@@ -1,0 +1,11 @@
+{
+  "name": "Nexus Mods",
+  "author": "Michael Finney",
+  "flags": ["debug"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["mods", "nexus-mods"],
+    "description": "Browse, install, and enable/disable Nexus Mods for the current game without leaving Gaming Mode.",
+    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/PluginLoader"
+  }
+}
