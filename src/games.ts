@@ -41,34 +41,23 @@ export const DEFAULT_GAME = SUPPORTED_GAMES[2868840];
 export const ALL_GAMES: SupportedGame[] = Object.values(SUPPORTED_GAMES);
 
 // ---- Active-game context ----------------------------------------------------
-// Which game the plugin is managing right now: the running supported game
-// wins; otherwise the user's explicit selection; otherwise the default.
-// A selector UI appears in the QAM automatically once the registry has more
-// than one game.
+// The plugin always follows what the user is doing: the running supported
+// game, else the supported game page they're viewing, else the last
+// supported game this session touched, else the default. There is
+// deliberately NO manual game selection - unsupported contexts just say so.
 
-let selectedAppId: number | undefined;
-const listeners = new Set<() => void>();
+let lastActiveAppId: number | undefined;
 
-export function setSelectedGameAppId(appId: number): void {
-  selectedAppId = appId;
-  listeners.forEach((fn) => fn());
+export function noteActiveGame(appId: number): void {
+  lastActiveAppId = appId;
 }
 
-export function subscribeActiveGame(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
-}
-
-export function getSelectedGame(): SupportedGame | undefined {
-  return getSupportedGame(selectedAppId);
+export function getLastActiveGame(): SupportedGame | undefined {
+  return getSupportedGame(lastActiveAppId);
 }
 
 export function getActiveGame(runningAppId: number | undefined): SupportedGame {
   return (
-    getSupportedGame(runningAppId) ??
-    getSupportedGame(selectedAppId) ??
-    DEFAULT_GAME
+    getSupportedGame(runningAppId) ?? getLastActiveGame() ?? DEFAULT_GAME
   );
 }
