@@ -111,6 +111,80 @@ interface BackendInfo {
 
 const ping = callable<[], BackendInfo>("ping");
 
+function LaunchOptionsModal({
+  frameworkName,
+  gameName,
+  appId,
+  options,
+  closeModal,
+}: {
+  frameworkName: string;
+  gameName: string;
+  appId: number;
+  options: string;
+  closeModal?: () => void;
+}) {
+  return (
+    <ModalRoot closeModal={closeModal}>
+      <h3 style={{ marginTop: 0 }}>
+        Launch {gameName} through {frameworkName}
+      </h3>
+      <div style={{ fontSize: "13px", opacity: 0.9, lineHeight: "1.5" }}>
+        Mods only load when Steam starts the game via {frameworkName}. That
+        needs these launch options on {gameName}:
+      </div>
+      <pre
+        style={{
+          fontSize: "12px",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-all",
+          background: "rgba(0,0,0,0.35)",
+          padding: "8px",
+          borderRadius: "4px",
+          margin: "10px 0",
+        }}
+      >
+        {options}
+      </pre>
+      <ButtonItem
+        layout="below"
+        description="Replaces any existing launch options for this game"
+        onClick={() => {
+          const ok = setLaunchOptions(appId, options);
+          toaster.toast(
+            ok
+              ? { title: "Launch options set", body: `${gameName} will start through ${frameworkName}` }
+              : { title: "Could not set launch options", body: "Use Copy instead and set them manually" }
+          );
+          if (ok) closeModal?.();
+        }}
+      >
+        Set automatically
+      </ButtonItem>
+      <ButtonItem
+        layout="below"
+        description={`Then: ${gameName} page → gear icon → Properties → Launch Options → paste`}
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(options);
+            toaster.toast({
+              title: "Copied to clipboard",
+              body: "Paste it in the game's Properties → Launch Options",
+            });
+          } catch {
+            toaster.toast({
+              title: "Clipboard unavailable",
+              body: options,
+            });
+          }
+        }}
+      >
+        Copy to clipboard
+      </ButtonItem>
+    </ModalRoot>
+  );
+}
+
 function CurrentGameSection() {
   const app = Router.MainRunningApp;
   const runningSupported = getSupportedGame(app ? Number(app.appid) : undefined);
@@ -144,17 +218,24 @@ function CurrentGameSection() {
         game.installDirName
       );
       if (result.ok && result.install_path) {
-        let body = `${game.framework.name} installed.`;
+        toaster.toast({
+          title: `${game.framework.name} installed`,
+          body: "One more step: launch options",
+        });
         if (game.framework.launchOptionsTemplate) {
           const options = game.framework.launchOptionsTemplate.replace(
             "{install_path}",
             result.install_path
           );
-          body += setLaunchOptions(game.appId, options)
-            ? " Steam launch options set automatically."
-            : ` Set the game's launch options to: ${options}`;
+          showModal(
+            <LaunchOptionsModal
+              frameworkName={game.framework.name}
+              gameName={game.displayName}
+              appId={game.appId}
+              options={options}
+            />
+          );
         }
-        toaster.toast({ title: `${game.framework.name} ready`, body });
       } else {
         toaster.toast({
           title: `${game.framework?.name} install failed`,
@@ -256,25 +337,21 @@ function CurrentGameSection() {
             layout="below"
             description={
               game.framework.launchOptionsTemplate
-                ? "Press to re-apply the Steam launch options it needs"
+                ? "Press to review the launch options it needs"
                 : undefined
             }
             onClick={() => {
               if (!game.framework?.launchOptionsTemplate || !status) return;
-              const options = game.framework.launchOptionsTemplate.replace(
-                "{install_path}",
-                status.install_path
-              );
-              toaster.toast(
-                setLaunchOptions(game.appId, options)
-                  ? {
-                      title: `${game.framework.name} launch options set`,
-                      body: options,
-                    }
-                  : {
-                      title: "Could not set launch options",
-                      body: `Set them manually to: ${options}`,
-                    }
+              showModal(
+                <LaunchOptionsModal
+                  frameworkName={game.framework.name}
+                  gameName={game.displayName}
+                  appId={game.appId}
+                  options={game.framework.launchOptionsTemplate.replace(
+                    "{install_path}",
+                    status.install_path
+                  )}
+                />
               );
             }}
           >
