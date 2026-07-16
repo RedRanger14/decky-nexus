@@ -213,6 +213,64 @@ def _norm_version(version) -> str:
     return (version or "").strip().lstrip("vV")
 
 
+def _sort_mod_files(files: list) -> list:
+    """Old versions last even when Nexus's is_primary flag is stale and
+    points at one (seen in the wild: SMAPI's primary flag stuck on a 2020
+    file). Within current files, primary first."""
+    files.sort(
+        key=lambda f: (
+            f["category_name"] == "OLD_VERSION",
+            not f["is_primary"],
+            f["category_name"],
+            f["name"],
+        )
+    )
+    return files
+
+
+def _pick_main_file(file_list: list):
+    """Latest MAIN-category file; never trust is_primary alone."""
+    mains = [f for f in file_list if f.get("category_name") == "MAIN"]
+    if mains:
+        return max(mains, key=lambda f: f["file_id"])
+    return next(
+        (f for f in file_list if f.get("category_name") != "OLD_VERSION"), None
+    )
+
+
+def _parse_mod_load_log(lines: list):
+    """Turn a game session log into per-mod load outcomes. Returns
+    (status dict keyed by normalized mod id, modded_session bool)."""
+
+    def norm(mod_id: str) -> str:
+        # log tags sometimes differ from manifest ids in dash/underscore
+        return re.sub(r"[^a-z0-9]", "", mod_id.lower())
+
+    loaded: set = set()
+    errors: dict = {}
+    modded_session = False
+    for line in lines:
+        if "RUNNING MODDED" in line:
+            modded_session = True
+            continue
+        m = re.search(r"Finished mod initialization for '.*' \(([^)]+)\)", line)
+        if m:
+            loaded.add(norm(m.group(1)))
+            continue
+        m = re.search(r"Tried to load mod with id (\S+?),", line)
+        if m:
+            errors.setdefault(norm(m.group(1)), "duplicate mod id")
+            continue
+        m = re.match(r"\[ERROR\] \[([^\]]+)\] (.*)", line)
+        if m:
+            errors.setdefault(norm(m.group(1)), m.group(2)[:160])
+
+    status = {key: {"state": "loaded", "detail": ""} for key in loaded}
+    for key, detail in errors.items():
+        status[key] = {"state": "error", "detail": detail}
+    return status, modded_session
+
+
 async def _is_process_running(name: str) -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -522,32 +580,7 @@ class Plugin:
         except OSError as e:
             return {"ok": False, "error": str(e)}
 
-        def norm(mod_id: str) -> str:
-            # log tags sometimes differ from manifest ids in dash/underscore
-            return re.sub(r"[^a-z0-9]", "", mod_id.lower())
-
-        loaded: set = set()
-        errors: dict = {}
-        modded_session = False
-        for line in lines:
-            if "RUNNING MODDED" in line:
-                modded_session = True
-                continue
-            m = re.search(r"Finished mod initialization for '.*' \(([^)]+)\)", line)
-            if m:
-                loaded.add(norm(m.group(1)))
-                continue
-            m = re.search(r"Tried to load mod with id (\S+?),", line)
-            if m:
-                errors.setdefault(norm(m.group(1)), "duplicate mod id")
-                continue
-            m = re.match(r"\[ERROR\] \[([^\]]+)\] (.*)", line)
-            if m:
-                errors.setdefault(norm(m.group(1)), m.group(2)[:160])
-
-        status = {key: {"state": "loaded", "detail": ""} for key in loaded}
-        for key, detail in errors.items():
-            status[key] = {"state": "error", "detail": detail}
+        status, modded_session = _parse_mod_load_log(lines)
         return {
             "ok": True,
             "available": True,
@@ -643,18 +676,7 @@ class Plugin:
             for f in body.get("files", [])
             if f.get("category_id") in VISIBLE_FILE_CATEGORIES
         ]
-        # Old versions last even when Nexus's is_primary flag is stale and
-        # points at one (seen in the wild: SMAPI's primary flag stuck on a
-        # 2020 file). Within current files, primary first.
-        files.sort(
-            key=lambda f: (
-                f["category_name"] == "OLD_VERSION",
-                not f["is_primary"],
-                f["category_name"],
-                f["name"],
-            )
-        )
-        return {"ok": True, "files": files}
+        return {"ok": True, "files": _sort_mod_files(files)}
 
     async def install_mod(
         self,
@@ -854,21 +876,7 @@ class Plugin:
             if not files.get("ok"):
                 return files
             file_list = files.get("files") or []
-            # Latest MAIN file - never trust is_primary alone (it can point
-            # at an ancient OLD_VERSION file, as on SMAPI's page).
-            mains = [f for f in file_list if f.get("category_name") == "MAIN"]
-            main = (
-                max(mains, key=lambda f: f["file_id"])
-                if mains
-                else next(
-                    (
-                        f
-                        for f in file_list
-                        if f.get("category_name") != "OLD_VERSION"
-                    ),
-                    None,
-                )
-            )
+            main = _pick_main_file(file_list)
             if not main:
                 return {"ok": False, "error": "No downloadable file found"}
 

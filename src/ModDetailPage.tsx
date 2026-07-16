@@ -176,6 +176,32 @@ export function ModDetailPage() {
   const primaryFile =
     fileList.find((f) => f.category_name !== "OLD_VERSION") ?? fileList[0];
 
+  // The primary button tells the truth about installed state: up-to-date
+  // installs get a disabled "Installed" state, outdated ones an Update.
+  const normVersion = (v?: string) => (v ?? "").trim().replace(/^[vV]/, "");
+  const upToDate = Boolean(
+    installedCopy?.version &&
+      primaryFile &&
+      normVersion(installedCopy.version) === normVersion(primaryFile.version)
+  );
+  const primaryLabel = !primaryFile
+    ? files === undefined
+      ? "Loading…"
+      : "No files available"
+    : installingFileId === primaryFile.file_id
+    ? progressText
+    : installedFileIds.has(primaryFile.file_id)
+    ? "Installed ✓"
+    : upToDate
+    ? "Installed ✓ (up to date)"
+    : installedCopy
+    ? installedCopy.version
+      ? `⬆ Update to v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`
+      : `⟳ Reinstall v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`
+    : `⬇ Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`;
+  const primaryDisabled =
+    installingFileId !== undefined || !primaryFile || upToDate;
+
   const heroUrl = mod.pictureUrl ?? mod.thumbnailUrl;
   const compatHint = getCompatHint(game.nexusDomain, mod.modId);
   const updatedDate = mod.updatedAt ? new Date(mod.updatedAt).toLocaleDateString() : "";
@@ -286,25 +312,16 @@ export function ModDetailPage() {
       >
         <style>{PRIMARY_BUTTON_CSS}</style>
         <DialogButton
-          disabled={installingFileId !== undefined || !primaryFile}
+          disabled={primaryDisabled}
           onClick={() => primaryFile && onInstall(primaryFile)}
           className={PRIMARY_BUTTON_CLASS}
           style={{
             flexGrow: 2,
             minWidth: "240px",
-            opacity:
-              installingFileId !== undefined || !primaryFile ? 0.55 : 1,
+            opacity: primaryDisabled && !upToDate ? 0.55 : upToDate ? 0.75 : 1,
           }}
         >
-          {files === undefined
-            ? "Loading…"
-            : !primaryFile
-            ? "No files available"
-            : installingFileId === primaryFile.file_id
-            ? progressText
-            : installedFileIds.has(primaryFile.file_id)
-            ? "Installed ✓"
-            : `⬇ Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`}
+          {primaryLabel}
         </DialogButton>
         <DialogButton
           disabled={fileList.length === 0}
