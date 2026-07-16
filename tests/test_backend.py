@@ -451,6 +451,27 @@ class TestFrameworkSetupState(unittest.TestCase):
         self.assertFalse(result["ok"])
 
 
+class TestEndorsements(unittest.TestCase):
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.plugin = main.Plugin()
+
+    def test_status_unknown_without_key(self):
+        result = run(self.plugin.get_endorsement("stardewvalley", 2400))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "unknown")
+
+    def test_set_requires_sign_in(self):
+        result = run(self.plugin.set_endorsement("stardewvalley", 2400, "1.0", True))
+        self.assertFalse(result["ok"])
+        self.assertIn("signed in", result["error"].lower())
+
+    def test_rejects_bad_domain(self):
+        result = run(self.plugin.set_endorsement("../evil", 1, "1", True))
+        self.assertFalse(result["ok"])
+
+
 class TestExtractZipFallback(unittest.TestCase):
     def test_zip_extraction_via_available_extractor(self):
         src = os.path.join(TEST_ROOT, "payload")

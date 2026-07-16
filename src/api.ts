@@ -217,6 +217,16 @@ export const getModDetails = callable<
   { ok: boolean; mod?: NexusMod; error?: string }
 >("get_mod_details");
 
+export const getEndorsement = callable<
+  [game_domain: string, mod_id: number],
+  { ok: boolean; status?: string; error?: string }
+>("get_endorsement");
+
+export const setEndorsement = callable<
+  [game_domain: string, mod_id: number, version: string, endorse: boolean],
+  { ok: boolean; status?: string; error?: string }
+>("set_endorsement");
+
 export const getModRequirements = callable<
   [game_domain: string, mod_id: number],
   { ok: boolean; requirements?: ModRequirement[]; error?: string }

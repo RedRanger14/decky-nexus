@@ -551,6 +551,81 @@ class Plugin:
         )
         return {"ok": True, "total": page["nodesCount"], "mods": mods}
 
+    async def get_endorsement(self, game_domain: str, mod_id: int) -> dict:
+        """The signed-in user's endorsement state for a mod. The v1
+        single-mod endpoint reports it when authenticated."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            return {"ok": True, "status": "unknown"}
+        url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{int(mod_id)}.json"
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.get(
+                    url, headers=_api_headers(api_key), ssl=SSL_CONTEXT
+                ) as resp:
+                    if resp.status != 200:
+                        return {"ok": True, "status": "unknown"}
+                    body = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return {"ok": True, "status": "unknown"}
+        endorsement = body.get("endorsement") or {}
+        return {"ok": True, "status": endorsement.get("endorse_status") or "Undecided"}
+
+    async def set_endorsement(
+        self, game_domain: str, mod_id: int, version: str, endorse: bool
+    ) -> dict:
+        """Endorse or abstain. Nexus Mods enforces its own rules (must have
+        downloaded the mod, a cool-down after downloading, not your own mod)
+        - map those to friendly messages."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            return {"ok": False, "error": "Not signed in"}
+        action = "endorse" if endorse else "abstain"
+        url = (
+            f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{int(mod_id)}"
+            f"/{action}.json"
+        )
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.post(
+                    url,
+                    headers=_api_headers(api_key),
+                    json={"version": version or "1"},
+                    ssl=SSL_CONTEXT,
+                ) as resp:
+                    try:
+                        body = await resp.json()
+                    except Exception:  # noqa: BLE001 - non-JSON error body
+                        body = {}
+                    if resp.status == 200:
+                        return {
+                            "ok": True,
+                            "status": "Endorsed" if endorse else "Abstained",
+                        }
+                    message = str(body.get("message") or body.get("error") or "")
+                    friendly = {
+                        "NOT_DOWNLOADED_MOD": "You can only endorse mods you've downloaded",
+                        "TOO_SOON_AFTER_DOWNLOAD": "Nexus Mods asks you to spend some time with a mod first - try again later",
+                        "IS_OWN_MOD": "You can't endorse your own mod",
+                    }
+                    for code, text in friendly.items():
+                        if code in message:
+                            return {"ok": False, "error": text}
+                    return {
+                        "ok": False,
+                        "error": message or f"Nexus Mods API error (HTTP {resp.status})",
+                    }
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return {"ok": False, "error": f"Network error: {type(e).__name__}"}
+
     async def get_mod_requirements(self, game_domain: str, mod_id: int) -> dict:
         """Nexus-listed requirements for a mod (public v2 data). Two-step:
         resolve the numeric game id once, then query via legacyMods."""
