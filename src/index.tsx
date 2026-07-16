@@ -1,6 +1,7 @@
 import {
   ButtonItem,
   ConfirmModal,
+  DialogButton,
   ModalRoot,
   PanelSection,
   PanelSectionRow,
@@ -64,6 +65,7 @@ import {
   restartGame,
   setLaunchOptions,
 } from "./steam";
+import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
 interface GameContext {
   /** The game being managed; undefined outside a supported game's context. */
@@ -129,6 +131,28 @@ interface BackendInfo {
 }
 
 const ping = callable<[], BackendInfo>("ping");
+
+/** Brand-orange call-to-action for the QAM (hover/focus states included). */
+function OrangeActionButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <style>{PRIMARY_BUTTON_CSS}</style>
+      <DialogButton
+        className={PRIMARY_BUTTON_CLASS}
+        style={{ width: "100%" }}
+        onClick={onClick}
+      >
+        {children}
+      </DialogButton>
+    </>
+  );
+}
 
 function LaunchOptionsModal({
   frameworkName,
@@ -356,15 +380,14 @@ function CurrentGameSection() {
     return (
       <PanelSection title="Nexus Mods">
         <PanelSectionRow>
-          <ButtonItem
-            layout="below"
+          <OrangeActionButton
             onClick={() => {
               Navigation.Navigate(BROWSE_ROUTE);
               Navigation.CloseSideMenus();
             }}
           >
             Open Mod Browser
-          </ButtonItem>
+          </OrangeActionButton>
         </PanelSectionRow>
       </PanelSection>
     );
@@ -422,16 +445,16 @@ function CurrentGameSection() {
             </PanelSectionRow>
           )}
           <PanelSectionRow>
-            <ButtonItem
-              label="Step 3"
-              layout="below"
-              onClick={() => {
-                Navigation.Navigate(BROWSE_ROUTE);
-                Navigation.CloseSideMenus();
-              }}
-            >
-              Open Mod Browser
-            </ButtonItem>
+            <Field label="Step 3" childrenLayout="below">
+              <OrangeActionButton
+                onClick={() => {
+                  Navigation.Navigate(BROWSE_ROUTE);
+                  Navigation.CloseSideMenus();
+                }}
+              >
+                Open Mod Browser
+              </OrangeActionButton>
+            </Field>
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
@@ -449,15 +472,14 @@ function CurrentGameSection() {
       ) : (
         <>
           <PanelSectionRow>
-            <ButtonItem
-              layout="below"
+            <OrangeActionButton
               onClick={() => {
                 Navigation.Navigate(BROWSE_ROUTE);
                 Navigation.CloseSideMenus();
               }}
             >
               Open Mod Browser
-            </ButtonItem>
+            </OrangeActionButton>
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem

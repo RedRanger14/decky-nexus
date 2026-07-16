@@ -34,6 +34,8 @@ export interface SupportedGame {
   framework?: GameFramework;
   /** Mod folders bulk operations must never remove (framework components) */
   protectedModFolders?: string[];
+  /** Curated "start here" mods featured as the browse page heroes */
+  recommendedModIds?: number[];
 }
 
 export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
@@ -46,6 +48,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     moddedSaveWarning: true,
     processName: "SlayTheSpire2",
     godotUserDirName: "SlayTheSpire2",
+    recommendedModIds: [103, 137], // BaseLib, RitsuLib - the ecosystem libraries
   },
   413150: {
     appId: 413150,
@@ -64,6 +67,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     },
     // SMAPI's own bundled components - "uninstall all" keeps these
     protectedModFolders: ["SaveBackup", "ConsoleCommands"],
+    recommendedModIds: [2400, 1915], // SMAPI, Content Patcher
   },
 };
 

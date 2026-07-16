@@ -107,6 +107,11 @@ export const getTrendingMods = callable<
   ModsResult
 >("get_trending_mods");
 
+export const getModsByIds = callable<
+  [game_domain: string, mod_ids: number[]],
+  ModsResult
+>("get_mods_by_ids");
+
 export const getModFiles = callable<[game_domain: string, mod_id: number], FilesResult>(
   "get_mod_files"
 );

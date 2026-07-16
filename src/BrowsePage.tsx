@@ -9,7 +9,7 @@ import {
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 
-import { ModsResult, NexusMod, getMods, getTrendingMods } from "./api";
+import { ModsResult, NexusMod, getMods, getModsByIds, getTrendingMods } from "./api";
 import { SupportedGame, getActiveGame } from "./games";
 import { setSelectedMod } from "./state";
 import { NEXUS_ORANGE } from "./theme";
@@ -230,12 +230,37 @@ export function BrowsePage() {
   const nextOffset = useRef(0);
 
   // home mode
+  const [recommended, setRecommended] = useState<NexusMod[]>([]);
   const [trending, setTrending] = useState<NexusMod[]>([]);
   const [newest, setNewest] = useState<NexusMod[]>([]);
   const [popular, setPopular] = useState<NexusMod[]>([]);
 
   const isHome = sort === "featured" && search.trim() === "";
   const effectiveSort = sort === "featured" ? "endorsements" : sort;
+
+  // Focus restore: switching home<->list unmounts the focused element and
+  // Steam's navigator strands focus on the system header ("down" goes dead
+  // until "up"). When the mode flips, focus the first tile of the new
+  // content once it exists.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef(true);
+  useEffect(() => {
+    pendingFocus.current = true;
+  }, [isHome]);
+  useEffect(() => {
+    if (!pendingFocus.current) return;
+    const ready = isHome
+      ? recommended.length + trending.length > 0
+      : mods.length > 0;
+    if (!ready) return;
+    pendingFocus.current = false;
+    const timer = setTimeout(() => {
+      (
+        contentRef.current?.querySelector("[tabindex]") as HTMLElement | null
+      )?.focus();
+    }, 120);
+    return () => clearTimeout(timer);
+  });
 
   const fetchPage = async (offset: number, append: boolean) => {
     setLoading(true);
@@ -270,10 +295,16 @@ export function BrowsePage() {
         if (!cancelled && result.ok && result.total !== undefined)
           setTotal((t) => t ?? result.total);
       };
+    setRecommended([]);
     setTrending([]);
     setNewest([]);
     setPopular([]);
     setTotal(undefined);
+    if (game.recommendedModIds?.length) {
+      getModsByIds(game.nexusDomain, game.recommendedModIds).then(
+        apply(setRecommended)
+      );
+    }
     getTrendingMods(game.nexusDomain, 10).then(apply(setTrending));
     getMods(game.nexusDomain, "createdAt", ROW_SIZE, 0, "").then(apply(setNewest));
     getMods(game.nexusDomain, "endorsements", ROW_SIZE, 0, "").then((r) => {
@@ -295,8 +326,13 @@ export function BrowsePage() {
   }, [game.appId, sort, search]);
 
   const hasMore = total !== undefined && nextOffset.current < total;
-  const heroMods = trending.slice(0, 2);
-  const carouselTrending = trending.slice(2);
+  // Curated recommendations take the hero slots (the "start here" mods -
+  // libraries and loaders); games without curation fall back to trending.
+  const hasRecommended = recommended.length > 0;
+  const heroMods = hasRecommended ? recommended.slice(0, 2) : trending.slice(0, 2);
+  const heroTitle = hasRecommended ? "Recommended" : "Trending now";
+  const railTrending = hasRecommended ? trending : trending.slice(2);
+  const railTitle = hasRecommended ? "Trending now" : "Also trending";
 
   return (
     // onCancel: B returns to the plugin's QAM panel instead of dumping the
@@ -392,11 +428,11 @@ export function BrowsePage() {
         </Focusable>
 
         {isHome ? (
-          <>
-            {/* ---- Hero: top two trending mods, big and bold ---- */}
+          <div ref={contentRef}>
+            {/* ---- Hero: curated recommendations, big and bold ---- */}
             {heroMods.length > 0 && (
               <>
-                <SectionHeading title="Trending now" />
+                <SectionHeading title={heroTitle} />
                 <Focusable
                   autoFocus={true}
                   style={{
@@ -412,14 +448,14 @@ export function BrowsePage() {
                 </Focusable>
               </>
             )}
-            {trending.length === 0 && (
+            {trending.length === 0 && recommended.length === 0 && (
               <div style={{ padding: "20px 0", opacity: 0.8 }}>
                 Loading mods…
               </div>
             )}
             <ModCarousel
-              title="Also trending"
-              mods={carouselTrending}
+              title={railTitle}
+              mods={railTrending}
               game={game}
               onViewAll={() => {
                 setSearch("");
@@ -444,9 +480,9 @@ export function BrowsePage() {
                 setSort("endorsements");
               }}
             />
-          </>
+          </div>
         ) : (
-          <>
+          <div ref={contentRef}>
             {error && (
               <div style={{ padding: "24px 0", opacity: 0.8 }}>
                 Could not load mods: {error}
@@ -484,7 +520,7 @@ export function BrowsePage() {
                 </ButtonItem>
               </Focusable>
             )}
-          </>
+          </div>
         )}
       </div>
     </Focusable>

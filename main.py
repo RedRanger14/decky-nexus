@@ -675,6 +675,33 @@ class Plugin:
             result["game_log_mod_lines"] = "(game log not found - has the game run?)"
         return result
 
+    async def get_mods_by_ids(self, game_domain: str, mod_ids) -> dict:
+        """Fetch specific mods (curated recommendations) in the given order."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        try:
+            ids = [int(i) for i in (mod_ids or [])][:10]
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Invalid mod ids"}
+        if not ids:
+            return {"ok": True, "mods": []}
+        api_key = _load_settings().get("api_key")
+        try:
+            game_id = await _resolve_game_id(game_domain, api_key)
+            id_args = ", ".join(
+                "{gameId: %d, modId: %d}" % (game_id, i) for i in ids
+            )
+            data = await _gql_query(
+                "{ legacyMods(ids: [%s]) { nodes {%s} } }" % (id_args, MOD_FIELDS),
+                api_key,
+            )
+            nodes = data["legacyMods"]["nodes"]
+            order = {mod_id: idx for idx, mod_id in enumerate(ids)}
+            nodes.sort(key=lambda n: order.get(n.get("modId"), len(ids)))
+            return {"ok": True, "mods": nodes}
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     async def get_trending_mods(self, game_domain: str, count: int = 10) -> dict:
         """Genuinely-trending mods from the v1 API (a signal v2 doesn't
         expose), mapped to the standard mod shape."""
