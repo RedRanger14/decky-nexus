@@ -39,9 +39,11 @@ import {
   getGameStatus,
   getInstalledMods,
   getModLoadStatus,
+  getNxmQueue,
   getSaveStatus,
   getSmapiLoadStatus,
   installFramework,
+  registerNxmHandler,
   markLaunchOptionsSet,
   setAllModsEnabled,
   setFrameworkEnabled,
@@ -1286,6 +1288,51 @@ function DevSection() {
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={onPing}>
           Ping backend
+        </ButtonItem>
+      </PanelSectionRow>
+      {/* Phase 1 spike for the free-user flow (docs/free-user-design.md):
+          register the relay, click 'Mod Manager Download' on any mod page in
+          the Gaming Mode browser, then check whether the queue caught it. */}
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          description="Free-user spike: register the nxm:// relay handler"
+          onClick={async () => {
+            const result = await registerNxmHandler();
+            toaster.toast(
+              result.ok
+                ? {
+                    title: "NXM relay registered",
+                    body: `tools: ${Object.entries(result.tools ?? {})
+                      .map(([k, v]) => `${k}=${v ? "ok" : "missing"}`)
+                      .join(", ")}`,
+                  }
+                : { title: "Relay registration failed", body: result.error ?? "" }
+            );
+          }}
+        >
+          NXM relay: register
+        </ButtonItem>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          description="Shows nxm:// links the relay has caught"
+          onClick={async () => {
+            const result = await getNxmQueue(false);
+            if (!result.ok) {
+              toaster.toast({ title: "Queue read failed", body: result.error ?? "" });
+              return;
+            }
+            const text =
+              (result.raw?.length ?? 0) === 0
+                ? "(queue is empty - nothing dispatched yet)"
+                : `Raw:\n${(result.raw ?? []).join("\n")}\n\nParsed:\n` +
+                  JSON.stringify(result.entries, null, 2);
+            showModal(<LogModal title="NXM relay queue" text={text} />);
+          }}
+        >
+          NXM relay: check queue
         </ButtonItem>
       </PanelSectionRow>
       {error && (

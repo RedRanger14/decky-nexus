@@ -270,6 +270,32 @@ export const getDebugInfo = callable<
   }
 >("get_debug_info");
 
+// ---- Free-user groundwork (nxm:// relay - see docs/free-user-design.md) ----
+
+export interface NxmEntry {
+  game_domain: string;
+  mod_id: number;
+  file_id: number;
+  key: string;
+  expires: string;
+  user_id: string;
+}
+
+export const registerNxmHandler = callable<
+  [],
+  { ok: boolean; tools?: Record<string, boolean>; error?: string }
+>("register_nxm_handler");
+
+export const unregisterNxmHandler = callable<
+  [],
+  { ok: boolean; removed?: boolean; error?: string }
+>("unregister_nxm_handler");
+
+export const getNxmQueue = callable<
+  [clear: boolean],
+  { ok: boolean; raw?: string[]; entries?: NxmEntry[]; error?: string }
+>("get_nxm_queue");
+
 export const setApiKey = callable<[api_key: string], AuthStatus>("set_api_key");
 export const getAuthStatus = callable<[], AuthStatus>("get_auth_status");
 export const getGameStatus = callable<

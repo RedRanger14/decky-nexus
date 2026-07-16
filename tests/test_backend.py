@@ -451,6 +451,67 @@ class TestFrameworkSetupState(unittest.TestCase):
         self.assertFalse(result["ok"])
 
 
+class TestNxmParsing(unittest.TestCase):
+    def test_parses_full_free_download_link(self):
+        entry = main._parse_nxm_url(
+            "nxm://stardewvalley/mods/2400/files/160380"
+            "?key=AbC-123&expires=1784226013&user_id=39089805"
+        )
+        self.assertEqual(entry["game_domain"], "stardewvalley")
+        self.assertEqual(entry["mod_id"], 2400)
+        self.assertEqual(entry["file_id"], 160380)
+        self.assertEqual(entry["key"], "AbC-123")
+        self.assertEqual(entry["expires"], "1784226013")
+
+    def test_parses_premium_link_without_token(self):
+        entry = main._parse_nxm_url("nxm://slaythespire2/mods/46/files/6344")
+        self.assertEqual(entry["mod_id"], 46)
+        self.assertEqual(entry["key"], "")
+
+    def test_rejects_non_mod_links(self):
+        self.assertIsNone(main._parse_nxm_url("nxm://oauth/callback?code=x"))
+        self.assertIsNone(
+            main._parse_nxm_url("nxm://game/collections/abc/revisions/1")
+        )
+        self.assertIsNone(main._parse_nxm_url("https://evil.example/mods/1/files/2"))
+        self.assertIsNone(main._parse_nxm_url("nxm://bad domain!/mods/1/files/2"))
+        self.assertIsNone(main._parse_nxm_url(""))
+        self.assertIsNone(main._parse_nxm_url("nxm://x/mods/abc/files/2"))
+
+    def test_queue_roundtrip(self):
+        queue = os.path.join(main.decky.DECKY_PLUGIN_RUNTIME_DIR, main.NXM_QUEUE_NAME)
+        os.makedirs(os.path.dirname(queue), exist_ok=True)
+        with open(queue, "w", encoding="utf-8") as f:
+            f.write("1784200000 nxm://stardewvalley/mods/5/files/9?key=k&expires=1&user_id=2\n")
+            f.write("1784200001 not-a-url\n")
+        result = run(main.Plugin().get_nxm_queue(clear=True))
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["entries"]), 1)
+        self.assertEqual(result["entries"][0]["mod_id"], 5)
+        self.assertEqual(len(result["raw"]), 2)
+        # cleared
+        result2 = run(main.Plugin().get_nxm_queue(clear=False))
+        self.assertEqual(result2["raw"], [])
+
+    def test_register_writes_handler_files(self):
+        result = run(main.Plugin().register_nxm_handler())
+        self.assertTrue(result["ok"], result.get("error"))
+        desktop = os.path.join(
+            main.decky.DECKY_USER_HOME, ".local", "share", "applications",
+            "nexus-mods-decky-nxm.desktop",
+        )
+        self.assertTrue(os.path.isfile(desktop))
+        with open(desktop, encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("MimeType=x-scheme-handler/nxm;", content)
+        self.assertIn("nxm-relay.sh %u", content)
+        self.assertTrue(
+            os.path.isfile(
+                os.path.join(main.decky.DECKY_PLUGIN_RUNTIME_DIR, "nxm-relay.sh")
+            )
+        )
+
+
 class TestEndorsements(unittest.TestCase):
     def setUp(self):
         if os.path.isfile(main.SETTINGS_PATH):
