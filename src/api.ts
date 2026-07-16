@@ -122,13 +122,18 @@ export const installMod = callable<
 
 export const getFrameworkSetup = callable<
   [game_domain: string],
-  { ok: boolean; launch_options_set?: boolean }
+  { ok: boolean; launch_options_set?: boolean; enabled?: boolean }
 >("get_framework_setup");
 
 export const markLaunchOptionsSet = callable<
   [game_domain: string],
   { ok: boolean; error?: string }
 >("mark_launch_options_set");
+
+export const setFrameworkEnabled = callable<
+  [game_domain: string, enabled: boolean],
+  { ok: boolean; error?: string }
+>("set_framework_enabled");
 
 export const installFramework = callable<
   [game_domain: string, mod_id: number, install_dir: string],

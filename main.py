@@ -974,10 +974,17 @@ class Plugin:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     # The plugin can't read Steam's launch options back, so it records that
-    # the user completed the launch-options step per game.
+    # the user completed the launch-options step per game, and whether the
+    # framework is currently enabled (launch options applied) or disabled
+    # (cleared - game launches vanilla).
     async def get_framework_setup(self, game_domain: str) -> dict:
         state = _load_settings().get("framework_setup", {}).get(game_domain, {})
-        return {"ok": True, "launch_options_set": bool(state.get("launch_options_set"))}
+        launch_set = bool(state.get("launch_options_set"))
+        return {
+            "ok": True,
+            "launch_options_set": launch_set,
+            "enabled": bool(state.get("enabled", launch_set)),
+        }
 
     async def mark_launch_options_set(self, game_domain: str) -> dict:
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
@@ -985,9 +992,25 @@ class Plugin:
         settings = _load_settings()
         settings.setdefault("framework_setup", {})[game_domain] = {
             "launch_options_set": True,
+            "enabled": True,
             "at": int(time.time()),
         }
         _save_settings(settings)
+        return {"ok": True}
+
+    async def set_framework_enabled(self, game_domain: str, enabled: bool) -> dict:
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        settings = _load_settings()
+        state = settings.setdefault("framework_setup", {}).setdefault(
+            game_domain, {}
+        )
+        state["enabled"] = bool(enabled)
+        _save_settings(settings)
+        decky.logger.info(
+            f"framework for {game_domain!r} marked "
+            f"{'enabled' if enabled else 'disabled'}"
+        )
         return {"ok": True}
 
     # ---- Installed mods / enable & disable ----------------------------------
