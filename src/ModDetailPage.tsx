@@ -394,7 +394,7 @@ export function ModDetailPage() {
       {installedFileIds.size > 0 && (
         <div style={{ marginTop: "4px", fontSize: "13px", opacity: 0.8 }}>
           Installed mods load when the game starts
-          {game.godotUserDirName
+          {game.logAdapter?.kind === "godot"
             ? " (it may relaunch itself once more to compile mods)."
             : "."}
         </div>

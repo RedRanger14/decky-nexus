@@ -40,6 +40,7 @@ import {
   getInstalledMods,
   getModLoadStatus,
   getSaveStatus,
+  getSmapiLoadStatus,
   installFramework,
   markLaunchOptionsSet,
   setAllModsEnabled,
@@ -775,8 +776,14 @@ function InstalledModsSection() {
       getInstalledMods(game.nexusDomain, game.installDirName, game.modsSubdir).then(
         (r) => setMods(r.ok ? r.mods : [])
       );
-      if (game.godotUserDirName) {
-        getModLoadStatus(game.godotUserDirName).then((r) =>
+      if (game.logAdapter?.kind === "godot") {
+        getModLoadStatus(game.logAdapter.userDirName).then((r) =>
+          setLoadStates(
+            r.ok && r.available && r.modded_session ? r.status : undefined
+          )
+        );
+      } else if (game.logAdapter?.kind === "smapi") {
+        getSmapiLoadStatus(game.logAdapter.configDirName).then((r) =>
           setLoadStates(
             r.ok && r.available && r.modded_session ? r.status : undefined
           )
@@ -1236,7 +1243,10 @@ function DevSection() {
   };
 
   const showLog = async (which: "game" | "plugin") => {
-    const debug = await getDebugInfo(game.godotUserDirName ?? "");
+    const debug = await getDebugInfo(
+      game.logAdapter?.kind === "godot" ? game.logAdapter.userDirName : "",
+      game.logAdapter?.kind === "smapi" ? game.logAdapter.configDirName : ""
+    );
     if (!debug.ok) {
       toaster.toast({ title: "Debug info failed", body: debug.error ?? "" });
       return;
@@ -1257,7 +1267,7 @@ function DevSection() {
 
   return (
     <PanelSection title="Developer">
-      {game.godotUserDirName && (
+      {game.logAdapter && (
         <PanelSectionRow>
           <ButtonItem
             layout="below"
