@@ -44,6 +44,7 @@ import {
   setAllModsEnabled,
   setApiKey,
   setModEnabled,
+  uninstallAllMods,
   uninstallMod,
 } from "./api";
 import {
@@ -404,6 +405,7 @@ function UninstallPickerModal({
   gameDomain,
   installDir,
   modsSubdir,
+  protectedFolders,
   closeModal,
   onDone,
 }: {
@@ -411,6 +413,7 @@ function UninstallPickerModal({
   gameDomain: string;
   installDir: string;
   modsSubdir: string;
+  protectedFolders: string[];
   closeModal?: () => void;
   onDone: () => void;
 }) {
@@ -450,6 +453,43 @@ function UninstallPickerModal({
     );
   };
 
+  const confirmUninstallAll = () => {
+    showModal(
+      <ConfirmModal
+        strTitle="Uninstall ALL mods?"
+        strDescription={
+          `Removes every mod folder for this game` +
+          (protectedFolders.length
+            ? `, except framework components (${protectedFolders.join(", ")})`
+            : "") +
+          `. Mods can be reinstalled from Nexus Mods at any time.`
+        }
+        strOKButtonText="Uninstall all"
+        bDestructiveWarning={true}
+        onOK={async () => {
+          const result = await uninstallAllMods(
+            gameDomain,
+            installDir,
+            modsSubdir,
+            protectedFolders
+          );
+          toaster.toast(
+            result.ok
+              ? {
+                  title: "All mods uninstalled",
+                  body: `${result.removed} removed${
+                    result.kept?.length ? `, kept: ${result.kept.join(", ")}` : ""
+                  }`,
+                }
+              : { title: "Uninstall all failed", body: result.error ?? "" }
+          );
+          onDone();
+          closeModal?.();
+        }}
+      />
+    );
+  };
+
   return (
     <ModalRoot closeModal={closeModal}>
       <h3 style={{ marginTop: 0 }}>Uninstall a mod</h3>
@@ -463,6 +503,17 @@ function UninstallPickerModal({
           {mod.name ?? mod.folder}
         </ButtonItem>
       ))}
+      <ButtonItem
+        layout="below"
+        description={
+          protectedFolders.length
+            ? `Keeps framework components: ${protectedFolders.join(", ")}`
+            : undefined
+        }
+        onClick={confirmUninstallAll}
+      >
+        Uninstall all mods…
+      </ButtonItem>
     </ModalRoot>
   );
 }
@@ -761,6 +812,7 @@ function InstalledModsSection() {
                 gameDomain={game.nexusDomain}
                 installDir={game.installDirName}
                 modsSubdir={game.modsSubdir}
+                protectedFolders={game.protectedModFolders ?? []}
                 onDone={refresh}
               />
             )

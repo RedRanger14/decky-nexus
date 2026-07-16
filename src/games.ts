@@ -32,6 +32,8 @@ export interface SupportedGame {
   godotUserDirName?: string;
   /** Required community mod loader, if the game has one */
   framework?: GameFramework;
+  /** Mod folders bulk operations must never remove (framework components) */
+  protectedModFolders?: string[];
 }
 
 export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
@@ -60,6 +62,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       nexusModId: 2400, // verified: "SMAPI - Stardew Modding API" by Pathoschild
       launchOptionsTemplate: '"{install_path}/StardewModdingAPI" %command%',
     },
+    // SMAPI's own bundled components - "uninstall all" keeps these
+    protectedModFolders: ["SaveBackup", "ConsoleCommands"],
   },
 };
 
