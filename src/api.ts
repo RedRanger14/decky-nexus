@@ -155,6 +155,16 @@ export const uninstallMod = callable<
   { ok: boolean; error?: string }
 >("uninstall_mod");
 
+export const uninstallAllMods = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    protected_folders: string[]
+  ],
+  { ok: boolean; removed?: number; kept?: string[]; error?: string }
+>("uninstall_all_mods");
+
 export interface SaveAccount {
   account_id: string;
   vanilla_profiles: number;

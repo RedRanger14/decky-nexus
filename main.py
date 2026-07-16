@@ -1150,6 +1150,43 @@ class Plugin:
             decky.logger.exception("copy_saves_to_modded crashed")
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    async def uninstall_all_mods(
+        self,
+        game_domain: str,
+        install_dir: str,
+        mods_subdir: str,
+        protected=None,
+    ) -> dict:
+        """Remove every mod folder (enabled and disabled) except protected
+        ones (framework components like SMAPI's SaveBackup)."""
+        try:
+            protected_set = {p.lower() for p in (protected or [])}
+            _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
+            settings = _load_settings()
+            records = settings.get("installed", {}).get(game_domain, {})
+            removed, kept = [], []
+            for base in (mods_path, disabled_path):
+                if not os.path.isdir(base):
+                    continue
+                for folder in sorted(os.listdir(base)):
+                    target = os.path.join(base, folder)
+                    if not os.path.isdir(target):
+                        continue
+                    if folder.lower() in protected_set:
+                        kept.append(folder)
+                        continue
+                    _force_rmtree(target)
+                    records.pop(folder, None)
+                    removed.append(folder)
+            _save_settings(settings)
+            decky.logger.info(
+                f"uninstall_all_mods({game_domain!r}): removed {removed}, kept {kept}"
+            )
+            return {"ok": True, "removed": len(removed), "kept": kept}
+        except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
+            decky.logger.exception("uninstall_all_mods crashed")
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     # ---- Game detection ----------------------------------------------------
 
     # Reports whether a supported game is installed, whether its mods folder
