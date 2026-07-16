@@ -643,11 +643,13 @@ class Plugin:
             for f in body.get("files", [])
             if f.get("category_id") in VISIBLE_FILE_CATEGORIES
         ]
-        # Primary file first, old versions last (they exist for rollbacks).
+        # Old versions last even when Nexus's is_primary flag is stale and
+        # points at one (seen in the wild: SMAPI's primary flag stuck on a
+        # 2020 file). Within current files, primary first.
         files.sort(
             key=lambda f: (
-                not f["is_primary"],
                 f["category_name"] == "OLD_VERSION",
+                not f["is_primary"],
                 f["category_name"],
                 f["name"],
             )
@@ -852,8 +854,20 @@ class Plugin:
             if not files.get("ok"):
                 return files
             file_list = files.get("files") or []
-            main = next((f for f in file_list if f["is_primary"]), None) or (
-                file_list[0] if file_list else None
+            # Latest MAIN file - never trust is_primary alone (it can point
+            # at an ancient OLD_VERSION file, as on SMAPI's page).
+            mains = [f for f in file_list if f.get("category_name") == "MAIN"]
+            main = (
+                max(mains, key=lambda f: f["file_id"])
+                if mains
+                else next(
+                    (
+                        f
+                        for f in file_list
+                        if f.get("category_name") != "OLD_VERSION"
+                    ),
+                    None,
+                )
             )
             if not main:
                 return {"ok": False, "error": "No downloadable file found"}
