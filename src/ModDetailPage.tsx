@@ -15,11 +15,13 @@ import {
   ModFile,
   ModRequirement,
   NexusMod,
+  getEndorsement,
   getInstalledMods,
   getModDetails,
   getModFiles,
   getModRequirements,
   installMod,
+  setEndorsement,
   uninstallMod,
 } from "./api";
 import { getCompatHint } from "./compat";
@@ -69,6 +71,8 @@ export function ModDetailPage() {
   const [installingFileId, setInstallingFileId] = useState<number | undefined>();
   const [installedFileIds, setInstalledFileIds] = useState<Set<number>>(new Set());
   const [installedCopy, setInstalledCopy] = useState<InstalledMod | undefined>();
+  const [endorseStatus, setEndorseStatus] = useState<string | undefined>();
+  const [endorseBusy, setEndorseBusy] = useState(false);
 
   const refreshInstalled = (s: SelectedMod) => {
     getInstalledMods(
@@ -92,6 +96,10 @@ export function ModDetailPage() {
     );
     getModDetails(s.game.nexusDomain, s.mod.modId).then((r) =>
       setDescription(r.ok ? stripMarkup(r.mod?.description ?? "") : "")
+    );
+    setEndorseStatus(undefined);
+    getEndorsement(s.game.nexusDomain, s.mod.modId).then((r) =>
+      setEndorseStatus(r.ok ? r.status : undefined)
     );
     refreshInstalled(s);
   };
@@ -242,10 +250,71 @@ export function ModDetailPage() {
             by {mod.author} · v{mod.version}
             {updatedDate ? ` · updated ${updatedDate}` : ""}
           </div>
-          <div style={{ opacity: 0.75, fontSize: "14px", marginBottom: "8px" }}>
-            👍 {mod.endorsements.toLocaleString()} · ⬇{" "}
-            {mod.downloads.toLocaleString()}
-          </div>
+          <Focusable
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              marginBottom: "8px",
+            }}
+          >
+            <span style={{ opacity: 0.75, fontSize: "14px" }}>
+              👍 {mod.endorsements.toLocaleString()} · ⬇{" "}
+              {mod.downloads.toLocaleString()}
+            </span>
+            {endorseStatus !== undefined && endorseStatus !== "unknown" && (
+              <Focusable
+                onActivate={async () => {
+                  if (endorseBusy) return;
+                  setEndorseBusy(true);
+                  try {
+                    const target = endorseStatus !== "Endorsed";
+                    const result = await setEndorsement(
+                      game.nexusDomain,
+                      mod.modId,
+                      mod.version,
+                      target
+                    );
+                    if (result.ok) {
+                      setEndorseStatus(result.status);
+                      toaster.toast({
+                        title: target ? "Endorsed!" : "Endorsement removed",
+                        body: target
+                          ? `Thanks for supporting ${mod.author}`
+                          : mod.name,
+                      });
+                    } else {
+                      toaster.toast({
+                        title: "Could not endorse",
+                        body: result.error ?? "",
+                      });
+                    }
+                  } finally {
+                    setEndorseBusy(false);
+                  }
+                }}
+                style={{
+                  padding: "3px 12px",
+                  borderRadius: "999px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  opacity: endorseBusy ? 0.5 : 1,
+                  ...(endorseStatus === "Endorsed"
+                    ? {
+                        background: "rgba(143, 212, 143, 0.15)",
+                        border: "1px solid rgba(143, 212, 143, 0.5)",
+                      }
+                    : {
+                        background: "rgba(218, 142, 53, 0.15)",
+                        border: `1px solid ${NEXUS_ORANGE}88`,
+                      }),
+                }}
+              >
+                {endorseStatus === "Endorsed" ? "👍 Endorsed ✓" : "👍 Endorse"}
+              </Focusable>
+            )}
+          </Focusable>
           {mod.summary && (
             <div style={{ fontSize: "13px", opacity: 0.9 }}>{mod.summary}</div>
           )}
