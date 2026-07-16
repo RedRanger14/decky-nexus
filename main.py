@@ -908,58 +908,52 @@ class Plugin:
                 _force_rmtree(scratch)
                 return {"ok": False, "error": f"Extraction failed: {err}"}
 
-            # Find the Linux installer script and make everything executable.
-            script = None
+            # SMAPI's bundled installer is interactive-only (its unattended
+            # flags don't exist, and 'install on Linux.sh' doesn't forward
+            # args anyway - verified on device). Its documented manual
+            # install is deterministic instead: extract internal/linux/
+            # install.dat into the game folder, then provide
+            # <detect_file>.deps.json by copying the game's own deps.json.
+            install_dat = None
             for root, _dirs, names in os.walk(scratch):
                 for name in names:
-                    fp = os.path.join(root, name)
-                    try:
-                        os.chmod(fp, 0o755)
-                    except OSError:
-                        pass
-                    if name.lower() == "install on linux.sh":
-                        script = fp
-            if not script:
+                    if (
+                        name == "install.dat"
+                        and os.path.basename(root) == "linux"
+                    ):
+                        install_dat = os.path.join(root, name)
+            if not install_dat:
                 _force_rmtree(scratch)
                 return {
                     "ok": False,
-                    "error": "No Linux installer found in the archive",
+                    "error": "No Linux install payload found in the archive",
                 }
 
-            proc = await asyncio.create_subprocess_exec(
-                "bash",
-                script,
-                "--install",
-                "--game-path",
-                install_path,
-                cwd=os.path.dirname(script),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            try:
-                out, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
-            except asyncio.TimeoutError:
-                proc.kill()
-                _force_rmtree(scratch)
-                return {"ok": False, "error": "Installer timed out"}
+            err = await _extract_archive(install_dat, install_path)
             _force_rmtree(scratch)
+            if err:
+                return {"ok": False, "error": f"Framework extraction failed: {err}"}
 
-            output = out.decode(errors="replace")
+            game_deps = os.path.join(install_path, f"{install_dir}.deps.json")
+            framework_deps = os.path.join(
+                install_path, "StardewModdingAPI.deps.json"
+            )
+            if os.path.isfile(game_deps) and not os.path.isfile(framework_deps):
+                shutil.copy2(game_deps, framework_deps)
+            launcher = os.path.join(install_path, "StardewModdingAPI")
+            if os.path.isfile(launcher):
+                os.chmod(launcher, 0o755)
+
             installed = any(
                 name.startswith("StardewModdingAPI")
                 for name in os.listdir(install_path)
             )
             if not installed:
-                decky.logger.warning(f"framework installer output: {output[-800:]}")
                 return {
                     "ok": False,
-                    "error": f"Installer ran but framework not detected: "
-                    f"{output[-200:]}",
+                    "error": "Framework files not found after extraction",
                 }
-            decky.logger.info(
-                f"framework installed into {install_path} "
-                f"(installer exit {proc.returncode})"
-            )
+            decky.logger.info(f"framework installed into {install_path}")
             return {"ok": True, "install_path": install_path}
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception("install_framework crashed")

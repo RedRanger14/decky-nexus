@@ -57,6 +57,7 @@ export function ModDetailPage() {
   const [requirements, setRequirements] = useState<ModRequirement[] | undefined>();
   const [description, setDescription] = useState<string | undefined>();
   const [descExpanded, setDescExpanded] = useState(false);
+  const [showAllFiles, setShowAllFiles] = useState(false);
   const [progress, setProgress] = useState<InstallProgress | undefined>();
   const [installingFileId, setInstallingFileId] = useState<number | undefined>();
   const [installedFileIds, setInstalledFileIds] = useState<Set<number>>(new Set());
@@ -75,6 +76,7 @@ export function ModDetailPage() {
     setRequirements(undefined);
     setDescription(undefined);
     setDescExpanded(false);
+    setShowAllFiles(false);
     setInstalledFileIds(new Set());
     setInstalledCopy(undefined);
     getModFiles(s.game.nexusDomain, s.mod.modId).then(setFiles);
@@ -160,6 +162,12 @@ export function ModDetailPage() {
         ? "Extracting…"
         : "Installing…"
       : "Installing…";
+
+  const fileList = files?.files ?? [];
+  // The site's single download button maps to the latest MAIN file; our sort
+  // puts the primary file first and OLD_VERSION files last.
+  const primaryFile =
+    fileList.find((f) => f.category_name !== "OLD_VERSION") ?? fileList[0];
 
   const heroUrl = mod.pictureUrl ?? mod.thumbnailUrl;
   const compatHint = getCompatHint(game.nexusDomain, mod.modId);
@@ -257,6 +265,93 @@ export function ModDetailPage() {
         </div>
       </Focusable>
 
+      {/* ---- Primary actions: one big install (latest main file), all-files
+           toggle, uninstall - mirroring the site's single download button ---- */}
+      <Focusable
+        style={{
+          display: "flex",
+          gap: "10px",
+          margin: "10px 0 0",
+          maxWidth: "760px",
+          alignItems: "flex-start",
+        }}
+      >
+        <div style={{ flexGrow: 2, minWidth: "230px" }}>
+          <ButtonItem
+            layout="below"
+            disabled={installingFileId !== undefined || !primaryFile}
+            onClick={() => primaryFile && onInstall(primaryFile)}
+          >
+            {files === undefined
+              ? "Loading…"
+              : !primaryFile
+              ? "No files available"
+              : installingFileId === primaryFile.file_id
+              ? progressText
+              : installedFileIds.has(primaryFile.file_id)
+              ? "Installed ✓"
+              : `Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`}
+          </ButtonItem>
+        </div>
+        <div style={{ flexGrow: 1, minWidth: "140px" }}>
+          <ButtonItem
+            layout="below"
+            disabled={fileList.length === 0}
+            onClick={() => setShowAllFiles(!showAllFiles)}
+          >
+            {showAllFiles ? "Hide files ▴" : `All files (${fileList.length}) ▾`}
+          </ButtonItem>
+        </div>
+        {installedCopy && (
+          <div style={{ flexGrow: 1, minWidth: "140px" }}>
+            <ButtonItem
+              layout="below"
+              disabled={installingFileId !== undefined}
+              onClick={() =>
+                showModal(
+                  <ConfirmModal
+                    strTitle={`Uninstall ${mod.name}?`}
+                    strDescription={`This deletes the "${installedCopy.folder}" folder from the game. You can reinstall it at any time.`}
+                    strOKButtonText="Uninstall"
+                    bDestructiveWarning={true}
+                    onOK={async () => {
+                      const result = await uninstallMod(
+                        game.nexusDomain,
+                        game.installDirName,
+                        game.modsSubdir,
+                        installedCopy.folder
+                      );
+                      toaster.toast(
+                        result.ok
+                          ? { title: "Mod uninstalled", body: mod.name }
+                          : { title: "Uninstall failed", body: result.error ?? "" }
+                      );
+                      setInstalledFileIds(new Set());
+                      refreshInstalled(sel);
+                    }}
+                  />
+                )
+              }
+            >
+              Uninstall
+            </ButtonItem>
+          </div>
+        )}
+      </Focusable>
+      {files && !files.ok && (
+        <div style={{ opacity: 0.8, fontSize: "13px" }}>
+          Could not load files: {files.error}
+        </div>
+      )}
+      {installedFileIds.size > 0 && (
+        <div style={{ marginTop: "4px", fontSize: "13px", opacity: 0.8 }}>
+          Installed mods load when the game starts
+          {game.godotUserDirName
+            ? " (it may relaunch itself once more to compile mods)."
+            : "."}
+        </div>
+      )}
+
       {/* ---- Description ---- */}
       {description === undefined ? (
         <div style={{ opacity: 0.7, padding: "8px 0" }}>Loading description…</div>
@@ -294,12 +389,9 @@ export function ModDetailPage() {
         </>
       ) : null}
 
-      {/* ---- Files ---- */}
-      <h3 style={{ margin: "16px 0 6px" }}>Files</h3>
-      {files === undefined && <div style={{ opacity: 0.8 }}>Loading files…</div>}
-      {files && !files.ok && (
-        <div style={{ opacity: 0.8 }}>Could not load files: {files.error}</div>
-      )}
+      {/* ---- All files (collapsed by default) ---- */}
+      {showAllFiles && <h3 style={{ margin: "16px 0 6px" }}>All Files</h3>}
+      {showAllFiles && (
       <Focusable
         style={{
           display: "grid",
@@ -353,13 +445,6 @@ export function ModDetailPage() {
           );
         })}
       </Focusable>
-      {installedFileIds.size > 0 && (
-        <div style={{ marginTop: "8px", fontSize: "13px", opacity: 0.8 }}>
-          Installed mods load when the game starts
-          {game.godotUserDirName
-            ? " (it may relaunch itself once more to compile mods)."
-            : "."}
-        </div>
       )}
 
       {/* ---- Footer actions ---- */}
@@ -370,41 +455,6 @@ export function ModDetailPage() {
           <div style={{ flexGrow: 1 }}>
             <ButtonItem layout="below" onClick={() => restartGame(game.appId)}>
               Restart {game.displayName} now
-            </ButtonItem>
-          </div>
-        )}
-        {installedCopy && (
-          <div style={{ flexGrow: 1 }}>
-            <ButtonItem
-              layout="below"
-              disabled={installingFileId !== undefined}
-              onClick={() =>
-                showModal(
-                  <ConfirmModal
-                    strTitle={`Uninstall ${mod.name}?`}
-                    strDescription={`This deletes the "${installedCopy.folder}" folder from the game. You can reinstall it at any time.`}
-                    strOKButtonText="Uninstall"
-                    bDestructiveWarning={true}
-                    onOK={async () => {
-                      const result = await uninstallMod(
-                        game.nexusDomain,
-                        game.installDirName,
-                        game.modsSubdir,
-                        installedCopy.folder
-                      );
-                      toaster.toast(
-                        result.ok
-                          ? { title: "Mod uninstalled", body: mod.name }
-                          : { title: "Uninstall failed", body: result.error ?? "" }
-                      );
-                      setInstalledFileIds(new Set());
-                      refreshInstalled(sel);
-                    }}
-                  />
-                )
-              }
-            >
-              Uninstall
             </ButtonItem>
           </div>
         )}

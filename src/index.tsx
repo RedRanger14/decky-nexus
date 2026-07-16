@@ -252,7 +252,34 @@ function CurrentGameSection() {
         )}
       {game.framework && status?.framework_installed === true && (
         <PanelSectionRow>
-          <Field label={game.framework.name}>Installed ✓</Field>
+          <ButtonItem
+            layout="below"
+            description={
+              game.framework.launchOptionsTemplate
+                ? "Press to re-apply the Steam launch options it needs"
+                : undefined
+            }
+            onClick={() => {
+              if (!game.framework?.launchOptionsTemplate || !status) return;
+              const options = game.framework.launchOptionsTemplate.replace(
+                "{install_path}",
+                status.install_path
+              );
+              toaster.toast(
+                setLaunchOptions(game.appId, options)
+                  ? {
+                      title: `${game.framework.name} launch options set`,
+                      body: options,
+                    }
+                  : {
+                      title: "Could not set launch options",
+                      body: `Set them manually to: ${options}`,
+                    }
+              );
+            }}
+          >
+            {game.framework.name} installed ✓
+          </ButtonItem>
         </PanelSectionRow>
       )}
       <PanelSectionRow>
