@@ -10,7 +10,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { NexusMod, getMods } from "./api";
-import { DEFAULT_GAME, SupportedGame, getSupportedGame } from "./games";
+import { SupportedGame, getActiveGame } from "./games";
 import { setSelectedMod } from "./state";
 
 const SORT_OPTIONS = [
@@ -68,10 +68,9 @@ function ModTile({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
 }
 
 export function BrowsePage() {
-  const game =
-    getSupportedGame(
-      Router.MainRunningApp ? Number(Router.MainRunningApp.appid) : undefined
-    ) ?? DEFAULT_GAME;
+  const game = getActiveGame(
+    Router.MainRunningApp ? Number(Router.MainRunningApp.appid) : undefined
+  );
 
   const [sort, setSort] = useState("endorsements");
   const [search, setSearch] = useState("");

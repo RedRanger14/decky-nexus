@@ -37,3 +37,34 @@ export function getSupportedGame(appId: number | undefined): SupportedGame | und
 // v1 is single-game: the full-screen browser falls back to StS2 when no
 // supported game is running.
 export const DEFAULT_GAME = SUPPORTED_GAMES[2868840];
+
+export const ALL_GAMES: SupportedGame[] = Object.values(SUPPORTED_GAMES);
+
+// ---- Active-game context ----------------------------------------------------
+// Which game the plugin is managing right now: the running supported game
+// wins; otherwise the user's explicit selection; otherwise the default.
+// A selector UI appears in the QAM automatically once the registry has more
+// than one game.
+
+let selectedAppId: number | undefined;
+const listeners = new Set<() => void>();
+
+export function setSelectedGameAppId(appId: number): void {
+  selectedAppId = appId;
+  listeners.forEach((fn) => fn());
+}
+
+export function subscribeActiveGame(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+
+export function getActiveGame(runningAppId: number | undefined): SupportedGame {
+  return (
+    getSupportedGame(runningAppId) ??
+    getSupportedGame(selectedAppId) ??
+    DEFAULT_GAME
+  );
+}
