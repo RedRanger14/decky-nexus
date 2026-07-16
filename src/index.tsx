@@ -20,7 +20,7 @@ import {
   routerHook,
   toaster,
 } from "@decky/api";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { FaPuzzlePiece } from "react-icons/fa";
 
 import {
@@ -44,32 +44,33 @@ import {
   uninstallMod,
 } from "./api";
 import {
+  ALL_GAMES,
   DEFAULT_GAME,
-  getLastActiveGame,
   getSupportedGame,
   noteActiveGame,
   SupportedGame,
 } from "./games";
 import {
   getAppDisplayName,
+  getMainWindowPath,
   getViewedLibraryAppId,
   isGameRunning,
   restartGame,
 } from "./steam";
 
 interface GameContext {
-  /** The game being managed; undefined means the current context is an
-   * unsupported game and sections should say so instead of showing another
-   * game's content. */
+  /** The game being managed; undefined outside a supported game's context. */
   game?: SupportedGame;
-  /** Display name of the unsupported context game, when game is undefined. */
+  /** Display name of the unsupported context game, when running/viewing one. */
   unsupportedName?: string;
+  /** True on neutral ground (home screen etc.) - no game context at all. */
+  neutral?: boolean;
 }
 
-/** Resolve which game the plugin is managing. The panel always follows what
- * the user is doing: running supported game > viewed supported game page >
- * explicit "unsupported" state > last supported game this session > default.
- * No manual selection, by design. */
+/** Resolve which game the plugin is managing. The panel strictly follows
+ * what the user is doing: a supported game's full sections appear only when
+ * that game is running or its library page is on screen. Everything else is
+ * either an "unsupported" message or the neutral all-games view. */
 function resolveGameContext(): GameContext {
   const app = Router.MainRunningApp;
   const runningId = app ? Number(app.appid) : undefined;
@@ -90,7 +91,7 @@ function resolveGameContext(): GameContext {
   if (viewedId !== undefined) {
     return { unsupportedName: getAppDisplayName(viewedId) ?? "This game" };
   }
-  return { game: getLastActiveGame() ?? DEFAULT_GAME };
+  return { neutral: true };
 }
 import { BrowsePage } from "./BrowsePage";
 import { ModDetailPage } from "./ModDetailPage";
@@ -123,16 +124,34 @@ function CurrentGameSection() {
   }, [game?.appId]);
 
   if (!game) {
-    // Running or viewing a game the plugin doesn't support: just say so.
+    if (unsupportedName) {
+      // Running or viewing a game the plugin doesn't support: just say so.
+      return (
+        <PanelSection title="Current Game">
+          <PanelSectionRow>
+            <Field label="Game">{unsupportedName}</Field>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <Field label="Support">
+              Not supported yet — v1 supports Slay the Spire 2 only
+            </Field>
+          </PanelSectionRow>
+        </PanelSection>
+      );
+    }
+    // Neutral ground (home screen etc.): just the browser entry point.
     return (
-      <PanelSection title="Current Game">
+      <PanelSection title="Nexus Mods">
         <PanelSectionRow>
-          <Field label="Game">{unsupportedName}</Field>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <Field label="Support">
-            Not supported yet — v1 supports Slay the Spire 2 only
-          </Field>
+          <ButtonItem
+            layout="below"
+            onClick={() => {
+              Navigation.Navigate(BROWSE_ROUTE);
+              Navigation.CloseSideMenus();
+            }}
+          >
+            Open Mod Browser
+          </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
     );
@@ -230,6 +249,98 @@ function UninstallPickerModal({
         </ButtonItem>
       ))}
     </ModalRoot>
+  );
+}
+
+function AllInstalledModsSection() {
+  // Neutral/unsupported contexts: a collapsed accordion of every installed
+  // mod, grouped by game. Full per-game tooling lives in the game's context.
+  const [expanded, setExpanded] = useState(false);
+  const [byGame, setByGame] = useState<
+    { game: SupportedGame; mods: InstalledMod[] }[] | undefined
+  >();
+  const [busyFolder, setBusyFolder] = useState<string | undefined>();
+
+  const refresh = () => {
+    Promise.all(
+      ALL_GAMES.map(async (g) => ({
+        game: g,
+        mods:
+          (await getInstalledMods(g.nexusDomain, g.installDirName, g.modsSubdir))
+            .mods ?? [],
+      }))
+    ).then((results) => setByGame(results.filter((r) => r.mods.length > 0)));
+  };
+  useEffect(refresh, []);
+
+  if (!byGame || byGame.length === 0) return null;
+  const total = byGame.reduce((n, r) => n + r.mods.length, 0);
+
+  const onToggle = async (
+    game: SupportedGame,
+    mod: InstalledMod,
+    enabled: boolean
+  ) => {
+    setBusyFolder(mod.folder);
+    try {
+      const result = await setModEnabled(
+        game.installDirName,
+        game.modsSubdir,
+        mod.folder,
+        enabled
+      );
+      if (!result.ok) {
+        toaster.toast({ title: "Could not toggle mod", body: result.error ?? "" });
+      }
+    } finally {
+      setBusyFolder(undefined);
+      refresh();
+    }
+  };
+
+  return (
+    <PanelSection title="Installed Mods">
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={() => setExpanded(!expanded)}>
+          {expanded ? "▾" : "▸"} {total} mod{total === 1 ? "" : "s"} ·{" "}
+          {byGame.length} game{byGame.length === 1 ? "" : "s"}
+        </ButtonItem>
+      </PanelSectionRow>
+      {expanded &&
+        byGame.map(({ game, mods }) => (
+          <Fragment key={game.appId}>
+            <PanelSectionRow>
+              <div
+                style={{
+                  fontWeight: 600,
+                  fontSize: "13px",
+                  opacity: 0.75,
+                  marginTop: "8px",
+                }}
+              >
+                {game.displayName}
+              </div>
+            </PanelSectionRow>
+            {mods.map((mod) => (
+              <PanelSectionRow key={`${mod.folder}:${mod.enabled}`}>
+                <ToggleField
+                  label={mod.name ?? mod.folder}
+                  description={
+                    mod.tracked
+                      ? `v${mod.version}${mod.enabled ? "" : " · disabled"}`
+                      : "not installed by this plugin"
+                  }
+                  checked={mod.enabled}
+                  disabled={busyFolder === mod.folder}
+                  onChange={(checked: boolean) => {
+                    if (checked !== mod.enabled) onToggle(game, mod, checked);
+                  }}
+                />
+              </PanelSectionRow>
+            ))}
+          </Fragment>
+        ))}
+    </PanelSection>
   );
 }
 
@@ -749,16 +860,28 @@ function DevSection() {
           </Field>
         </PanelSectionRow>
       )}
+      <PanelSectionRow>
+        {/* Diagnostic for viewed-game detection - shows what route Steam
+            reports. Remove once detection is confirmed on real hardware. */}
+        <Field label="Route">{getMainWindowPath() ?? "(unavailable)"}</Field>
+      </PanelSectionRow>
     </PanelSection>
   );
 }
 
 function Content() {
+  const ctx = resolveGameContext();
   return (
     <>
       <CurrentGameSection />
-      <InstalledModsSection />
-      <SavesSection />
+      {ctx.game ? (
+        <>
+          <InstalledModsSection />
+          <SavesSection />
+        </>
+      ) : (
+        <AllInstalledModsSection />
+      )}
       <AccountSection />
       <DevSection />
     </>
