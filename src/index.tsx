@@ -394,6 +394,17 @@ function CurrentGameSection() {
           Open Mod Browser
         </ButtonItem>
       </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          description="Restarts are required for mods to take effect"
+          onClick={() => restartGame(game.appId)}
+        >
+          {runningSupported
+            ? `Restart ${game.displayName}`
+            : `Launch ${game.displayName}`}
+        </ButtonItem>
+      </PanelSectionRow>
     </PanelSection>
   );
 }
@@ -819,17 +830,6 @@ function InstalledModsSection() {
           Uninstall a mod…
         </ButtonItem>
       </PanelSectionRow>
-      {isGameRunning(game.appId) && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            description="Mod changes apply on next game start"
-            onClick={() => restartGame(game.appId)}
-          >
-            Restart {game.displayName}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
     </PanelSection>
   );
 }
