@@ -959,6 +959,23 @@ class Plugin:
             decky.logger.exception("install_framework crashed")
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    # The plugin can't read Steam's launch options back, so it records that
+    # the user completed the launch-options step per game.
+    async def get_framework_setup(self, game_domain: str) -> dict:
+        state = _load_settings().get("framework_setup", {}).get(game_domain, {})
+        return {"ok": True, "launch_options_set": bool(state.get("launch_options_set"))}
+
+    async def mark_launch_options_set(self, game_domain: str) -> dict:
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        settings = _load_settings()
+        settings.setdefault("framework_setup", {})[game_domain] = {
+            "launch_options_set": True,
+            "at": int(time.time()),
+        }
+        _save_settings(settings)
+        return {"ok": True}
+
     # ---- Installed mods / enable & disable ----------------------------------
 
     async def get_installed_mods(

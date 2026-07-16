@@ -120,6 +120,16 @@ export const installMod = callable<
   InstallResult
 >("install_mod");
 
+export const getFrameworkSetup = callable<
+  [game_domain: string],
+  { ok: boolean; launch_options_set?: boolean }
+>("get_framework_setup");
+
+export const markLaunchOptionsSet = callable<
+  [game_domain: string],
+  { ok: boolean; error?: string }
+>("mark_launch_options_set");
+
 export const installFramework = callable<
   [game_domain: string, mod_id: number, install_dir: string],
   { ok: boolean; install_path?: string; error?: string }

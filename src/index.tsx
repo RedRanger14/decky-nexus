@@ -34,11 +34,13 @@ import {
   copySavesToModded,
   getAuthStatus,
   getDebugInfo,
+  getFrameworkSetup,
   getGameStatus,
   getInstalledMods,
   getModLoadStatus,
   getSaveStatus,
   installFramework,
+  markLaunchOptionsSet,
   setAllModsEnabled,
   setApiKey,
   setModEnabled,
@@ -116,12 +118,14 @@ function LaunchOptionsModal({
   gameName,
   appId,
   options,
+  onDone,
   closeModal,
 }: {
   frameworkName: string;
   gameName: string;
   appId: number;
   options: string;
+  onDone?: () => void;
   closeModal?: () => void;
 }) {
   return (
@@ -156,7 +160,10 @@ function LaunchOptionsModal({
               ? { title: "Launch options set", body: `${gameName} will start through ${frameworkName}` }
               : { title: "Could not set launch options", body: "Use Copy instead and set them manually" }
           );
-          if (ok) closeModal?.();
+          if (ok) {
+            onDone?.();
+            closeModal?.();
+          }
         }}
       >
         Set automatically
@@ -181,6 +188,15 @@ function LaunchOptionsModal({
       >
         Copy to clipboard
       </ButtonItem>
+      <ButtonItem
+        layout="below"
+        onClick={() => {
+          onDone?.();
+          closeModal?.();
+        }}
+      >
+        I've set them manually — mark done
+      </ButtonItem>
     </ModalRoot>
   );
 }
@@ -192,6 +208,7 @@ function CurrentGameSection() {
 
   const [status, setStatus] = useState<GameStatus | undefined>();
   const [frameworkBusy, setFrameworkBusy] = useState(false);
+  const [launchOptionsSet, setLaunchOptionsSet] = useState(false);
 
   const refreshStatus = () => {
     if (game) {
@@ -200,7 +217,34 @@ function CurrentGameSection() {
         game.modsSubdir,
         game.framework?.detectFile ?? ""
       ).then(setStatus);
+      if (game.framework) {
+        getFrameworkSetup(game.nexusDomain).then((r) =>
+          setLaunchOptionsSet(Boolean(r.launch_options_set))
+        );
+      }
     }
+  };
+
+  const markDone = () => {
+    if (game) {
+      markLaunchOptionsSet(game.nexusDomain).then(() => setLaunchOptionsSet(true));
+    }
+  };
+
+  const openLaunchOptionsModal = () => {
+    if (!game?.framework?.launchOptionsTemplate || !status) return;
+    showModal(
+      <LaunchOptionsModal
+        frameworkName={game.framework.name}
+        gameName={game.displayName}
+        appId={game.appId}
+        options={game.framework.launchOptionsTemplate.replace(
+          "{install_path}",
+          status.install_path
+        )}
+        onDone={markDone}
+      />
+    );
   };
 
   useEffect(() => {
@@ -220,19 +264,19 @@ function CurrentGameSection() {
       if (result.ok && result.install_path) {
         toaster.toast({
           title: `${game.framework.name} installed`,
-          body: "One more step: launch options",
+          body: "Step 2: set the launch command",
         });
         if (game.framework.launchOptionsTemplate) {
-          const options = game.framework.launchOptionsTemplate.replace(
-            "{install_path}",
-            result.install_path
-          );
           showModal(
             <LaunchOptionsModal
               frameworkName={game.framework.name}
               gameName={game.displayName}
               appId={game.appId}
-              options={options}
+              options={game.framework.launchOptionsTemplate.replace(
+                "{install_path}",
+                result.install_path
+              )}
+              onDone={markDone}
             />
           );
         }
@@ -295,69 +339,48 @@ function CurrentGameSection() {
           <Field label="Installed">Not found in main Steam library</Field>
         </PanelSectionRow>
       )}
-      {game.framework &&
-        status?.installed &&
-        status.framework_installed === false && (
-          <>
-            <PanelSectionRow>
-              <div
-                style={{
-                  padding: "8px 10px",
-                  margin: "4px 0",
-                  background: "rgba(255, 200, 60, 0.12)",
-                  borderLeft: "3px solid #ffc83c",
-                  borderRadius: "4px",
-                  fontSize: "12px",
-                  lineHeight: "1.45",
-                }}
+      {/* Framework games get an explicit numbered setup checklist. */}
+      {game.framework && status?.installed && (
+        <>
+          <PanelSectionRow>
+            {status.framework_installed ? (
+              <Field label="Step 1">{game.framework.name} installed ✓</Field>
+            ) : (
+              <ButtonItem
+                layout="below"
+                disabled={frameworkBusy || !game.framework.nexusModId}
+                description={`Most ${game.displayName} mods require it. Downloads from Nexus Mods (author gets the credit).`}
+                onClick={onInstallFramework}
               >
-                ⚠ {game.framework.name} isn't installed — most{" "}
-                {game.displayName} mods require it.
-              </div>
-            </PanelSectionRow>
-            {game.framework.nexusModId && (
-              <PanelSectionRow>
+                {frameworkBusy
+                  ? `Installing ${game.framework.name}…`
+                  : `1. Install ${game.framework.name}`}
+              </ButtonItem>
+            )}
+          </PanelSectionRow>
+          {game.framework.launchOptionsTemplate && (
+            <PanelSectionRow>
+              {launchOptionsSet ? (
                 <ButtonItem
                   layout="below"
-                  disabled={frameworkBusy}
-                  description="Downloads from Nexus Mods (author gets the credit) and sets up the game"
-                  onClick={onInstallFramework}
+                  description="Press to review or re-apply"
+                  onClick={openLaunchOptionsModal}
                 >
-                  {frameworkBusy
-                    ? `Installing ${game.framework.name}…`
-                    : `Download ${game.framework.name}`}
+                  Step 2: launch command set ✓
                 </ButtonItem>
-              </PanelSectionRow>
-            )}
-          </>
-        )}
-      {game.framework && status?.framework_installed === true && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            description={
-              game.framework.launchOptionsTemplate
-                ? "Press to review the launch options it needs"
-                : undefined
-            }
-            onClick={() => {
-              if (!game.framework?.launchOptionsTemplate || !status) return;
-              showModal(
-                <LaunchOptionsModal
-                  frameworkName={game.framework.name}
-                  gameName={game.displayName}
-                  appId={game.appId}
-                  options={game.framework.launchOptionsTemplate.replace(
-                    "{install_path}",
-                    status.install_path
-                  )}
-                />
-              );
-            }}
-          >
-            {game.framework.name} installed ✓
-          </ButtonItem>
-        </PanelSectionRow>
+              ) : (
+                <ButtonItem
+                  layout="below"
+                  disabled={!status.framework_installed}
+                  description={`Needed for ${game.framework.name} to load mods`}
+                  onClick={openLaunchOptionsModal}
+                >
+                  2. Set launch command
+                </ButtonItem>
+              )}
+            </PanelSectionRow>
+          )}
+        </>
       )}
       <PanelSectionRow>
         <ButtonItem
@@ -367,7 +390,9 @@ function CurrentGameSection() {
             Navigation.CloseSideMenus();
           }}
         >
-          Open Mod Browser
+          {game.framework && status?.installed
+            ? "3. Happy modding — browse mods"
+            : "Open Mod Browser"}
         </ButtonItem>
       </PanelSectionRow>
     </PanelSection>
