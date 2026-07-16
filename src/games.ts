@@ -1,6 +1,15 @@
 // Registry of games the plugin supports. v1: Slay the Spire 2 only.
 // appid is the Steam app ID; nexusDomain is the game's slug on nexusmods.com.
 
+export interface GameFramework {
+  /** Community mod loader most mods require (e.g. SMAPI) */
+  name: string;
+  /** Filename prefix inside the install dir that proves it's installed */
+  detectFile: string;
+  /** Where to learn about installing it */
+  url: string;
+}
+
 export interface SupportedGame {
   appId: number;
   displayName: string;
@@ -13,8 +22,11 @@ export interface SupportedGame {
   moddedSaveWarning: boolean;
   /** Process name (comm) used to detect the game is running */
   processName: string;
-  /** Godot user dir under ~/.local/share/ (mod-loader logs live here) */
-  godotUserDirName: string;
+  /** Godot user dir under ~/.local/share/ (mod-loader logs live here).
+   * Absent for non-Godot games - load-status/log features hide. */
+  godotUserDirName?: string;
+  /** Required community mod loader, if the game has one */
+  framework?: GameFramework;
 }
 
 export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
@@ -27,6 +39,20 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     moddedSaveWarning: true,
     processName: "SlayTheSpire2",
     godotUserDirName: "SlayTheSpire2",
+  },
+  413150: {
+    appId: 413150,
+    displayName: "Stardew Valley",
+    nexusDomain: "stardewvalley", // verified: game id 1303, ~32k mods
+    installDirName: "Stardew Valley",
+    modsSubdir: "Mods", // SMAPI convention
+    moddedSaveWarning: false, // saves are shared between modded/vanilla
+    processName: "StardewValley", // TODO verify comm name on device
+    framework: {
+      name: "SMAPI",
+      detectFile: "StardewModdingAPI",
+      url: "smapi.io",
+    },
   },
 };
 

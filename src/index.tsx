@@ -119,7 +119,11 @@ function CurrentGameSection() {
   useEffect(() => {
     setStatus(undefined);
     if (game) {
-      getGameStatus(game.installDirName, game.modsSubdir).then(setStatus);
+      getGameStatus(
+        game.installDirName,
+        game.modsSubdir,
+        game.framework?.detectFile ?? ""
+      ).then(setStatus);
     }
   }, [game?.appId]);
 
@@ -133,7 +137,8 @@ function CurrentGameSection() {
           </PanelSectionRow>
           <PanelSectionRow>
             <Field label="Support">
-              Not supported yet — v1 supports Slay the Spire 2 only
+              Not supported yet — currently:{" "}
+              {ALL_GAMES.map((g) => g.displayName).join(", ")}
             </Field>
           </PanelSectionRow>
         </PanelSection>
@@ -169,6 +174,27 @@ function CurrentGameSection() {
           <Field label="Installed">Not found in main Steam library</Field>
         </PanelSectionRow>
       )}
+      {game.framework &&
+        status?.installed &&
+        status.framework_installed === false && (
+          <PanelSectionRow>
+            <div
+              style={{
+                padding: "8px 10px",
+                margin: "4px 0",
+                background: "rgba(255, 200, 60, 0.12)",
+                borderLeft: "3px solid #ffc83c",
+                borderRadius: "4px",
+                fontSize: "12px",
+                lineHeight: "1.45",
+              }}
+            >
+              ⚠ {game.framework.name} isn't installed — most{" "}
+              {game.displayName} mods require it. See {game.framework.url} to
+              set it up.
+            </div>
+          </PanelSectionRow>
+        )}
       <PanelSectionRow>
         <ButtonItem
           layout="below"
@@ -409,9 +435,15 @@ function InstalledModsSection() {
       getInstalledMods(game.nexusDomain, game.installDirName, game.modsSubdir).then(
         (r) => setMods(r.ok ? r.mods : [])
       );
-      getModLoadStatus(game.godotUserDirName).then((r) =>
-        setLoadStates(r.ok && r.available && r.modded_session ? r.status : undefined)
-      );
+      if (game.godotUserDirName) {
+        getModLoadStatus(game.godotUserDirName).then((r) =>
+          setLoadStates(
+            r.ok && r.available && r.modded_session ? r.status : undefined
+          )
+        );
+      } else {
+        setLoadStates(undefined);
+      }
       checkUpdates(game.nexusDomain).then((r) =>
         setUpdates(r.ok ? r.updates : undefined)
       );
@@ -808,7 +840,7 @@ function DevSection() {
   };
 
   const showLog = async (which: "game" | "plugin") => {
-    const debug = await getDebugInfo(game.godotUserDirName);
+    const debug = await getDebugInfo(game.godotUserDirName ?? "");
     if (!debug.ok) {
       toaster.toast({ title: "Debug info failed", body: debug.error ?? "" });
       return;
@@ -829,15 +861,17 @@ function DevSection() {
 
   return (
     <PanelSection title="Developer">
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          description="What the game's mod loader reported last run"
-          onClick={() => showLog("game")}
-        >
-          Game mod log
-        </ButtonItem>
-      </PanelSectionRow>
+      {game.godotUserDirName && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            description="What the game's mod loader reported last run"
+            onClick={() => showLog("game")}
+          >
+            Game mod log
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={() => showLog("plugin")}>
           Plugin log

@@ -81,6 +81,7 @@ export interface GameStatus {
   install_path: string;
   mods_path: string;
   mods_dir_exists: boolean;
+  framework_installed?: boolean;
 }
 
 export const getMods = callable<
@@ -204,6 +205,6 @@ export const getDebugInfo = callable<
 export const setApiKey = callable<[api_key: string], AuthStatus>("set_api_key");
 export const getAuthStatus = callable<[], AuthStatus>("get_auth_status");
 export const getGameStatus = callable<
-  [install_dir: string, mods_subdir: string],
+  [install_dir: string, mods_subdir: string, framework_file: string],
   GameStatus
 >("get_game_status");
