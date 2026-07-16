@@ -537,10 +537,11 @@ class Plugin:
 
     # ---- Debugging -----------------------------------------------------------
 
-    async def get_debug_info(self, game_user_dir: str) -> dict:
+    async def get_debug_info(self, game_user_dir: str = "") -> dict:
         """Tails of the plugin's own log and the game's Godot log (where the
-        StS2 mod loader reports what it loads). Read-only."""
-        if not re.fullmatch(r"[A-Za-z0-9 ._-]+", game_user_dir or ""):
+        StS2 mod loader reports what it loads). Read-only. An empty
+        game_user_dir returns only the plugin log (non-Godot games)."""
+        if game_user_dir and not re.fullmatch(r"[A-Za-z0-9 ._-]+", game_user_dir):
             return {"ok": False, "error": "Invalid game user dir"}
 
         def tail_of(path: str, n: int) -> str:
@@ -563,6 +564,10 @@ class Plugin:
             result["plugin_log"] = tail_of(newest, 40) if newest else "(no plugin log)"
         except OSError as e:
             result["plugin_log"] = f"(error: {e})"
+
+        if not game_user_dir:
+            result["game_log_mod_lines"] = "(no game log adapter for this game)"
+            return result
 
         game_log = os.path.join(
             decky.DECKY_USER_HOME, ".local", "share", game_user_dir,
@@ -984,16 +989,25 @@ class Plugin:
 
     # ---- Game detection ----------------------------------------------------
 
-    # Reports whether a supported game is installed and whether its mods
-    # folder exists yet (StS2 only creates it once mods are used).
-    async def get_game_status(self, install_dir: str, mods_subdir: str) -> dict:
+    # Reports whether a supported game is installed, whether its mods folder
+    # exists yet, and (when the game needs a community mod loader like SMAPI)
+    # whether that framework is present in the install dir.
+    async def get_game_status(
+        self, install_dir: str, mods_subdir: str, framework_file: str = ""
+    ) -> dict:
         install_path, mods_path, _ = _game_paths(install_dir, mods_subdir)
+        installed = os.path.isdir(install_path)
         status = {
-            "installed": os.path.isdir(install_path),
+            "installed": installed,
             "install_path": install_path,
             "mods_path": mods_path,
             "mods_dir_exists": os.path.isdir(mods_path),
         }
+        if framework_file:
+            status["framework_installed"] = installed and any(
+                name.startswith(framework_file)
+                for name in os.listdir(install_path)
+            )
         decky.logger.info(f"game status for {install_dir!r}: {status}")
         return status
 
