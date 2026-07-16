@@ -282,11 +282,11 @@ async def _validate_key(api_key: str) -> dict:
                     }
                 if resp.status == 401:
                     return {"ok": False, "error": "Invalid API key"}
-                return {"ok": False, "error": f"Nexus API error (HTTP {resp.status})"}
+                return {"ok": False, "error": f"Nexus Mods API error (HTTP {resp.status})"}
     except aiohttp.ClientError as e:
         return {"ok": False, "error": f"Network error: {type(e).__name__}"}
     except asyncio.TimeoutError:
-        return {"ok": False, "error": "Nexus API timed out"}
+        return {"ok": False, "error": "Nexus Mods API timed out"}
 
 
 async def _extract_archive(archive_path: str, dest_dir: str) -> str:
@@ -392,18 +392,18 @@ class Plugin:
                     if resp.status != 200:
                         return {
                             "ok": False,
-                            "error": f"Nexus API error (HTTP {resp.status})",
+                            "error": f"Nexus Mods API error (HTTP {resp.status})",
                         }
                     body = await resp.json()
         except aiohttp.ClientError as e:
             return {"ok": False, "error": f"Network error: {type(e).__name__}"}
         except asyncio.TimeoutError:
-            return {"ok": False, "error": "Nexus API timed out"}
+            return {"ok": False, "error": "Nexus Mods API timed out"}
 
         if body.get("errors"):
             msg = body["errors"][0].get("message", "unknown GraphQL error")
             decky.logger.warning(f"get_mods GraphQL error: {msg}")
-            return {"ok": False, "error": f"Nexus query error: {msg}"}
+            return {"ok": False, "error": f"Nexus Mods query error: {msg}"}
 
         page = body["data"]["mods"]
         # Adult-content filtering happens here for now; make it a setting later.
@@ -436,6 +436,26 @@ class Plugin:
                 else []
             )
             return {"ok": True, "requirements": reqs}
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def get_mod_details(self, game_domain: str, mod_id: int) -> dict:
+        """Single mod with full description - used by the detail page and for
+        opening a required mod's page from a requirement chip."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        api_key = _load_settings().get("api_key")
+        try:
+            game_id = await _resolve_game_id(game_domain, api_key)
+            data = await _gql_query(
+                "{ legacyMods(ids: [{gameId: %d, modId: %d}]) { nodes {%s\n description } } }"
+                % (game_id, int(mod_id), MOD_FIELDS),
+                api_key,
+            )
+            nodes = data["legacyMods"]["nodes"]
+            if not nodes:
+                return {"ok": False, "error": "Mod not found"}
+            return {"ok": True, "mod": nodes[0]}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -601,13 +621,13 @@ class Plugin:
                     if resp.status != 200:
                         return {
                             "ok": False,
-                            "error": f"Nexus API error (HTTP {resp.status})",
+                            "error": f"Nexus Mods API error (HTTP {resp.status})",
                         }
                     body = await resp.json()
         except aiohttp.ClientError as e:
             return {"ok": False, "error": f"Network error: {type(e).__name__}"}
         except asyncio.TimeoutError:
-            return {"ok": False, "error": "Nexus API timed out"}
+            return {"ok": False, "error": "Nexus Mods API timed out"}
 
         files = [
             {
@@ -713,10 +733,10 @@ class Plugin:
             return {"ok": False, "error": f"Network error: {type(e).__name__}"}
 
         if not links or not isinstance(links, list):
-            return {"ok": False, "error": "Nexus returned no download locations"}
+            return {"ok": False, "error": "Nexus Mods returned no download locations"}
         uri = links[0].get("URI") or links[0].get("uri")
         if not uri:
-            return {"ok": False, "error": "Nexus returned a malformed download link"}
+            return {"ok": False, "error": "Nexus Mods returned a malformed download link"}
 
         # 2) Download with progress events. Archive name is built from ids so
         #    non-ASCII upstream filenames can't produce a broken local path;

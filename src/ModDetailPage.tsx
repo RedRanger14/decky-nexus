@@ -14,14 +14,16 @@ import {
   InstalledMod,
   ModFile,
   ModRequirement,
+  NexusMod,
   getInstalledMods,
+  getModDetails,
   getModFiles,
   getModRequirements,
   installMod,
   uninstallMod,
 } from "./api";
 import { getCompatHint } from "./compat";
-import { getSelectedMod } from "./state";
+import { SelectedMod, getSelectedMod, setSelectedMod } from "./state";
 import { isGameRunning, restartGame } from "./steam";
 
 function fmtSize(sizeKb: number): string {
@@ -29,35 +31,64 @@ function fmtSize(sizeKb: number): string {
   return `${sizeKb} KB`;
 }
 
+/** Mod descriptions arrive as bbcode/html soup - reduce to readable text. */
+function stripMarkup(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\[img[^\]]*\][^[]*\[\/img\]/gi, "")
+    .replace(/\[youtube[^\]]*\][^[]*\[\/youtube\]/gi, "")
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+const DESC_COLLAPSE_LENGTH = 500;
+
 export function ModDetailPage() {
-  const sel = getSelectedMod();
+  const [sel, setSel] = useState<SelectedMod | undefined>(getSelectedMod());
   const [files, setFiles] = useState<FilesResult | undefined>();
+  const [requirements, setRequirements] = useState<ModRequirement[] | undefined>();
+  const [description, setDescription] = useState<string | undefined>();
+  const [descExpanded, setDescExpanded] = useState(false);
   const [progress, setProgress] = useState<InstallProgress | undefined>();
   const [installingFileId, setInstallingFileId] = useState<number | undefined>();
   const [installedFileIds, setInstalledFileIds] = useState<Set<number>>(new Set());
   const [installedCopy, setInstalledCopy] = useState<InstalledMod | undefined>();
-  const [requirements, setRequirements] = useState<ModRequirement[] | undefined>();
 
-  const refreshInstalled = () => {
-    if (sel) {
-      getInstalledMods(
-        sel.game.nexusDomain,
-        sel.game.installDirName,
-        sel.game.modsSubdir
-      ).then((r) =>
-        setInstalledCopy(r.mods?.find((m) => m.mod_id === sel.mod.modId))
-      );
-    }
+  const refreshInstalled = (s: SelectedMod) => {
+    getInstalledMods(
+      s.game.nexusDomain,
+      s.game.installDirName,
+      s.game.modsSubdir
+    ).then((r) => setInstalledCopy(r.mods?.find((m) => m.mod_id === s.mod.modId)));
+  };
+
+  const loadAll = (s: SelectedMod) => {
+    setFiles(undefined);
+    setRequirements(undefined);
+    setDescription(undefined);
+    setDescExpanded(false);
+    setInstalledFileIds(new Set());
+    setInstalledCopy(undefined);
+    getModFiles(s.game.nexusDomain, s.mod.modId).then(setFiles);
+    getModRequirements(s.game.nexusDomain, s.mod.modId).then((r) =>
+      setRequirements(r.ok ? r.requirements ?? [] : [])
+    );
+    getModDetails(s.game.nexusDomain, s.mod.modId).then((r) =>
+      setDescription(r.ok ? stripMarkup(r.mod?.description ?? "") : "")
+    );
+    refreshInstalled(s);
   };
 
   useEffect(() => {
-    if (sel) {
-      getModFiles(sel.game.nexusDomain, sel.mod.modId).then(setFiles);
-      getModRequirements(sel.game.nexusDomain, sel.mod.modId).then((r) =>
-        setRequirements(r.ok ? r.requirements ?? [] : [])
-      );
-      refreshInstalled();
-    }
+    if (sel) loadAll(sel);
     const listener = addEventListener<[p: InstallProgress]>(
       "install_progress",
       (p) => setProgress(p)
@@ -66,13 +97,25 @@ export function ModDetailPage() {
   }, []);
 
   if (!sel) {
-    return (
-      <div style={{ marginTop: "40px", padding: "24px" }}>
-        No mod selected.
-      </div>
-    );
+    return <div style={{ marginTop: "40px", padding: "24px" }}>No mod selected.</div>;
   }
   const { game, mod } = sel;
+
+  const openRequirement = async (req: ModRequirement) => {
+    if (!req.modId) return;
+    const result = await getModDetails(game.nexusDomain, req.modId);
+    if (result.ok && result.mod) {
+      const next = { game, mod: result.mod as NexusMod };
+      setSelectedMod(next);
+      setSel(next);
+      loadAll(next);
+    } else {
+      toaster.toast({
+        title: "Could not open mod",
+        body: result.error ?? req.modName,
+      });
+    }
+  };
 
   const onInstall = async (file: ModFile) => {
     setInstallingFileId(file.file_id);
@@ -90,7 +133,7 @@ export function ModDetailPage() {
       );
       if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
-        refreshInstalled();
+        refreshInstalled(sel);
         toaster.toast({
           title: `${mod.name} installed`,
           body: isGameRunning(game.appId)
@@ -119,6 +162,9 @@ export function ModDetailPage() {
       : "Installing…";
 
   const heroUrl = mod.pictureUrl ?? mod.thumbnailUrl;
+  const compatHint = getCompatHint(game.nexusDomain, mod.modId);
+  const updatedDate = mod.updatedAt ? new Date(mod.updatedAt).toLocaleDateString() : "";
+  const descLong = (description?.length ?? 0) > DESC_COLLAPSE_LENGTH;
 
   return (
     <div
@@ -129,63 +175,34 @@ export function ModDetailPage() {
         padding: "0 24px 24px",
       }}
     >
-      <Focusable style={{ display: "flex", gap: "20px", padding: "12px 0" }}>
+      {/* ---- Header: hero image + facts ---- */}
+      <Focusable style={{ display: "flex", gap: "20px", padding: "12px 0 4px" }}>
         {heroUrl && (
           <img
             src={heroUrl}
             alt={mod.name}
             style={{
-              width: "38%",
-              maxHeight: "230px",
+              width: "44%",
+              maxHeight: "280px",
               objectFit: "cover",
               borderRadius: "8px",
               flexShrink: 0,
+              alignSelf: "flex-start",
             }}
           />
         )}
-        <div style={{ minWidth: 0 }}>
-          <h2 style={{ margin: "0 0 4px 0" }}>{mod.name}</h2>
-          <div style={{ opacity: 0.75, marginBottom: "8px" }}>
-            by {mod.author} · v{mod.version} · 👍{" "}
-            {mod.endorsements.toLocaleString()} · ⬇{" "}
+        <div style={{ minWidth: 0, flexGrow: 1 }}>
+          <h2 style={{ margin: "0 0 2px 0" }}>{mod.name}</h2>
+          <div style={{ opacity: 0.75, fontSize: "14px" }}>
+            by {mod.author} · v{mod.version}
+            {updatedDate ? ` · updated ${updatedDate}` : ""}
+          </div>
+          <div style={{ opacity: 0.75, fontSize: "14px", marginBottom: "8px" }}>
+            👍 {mod.endorsements.toLocaleString()} · ⬇{" "}
             {mod.downloads.toLocaleString()}
           </div>
           {mod.summary && (
-            <div style={{ fontSize: "14px", opacity: 0.9 }}>{mod.summary}</div>
-          )}
-          {(() => {
-            const hint = getCompatHint(game.nexusDomain, mod.modId);
-            return hint ? (
-              <div
-                style={{
-                  marginTop: "10px",
-                  padding: "8px 10px",
-                  background: "rgba(255, 200, 60, 0.12)",
-                  borderLeft: "3px solid #ffc83c",
-                  borderRadius: "4px",
-                  fontSize: "13px",
-                }}
-              >
-                🐧 <b>Linux note:</b> {hint}
-              </div>
-            ) : null;
-          })()}
-          {requirements && requirements.length > 0 && (
-            <div
-              style={{
-                marginTop: "10px",
-                padding: "8px 10px",
-                background: "rgba(120, 170, 255, 0.10)",
-                borderLeft: "3px solid #78aaff",
-                borderRadius: "4px",
-                fontSize: "13px",
-              }}
-            >
-              <b>Requires:</b>{" "}
-              {requirements
-                .map((r) => r.modName + (r.notes ? ` (${r.notes})` : ""))
-                .join(", ")}
-            </div>
+            <div style={{ fontSize: "13px", opacity: 0.9 }}>{mod.summary}</div>
           )}
           {installedCopy && (
             <div style={{ marginTop: "8px", fontSize: "13px", color: "#8fd48f" }}>
@@ -193,10 +210,10 @@ export function ModDetailPage() {
               {installedCopy.enabled ? "" : " · currently disabled"}
             </div>
           )}
-          {game.moddedSaveWarning && (
+          {compatHint && (
             <div
               style={{
-                marginTop: "12px",
+                marginTop: "10px",
                 padding: "8px 10px",
                 background: "rgba(255, 200, 60, 0.12)",
                 borderLeft: "3px solid #ffc83c",
@@ -204,57 +221,158 @@ export function ModDetailPage() {
                 fontSize: "13px",
               }}
             >
-              ⚠ {game.displayName} keeps separate save files for modded and
-              unmodded play.
+              🐧 <b>Linux note:</b> {compatHint}
             </div>
+          )}
+          {requirements && requirements.length > 0 && (
+            <Focusable
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "6px",
+                marginTop: "10px",
+              }}
+            >
+              <span style={{ fontSize: "13px", opacity: 0.8 }}>Requires:</span>
+              {requirements.map((req) => (
+                <Focusable
+                  key={`${req.modId}-${req.modName}`}
+                  onActivate={() => openRequirement(req)}
+                  style={{
+                    padding: "3px 12px",
+                    background: "rgba(120, 170, 255, 0.15)",
+                    border: "1px solid rgba(120, 170, 255, 0.35)",
+                    borderRadius: "999px",
+                    fontSize: "12px",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {req.modName}
+                  {req.notes ? ` · ${req.notes}` : ""}
+                </Focusable>
+              ))}
+            </Focusable>
           )}
         </div>
       </Focusable>
 
-      <h3 style={{ margin: "16px 0 4px" }}>Files</h3>
+      {/* ---- Description ---- */}
+      {description === undefined ? (
+        <div style={{ opacity: 0.7, padding: "8px 0" }}>Loading description…</div>
+      ) : description ? (
+        <>
+          <h3 style={{ margin: "14px 0 4px" }}>About</h3>
+          <div
+            style={{
+              fontSize: "13px",
+              opacity: 0.9,
+              whiteSpace: "pre-wrap",
+              lineHeight: "1.5",
+              ...(descExpanded || !descLong
+                ? {}
+                : { maxHeight: "108px", overflow: "hidden" }),
+            }}
+          >
+            {description}
+          </div>
+          {descLong && (
+            <Focusable
+              onActivate={() => setDescExpanded(!descExpanded)}
+              style={{
+                display: "inline-block",
+                marginTop: "4px",
+                padding: "3px 12px",
+                background: "rgba(255, 255, 255, 0.08)",
+                borderRadius: "999px",
+                fontSize: "12px",
+              }}
+            >
+              {descExpanded ? "Show less ▴" : "Show more ▾"}
+            </Focusable>
+          )}
+        </>
+      ) : null}
+
+      {/* ---- Files ---- */}
+      <h3 style={{ margin: "16px 0 6px" }}>Files</h3>
       {files === undefined && <div style={{ opacity: 0.8 }}>Loading files…</div>}
       {files && !files.ok && (
         <div style={{ opacity: 0.8 }}>Could not load files: {files.error}</div>
       )}
-      <Focusable style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-        {files?.files?.map((file) => (
-          <ButtonItem
-            key={file.file_id}
-            layout="below"
-            disabled={installingFileId !== undefined}
-            description={`${file.category_name}${file.is_primary ? " · primary" : ""} · v${file.version} · ${fmtSize(file.size_kb)}`}
-            onClick={() => onInstall(file)}
-          >
-            {installingFileId === file.file_id
-              ? progressText
-              : installedFileIds.has(file.file_id)
-              ? `Install ${file.name} ✓`
-              : `Install ${file.name}`}
-          </ButtonItem>
-        ))}
+      <Focusable
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))",
+          gap: "8px",
+        }}
+      >
+        {files?.files?.map((file) => {
+          const busy = installingFileId === file.file_id;
+          const done = installedFileIds.has(file.file_id);
+          return (
+            <Focusable
+              key={file.file_id}
+              onActivate={() => {
+                if (installingFileId === undefined) onInstall(file);
+              }}
+              style={{
+                background: "rgba(255, 255, 255, 0.06)",
+                borderRadius: "6px",
+                padding: "8px 12px",
+                opacity:
+                  installingFileId !== undefined && !busy ? 0.45 : 1,
+              }}
+            >
+              <div
+                style={{
+                  fontWeight: 600,
+                  fontSize: "13px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {file.name}
+              </div>
+              <div style={{ fontSize: "11px", opacity: 0.65 }}>
+                {file.category_name}
+                {file.is_primary ? " · primary" : ""} · v{file.version} ·{" "}
+                {fmtSize(file.size_kb)}
+              </div>
+              <div
+                style={{
+                  fontSize: "12px",
+                  marginTop: "2px",
+                  color: done ? "#8fd48f" : "#78aaff",
+                }}
+              >
+                {busy ? progressText : done ? "Installed ✓" : "Install"}
+              </div>
+            </Focusable>
+          );
+        })}
       </Focusable>
       {installedFileIds.size > 0 && (
-        <>
-          <div style={{ marginTop: "8px", fontSize: "13px", opacity: 0.8 }}>
-            Installed mods load when the game starts
-            {" "}(it may relaunch itself once more to compile mods).
-          </div>
-          {isGameRunning(game.appId) && (
-            <Focusable style={{ marginTop: "8px", maxWidth: "300px" }}>
-              <ButtonItem
-                layout="below"
-                onClick={() => restartGame(game.appId)}
-              >
-                Restart {game.displayName} now
-              </ButtonItem>
-            </Focusable>
-          )}
-        </>
+        <div style={{ marginTop: "8px", fontSize: "13px", opacity: 0.8 }}>
+          Installed mods load when the game starts
+          {game.godotUserDirName
+            ? " (it may relaunch itself once more to compile mods)."
+            : "."}
+        </div>
       )}
 
+      {/* ---- Footer actions ---- */}
       <Focusable
-        style={{ marginTop: "16px", display: "flex", gap: "12px", maxWidth: "540px" }}
+        style={{ marginTop: "16px", display: "flex", gap: "12px", maxWidth: "640px" }}
       >
+        {isGameRunning(game.appId) && installedFileIds.size > 0 && (
+          <div style={{ flexGrow: 1 }}>
+            <ButtonItem layout="below" onClick={() => restartGame(game.appId)}>
+              Restart {game.displayName} now
+            </ButtonItem>
+          </div>
+        )}
         {installedCopy && (
           <div style={{ flexGrow: 1 }}>
             <ButtonItem
@@ -280,7 +398,7 @@ export function ModDetailPage() {
                           : { title: "Uninstall failed", body: result.error ?? "" }
                       );
                       setInstalledFileIds(new Set());
-                      refreshInstalled();
+                      refreshInstalled(sel);
                     }}
                   />
                 )
