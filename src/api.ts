@@ -1,0 +1,209 @@
+// Typed bridge to the Python backend (main.py). All callables are positional.
+import { callable } from "@decky/api";
+
+export interface NexusMod {
+  modId: number;
+  name: string;
+  summary?: string;
+  author: string;
+  version: string;
+  endorsements: number;
+  downloads: number;
+  thumbnailUrl?: string;
+  pictureUrl?: string;
+  updatedAt: string;
+  adultContent: boolean;
+}
+
+export interface ModsResult {
+  ok: boolean;
+  total?: number;
+  mods?: NexusMod[];
+  error?: string;
+}
+
+export interface ModFile {
+  file_id: number;
+  name: string;
+  file_name: string;
+  version: string;
+  size_kb: number;
+  category_name: string;
+  is_primary: boolean;
+  description?: string;
+}
+
+export interface FilesResult {
+  ok: boolean;
+  files?: ModFile[];
+  error?: string;
+}
+
+export interface InstallResult {
+  ok: boolean;
+  folder?: string;
+  error?: string;
+}
+
+export interface InstalledMod {
+  folder: string;
+  enabled: boolean;
+  tracked: boolean;
+  name?: string;
+  version?: string;
+  mod_id?: number;
+}
+
+export interface InstalledResult {
+  ok: boolean;
+  mods?: InstalledMod[];
+  error?: string;
+}
+
+export interface InstallProgress {
+  mod_id: number;
+  phase: "downloading" | "extracting" | "done" | "error";
+  percent: number;
+  message?: string;
+}
+
+export interface AuthStatus {
+  ok: boolean;
+  name?: string;
+  user_id?: number;
+  is_premium?: boolean;
+  error?: string;
+  cleared?: boolean;
+}
+
+export interface GameStatus {
+  installed: boolean;
+  install_path: string;
+  mods_path: string;
+  mods_dir_exists: boolean;
+}
+
+export const getMods = callable<
+  [game_domain: string, sort: string, count: number, offset: number, search: string],
+  ModsResult
+>("get_mods");
+
+export interface UpdateInfo {
+  installed: string;
+  current: string;
+  update_available: boolean;
+}
+
+export const checkUpdates = callable<
+  [game_domain: string],
+  { ok: boolean; updates?: Record<string, UpdateInfo>; error?: string }
+>("check_updates");
+
+export const getModFiles = callable<[game_domain: string, mod_id: number], FilesResult>(
+  "get_mod_files"
+);
+
+export const installMod = callable<
+  [
+    game_domain: string,
+    mod_id: number,
+    file_id: number,
+    file_name: string,
+    mod_name: string,
+    mod_version: string,
+    install_dir: string,
+    mods_subdir: string
+  ],
+  InstallResult
+>("install_mod");
+
+export const getInstalledMods = callable<
+  [game_domain: string, install_dir: string, mods_subdir: string],
+  InstalledResult
+>("get_installed_mods");
+
+export const setModEnabled = callable<
+  [install_dir: string, mods_subdir: string, folder: string, enabled: boolean],
+  { ok: boolean; error?: string }
+>("set_mod_enabled");
+
+export const setAllModsEnabled = callable<
+  [install_dir: string, mods_subdir: string, enabled: boolean],
+  { ok: boolean; moved?: number; errors?: string[]; error?: string }
+>("set_all_mods_enabled");
+
+export const uninstallMod = callable<
+  [game_domain: string, install_dir: string, mods_subdir: string, folder: string],
+  { ok: boolean; error?: string }
+>("uninstall_mod");
+
+export interface SaveAccount {
+  account_id: string;
+  vanilla_profiles: number;
+  has_modded: boolean;
+  last_write: number;
+}
+
+export interface SaveStatus {
+  ok: boolean;
+  accounts?: SaveAccount[];
+  active_account?: string | null;
+  game_running?: boolean;
+  error?: string;
+}
+
+export const getSaveStatus = callable<
+  [app_id: number, process_name: string],
+  SaveStatus
+>("get_save_status");
+
+export const copySavesToModded = callable<
+  [app_id: number, account_id: string, process_name: string],
+  { ok: boolean; profiles?: number; backup?: string | null; error?: string }
+>("copy_saves_to_modded");
+
+export interface ModRequirement {
+  modName: string;
+  modId: number;
+  notes?: string;
+  url?: string;
+}
+
+export const getModRequirements = callable<
+  [game_domain: string, mod_id: number],
+  { ok: boolean; requirements?: ModRequirement[]; error?: string }
+>("get_mod_requirements");
+
+export interface ModLoadState {
+  state: "loaded" | "error";
+  detail: string;
+}
+
+export const getModLoadStatus = callable<
+  [game_user_dir: string],
+  {
+    ok: boolean;
+    available?: boolean;
+    modded_session?: boolean;
+    status?: Record<string, ModLoadState>;
+    error?: string;
+  }
+>("get_mod_load_status");
+
+export const getDebugInfo = callable<
+  [game_user_dir: string],
+  {
+    ok: boolean;
+    plugin_log?: string;
+    game_log_mod_lines?: string;
+    game_log_tail?: string;
+    error?: string;
+  }
+>("get_debug_info");
+
+export const setApiKey = callable<[api_key: string], AuthStatus>("set_api_key");
+export const getAuthStatus = callable<[], AuthStatus>("get_auth_status");
+export const getGameStatus = callable<
+  [install_dir: string, mods_subdir: string],
+  GameStatus
+>("get_game_status");
