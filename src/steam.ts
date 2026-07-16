@@ -25,17 +25,28 @@ async function waitFor(pred: () => boolean, timeoutMs: number): Promise<boolean>
   return pred();
 }
 
-/** App id of the library game page currently on screen, if any.
- * (Gaming Mode routes game pages as /library/app/<appid>.) */
-export function getViewedLibraryAppId(): number | undefined {
+/** Current route path of the main Gaming Mode window, trying the locations
+ * different Steam client versions expose it at. */
+export function getMainWindowPath(): string | undefined {
   try {
-    const path = (Router as any).WindowStore?.GamepadUIMainWindowInstance
-      ?.BrowserWindow?.location?.pathname as string | undefined;
-    const match = path?.match(/\/library\/app\/(\d+)/);
-    return match ? Number(match[1]) : undefined;
+    const router = Router as any;
+    const win = router.WindowStore?.GamepadUIMainWindowInstance;
+    return (
+      win?.m_history?.location?.pathname ??
+      router.m_history?.location?.pathname ??
+      win?.BrowserWindow?.location?.pathname ??
+      undefined
+    );
   } catch {
     return undefined;
   }
+}
+
+/** App id of the library game page currently on screen, if any.
+ * (Gaming Mode routes game pages as /library/app/<appid>.) */
+export function getViewedLibraryAppId(): number | undefined {
+  const match = getMainWindowPath()?.match(/\/library\/app\/(\d+)/);
+  return match ? Number(match[1]) : undefined;
 }
 
 export function getAppDisplayName(appId: number): string | undefined {

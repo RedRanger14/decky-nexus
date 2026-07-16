@@ -65,19 +65,19 @@ $remoteScriptPath = Join-Path $env:TEMP "decky-nexus-remote.sh"
 [IO.File]::WriteAllText($remoteScriptPath, $remoteScript + "`n")
 
 # ---- ship + install --------------------------------------------------------
+# ServerAlive*: if the device suspends mid-connection the session dies in ~20s
+# instead of hanging forever.
+$keepAlive = @("-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=4")
+
 # Handhelds drop Wi-Fi aggressively in power save / suspend: probe first, retry a few times
 $probeOk = $false
 foreach ($i in 1..3) {
-    ssh -p $cfg.deckport -o ConnectTimeout=8 -o BatchMode=yes $target "true"
+    ssh -p $cfg.deckport -o ConnectTimeout=8 -o BatchMode=yes @keepAlive $target "true"
     if ($LASTEXITCODE -eq 0) { $probeOk = $true; break }
     Write-Host "Device not answering (attempt $i/3) - make sure it's awake..." -ForegroundColor Yellow
     Start-Sleep -Seconds 4
 }
 if (-not $probeOk) { throw "cannot reach $target - wake the device and re-run" }
-
-# ServerAlive*: if the device suspends mid-transfer the session dies in ~20s
-# instead of hanging forever.
-$keepAlive = @("-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=4")
 
 Write-Host "Copying to $target ..." -ForegroundColor Cyan
 scp -P $cfg.deckport -o ConnectTimeout=10 @keepAlive $tarball $remoteScriptPath "${target}:/tmp/"
