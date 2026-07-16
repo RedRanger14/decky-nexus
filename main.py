@@ -213,6 +213,24 @@ def _norm_version(version) -> str:
     return (version or "").strip().lstrip("vV")
 
 
+def _map_v1_mod(m: dict) -> dict:
+    """Map a REST v1 mod object onto the same shape our GraphQL v2 queries
+    return, so the frontend can reuse tiles/detail pages transparently."""
+    return {
+        "modId": m.get("mod_id"),
+        "name": m.get("name") or f"Mod {m.get('mod_id')}",
+        "summary": m.get("summary") or "",
+        "author": m.get("author") or m.get("uploaded_by") or "",
+        "version": m.get("version") or "",
+        "endorsements": m.get("endorsement_count") or 0,
+        "downloads": m.get("mod_downloads") or 0,
+        "thumbnailUrl": m.get("picture_url"),
+        "pictureUrl": m.get("picture_url"),
+        "updatedAt": m.get("updated_time") or "",
+        "adultContent": bool(m.get("contains_adult_content")),
+    }
+
+
 def _sort_mod_files(files: list) -> list:
     """Old versions last even when Nexus's is_primary flag is stale and
     points at one (seen in the wild: SMAPI's primary flag stuck on a 2020
@@ -640,6 +658,37 @@ class Plugin:
         else:
             result["game_log_mod_lines"] = "(game log not found - has the game run?)"
         return result
+
+    async def get_trending_mods(self, game_domain: str, count: int = 10) -> dict:
+        """Genuinely-trending mods from the v1 API (a signal v2 doesn't
+        expose), mapped to the standard mod shape."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/trending.json"
+        headers = _api_headers(_load_settings().get("api_key"))
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as session:
+                async with session.get(url, headers=headers, ssl=SSL_CONTEXT) as resp:
+                    if resp.status != 200:
+                        return {
+                            "ok": False,
+                            "error": f"Nexus Mods API error (HTTP {resp.status})",
+                        }
+                    body = await resp.json()
+        except aiohttp.ClientError as e:
+            return {"ok": False, "error": f"Network error: {type(e).__name__}"}
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "Nexus Mods API timed out"}
+
+        mods = [
+            _map_v1_mod(m)
+            for m in body
+            if m.get("name") and m.get("available", True)
+        ]
+        mods = [m for m in mods if not m["adultContent"]][: int(count)]
+        return {"ok": True, "total": len(mods), "mods": mods}
 
     # ---- Mod files & install (REST v1) --------------------------------------
 
