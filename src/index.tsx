@@ -1,7 +1,6 @@
 import {
   ButtonItem,
   ConfirmModal,
-  DropdownItem,
   ModalRoot,
   PanelSection,
   PanelSectionRow,
@@ -45,12 +44,10 @@ import {
   uninstallMod,
 } from "./api";
 import {
-  ALL_GAMES,
   DEFAULT_GAME,
-  getSelectedGame,
+  getLastActiveGame,
   getSupportedGame,
-  setSelectedGameAppId,
-  subscribeActiveGame,
+  noteActiveGame,
   SupportedGame,
 } from "./games";
 import {
@@ -69,31 +66,31 @@ interface GameContext {
   unsupportedName?: string;
 }
 
-/** Resolve which game the plugin is managing:
- * running supported game > viewed supported game page > manual selection >
- * explicit "unsupported" state (when running/viewing an unsupported game) >
- * default. Re-renders when the manual selection changes. */
-function useGameContext(): GameContext {
-  const [, bump] = useState(0);
-  useEffect(() => subscribeActiveGame(() => bump((n) => n + 1)), []);
-
+/** Resolve which game the plugin is managing. The panel always follows what
+ * the user is doing: running supported game > viewed supported game page >
+ * explicit "unsupported" state > last supported game this session > default.
+ * No manual selection, by design. */
+function resolveGameContext(): GameContext {
   const app = Router.MainRunningApp;
   const runningId = app ? Number(app.appid) : undefined;
   const running = getSupportedGame(runningId);
-  if (running) return { game: running };
+  if (running) {
+    noteActiveGame(running.appId);
+    return { game: running };
+  }
 
   const viewedId = getViewedLibraryAppId();
   const viewed = getSupportedGame(viewedId);
-  if (viewed) return { game: viewed };
-
-  const selected = getSelectedGame();
-  if (selected) return { game: selected };
+  if (viewed) {
+    noteActiveGame(viewed.appId);
+    return { game: viewed };
+  }
 
   if (app) return { unsupportedName: app.display_name };
   if (viewedId !== undefined) {
     return { unsupportedName: getAppDisplayName(viewedId) ?? "This game" };
   }
-  return { game: DEFAULT_GAME };
+  return { game: getLastActiveGame() ?? DEFAULT_GAME };
 }
 import { BrowsePage } from "./BrowsePage";
 import { ModDetailPage } from "./ModDetailPage";
@@ -114,7 +111,7 @@ const ping = callable<[], BackendInfo>("ping");
 function CurrentGameSection() {
   const app = Router.MainRunningApp;
   const runningSupported = getSupportedGame(app ? Number(app.appid) : undefined);
-  const { game, unsupportedName } = useGameContext();
+  const { game, unsupportedName } = resolveGameContext();
 
   const [status, setStatus] = useState<GameStatus | undefined>();
 
@@ -126,8 +123,7 @@ function CurrentGameSection() {
   }, [game?.appId]);
 
   if (!game) {
-    // Running or viewing a game the plugin doesn't support: say so instead
-    // of showing another game's mods, with an escape hatch.
+    // Running or viewing a game the plugin doesn't support: just say so.
     return (
       <PanelSection title="Current Game">
         <PanelSectionRow>
@@ -138,41 +134,17 @@ function CurrentGameSection() {
             Not supported yet — v1 supports Slay the Spire 2 only
           </Field>
         </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={() => setSelectedGameAppId(DEFAULT_GAME.appId)}
-          >
-            Manage {DEFAULT_GAME.displayName} instead
-          </ButtonItem>
-        </PanelSectionRow>
       </PanelSection>
     );
   }
 
   return (
     <PanelSection title="Current Game">
-      {/* Selector appears once the registry has more than one game and no
-          supported game is running (a running game always wins). */}
-      {!runningSupported && ALL_GAMES.length > 1 ? (
-        <PanelSectionRow>
-          <DropdownItem
-            label="Managing"
-            rgOptions={ALL_GAMES.map((g) => ({
-              data: g.appId,
-              label: g.displayName,
-            }))}
-            selectedOption={game.appId}
-            onChange={(opt) => setSelectedGameAppId(opt.data)}
-          />
-        </PanelSectionRow>
-      ) : (
-        <PanelSectionRow>
-          <Field label="Game">
-            {runningSupported ? game.displayName : `${game.displayName} · not running`}
-          </Field>
-        </PanelSectionRow>
-      )}
+      <PanelSectionRow>
+        <Field label="Game">
+          {runningSupported ? game.displayName : `${game.displayName} · not running`}
+        </Field>
+      </PanelSectionRow>
       {status && !status.installed && (
         <PanelSectionRow>
           <Field label="Installed">Not found in main Steam library</Field>
@@ -311,7 +283,7 @@ function FailedModsModal({
 function InstalledModsSection() {
   // Active-game context: toggling mods makes the most sense while the game
   // is NOT running, so this never requires a running game.
-  const { game } = useGameContext();
+  const { game } = resolveGameContext();
 
   const [mods, setMods] = useState<InstalledMod[] | undefined>();
   const [busyFolder, setBusyFolder] = useState<string | undefined>();
@@ -482,7 +454,7 @@ function InstalledModsSection() {
 
 function SavesSection() {
   const app = Router.MainRunningApp;
-  const { game } = useGameContext();
+  const { game } = resolveGameContext();
 
   const [status, setStatus] = useState<SaveStatus | undefined>();
   const [busy, setBusy] = useState(false);
@@ -710,7 +682,7 @@ function LogModal({
 function DevSection() {
   // Dev tools work regardless of context; fall back to the default game's
   // log location when the context is unsupported.
-  const game = useGameContext().game ?? DEFAULT_GAME;
+  const game = resolveGameContext().game ?? DEFAULT_GAME;
 
   const [info, setInfo] = useState<BackendInfo | undefined>();
   const [error, setError] = useState<string | undefined>();
