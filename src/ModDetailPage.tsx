@@ -1,6 +1,6 @@
 import {
-  ButtonItem,
   ConfirmModal,
+  DialogButton,
   Focusable,
   Navigation,
   showModal,
@@ -25,6 +25,7 @@ import {
 import { getCompatHint } from "./compat";
 import { SelectedMod, getSelectedMod, setSelectedMod } from "./state";
 import { isGameRunning, restartGame } from "./steam";
+import { ACCENT_DANGER, ACCENT_SUCCESS, NEXUS_ORANGE } from "./theme";
 
 function fmtSize(sizeKb: number): string {
   if (sizeKb >= 1024) return `${(sizeKb / 1024).toFixed(1)} MB`;
@@ -213,7 +214,9 @@ export function ModDetailPage() {
             <div style={{ fontSize: "13px", opacity: 0.9 }}>{mod.summary}</div>
           )}
           {installedCopy && (
-            <div style={{ marginTop: "8px", fontSize: "13px", color: "#8fd48f" }}>
+            <div
+              style={{ marginTop: "8px", fontSize: "13px", color: ACCENT_SUCCESS }}
+            >
               ✓ Installed{installedCopy.version ? ` (v${installedCopy.version})` : ""}
               {installedCopy.enabled ? "" : " · currently disabled"}
             </div>
@@ -271,71 +274,72 @@ export function ModDetailPage() {
         style={{
           display: "flex",
           gap: "10px",
-          margin: "10px 0 0",
+          margin: "12px 0 0",
           maxWidth: "760px",
-          alignItems: "flex-start",
         }}
       >
-        <div style={{ flexGrow: 2, minWidth: "230px" }}>
-          <ButtonItem
-            layout="below"
-            disabled={installingFileId !== undefined || !primaryFile}
-            onClick={() => primaryFile && onInstall(primaryFile)}
-          >
-            {files === undefined
-              ? "Loading…"
-              : !primaryFile
-              ? "No files available"
-              : installingFileId === primaryFile.file_id
-              ? progressText
-              : installedFileIds.has(primaryFile.file_id)
-              ? "Installed ✓"
-              : `Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`}
-          </ButtonItem>
-        </div>
-        <div style={{ flexGrow: 1, minWidth: "140px" }}>
-          <ButtonItem
-            layout="below"
-            disabled={fileList.length === 0}
-            onClick={() => setShowAllFiles(!showAllFiles)}
-          >
-            {showAllFiles ? "Hide files ▴" : `All files (${fileList.length}) ▾`}
-          </ButtonItem>
-        </div>
+        <DialogButton
+          disabled={installingFileId !== undefined || !primaryFile}
+          onClick={() => primaryFile && onInstall(primaryFile)}
+          style={{
+            flexGrow: 2,
+            minWidth: "240px",
+            backgroundColor: NEXUS_ORANGE,
+            color: "#fff",
+            fontWeight: 600,
+            opacity:
+              installingFileId !== undefined || !primaryFile ? 0.55 : 1,
+          }}
+        >
+          {files === undefined
+            ? "Loading…"
+            : !primaryFile
+            ? "No files available"
+            : installingFileId === primaryFile.file_id
+            ? progressText
+            : installedFileIds.has(primaryFile.file_id)
+            ? "Installed ✓"
+            : `⬇ Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`}
+        </DialogButton>
+        <DialogButton
+          disabled={fileList.length === 0}
+          onClick={() => setShowAllFiles(!showAllFiles)}
+          style={{ flexGrow: 1, minWidth: "150px" }}
+        >
+          {showAllFiles ? "Hide files ▴" : `All files (${fileList.length}) ▾`}
+        </DialogButton>
         {installedCopy && (
-          <div style={{ flexGrow: 1, minWidth: "140px" }}>
-            <ButtonItem
-              layout="below"
-              disabled={installingFileId !== undefined}
-              onClick={() =>
-                showModal(
-                  <ConfirmModal
-                    strTitle={`Uninstall ${mod.name}?`}
-                    strDescription={`This deletes the "${installedCopy.folder}" folder from the game. You can reinstall it at any time.`}
-                    strOKButtonText="Uninstall"
-                    bDestructiveWarning={true}
-                    onOK={async () => {
-                      const result = await uninstallMod(
-                        game.nexusDomain,
-                        game.installDirName,
-                        game.modsSubdir,
-                        installedCopy.folder
-                      );
-                      toaster.toast(
-                        result.ok
-                          ? { title: "Mod uninstalled", body: mod.name }
-                          : { title: "Uninstall failed", body: result.error ?? "" }
-                      );
-                      setInstalledFileIds(new Set());
-                      refreshInstalled(sel);
-                    }}
-                  />
-                )
-              }
-            >
-              Uninstall
-            </ButtonItem>
-          </div>
+          <DialogButton
+            disabled={installingFileId !== undefined}
+            style={{ flexGrow: 1, minWidth: "140px", color: ACCENT_DANGER }}
+            onClick={() =>
+              showModal(
+                <ConfirmModal
+                  strTitle={`Uninstall ${mod.name}?`}
+                  strDescription={`This deletes the "${installedCopy.folder}" folder from the game. You can reinstall it at any time.`}
+                  strOKButtonText="Uninstall"
+                  bDestructiveWarning={true}
+                  onOK={async () => {
+                    const result = await uninstallMod(
+                      game.nexusDomain,
+                      game.installDirName,
+                      game.modsSubdir,
+                      installedCopy.folder
+                    );
+                    toaster.toast(
+                      result.ok
+                        ? { title: "Mod uninstalled", body: mod.name }
+                        : { title: "Uninstall failed", body: result.error ?? "" }
+                    );
+                    setInstalledFileIds(new Set());
+                    refreshInstalled(sel);
+                  }}
+                />
+              )
+            }
+          >
+            Uninstall
+          </DialogButton>
         )}
       </Focusable>
       {files && !files.ok && (
@@ -436,10 +440,10 @@ export function ModDetailPage() {
                 style={{
                   fontSize: "12px",
                   marginTop: "2px",
-                  color: done ? "#8fd48f" : "#78aaff",
+                  color: done ? ACCENT_SUCCESS : NEXUS_ORANGE,
                 }}
               >
-                {busy ? progressText : done ? "Installed ✓" : "Install"}
+                {busy ? progressText : done ? "Installed ✓" : "⬇ Install"}
               </div>
             </Focusable>
           );
@@ -452,17 +456,19 @@ export function ModDetailPage() {
         style={{ marginTop: "16px", display: "flex", gap: "12px", maxWidth: "640px" }}
       >
         {isGameRunning(game.appId) && installedFileIds.size > 0 && (
-          <div style={{ flexGrow: 1 }}>
-            <ButtonItem layout="below" onClick={() => restartGame(game.appId)}>
-              Restart {game.displayName} now
-            </ButtonItem>
-          </div>
+          <DialogButton
+            style={{ flexGrow: 1 }}
+            onClick={() => restartGame(game.appId)}
+          >
+            Restart {game.displayName} now
+          </DialogButton>
         )}
-        <div style={{ flexGrow: 1 }}>
-          <ButtonItem layout="below" onClick={() => Navigation.NavigateBack()}>
-            Back to browse
-          </ButtonItem>
-        </div>
+        <DialogButton
+          style={{ flexGrow: 1 }}
+          onClick={() => Navigation.NavigateBack()}
+        >
+          Back to browse
+        </DialogButton>
       </Focusable>
     </div>
   );
