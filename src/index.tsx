@@ -42,6 +42,7 @@ import {
   installFramework,
   markLaunchOptionsSet,
   setAllModsEnabled,
+  setFrameworkEnabled,
   setApiKey,
   setModEnabled,
   uninstallAllMods,
@@ -367,7 +368,7 @@ function CurrentGameSection() {
                   description="Press to review or re-apply"
                   onClick={openLaunchOptionsModal}
                 >
-                  Step 2: launch command set ✓
+                  2. Launch command ✓
                 </ButtonItem>
               ) : (
                 <ButtonItem
@@ -678,6 +679,8 @@ function InstalledModsSection() {
     Record<string, ModLoadState> | undefined
   >();
   const [updates, setUpdates] = useState<Record<string, UpdateInfo> | undefined>();
+  const [fwStatus, setFwStatus] = useState<GameStatus | undefined>();
+  const [fwEnabled, setFwEnabled] = useState(true);
 
   const refresh = () => {
     if (game) {
@@ -696,12 +699,62 @@ function InstalledModsSection() {
       checkUpdates(game.nexusDomain).then((r) =>
         setUpdates(r.ok ? r.updates : undefined)
       );
+      if (game.framework) {
+        getGameStatus(
+          game.installDirName,
+          game.modsSubdir,
+          game.framework.detectFile
+        ).then(setFwStatus);
+        getFrameworkSetup(game.nexusDomain).then((r) =>
+          setFwEnabled(r.enabled !== false)
+        );
+      }
     }
   };
 
   useEffect(refresh, [game?.appId]);
 
   if (!game) return null;
+
+  // The framework (SMAPI) isn't a Mods/-folder mod, but it deserves a row:
+  // its toggle applies/clears the launch options - a real enable/disable.
+  const showFrameworkRow = Boolean(
+    game.framework && fwStatus?.framework_installed
+  );
+
+  const onToggleFramework = async (enabled: boolean) => {
+    if (!game.framework?.launchOptionsTemplate || !fwStatus) return;
+    const ok = enabled
+      ? setLaunchOptions(
+          game.appId,
+          game.framework.launchOptionsTemplate.replace(
+            "{install_path}",
+            fwStatus.install_path
+          )
+        )
+      : setLaunchOptions(game.appId, "");
+    if (!ok) {
+      toaster.toast({
+        title: "Could not change launch options",
+        body: "Steam client API unavailable",
+      });
+      return;
+    }
+    if (enabled) {
+      await markLaunchOptionsSet(game.nexusDomain);
+    } else {
+      await setFrameworkEnabled(game.nexusDomain, false);
+    }
+    setFwEnabled(enabled);
+    toaster.toast({
+      title: enabled
+        ? `${game.framework.name} enabled`
+        : `${game.framework.name} disabled`,
+      body: enabled
+        ? "Mods will load next launch"
+        : `${game.displayName} will launch without mods`,
+    });
+  };
 
   // Same normalization as the backend: log tags vs manifest ids can differ
   // in dashes/underscores.
@@ -715,9 +768,9 @@ function InstalledModsSection() {
       detail: loadStateFor(m.folder)?.detail ?? "",
     }));
 
-  if (!game || mods === undefined || mods.length === 0) return null;
+  if ((mods === undefined || mods.length === 0) && !showFrameworkRow) return null;
 
-  const anyEnabled = mods.some((m) => m.enabled);
+  const anyEnabled = (mods ?? []).some((m) => m.enabled);
 
   const onToggle = async (mod: InstalledMod, enabled: boolean) => {
     setBusyFolder(mod.folder);
@@ -759,7 +812,23 @@ function InstalledModsSection() {
 
   return (
     <PanelSection title="Installed Mods">
-      {mods.map((mod) => {
+      {showFrameworkRow && game.framework && (
+        <PanelSectionRow key={`framework:${fwEnabled}`}>
+          <ToggleField
+            label={`${game.framework.name} (mod loader)`}
+            description={
+              fwEnabled
+                ? "framework — mods need it"
+                : "disabled · game launches without mods"
+            }
+            checked={fwEnabled}
+            onChange={(checked: boolean) => {
+              if (checked !== fwEnabled) onToggleFramework(checked);
+            }}
+          />
+        </PanelSectionRow>
+      )}
+      {(mods ?? []).map((mod) => {
         const load = mod.enabled ? loadStateFor(mod.folder) : undefined;
         const update = updates?.[mod.folder];
         const badge =
