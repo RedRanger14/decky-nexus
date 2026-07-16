@@ -613,7 +613,7 @@ class Plugin:
                     message = str(body.get("message") or body.get("error") or "")
                     friendly = {
                         "NOT_DOWNLOADED_MOD": "You can only endorse mods you've downloaded",
-                        "TOO_SOON_AFTER_DOWNLOAD": "Nexus Mods asks you to spend some time with a mod first - try again later",
+                        "TOO_SOON_AFTER_DOWNLOAD": "Wait 15 minutes after downloading to endorse",
                         "IS_OWN_MOD": "You can't endorse your own mod",
                     }
                     for code, text in friendly.items():
