@@ -110,6 +110,10 @@ export function ModDetailPage() {
   }
   const { game, mod } = sel;
 
+  // Framework mods (SMAPI) must go through the guided game-panel setup -
+  // installing the raw zip as a drop-in mod just parks the installer in Mods/.
+  const isFrameworkMod = game.framework?.nexusModId === mod.modId;
+
   const openRequirement = async (req: ModRequirement) => {
     if (!req.modId) return;
     const result = await getModDetails(game.nexusDomain, req.modId);
@@ -300,6 +304,24 @@ export function ModDetailPage() {
         </div>
       </Focusable>
 
+      {isFrameworkMod ? (
+        <div
+          style={{
+            marginTop: "12px",
+            padding: "10px 12px",
+            background: "rgba(255, 200, 60, 0.12)",
+            borderLeft: "3px solid #ffc83c",
+            borderRadius: "4px",
+            fontSize: "13px",
+            lineHeight: "1.5",
+          }}
+        >
+          🛠 <b>{mod.name}</b> is the mod loader for {game.displayName}.
+          Install it from the game's panel (Step 1) for guided setup with
+          launch options — installing it here as a regular mod won't work.
+        </div>
+      ) : (
+        <>
       {/* ---- Primary actions: one big install (latest main file), all-files
            toggle, uninstall - mirroring the site's single download button ---- */}
       <Focusable
@@ -377,6 +399,8 @@ export function ModDetailPage() {
             : "."}
         </div>
       )}
+        </>
+      )}
 
       {/* ---- Description ---- */}
       {description === undefined ? (
@@ -416,8 +440,8 @@ export function ModDetailPage() {
       ) : null}
 
       {/* ---- All files (collapsed by default) ---- */}
-      {showAllFiles && <h3 style={{ margin: "16px 0 6px" }}>All Files</h3>}
-      {showAllFiles && (
+      {!isFrameworkMod && showAllFiles && <h3 style={{ margin: "16px 0 6px" }}>All Files</h3>}
+      {!isFrameworkMod && showAllFiles && (
       <Focusable
         style={{
           display: "grid",
