@@ -1,9 +1,20 @@
 // Thin wrappers around the Steam client globals Decky exposes.
 import { Router } from "@decky/ui";
 
+/** All currently running app ids (Steam supports several at once). */
+export function getRunningAppIds(): number[] {
+  try {
+    const apps = (Router as any).RunningApps as { appid: string }[] | undefined;
+    if (apps && apps.length > 0) return apps.map((a) => Number(a.appid));
+  } catch {
+    // fall through to MainRunningApp
+  }
+  const main = Router.MainRunningApp;
+  return main ? [Number(main.appid)] : [];
+}
+
 export function isGameRunning(appId: number): boolean {
-  const app = Router.MainRunningApp;
-  return app !== undefined && Number(app.appid) === appId;
+  return getRunningAppIds().includes(appId);
 }
 
 function gameIdFor(appId: number): string {
