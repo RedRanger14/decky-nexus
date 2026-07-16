@@ -382,71 +382,96 @@ function CurrentGameSection() {
           <Field label="Installed">Not found in main Steam library</Field>
         </PanelSectionRow>
       )}
-      {/* Framework games get an explicit numbered setup checklist. */}
-      {game.framework && status?.installed && (
+      {/* Framework games render a uniform numbered checklist: every step has
+          a "Step N" heading; the content is a button while actionable and a
+          plain ✓ line once done (one-time buttons disappear after use). */}
+      {game.framework && status?.installed ? (
         <>
           <PanelSectionRow>
             {status.framework_installed ? (
               <Field label="Step 1">{game.framework.name} installed ✓</Field>
             ) : (
               <ButtonItem
+                label="Step 1"
                 layout="below"
                 disabled={frameworkBusy || !game.framework.nexusModId}
-                description={`Most ${game.displayName} mods require it. Downloads from Nexus Mods (author gets the credit).`}
+                description={`Most ${game.displayName} mods require ${game.framework.name}. Downloads from Nexus Mods (author gets the credit).`}
                 onClick={onInstallFramework}
               >
                 {frameworkBusy
                   ? `Installing ${game.framework.name}…`
-                  : `1. Install ${game.framework.name}`}
+                  : `Install ${game.framework.name}`}
               </ButtonItem>
             )}
           </PanelSectionRow>
           {game.framework.launchOptionsTemplate && (
             <PanelSectionRow>
               {launchOptionsSet ? (
-                <ButtonItem
-                  layout="below"
-                  description="Press to review or re-apply"
-                  onClick={openLaunchOptionsModal}
-                >
-                  2. Launch command ✓
-                </ButtonItem>
+                <Field label="Step 2">Launch command set ✓</Field>
               ) : (
                 <ButtonItem
+                  label="Step 2"
                   layout="below"
                   disabled={!status.framework_installed}
                   description={`Needed for ${game.framework.name} to load mods`}
                   onClick={openLaunchOptionsModal}
                 >
-                  2. Set launch command
+                  Set launch command
                 </ButtonItem>
               )}
             </PanelSectionRow>
           )}
+          <PanelSectionRow>
+            <ButtonItem
+              label="Step 3"
+              layout="below"
+              onClick={() => {
+                Navigation.Navigate(BROWSE_ROUTE);
+                Navigation.CloseSideMenus();
+              }}
+            >
+              Open Mod Browser
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              label="Step 4"
+              layout="below"
+              description="Restarts are required for mods to take effect"
+              onClick={() => restartGame(game.appId)}
+            >
+              {gameIsRunning
+                ? `Restart ${game.displayName}`
+                : `Launch ${game.displayName}`}
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
+      ) : (
+        <>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={() => {
+                Navigation.Navigate(BROWSE_ROUTE);
+                Navigation.CloseSideMenus();
+              }}
+            >
+              Open Mod Browser
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              description="Restarts are required for mods to take effect"
+              onClick={() => restartGame(game.appId)}
+            >
+              {gameIsRunning
+                ? `Restart ${game.displayName}`
+                : `Launch ${game.displayName}`}
+            </ButtonItem>
+          </PanelSectionRow>
         </>
       )}
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          onClick={() => {
-            Navigation.Navigate(BROWSE_ROUTE);
-            Navigation.CloseSideMenus();
-          }}
-        >
-          Open Mod Browser
-        </ButtonItem>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          description="Restarts are required for mods to take effect"
-          onClick={() => restartGame(game.appId)}
-        >
-          {gameIsRunning
-            ? `Restart ${game.displayName}`
-            : `Launch ${game.displayName}`}
-        </ButtonItem>
-      </PanelSectionRow>
     </PanelSection>
   );
 }
