@@ -8,7 +8,8 @@
     "watch": "rollup -c -w",
     "typecheck": "tsc --noEmit --skipLibCheck",
     "deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "python -m unittest discover -s tests",
+    "check": "pnpm run typecheck && pnpm run test"
   },
   "keywords": [
     "decky",
