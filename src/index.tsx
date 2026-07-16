@@ -391,9 +391,7 @@ function CurrentGameSection() {
             Navigation.CloseSideMenus();
           }}
         >
-          {game.framework && status?.installed
-            ? "3. Happy modding — browse mods"
-            : "Open Mod Browser"}
+          Open Mod Browser
         </ButtonItem>
       </PanelSectionRow>
     </PanelSection>
