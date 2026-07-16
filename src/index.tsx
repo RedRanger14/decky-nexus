@@ -69,21 +69,28 @@ interface GameContext {
   game?: SupportedGame;
   /** Display name of the unsupported context game, when running/viewing one. */
   unsupportedName?: string;
+  /** Names of supported games running simultaneously - ambiguous context. */
+  multipleNames?: string[];
   /** True on neutral ground (home screen etc.) - no game context at all. */
   neutral?: boolean;
 }
 
 /** Resolve which game the plugin is managing. The panel strictly follows
  * what the user is doing: a supported game's full sections appear only when
- * that game is running or its library page is on screen. Everything else is
- * either an "unsupported" message or the neutral all-games view. */
+ * that game is running or its library page is on screen. Several supported
+ * games running at once is an explicit (unsupported) state, not a guess. */
 function resolveGameContext(): GameContext {
-  const app = Router.MainRunningApp;
-  const runningId = app ? Number(app.appid) : undefined;
-  const running = getSupportedGame(runningId);
-  if (running) {
-    noteActiveGame(running.appId);
-    return { game: running };
+  const runningIds = getRunningAppIds();
+  const runningSupported = runningIds
+    .map((id) => getSupportedGame(id))
+    .filter((g): g is SupportedGame => Boolean(g));
+
+  if (runningSupported.length > 1) {
+    return { multipleNames: runningSupported.map((g) => g.displayName) };
+  }
+  if (runningSupported.length === 1) {
+    noteActiveGame(runningSupported[0].appId);
+    return { game: runningSupported[0] };
   }
 
   const viewedId = getViewedLibraryAppId();
@@ -93,7 +100,14 @@ function resolveGameContext(): GameContext {
     return { game: viewed };
   }
 
-  if (app) return { unsupportedName: app.display_name };
+  if (runningIds.length > 0) {
+    return {
+      unsupportedName:
+        Router.MainRunningApp?.display_name ??
+        getAppDisplayName(runningIds[0]) ??
+        "This game",
+    };
+  }
   if (viewedId !== undefined) {
     return { unsupportedName: getAppDisplayName(viewedId) ?? "This game" };
   }
@@ -204,9 +218,8 @@ function LaunchOptionsModal({
 }
 
 function CurrentGameSection() {
-  const app = Router.MainRunningApp;
-  const runningSupported = getSupportedGame(app ? Number(app.appid) : undefined);
-  const { game, unsupportedName } = resolveGameContext();
+  const { game, unsupportedName, multipleNames } = resolveGameContext();
+  const gameIsRunning = game ? isGameRunning(game.appId) : false;
 
   const [status, setStatus] = useState<GameStatus | undefined>();
   const [frameworkBusy, setFrameworkBusy] = useState(false);
@@ -295,6 +308,33 @@ function CurrentGameSection() {
   };
 
   if (!game) {
+    if (multipleNames) {
+      // Several supported games running at once: say so instead of guessing.
+      return (
+        <PanelSection title="Current Game">
+          <PanelSectionRow>
+            <Field label="Running">{multipleNames.join(" · ")}</Field>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <div
+              style={{
+                padding: "8px 10px",
+                margin: "4px 0",
+                background: "rgba(255, 200, 60, 0.12)",
+                borderLeft: "3px solid #ffc83c",
+                borderRadius: "4px",
+                fontSize: "12px",
+                lineHeight: "1.45",
+              }}
+            >
+              ⚠ Multiple supported games are running. Mod management works
+              with one game at a time — close one to continue. Installed mods
+              are still listed below.
+            </div>
+          </PanelSectionRow>
+        </PanelSection>
+      );
+    }
     if (unsupportedName) {
       // Running or viewing a game the plugin doesn't support: just say so.
       return (
@@ -333,7 +373,7 @@ function CurrentGameSection() {
     <PanelSection title="Current Game">
       <PanelSectionRow>
         <Field label="Game">
-          {runningSupported ? game.displayName : `${game.displayName} · not running`}
+          {gameIsRunning ? game.displayName : `${game.displayName} · not running`}
         </Field>
       </PanelSectionRow>
       {status && !status.installed && (
@@ -401,7 +441,7 @@ function CurrentGameSection() {
           description="Restarts are required for mods to take effect"
           onClick={() => restartGame(game.appId)}
         >
-          {runningSupported
+          {gameIsRunning
             ? `Restart ${game.displayName}`
             : `Launch ${game.displayName}`}
         </ButtonItem>
