@@ -266,6 +266,51 @@ def _pick_main_file(file_list: list):
     )
 
 
+def _norm_mod_id(mod_id: str) -> str:
+    """Log display names and folder names differ in spaces/dashes/case -
+    'CJB Cheats Menu' vs folder 'CJBCheatsMenu'. Normalize both sides."""
+    return re.sub(r"[^a-z0-9]", "", mod_id.lower())
+
+
+def _parse_smapi_log(lines: list):
+    """Parse SMAPI-latest.txt into per-mod load outcomes (format verified on
+    device, SMAPI 4.5.2). Loaded mods appear under 'Loaded N mods:' as
+    '   <Name> <version> by <author> | <summary>'; skipped mods appear as
+    '   - <Name> <version> because <reason>'."""
+    loaded: set = set()
+    errors: dict = {}
+    modded_session = False
+    in_loaded = False
+    for raw in lines:
+        # strip the '[HH:MM:SS LEVEL Source] ' prefix
+        msg = re.sub(r"^\[[^\]]*\]\s?", "", raw.rstrip())
+        if re.match(r"Loaded \d+ mods:", msg):
+            modded_session = True
+            in_loaded = True
+            continue
+        if in_loaded:
+            m = re.match(r"\s{2,}(.+?)\s+\d[^\s]*\s+by\s+", msg)
+            if m:
+                loaded.add(_norm_mod_id(m.group(1)))
+                continue
+            in_loaded = False
+        m = re.match(r"\s*-\s+(.+?)(?:\s+\d[^\s]*)?\s+because\s+(.+)$", msg)
+        if m:
+            errors[_norm_mod_id(m.group(1))] = m.group(2)[:160]
+
+    status = {key: {"state": "loaded", "detail": ""} for key in loaded}
+    for key, detail in errors.items():
+        status[key] = {"state": "error", "detail": detail}
+    return status, modded_session
+
+
+def _smapi_log_path(config_dir_name: str) -> str:
+    return os.path.join(
+        decky.DECKY_USER_HOME, ".config", config_dir_name,
+        "ErrorLogs", "SMAPI-latest.txt",
+    )
+
+
 def _parse_mod_load_log(lines: list):
     """Turn a game session log into per-mod load outcomes. Returns
     (status dict keyed by normalized mod id, modded_session bool)."""
@@ -622,14 +667,41 @@ class Plugin:
             "status": status,
         }
 
+    async def get_smapi_load_status(self, config_dir_name: str) -> dict:
+        """Per-mod load outcomes from SMAPI's own log - Stardew's equivalent
+        of the Godot log parser. Same response shape."""
+        if not re.fullmatch(r"[A-Za-z0-9 ._-]+", config_dir_name or ""):
+            return {"ok": False, "error": "Invalid config dir"}
+        log_path = _smapi_log_path(config_dir_name)
+        if not os.path.isfile(log_path):
+            return {"ok": True, "available": False}
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.read().splitlines()
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        status, modded_session = _parse_smapi_log(lines)
+        return {
+            "ok": True,
+            "available": True,
+            "modded_session": modded_session,
+            "status": status,
+        }
+
     # ---- Debugging -----------------------------------------------------------
 
-    async def get_debug_info(self, game_user_dir: str = "") -> dict:
-        """Tails of the plugin's own log and the game's Godot log (where the
-        StS2 mod loader reports what it loads). Read-only. An empty
-        game_user_dir returns only the plugin log (non-Godot games)."""
+    async def get_debug_info(
+        self, game_user_dir: str = "", smapi_config_dir: str = ""
+    ) -> dict:
+        """Tails of the plugin's own log and the game's mod-loader log
+        (Godot via game_user_dir, or SMAPI via smapi_config_dir). Read-only.
+        With neither, returns only the plugin log."""
         if game_user_dir and not re.fullmatch(r"[A-Za-z0-9 ._-]+", game_user_dir):
             return {"ok": False, "error": "Invalid game user dir"}
+        if smapi_config_dir and not re.fullmatch(
+            r"[A-Za-z0-9 ._-]+", smapi_config_dir
+        ):
+            return {"ok": False, "error": "Invalid config dir"}
 
         def tail_of(path: str, n: int) -> str:
             try:
@@ -651,6 +723,27 @@ class Plugin:
             result["plugin_log"] = tail_of(newest, 40) if newest else "(no plugin log)"
         except OSError as e:
             result["plugin_log"] = f"(error: {e})"
+
+        if smapi_config_dir and not game_user_dir:
+            smapi_log = _smapi_log_path(smapi_config_dir)
+            if not os.path.isfile(smapi_log):
+                result["game_log_mod_lines"] = "(SMAPI log not found - has the game run through SMAPI?)"
+                return result
+            try:
+                with open(smapi_log, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.read().splitlines()
+                mod_lines = [
+                    l
+                    for l in lines
+                    if re.search(r"Loaded \d+ mods|\bby\b.*\||because|Skipped", l)
+                ]
+                result["game_log_mod_lines"] = (
+                    "\n".join(mod_lines[-40:]) or "(no mod-related lines)"
+                )
+                result["game_log_tail"] = "\n".join(lines[-25:])
+            except OSError as e:
+                result["game_log_mod_lines"] = f"(error: {e})"
+            return result
 
         if not game_user_dir:
             result["game_log_mod_lines"] = "(no game log adapter for this game)"

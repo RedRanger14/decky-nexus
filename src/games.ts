@@ -1,6 +1,12 @@
 // Registry of games the plugin supports. v1: Slay the Spire 2 only.
 // appid is the Steam app ID; nexusDomain is the game's slug on nexusmods.com.
 
+export type LogAdapter =
+  /** Godot games: ~/.local/share/<userDirName>/logs/godot.log */
+  | { kind: "godot"; userDirName: string }
+  /** SMAPI games: ~/.config/<configDirName>/ErrorLogs/SMAPI-latest.txt */
+  | { kind: "smapi"; configDirName: string };
+
 export interface GameFramework {
   /** Community mod loader most mods require (e.g. SMAPI) */
   name: string;
@@ -27,9 +33,9 @@ export interface SupportedGame {
   moddedSaveWarning: boolean;
   /** Process name (comm) used to detect the game is running */
   processName: string;
-  /** Godot user dir under ~/.local/share/ (mod-loader logs live here).
-   * Absent for non-Godot games - load-status/log features hide. */
-  godotUserDirName?: string;
+  /** How to read the game's mod-loader diagnostics. Absent = no
+   * load-status badges or game-log viewer for this game. */
+  logAdapter?: LogAdapter;
   /** Required community mod loader, if the game has one */
   framework?: GameFramework;
   /** Mod folders bulk operations must never remove (framework components) */
@@ -47,7 +53,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     modsSubdir: "mods",
     moddedSaveWarning: true,
     processName: "SlayTheSpire2",
-    godotUserDirName: "SlayTheSpire2",
+    logAdapter: { kind: "godot", userDirName: "SlayTheSpire2" },
     recommendedModIds: [103, 137], // BaseLib, RitsuLib - the ecosystem libraries
   },
   413150: {
@@ -68,6 +74,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // SMAPI's own bundled components - "uninstall all" keeps these
     protectedModFolders: ["SaveBackup", "ConsoleCommands"],
     recommendedModIds: [2400, 1915], // SMAPI, Content Patcher
+    // verified on device: SMAPI logs land in ~/.config/StardewValley/
+    logAdapter: { kind: "smapi", configDirName: "StardewValley" },
   },
 };
 

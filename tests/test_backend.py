@@ -207,6 +207,76 @@ class TestModLoadLogParsing(unittest.TestCase):
         self.assertEqual(status["x"]["state"], "loaded")
 
 
+class TestSmapiLogParsing(unittest.TestCase):
+    """Lines lifted from the real SMAPI-latest.txt on the test device
+    (SMAPI 4.5.2, ~/.config/StardewValley/ErrorLogs/)."""
+
+    LINES = [
+        "[16:43:06 INFO  SMAPI] SMAPI 4.5.2 with Stardew Valley 1.6.15 build 24356 on Unix 6.16.12.24",
+        "[16:43:10 INFO  SMAPI] Loaded 5 mods:",
+        "[16:43:10 INFO  SMAPI]    CJB Cheats Menu 1.42.0 by CJBok and Pathoschild | Simple in-game cheats menu!",
+        "[16:43:10 INFO  SMAPI]    Console Commands 4.5.2 by SMAPI | Adds SMAPI console commands that let you manipulate the game.",
+        "[16:43:10 INFO  SMAPI]    Content Patcher 2.9.1 by Pathoschild | Loads content packs which edit game data, images, and maps without changing the game files.",
+        "[16:43:10 INFO  SMAPI]    Save Backup 4.5.2 by SMAPI | Automatically backs up all your saves once per day into its folder.",
+        "",
+        "[16:43:10 TRACE SMAPI]    Direct console access",
+        "[16:43:11 ERROR SMAPI] Skipped mods",
+        "[16:43:11 ERROR SMAPI] --------------------------------------------------",
+        "[16:43:11 ERROR SMAPI]    These mods could not be added to your game.",
+        "[16:43:11 ERROR SMAPI]       - Farm Type Manager 1.16.0 because it's no longer compatible.",
+    ]
+
+    def test_loaded_mods_map_to_folder_norms(self):
+        status, modded = main._parse_smapi_log(self.LINES)
+        self.assertTrue(modded)
+        # 'CJB Cheats Menu' (log display name) must match folder 'CJBCheatsMenu'
+        self.assertEqual(status["cjbcheatsmenu"]["state"], "loaded")
+        self.assertEqual(status["consolecommands"]["state"], "loaded")
+        self.assertEqual(status["contentpatcher"]["state"], "loaded")
+        self.assertEqual(status["savebackup"]["state"], "loaded")
+
+    def test_skipped_mods_become_errors_with_reason(self):
+        status, _ = main._parse_smapi_log(self.LINES)
+        self.assertEqual(status["farmtypemanager"]["state"], "error")
+        self.assertIn("no longer compatible", status["farmtypemanager"]["detail"])
+
+    def test_vanilla_log_reports_no_modded_session(self):
+        status, modded = main._parse_smapi_log(
+            ["[10:00:00 INFO  SMAPI] SMAPI 4.5.2 with Stardew Valley 1.6.15"]
+        )
+        self.assertFalse(modded)
+        self.assertEqual(status, {})
+
+
+class TestSmapiLoadStatusEndToEnd(unittest.TestCase):
+    def test_reads_log_from_config_dir(self):
+        log_dir = os.path.join(
+            main.decky.DECKY_USER_HOME, ".config", "TestValley", "ErrorLogs"
+        )
+        os.makedirs(log_dir, exist_ok=True)
+        with open(
+            os.path.join(log_dir, "SMAPI-latest.txt"), "w", encoding="utf-8"
+        ) as f:
+            f.write(
+                "[10:00:00 INFO  SMAPI] Loaded 1 mods:\n"
+                "[10:00:00 INFO  SMAPI]    Cool Mod 1.0.0 by Someone | Does things.\n"
+            )
+        result = run(main.Plugin().get_smapi_load_status("TestValley"))
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["available"])
+        self.assertTrue(result["modded_session"])
+        self.assertEqual(result["status"]["coolmod"]["state"], "loaded")
+
+    def test_missing_log_reports_unavailable(self):
+        result = run(main.Plugin().get_smapi_load_status("NoSuchValley"))
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["available"])
+
+    def test_rejects_bad_dir(self):
+        result = run(main.Plugin().get_smapi_load_status("../../etc"))
+        self.assertFalse(result["ok"])
+
+
 class TestHelpers(unittest.TestCase):
     def test_safe_name_strips_unsafe_characters(self):
         self.assertEqual(main._safe_name("Iron/clad:铁甲"), "Ironclad")

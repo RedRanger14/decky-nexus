@@ -238,8 +238,19 @@ export const getModLoadStatus = callable<
   }
 >("get_mod_load_status");
 
+export const getSmapiLoadStatus = callable<
+  [config_dir_name: string],
+  {
+    ok: boolean;
+    available?: boolean;
+    modded_session?: boolean;
+    status?: Record<string, ModLoadState>;
+    error?: string;
+  }
+>("get_smapi_load_status");
+
 export const getDebugInfo = callable<
-  [game_user_dir: string],
+  [game_user_dir: string, smapi_config_dir: string],
   {
     ok: boolean;
     plugin_log?: string;
