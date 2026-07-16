@@ -69,11 +69,32 @@ MOD_FIELDS = """
       adultContent
 """
 
-MODS_QUERY = f"""
-query BrowseMods($domain: String!, $count: Int!, $offset: Int!, $sort: [ModsSort!]) {{
+TRENDING_WINDOW_DAYS = 30
+
+
+def _build_mods_query(with_search: bool, trending_since=None) -> str:
+    """Compose the browse query. WILDCARD does substring matching
+    server-side; date filters take epoch seconds (verified - ISO datetimes
+    break the backing Lucene query). 'Trending' = created within the window,
+    sorted by downloads."""
+    filters = ["gameDomainName: [{ value: $domain, op: EQUALS }]"]
+    params = "$domain: String!, $count: Int!, $offset: Int!"
+    if with_search:
+        filters.append("name: [{ value: $search, op: WILDCARD }]")
+        params += ", $search: String!"
+    if trending_since is not None:
+        filters.append(
+            'createdAt: [{ value: "%d", op: GT }]' % int(trending_since)
+        )
+        sort_part = "[{ downloads: { direction: DESC } }]"
+    else:
+        sort_part = "$sort"
+        params += ", $sort: [ModsSort!]"
+    return f"""
+query BrowseMods({params}) {{
   mods(
-    filter: {{ gameDomainName: [{{ value: $domain, op: EQUALS }}] }}
-    sort: $sort
+    filter: {{ {" ".join(filters)} }}
+    sort: {sort_part}
     count: $count
     offset: $offset
   ) {{
@@ -83,25 +104,14 @@ query BrowseMods($domain: String!, $count: Int!, $offset: Int!, $sort: [ModsSort
 }}
 """
 
-# WILDCARD does substring matching server-side (no asterisks needed).
-MODS_SEARCH_QUERY = f"""
-query SearchMods($domain: String!, $count: Int!, $offset: Int!, $sort: [ModsSort!], $search: String!) {{
-  mods(
-    filter: {{
-      gameDomainName: [{{ value: $domain, op: EQUALS }}]
-      name: [{{ value: $search, op: WILDCARD }}]
-    }}
-    sort: $sort
-    count: $count
-    offset: $offset
-  ) {{
-    nodesCount
-    nodes {{{MOD_FIELDS}}}
-  }}
-}}
-"""
-
-SORT_FIELDS = {"endorsements", "downloads", "updatedAt", "createdAt", "relevance"}
+SORT_FIELDS = {
+    "endorsements",
+    "downloads",
+    "updatedAt",
+    "createdAt",
+    "relevance",
+    "trending",
+}
 
 # domain -> numeric game id, resolved once per session via GraphQL
 _GAME_ID_CACHE: dict = {}
@@ -441,16 +451,22 @@ class Plugin:
         if sort not in SORT_FIELDS:
             return {"ok": False, "error": f"Unknown sort {sort!r}"}
         search = (search or "").strip()
+        trending_since = (
+            int(time.time()) - TRENDING_WINDOW_DAYS * 86400
+            if sort == "trending"
+            else None
+        )
         variables = {
             "domain": game_domain,
             "count": count,
             "offset": offset,
-            "sort": [{sort: {"direction": "DESC"}}],
         }
+        if trending_since is None:
+            variables["sort"] = [{sort: {"direction": "DESC"}}]
         if search:
             variables["search"] = search
         payload = {
-            "query": MODS_SEARCH_QUERY if search else MODS_QUERY,
+            "query": _build_mods_query(bool(search), trending_since),
             "variables": variables,
         }
         headers = {

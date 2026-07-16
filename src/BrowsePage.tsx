@@ -16,6 +16,7 @@ import { NEXUS_ORANGE } from "./theme";
 
 const SORT_OPTIONS = [
   { data: "featured", label: "Featured" },
+  { data: "trending", label: "Trending" },
   { data: "endorsements", label: "Most endorsed" },
   { data: "downloads", label: "Most downloaded" },
   { data: "updatedAt", label: "Recently updated" },
@@ -422,7 +423,7 @@ export function BrowsePage() {
               game={game}
               onViewAll={() => {
                 setSearch("");
-                setSort("updatedAt");
+                setSort("trending");
               }}
             />
             <ModCarousel

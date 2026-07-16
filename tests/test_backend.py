@@ -133,6 +133,49 @@ class TestFileSelection(unittest.TestCase):
         self.assertEqual(ordered[-1]["file_id"], 25316)
 
 
+class TestModsQueryBuilder(unittest.TestCase):
+    def test_base_query_uses_sort_variable(self):
+        q = main._build_mods_query(with_search=False)
+        self.assertIn("$sort: [ModsSort!]", q)
+        self.assertIn("sort: $sort", q)
+        self.assertNotIn("createdAt:", q)
+        self.assertNotIn("$search", q)
+
+    def test_search_adds_wildcard_filter(self):
+        q = main._build_mods_query(with_search=True)
+        self.assertIn("op: WILDCARD", q)
+        self.assertIn("$search: String!", q)
+
+    def test_trending_filters_by_epoch_and_sorts_by_downloads(self):
+        q = main._build_mods_query(with_search=False, trending_since=1781740800)
+        # date filters must be epoch seconds (ISO datetimes break the
+        # backing Lucene query - verified against the live API)
+        self.assertIn('createdAt: [{ value: "1781740800", op: GT }]', q)
+        self.assertIn("downloads: { direction: DESC }", q)
+        self.assertNotIn("$sort", q)
+
+    def test_trending_composes_with_search(self):
+        q = main._build_mods_query(with_search=True, trending_since=123)
+        self.assertIn("op: WILDCARD", q)
+        self.assertIn('value: "123"', q)
+
+    def test_v1_mod_mapping(self):
+        mapped = main._map_v1_mod(
+            {
+                "mod_id": 5,
+                "name": "X",
+                "endorsement_count": 7,
+                "mod_downloads": 9,
+                "picture_url": "http://p",
+                "contains_adult_content": False,
+            }
+        )
+        self.assertEqual(mapped["modId"], 5)
+        self.assertEqual(mapped["endorsements"], 7)
+        self.assertEqual(mapped["downloads"], 9)
+        self.assertEqual(mapped["pictureUrl"], "http://p")
+
+
 class TestModLoadLogParsing(unittest.TestCase):
     """Lines lifted from a real StS2 session log on the test device."""
 
