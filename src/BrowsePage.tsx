@@ -153,15 +153,42 @@ function SectionHeading({ title }: { title: string }) {
   );
 }
 
+/** End-of-rail card that jumps into the sorted list view - an organic way
+ * into the same place the sort dropdown goes. */
+function ViewAllCard({ onActivate }: { onActivate: () => void }) {
+  return (
+    <Focusable
+      onActivate={onActivate}
+      style={{
+        width: "205px",
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: "6px",
+        background: "rgba(218, 142, 53, 0.12)",
+        border: `1px solid ${NEXUS_ORANGE}55`,
+        minHeight: "160px",
+        fontWeight: 600,
+        fontSize: "15px",
+      }}
+    >
+      View all →
+    </Focusable>
+  );
+}
+
 /** Horizontally scrolling, controller-focusable carousel row. */
 function ModCarousel({
   title,
   mods,
   game,
+  onViewAll,
 }: {
   title: string;
   mods: NexusMod[];
   game: SupportedGame;
+  onViewAll?: () => void;
 }) {
   if (mods.length === 0) return null;
   return (
@@ -180,6 +207,7 @@ function ModCarousel({
             <ModTile mod={mod} game={game} />
           </div>
         ))}
+        {onViewAll && <ViewAllCard onActivate={onViewAll} />}
       </Focusable>
     </>
   );
@@ -392,9 +420,29 @@ export function BrowsePage() {
               title="Also trending"
               mods={carouselTrending}
               game={game}
+              onViewAll={() => {
+                setSearch("");
+                setSort("updatedAt");
+              }}
             />
-            <ModCarousel title="New mods" mods={newest} game={game} />
-            <ModCarousel title="All-time favourites" mods={popular} game={game} />
+            <ModCarousel
+              title="New mods"
+              mods={newest}
+              game={game}
+              onViewAll={() => {
+                setSearch("");
+                setSort("createdAt");
+              }}
+            />
+            <ModCarousel
+              title="All-time favourites"
+              mods={popular}
+              game={game}
+              onViewAll={() => {
+                setSearch("");
+                setSort("endorsements");
+              }}
+            />
           </>
         ) : (
           <>
