@@ -5,6 +5,7 @@ import re
 import shutil
 import ssl
 import time
+import urllib.parse
 
 import aiohttp
 
@@ -264,6 +265,41 @@ def _pick_main_file(file_list: list):
     return next(
         (f for f in file_list if f.get("category_name") != "OLD_VERSION"), None
     )
+
+
+NXM_QUEUE_NAME = "nxm-queue.log"
+
+
+def _parse_nxm_url(url: str):
+    """Strictly parse an nxm:// mod-file link (the website's 'Slow download' /
+    'Mod Manager Download' handoff). Returns None for anything else -
+    including nxm://oauth callbacks and malformed/hostile input."""
+    try:
+        parts = urllib.parse.urlsplit((url or "").strip())
+    except ValueError:
+        return None
+    if parts.scheme != "nxm":
+        return None
+    domain = parts.netloc.lower()
+    if not re.fullmatch(r"[a-z0-9_-]+", domain):
+        return None
+    m = re.fullmatch(r"/mods/(\d+)/files/(\d+)", parts.path)
+    if not m:
+        return None
+    query = urllib.parse.parse_qs(parts.query)
+
+    def q(name):
+        values = query.get(name) or [""]
+        return values[0]
+
+    return {
+        "game_domain": domain,
+        "mod_id": int(m.group(1)),
+        "file_id": int(m.group(2)),
+        "key": q("key"),
+        "expires": q("expires"),
+        "user_id": q("user_id"),
+    }
 
 
 def _norm_mod_id(mod_id: str) -> str:
@@ -763,6 +799,104 @@ class Plugin:
             "status": status,
         }
 
+    # ---- Free-user groundwork: nxm:// relay ----------------------------------
+    # Registered handler + queue only; the full free-user flow stays behind
+    # the kill switch until the internal conversation blesses it (see
+    # docs/free-user-design.md). Also serves the Phase 1 dispatch spike.
+
+    async def register_nxm_handler(self) -> dict:
+        """Install a user-level nxm:// handler: a relay script that appends
+        received URLs to a queue file, registered via a desktop entry."""
+        try:
+            runtime = decky.DECKY_PLUGIN_RUNTIME_DIR
+            os.makedirs(runtime, exist_ok=True)
+            queue = os.path.join(runtime, NXM_QUEUE_NAME)
+            script = os.path.join(runtime, "nxm-relay.sh")
+            with open(script, "w", encoding="utf-8", newline="\n") as f:
+                f.write('#!/bin/sh\necho "$(date +%s) $1" >> "' + queue + '"\n')
+            os.chmod(script, 0o755)
+
+            apps_dir = os.path.join(
+                decky.DECKY_USER_HOME, ".local", "share", "applications"
+            )
+            os.makedirs(apps_dir, exist_ok=True)
+            desktop_id = "nexus-mods-decky-nxm.desktop"
+            with open(
+                os.path.join(apps_dir, desktop_id), "w",
+                encoding="utf-8", newline="\n",
+            ) as f:
+                f.write(
+                    "[Desktop Entry]\n"
+                    "Type=Application\n"
+                    "Name=Nexus Mods (Decky) NXM Relay\n"
+                    f"Exec={script} %u\n"
+                    "MimeType=x-scheme-handler/nxm;\n"
+                    "NoDisplay=true\n"
+                    "Terminal=false\n"
+                )
+
+            tools = {}
+            for cmd in (
+                ["update-desktop-database", apps_dir],
+                ["xdg-settings", "set", "default-url-scheme-handler", "nxm", desktop_id],
+            ):
+                if shutil.which(cmd[0]):
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    tools[cmd[0]] = (await proc.wait()) == 0
+                else:
+                    tools[cmd[0]] = False
+            decky.logger.info(f"nxm handler registered (tools: {tools})")
+            return {"ok": True, "tools": tools}
+        except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
+            decky.logger.exception("register_nxm_handler crashed")
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def unregister_nxm_handler(self) -> dict:
+        try:
+            apps_dir = os.path.join(
+                decky.DECKY_USER_HOME, ".local", "share", "applications"
+            )
+            desktop = os.path.join(apps_dir, "nexus-mods-decky-nxm.desktop")
+            removed = os.path.isfile(desktop)
+            if removed:
+                os.remove(desktop)
+            if shutil.which("update-desktop-database"):
+                proc = await asyncio.create_subprocess_exec(
+                    "update-desktop-database", apps_dir,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+            return {"ok": True, "removed": removed}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def get_nxm_queue(self, clear: bool = False) -> dict:
+        """Read (and optionally clear) the relay queue: raw lines for
+        diagnostics plus strictly-parsed mod-file entries."""
+        queue = os.path.join(decky.DECKY_PLUGIN_RUNTIME_DIR, NXM_QUEUE_NAME)
+        if not os.path.isfile(queue):
+            return {"ok": True, "raw": [], "entries": []}
+        try:
+            with open(queue, "r", encoding="utf-8", errors="replace") as f:
+                lines = [l for l in f.read().splitlines() if l.strip()]
+            if clear:
+                open(queue, "w").close()
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        entries = []
+        for line in lines:
+            parts = line.split(" ", 1)
+            url = parts[1] if len(parts) == 2 else parts[0]
+            parsed = _parse_nxm_url(url)
+            if parsed:
+                entries.append(parsed)
+        return {"ok": True, "raw": lines[-10:], "entries": entries[-10:]}
+
     # ---- Debugging -----------------------------------------------------------
 
     async def get_debug_info(
@@ -948,9 +1082,12 @@ class Plugin:
         mod_version: str,
         install_dir: str,
         mods_subdir: str,
+        dl_key: str = "",
+        dl_expires: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
-        instead of decky's generic 'Python Exception'."""
+        instead of decky's generic 'Python Exception'. dl_key/dl_expires are
+        the website-issued free-download token from an nxm:// link."""
         try:
             return await self._install_mod_inner(
                 game_domain,
@@ -961,6 +1098,8 @@ class Plugin:
                 mod_version,
                 install_dir,
                 mods_subdir,
+                dl_key,
+                dl_expires,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -977,6 +1116,8 @@ class Plugin:
         mod_version: str,
         install_dir: str,
         mods_subdir: str,
+        dl_key: str = "",
+        dl_expires: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -993,6 +1134,12 @@ class Plugin:
             f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}"
             f"/files/{file_id}/download_link.json"
         )
+        if dl_key:
+            # free-account flow: website-issued token from the nxm:// link
+            link_url += (
+                f"?key={urllib.parse.quote(dl_key)}"
+                f"&expires={urllib.parse.quote(str(dl_expires))}"
+            )
         headers = _api_headers(api_key)
         try:
             async with aiohttp.ClientSession(
