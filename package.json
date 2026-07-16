@@ -4,8 +4,9 @@
   "description": "Browse, install, and manage Nexus Mods for the current game — entirely from Gaming Mode. Decky Loader plugin.",
   "type": "module",
   "scripts": {
-    "build": "rollup -c",
+    "build": "tsc --noEmit --skipLibCheck && rollup -c",
     "watch": "rollup -c -w",
+    "typecheck": "tsc --noEmit --skipLibCheck",
     "deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

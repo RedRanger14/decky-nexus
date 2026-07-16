@@ -58,6 +58,7 @@ import {
 import {
   getAppDisplayName,
   getMainWindowPath,
+  getRunningAppIds,
   getViewedLibraryAppId,
   isGameRunning,
   restartGame,
@@ -926,7 +927,7 @@ function InstalledModsSection() {
           onClick={() =>
             showModal(
               <UninstallPickerModal
-                mods={mods}
+                mods={mods ?? []}
                 gameDomain={game.nexusDomain}
                 installDir={game.installDirName}
                 modsSubdir={game.modsSubdir}
