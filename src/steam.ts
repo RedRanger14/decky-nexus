@@ -25,6 +25,28 @@ async function waitFor(pred: () => boolean, timeoutMs: number): Promise<boolean>
   return pred();
 }
 
+/** App id of the library game page currently on screen, if any.
+ * (Gaming Mode routes game pages as /library/app/<appid>.) */
+export function getViewedLibraryAppId(): number | undefined {
+  try {
+    const path = (Router as any).WindowStore?.GamepadUIMainWindowInstance
+      ?.BrowserWindow?.location?.pathname as string | undefined;
+    const match = path?.match(/\/library\/app\/(\d+)/);
+    return match ? Number(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function getAppDisplayName(appId: number): string | undefined {
+  try {
+    return (globalThis as any).appStore?.GetAppOverviewByAppID?.(appId)
+      ?.display_name;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Terminate the game if running, wait for it to exit, then launch it. */
 export async function restartGame(appId: number): Promise<boolean> {
   const steamClient = (globalThis as any).SteamClient;

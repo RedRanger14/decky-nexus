@@ -46,21 +46,54 @@ import {
 } from "./api";
 import {
   ALL_GAMES,
-  getActiveGame,
+  DEFAULT_GAME,
+  getSelectedGame,
   getSupportedGame,
   setSelectedGameAppId,
   subscribeActiveGame,
   SupportedGame,
 } from "./games";
-import { isGameRunning, restartGame } from "./steam";
+import {
+  getAppDisplayName,
+  getViewedLibraryAppId,
+  isGameRunning,
+  restartGame,
+} from "./steam";
 
-/** The game this plugin is currently managing (running > selected > default),
- * re-rendering when the user changes the selection. */
-function useActiveGame(): SupportedGame {
+interface GameContext {
+  /** The game being managed; undefined means the current context is an
+   * unsupported game and sections should say so instead of showing another
+   * game's content. */
+  game?: SupportedGame;
+  /** Display name of the unsupported context game, when game is undefined. */
+  unsupportedName?: string;
+}
+
+/** Resolve which game the plugin is managing:
+ * running supported game > viewed supported game page > manual selection >
+ * explicit "unsupported" state (when running/viewing an unsupported game) >
+ * default. Re-renders when the manual selection changes. */
+function useGameContext(): GameContext {
   const [, bump] = useState(0);
   useEffect(() => subscribeActiveGame(() => bump((n) => n + 1)), []);
+
   const app = Router.MainRunningApp;
-  return getActiveGame(app ? Number(app.appid) : undefined);
+  const runningId = app ? Number(app.appid) : undefined;
+  const running = getSupportedGame(runningId);
+  if (running) return { game: running };
+
+  const viewedId = getViewedLibraryAppId();
+  const viewed = getSupportedGame(viewedId);
+  if (viewed) return { game: viewed };
+
+  const selected = getSelectedGame();
+  if (selected) return { game: selected };
+
+  if (app) return { unsupportedName: app.display_name };
+  if (viewedId !== undefined) {
+    return { unsupportedName: getAppDisplayName(viewedId) ?? "This game" };
+  }
+  return { game: DEFAULT_GAME };
 }
 import { BrowsePage } from "./BrowsePage";
 import { ModDetailPage } from "./ModDetailPage";
@@ -80,16 +113,42 @@ const ping = callable<[], BackendInfo>("ping");
 
 function CurrentGameSection() {
   const app = Router.MainRunningApp;
-  const appId = app ? Number(app.appid) : undefined;
-  const runningSupported = getSupportedGame(appId);
-  const game = useActiveGame();
+  const runningSupported = getSupportedGame(app ? Number(app.appid) : undefined);
+  const { game, unsupportedName } = useGameContext();
 
   const [status, setStatus] = useState<GameStatus | undefined>();
 
   useEffect(() => {
     setStatus(undefined);
-    getGameStatus(game.installDirName, game.modsSubdir).then(setStatus);
-  }, [game.appId]);
+    if (game) {
+      getGameStatus(game.installDirName, game.modsSubdir).then(setStatus);
+    }
+  }, [game?.appId]);
+
+  if (!game) {
+    // Running or viewing a game the plugin doesn't support: say so instead
+    // of showing another game's mods, with an escape hatch.
+    return (
+      <PanelSection title="Current Game">
+        <PanelSectionRow>
+          <Field label="Game">{unsupportedName}</Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <Field label="Support">
+            Not supported yet — v1 supports Slay the Spire 2 only
+          </Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() => setSelectedGameAppId(DEFAULT_GAME.appId)}
+          >
+            Manage {DEFAULT_GAME.displayName} instead
+          </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
+    );
+  }
 
   return (
     <PanelSection title="Current Game">
@@ -110,15 +169,7 @@ function CurrentGameSection() {
       ) : (
         <PanelSectionRow>
           <Field label="Game">
-            {app ? app.display_name : `${game.displayName} · not running`}
-          </Field>
-        </PanelSectionRow>
-      )}
-      {app && !runningSupported && (
-        <PanelSectionRow>
-          <Field label="Support">
-            {app.display_name} isn't supported yet — managing{" "}
-            {game.displayName}
+            {runningSupported ? game.displayName : `${game.displayName} · not running`}
           </Field>
         </PanelSectionRow>
       )}
@@ -260,7 +311,7 @@ function FailedModsModal({
 function InstalledModsSection() {
   // Active-game context: toggling mods makes the most sense while the game
   // is NOT running, so this never requires a running game.
-  const game = useActiveGame();
+  const { game } = useGameContext();
 
   const [mods, setMods] = useState<InstalledMod[] | undefined>();
   const [busyFolder, setBusyFolder] = useState<string | undefined>();
@@ -285,6 +336,8 @@ function InstalledModsSection() {
   };
 
   useEffect(refresh, [game?.appId]);
+
+  if (!game) return null;
 
   // Same normalization as the backend: log tags vs manifest ids can differ
   // in dashes/underscores.
@@ -429,20 +482,21 @@ function InstalledModsSection() {
 
 function SavesSection() {
   const app = Router.MainRunningApp;
-  const game = useActiveGame();
+  const { game } = useGameContext();
 
   const [status, setStatus] = useState<SaveStatus | undefined>();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   const refresh = () => {
-    if (game.moddedSaveWarning) {
+    if (game?.moddedSaveWarning) {
       getSaveStatus(game.appId, game.processName).then(setStatus);
     }
   };
-  useEffect(refresh, [game.appId]);
+  useEffect(refresh, [game?.appId]);
 
-  if (!game.moddedSaveWarning || !status?.ok || !status.active_account) return null;
+  if (!game || !game.moddedSaveWarning || !status?.ok || !status.active_account)
+    return null;
 
   const account = status.accounts?.find(
     (a) => a.account_id === status.active_account
@@ -654,7 +708,9 @@ function LogModal({
 }
 
 function DevSection() {
-  const game = useActiveGame();
+  // Dev tools work regardless of context; fall back to the default game's
+  // log location when the context is unsupported.
+  const game = useGameContext().game ?? DEFAULT_GAME;
 
   const [info, setInfo] = useState<BackendInfo | undefined>();
   const [error, setError] = useState<string | undefined>();
