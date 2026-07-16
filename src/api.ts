@@ -102,6 +102,11 @@ export const checkUpdates = callable<
   { ok: boolean; updates?: Record<string, UpdateInfo>; error?: string }
 >("check_updates");
 
+export const getTrendingMods = callable<
+  [game_domain: string, count: number],
+  ModsResult
+>("get_trending_mods");
+
 export const getModFiles = callable<[game_domain: string, mod_id: number], FilesResult>(
   "get_mod_files"
 );
