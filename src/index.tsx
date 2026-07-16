@@ -1,6 +1,7 @@
 import {
   ButtonItem,
   ConfirmModal,
+  DropdownItem,
   ModalRoot,
   PanelSection,
   PanelSectionRow,
@@ -43,8 +44,24 @@ import {
   setModEnabled,
   uninstallMod,
 } from "./api";
-import { DEFAULT_GAME, getSupportedGame, SupportedGame } from "./games";
+import {
+  ALL_GAMES,
+  getActiveGame,
+  getSupportedGame,
+  setSelectedGameAppId,
+  subscribeActiveGame,
+  SupportedGame,
+} from "./games";
 import { isGameRunning, restartGame } from "./steam";
+
+/** The game this plugin is currently managing (running > selected > default),
+ * re-rendering when the user changes the selection. */
+function useActiveGame(): SupportedGame {
+  const [, bump] = useState(0);
+  useEffect(() => subscribeActiveGame(() => bump((n) => n + 1)), []);
+  const app = Router.MainRunningApp;
+  return getActiveGame(app ? Number(app.appid) : undefined);
+}
 import { BrowsePage } from "./BrowsePage";
 import { ModDetailPage } from "./ModDetailPage";
 
@@ -64,30 +81,48 @@ const ping = callable<[], BackendInfo>("ping");
 function CurrentGameSection() {
   const app = Router.MainRunningApp;
   const appId = app ? Number(app.appid) : undefined;
-  const game: SupportedGame | undefined = getSupportedGame(appId);
+  const runningSupported = getSupportedGame(appId);
+  const game = useActiveGame();
 
   const [status, setStatus] = useState<GameStatus | undefined>();
 
   useEffect(() => {
     setStatus(undefined);
-    if (game) {
-      getGameStatus(game.installDirName, game.modsSubdir).then(setStatus);
-    }
-  }, [game?.appId]);
+    getGameStatus(game.installDirName, game.modsSubdir).then(setStatus);
+  }, [game.appId]);
 
   return (
     <PanelSection title="Current Game">
-      <PanelSectionRow>
-        <Field label="Game">{app ? app.display_name : "None running"}</Field>
-      </PanelSectionRow>
-      {app && !game && (
+      {/* Selector appears once the registry has more than one game and no
+          supported game is running (a running game always wins). */}
+      {!runningSupported && ALL_GAMES.length > 1 ? (
         <PanelSectionRow>
-          <Field label="Support">
-            Not supported yet — v1 supports Slay the Spire 2 only
+          <DropdownItem
+            label="Managing"
+            rgOptions={ALL_GAMES.map((g) => ({
+              data: g.appId,
+              label: g.displayName,
+            }))}
+            selectedOption={game.appId}
+            onChange={(opt) => setSelectedGameAppId(opt.data)}
+          />
+        </PanelSectionRow>
+      ) : (
+        <PanelSectionRow>
+          <Field label="Game">
+            {app ? app.display_name : `${game.displayName} · not running`}
           </Field>
         </PanelSectionRow>
       )}
-      {game && status && !status.installed && (
+      {app && !runningSupported && (
+        <PanelSectionRow>
+          <Field label="Support">
+            {app.display_name} isn't supported yet — managing{" "}
+            {game.displayName}
+          </Field>
+        </PanelSectionRow>
+      )}
+      {status && !status.installed && (
         <PanelSectionRow>
           <Field label="Installed">Not found in main Steam library</Field>
         </PanelSectionRow>
@@ -223,10 +258,9 @@ function FailedModsModal({
 }
 
 function InstalledModsSection() {
-  const app = Router.MainRunningApp;
-  // Fall back to the default game: toggling mods makes the most sense while
-  // the game is NOT running.
-  const game = getSupportedGame(app ? Number(app.appid) : undefined) ?? DEFAULT_GAME;
+  // Active-game context: toggling mods makes the most sense while the game
+  // is NOT running, so this never requires a running game.
+  const game = useActiveGame();
 
   const [mods, setMods] = useState<InstalledMod[] | undefined>();
   const [busyFolder, setBusyFolder] = useState<string | undefined>();
@@ -395,7 +429,7 @@ function InstalledModsSection() {
 
 function SavesSection() {
   const app = Router.MainRunningApp;
-  const game = getSupportedGame(app ? Number(app.appid) : undefined) ?? DEFAULT_GAME;
+  const game = useActiveGame();
 
   const [status, setStatus] = useState<SaveStatus | undefined>();
   const [busy, setBusy] = useState(false);
@@ -620,8 +654,7 @@ function LogModal({
 }
 
 function DevSection() {
-  const app = Router.MainRunningApp;
-  const game = getSupportedGame(app ? Number(app.appid) : undefined) ?? DEFAULT_GAME;
+  const game = useActiveGame();
 
   const [info, setInfo] = useState<BackendInfo | undefined>();
   const [error, setError] = useState<string | undefined>();
