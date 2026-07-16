@@ -8,6 +8,11 @@ export interface GameFramework {
   detectFile: string;
   /** Where to learn about installing it */
   url: string;
+  /** The framework's own Nexus mod id - downloads route through Nexus so
+   * the author gets credit and download counts */
+  nexusModId?: number;
+  /** Steam launch options needed after install; {install_path} is replaced */
+  launchOptionsTemplate?: string;
 }
 
 export interface SupportedGame {
@@ -52,6 +57,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       name: "SMAPI",
       detectFile: "StardewModdingAPI",
       url: "smapi.io",
+      nexusModId: 2400, // verified: "SMAPI - Stardew Modding API" by Pathoschild
+      launchOptionsTemplate: '"{install_path}/StardewModdingAPI" %command%',
     },
   },
 };

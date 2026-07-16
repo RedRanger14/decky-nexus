@@ -118,6 +118,11 @@ export const installMod = callable<
   InstallResult
 >("install_mod");
 
+export const installFramework = callable<
+  [game_domain: string, mod_id: number, install_dir: string],
+  { ok: boolean; install_path?: string; error?: string }
+>("install_framework");
+
 export const getInstalledMods = callable<
   [game_domain: string, install_dir: string, mods_subdir: string],
   InstalledResult

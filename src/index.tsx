@@ -38,6 +38,7 @@ import {
   getInstalledMods,
   getModLoadStatus,
   getSaveStatus,
+  installFramework,
   setAllModsEnabled,
   setApiKey,
   setModEnabled,
@@ -56,6 +57,7 @@ import {
   getViewedLibraryAppId,
   isGameRunning,
   restartGame,
+  setLaunchOptions,
 } from "./steam";
 
 interface GameContext {
@@ -115,9 +117,9 @@ function CurrentGameSection() {
   const { game, unsupportedName } = resolveGameContext();
 
   const [status, setStatus] = useState<GameStatus | undefined>();
+  const [frameworkBusy, setFrameworkBusy] = useState(false);
 
-  useEffect(() => {
-    setStatus(undefined);
+  const refreshStatus = () => {
     if (game) {
       getGameStatus(
         game.installDirName,
@@ -125,7 +127,45 @@ function CurrentGameSection() {
         game.framework?.detectFile ?? ""
       ).then(setStatus);
     }
+  };
+
+  useEffect(() => {
+    setStatus(undefined);
+    refreshStatus();
   }, [game?.appId]);
+
+  const onInstallFramework = async () => {
+    if (!game?.framework?.nexusModId) return;
+    setFrameworkBusy(true);
+    try {
+      const result = await installFramework(
+        game.nexusDomain,
+        game.framework.nexusModId,
+        game.installDirName
+      );
+      if (result.ok && result.install_path) {
+        let body = `${game.framework.name} installed.`;
+        if (game.framework.launchOptionsTemplate) {
+          const options = game.framework.launchOptionsTemplate.replace(
+            "{install_path}",
+            result.install_path
+          );
+          body += setLaunchOptions(game.appId, options)
+            ? " Steam launch options set automatically."
+            : ` Set the game's launch options to: ${options}`;
+        }
+        toaster.toast({ title: `${game.framework.name} ready`, body });
+      } else {
+        toaster.toast({
+          title: `${game.framework?.name} install failed`,
+          body: result.error ?? "Unknown error",
+        });
+      }
+    } finally {
+      setFrameworkBusy(false);
+      refreshStatus();
+    }
+  };
 
   if (!game) {
     if (unsupportedName) {
@@ -177,24 +217,44 @@ function CurrentGameSection() {
       {game.framework &&
         status?.installed &&
         status.framework_installed === false && (
-          <PanelSectionRow>
-            <div
-              style={{
-                padding: "8px 10px",
-                margin: "4px 0",
-                background: "rgba(255, 200, 60, 0.12)",
-                borderLeft: "3px solid #ffc83c",
-                borderRadius: "4px",
-                fontSize: "12px",
-                lineHeight: "1.45",
-              }}
-            >
-              ⚠ {game.framework.name} isn't installed — most{" "}
-              {game.displayName} mods require it. See {game.framework.url} to
-              set it up.
-            </div>
-          </PanelSectionRow>
+          <>
+            <PanelSectionRow>
+              <div
+                style={{
+                  padding: "8px 10px",
+                  margin: "4px 0",
+                  background: "rgba(255, 200, 60, 0.12)",
+                  borderLeft: "3px solid #ffc83c",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                  lineHeight: "1.45",
+                }}
+              >
+                ⚠ {game.framework.name} isn't installed — most{" "}
+                {game.displayName} mods require it.
+              </div>
+            </PanelSectionRow>
+            {game.framework.nexusModId && (
+              <PanelSectionRow>
+                <ButtonItem
+                  layout="below"
+                  disabled={frameworkBusy}
+                  description="Downloads from Nexus (author gets the credit) and sets up the game"
+                  onClick={onInstallFramework}
+                >
+                  {frameworkBusy
+                    ? `Installing ${game.framework.name}…`
+                    : `Download ${game.framework.name}`}
+                </ButtonItem>
+              </PanelSectionRow>
+            )}
+          </>
         )}
+      {game.framework && status?.framework_installed === true && (
+        <PanelSectionRow>
+          <Field label={game.framework.name}>Installed ✓</Field>
+        </PanelSectionRow>
+      )}
       <PanelSectionRow>
         <ButtonItem
           layout="below"
