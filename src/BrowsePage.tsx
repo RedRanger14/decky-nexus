@@ -137,9 +137,14 @@ export function BrowsePage() {
           padding: "12px 0",
         }}
       >
-        <h2 style={{ margin: 0, whiteSpace: "nowrap" }}>
-          {game.displayName} — {total?.toLocaleString() ?? "…"} mods
-        </h2>
+        <div style={{ flexShrink: 0, minWidth: 0 }}>
+          <h2 style={{ margin: 0, whiteSpace: "nowrap", lineHeight: 1.15 }}>
+            {game.displayName}
+          </h2>
+          <div style={{ fontSize: "13px", fontWeight: 400, opacity: 0.6 }}>
+            {total !== undefined ? `${total.toLocaleString()} mods` : "loading…"}
+          </div>
+        </div>
         <div style={{ flexGrow: 1, maxWidth: "380px" }}>
           <TextField
             label="Search"
