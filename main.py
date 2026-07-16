@@ -813,6 +813,138 @@ class Plugin:
         await _emit_progress(mod_id, "done", 100)
         return {"ok": True, "folder": folder}
 
+    async def install_framework(
+        self, game_domain: str, mod_id: int, install_dir: str
+    ) -> dict:
+        """Download a mod-loader framework (e.g. SMAPI) from Nexus - so the
+        author gets the download credit - and run its unattended installer
+        against the game folder. Verified for SMAPI's installer, which
+        supports --install --game-path for mod managers."""
+        try:
+            api_key = _load_settings().get("api_key")
+            if not api_key:
+                return {"ok": False, "error": "Not signed in"}
+            install_path = os.path.join(STEAM_COMMON, install_dir)
+            if not os.path.isdir(install_path):
+                return {"ok": False, "error": "Game install folder not found"}
+
+            files = await self.get_mod_files(game_domain, mod_id)
+            if not files.get("ok"):
+                return files
+            file_list = files.get("files") or []
+            main = next((f for f in file_list if f["is_primary"]), None) or (
+                file_list[0] if file_list else None
+            )
+            if not main:
+                return {"ok": False, "error": "No downloadable file found"}
+
+            link_url = (
+                f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}"
+                f"/files/{main['file_id']}/download_link.json"
+            )
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=300, sock_connect=30)
+            ) as session:
+                async with session.get(
+                    link_url, headers=_api_headers(api_key), ssl=SSL_CONTEXT
+                ) as resp:
+                    if resp.status == 403:
+                        return {
+                            "ok": False,
+                            "error": "Direct downloads need a Premium account",
+                        }
+                    if resp.status != 200:
+                        return {
+                            "ok": False,
+                            "error": f"Download link error (HTTP {resp.status})",
+                        }
+                    links = await resp.json()
+                uri = (links[0].get("URI") or links[0].get("uri")) if links else None
+                if not uri:
+                    return {"ok": False, "error": "Malformed download link"}
+                os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+                archive_path = os.path.join(
+                    DOWNLOADS_DIR, f"framework-{mod_id}.zip"
+                )
+                async with session.get(uri, ssl=SSL_CONTEXT) as resp:
+                    if resp.status != 200:
+                        return {
+                            "ok": False,
+                            "error": f"CDN download failed (HTTP {resp.status})",
+                        }
+                    with open(archive_path, "wb") as out:
+                        async for chunk in resp.content.iter_chunked(1 << 20):
+                            out.write(chunk)
+
+            scratch = os.path.join(DOWNLOADS_DIR, f"framework-{mod_id}")
+            _force_rmtree(scratch)
+            os.makedirs(scratch)
+            err = await _extract_archive(archive_path, scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            if err:
+                _force_rmtree(scratch)
+                return {"ok": False, "error": f"Extraction failed: {err}"}
+
+            # Find the Linux installer script and make everything executable.
+            script = None
+            for root, _dirs, names in os.walk(scratch):
+                for name in names:
+                    fp = os.path.join(root, name)
+                    try:
+                        os.chmod(fp, 0o755)
+                    except OSError:
+                        pass
+                    if name.lower() == "install on linux.sh":
+                        script = fp
+            if not script:
+                _force_rmtree(scratch)
+                return {
+                    "ok": False,
+                    "error": "No Linux installer found in the archive",
+                }
+
+            proc = await asyncio.create_subprocess_exec(
+                "bash",
+                script,
+                "--install",
+                "--game-path",
+                install_path,
+                cwd=os.path.dirname(script),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
+            except asyncio.TimeoutError:
+                proc.kill()
+                _force_rmtree(scratch)
+                return {"ok": False, "error": "Installer timed out"}
+            _force_rmtree(scratch)
+
+            output = out.decode(errors="replace")
+            installed = any(
+                name.startswith("StardewModdingAPI")
+                for name in os.listdir(install_path)
+            )
+            if not installed:
+                decky.logger.warning(f"framework installer output: {output[-800:]}")
+                return {
+                    "ok": False,
+                    "error": f"Installer ran but framework not detected: "
+                    f"{output[-200:]}",
+                }
+            decky.logger.info(
+                f"framework installed into {install_path} "
+                f"(installer exit {proc.returncode})"
+            )
+            return {"ok": True, "install_path": install_path}
+        except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
+            decky.logger.exception("install_framework crashed")
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     # ---- Installed mods / enable & disable ----------------------------------
 
     async def get_installed_mods(

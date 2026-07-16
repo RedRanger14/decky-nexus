@@ -58,6 +58,19 @@ export function getAppDisplayName(appId: number): string | undefined {
   }
 }
 
+/** Set a Steam game's launch options (e.g. the SMAPI wrapper command).
+ * Returns false if the client API isn't available. */
+export function setLaunchOptions(appId: number, options: string): boolean {
+  try {
+    const apps = (globalThis as any).SteamClient?.Apps;
+    if (!apps?.SetAppLaunchOptions) return false;
+    apps.SetAppLaunchOptions(appId, options);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Terminate the game if running, wait for it to exit, then launch it. */
 export async function restartGame(appId: number): Promise<boolean> {
   const steamClient = (globalThis as any).SteamClient;
