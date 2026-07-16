@@ -13,6 +13,8 @@ export interface NexusMod {
   pictureUrl?: string;
   updatedAt: string;
   adultContent: boolean;
+  /** Full description (bbcode/html soup) - present via getModDetails */
+  description?: string;
 }
 
 export interface ModsResult {
@@ -174,6 +176,11 @@ export interface ModRequirement {
   notes?: string;
   url?: string;
 }
+
+export const getModDetails = callable<
+  [game_domain: string, mod_id: number],
+  { ok: boolean; mod?: NexusMod; error?: string }
+>("get_mod_details");
 
 export const getModRequirements = callable<
   [game_domain: string, mod_id: number],

@@ -239,7 +239,7 @@ function CurrentGameSection() {
                 <ButtonItem
                   layout="below"
                   disabled={frameworkBusy}
-                  description="Downloads from Nexus (author gets the credit) and sets up the game"
+                  description="Downloads from Nexus Mods (author gets the credit) and sets up the game"
                   onClick={onInstallFramework}
                 >
                   {frameworkBusy
@@ -297,7 +297,7 @@ function UninstallPickerModal({
     showModal(
       <ConfirmModal
         strTitle={`Uninstall ${mod.name ?? mod.folder}?`}
-        strDescription={`This deletes the "${mod.folder}" folder from the game. You can reinstall it from Nexus at any time.`}
+        strDescription={`This deletes the "${mod.folder}" folder from the game. You can reinstall it from Nexus Mods at any time.`}
         strOKButtonText="Uninstall"
         bDestructiveWarning={true}
         onOK={async () => {
@@ -469,7 +469,7 @@ function FailedModsModal({
       >
         A "patching exception" usually means the mod's code doesn't match this
         version of the game — and some mods need library mods (BaseLib,
-        RitsuLib) on the Linux build even when Nexus lists no requirements.
+        RitsuLib) on the Linux build even when Nexus Mods lists no requirements.
         Try installing the libraries from the browser, check the mod's
         description and posts, or look for an updated version.
       </div>
@@ -808,7 +808,7 @@ function AccountSection() {
 
   if (auth?.ok) {
     return (
-      <PanelSection title="Nexus Account">
+      <PanelSection title="Nexus Mods Account">
         <PanelSectionRow>
           <Field label="Signed in">
             {auth.name} ({auth.is_premium ? "Premium" : "Free"})
@@ -824,7 +824,7 @@ function AccountSection() {
   }
 
   return (
-    <PanelSection title="Nexus Account">
+    <PanelSection title="Nexus Mods Account">
       <PanelSectionRow>
         <Field label="Status">
           {auth === undefined ? "checking…" : auth.error ?? "Not signed in"}
