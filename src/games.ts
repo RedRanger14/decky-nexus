@@ -61,6 +61,10 @@ export function subscribeActiveGame(fn: () => void): () => void {
   };
 }
 
+export function getSelectedGame(): SupportedGame | undefined {
+  return getSupportedGame(selectedAppId);
+}
+
 export function getActiveGame(runningAppId: number | undefined): SupportedGame {
   return (
     getSupportedGame(runningAppId) ??
