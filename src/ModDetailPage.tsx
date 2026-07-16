@@ -25,7 +25,13 @@ import {
 import { getCompatHint } from "./compat";
 import { SelectedMod, getSelectedMod, setSelectedMod } from "./state";
 import { isGameRunning, restartGame } from "./steam";
-import { ACCENT_DANGER, ACCENT_SUCCESS, NEXUS_ORANGE } from "./theme";
+import {
+  ACCENT_DANGER,
+  ACCENT_SUCCESS,
+  NEXUS_ORANGE,
+  PRIMARY_BUTTON_CLASS,
+  PRIMARY_BUTTON_CSS,
+} from "./theme";
 
 function fmtSize(sizeKb: number): string {
   if (sizeKb >= 1024) return `${(sizeKb / 1024).toFixed(1)} MB`;
@@ -278,15 +284,14 @@ export function ModDetailPage() {
           maxWidth: "760px",
         }}
       >
+        <style>{PRIMARY_BUTTON_CSS}</style>
         <DialogButton
           disabled={installingFileId !== undefined || !primaryFile}
           onClick={() => primaryFile && onInstall(primaryFile)}
+          className={PRIMARY_BUTTON_CLASS}
           style={{
             flexGrow: 2,
             minWidth: "240px",
-            backgroundColor: NEXUS_ORANGE,
-            color: "#fff",
-            fontWeight: 600,
             opacity:
               installingFileId !== undefined || !primaryFile ? 0.55 : 1,
           }}
