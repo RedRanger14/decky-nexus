@@ -27,7 +27,10 @@ if (-not (Test-Path $settingsPath)) {
 $cfg = Get-Content $settingsPath -Raw | ConvertFrom-Json
 $folder = $cfg.pluginname -replace ' ', '-'   # template convention: no spaces in the folder name
 $pluginDir = "$($cfg.deckdir)/homebrew/plugins/$folder"
-$target = "$($cfg.deckuser)@$($cfg.deckip)"
+# deckip is usually an mDNS name (steamdeck.local); Windows mDNS resolution is
+# flaky, so deckipfallback (a raw LAN IP) is tried when the name doesn't answer.
+$hosts = @($cfg.deckip)
+if ($cfg.deckipfallback) { $hosts += $cfg.deckipfallback }
 
 # ---- build -----------------------------------------------------------------
 if (-not $SkipBuild) {
@@ -70,14 +73,18 @@ $remoteScriptPath = Join-Path $env:TEMP "decky-nexus-remote.sh"
 $keepAlive = @("-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=4")
 
 # Handhelds drop Wi-Fi aggressively in power save / suspend: probe first, retry a few times
-$probeOk = $false
+$target = $null
 foreach ($i in 1..3) {
-    ssh -p $cfg.deckport -o ConnectTimeout=8 -o BatchMode=yes @keepAlive $target "true"
-    if ($LASTEXITCODE -eq 0) { $probeOk = $true; break }
+    foreach ($h in $hosts) {
+        $candidate = "$($cfg.deckuser)@$h"
+        ssh -p $cfg.deckport -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=accept-new @keepAlive $candidate "true"
+        if ($LASTEXITCODE -eq 0) { $target = $candidate; break }
+    }
+    if ($target) { break }
     Write-Host "Device not answering (attempt $i/3) - make sure it's awake..." -ForegroundColor Yellow
     Start-Sleep -Seconds 4
 }
-if (-not $probeOk) { throw "cannot reach $target - wake the device and re-run" }
+if (-not $target) { throw "cannot reach $($hosts -join ' / ') - wake the device and re-run" }
 
 Write-Host "Copying to $target ..." -ForegroundColor Cyan
 scp -P $cfg.deckport -o ConnectTimeout=10 @keepAlive $tarball $remoteScriptPath "${target}:/tmp/"

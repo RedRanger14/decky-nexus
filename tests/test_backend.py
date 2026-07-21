@@ -590,13 +590,37 @@ class TestPluginsTxt(unittest.TestCase):
             return f.read().splitlines()
 
     def test_path_points_into_proton_prefix(self):
-        path = main._plugins_txt_path(489830, "Skyrim Special Edition/plugins.txt")
+        path = main._plugins_txt_path(489830, "Skyrim Special Edition/Plugins.txt")
         expected = os.path.join(
             main.decky.DECKY_USER_HOME, ".steam", "steam", "steamapps",
             "compatdata", "489830", "pfx", "drive_c", "users", "steamuser",
-            "AppData", "Local", "Skyrim Special Edition", "plugins.txt",
+            "AppData", "Local", "Skyrim Special Edition", "Plugins.txt",
         )
         self.assertEqual(path, expected)
+
+    def test_path_reuses_existing_file_of_any_casing(self):
+        """The game writes 'Plugins.txt' via Wine's case-insensitive lookup;
+        we must adopt whatever casing is on disk, never create a twin.
+        (On case-insensitive filesystems the OS collapses the two names
+        itself - the invariant is the same either way: one file.)"""
+        nominal = main._plugins_txt_path(489831, "Test Game/Plugins.txt")
+        parent = os.path.dirname(nominal)
+        os.makedirs(parent, exist_ok=True)
+        with open(os.path.join(parent, "PLUGINS.TXT"), "w") as f:
+            f.write("# header\n")
+        try:
+            resolved = main._plugins_txt_path(489831, "Test Game/Plugins.txt")
+            main._add_plugins(resolved, ["Mod.esp"])
+            matches = [
+                e for e in os.listdir(parent) if e.lower() == "plugins.txt"
+            ]
+            self.assertEqual(len(matches), 1, matches)
+            self.assertIn(
+                "*Mod.esp",
+                main._read_plugins_txt(os.path.join(parent, matches[0])),
+            )
+        finally:
+            shutil.rmtree(os.path.dirname(parent))
 
     def test_read_missing_file_is_empty(self):
         self.assertEqual(main._read_plugins_txt(self.path), [])
@@ -685,7 +709,7 @@ class TestDataDirFlows(unittest.TestCase):
     GAME = "Skyrim Special Edition"
     DOMAIN = "skyrimspecialedition"
     APP_ID = 489830
-    SUBPATH = "Skyrim Special Edition/plugins.txt"
+    SUBPATH = "Skyrim Special Edition/Plugins.txt"
 
     def setUp(self):
         self.install = os.path.join(main.STEAM_COMMON, self.GAME)
