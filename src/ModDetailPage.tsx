@@ -398,7 +398,10 @@ export function ModDetailPage() {
         <>
       {/* ---- Primary actions: one big install (latest main file), all-files
            toggle, uninstall - mirroring the site's single download button ---- */}
+      {/* Focus starts on the page's main action row, not the endorse chip
+          above it (first-in-DOM otherwise wins). */}
       <Focusable
+        autoFocus={true}
         style={{
           display: "flex",
           gap: "10px",
