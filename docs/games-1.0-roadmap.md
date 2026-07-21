@@ -183,7 +183,14 @@ complete.)*
   install can't route through Nexus for that piece.
 - Dir/exe: Balatro / Balatro.exe (fused LÖVE binary).
 
-### Palworld — pak tier EASY, UE4SS tier HARD (gate it)
+### Palworld — pak tier VERIFIED; UE4SS tier BUILT in v0.3.0 (2026-07-22)
+UE4SS support shipped: framework = Nexus mod 3405 (Linux-fixes fork)
+via copyRoot into Pal/Binaries/Win64 + dwmapi override; Lua/native
+mods → ue4ss/Mods folders with enabled.txt; Blueprint paks → LogicMods
+flat with per-file records. Awaiting on-device verification. Reuse for
+Subnautica 2 when its entry lands. Original assessment below.
+
+### (superseded) Palworld — pak tier EASY, UE4SS tier HARD (gate it)
 - Pak mods: create `Pal/Content/Paks/~mods/`, drop paks, zero Proton
   config → folder mode with fixed subpath.
 - UE4SS: Palworld uses a FORK (Okaetsu experimental-palworld; Nexus
