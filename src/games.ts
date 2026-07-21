@@ -59,15 +59,6 @@ export interface SupportedGame {
   pluginsTxtStyle?: "starred" | "listed";
   /** Curated "start here" mods featured as the browse page heroes */
   recommendedModIds?: number[];
-  /** Prefs-ini settings this game needs to survive the Steam UI taking
-   * over the screen (e.g. exclusive fullscreen crashes Proton games when
-   * the mod browser opens). Checked and offered as a one-tap fix. */
-  displayFix?: {
-    /** Path under Documents/My Games/ in the Proton prefix */
-    prefsSubpath: string;
-    section: string;
-    settings: Record<string, string>;
-  };
   /** Ini blocks required for mods to load at all (e.g. Fallout 4's
    * loose-files invalidation). Applied automatically after the framework
    * installs; files are created if missing. */
@@ -139,13 +130,6 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         "{@/SkyrimSELauncher.exe/skse64_loader.exe}\"' -- %command%",
     },
     recommendedModIds: [12604, 266], // SkyUI, USSEP - the canon starters
-    // Exclusive fullscreen dies when gamescope switches to the Steam UI
-    // (the classic alt-tab crash) - borderless survives it.
-    displayFix: {
-      prefsSubpath: "Skyrim Special Edition/SkyrimPrefs.ini",
-      section: "Display",
-      settings: { "bFull Screen": "0", "bBorderless": "1" },
-    },
   },
   377160: {
     appId: 377160,
@@ -184,12 +168,6 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         },
       },
     ],
-    // Same exclusive-fullscreen crash class as Skyrim SE.
-    displayFix: {
-      prefsSubpath: "Fallout4/Fallout4Prefs.ini",
-      section: "Display",
-      settings: { "bFull Screen": "0", "bBorderless": "1" },
-    },
   },
 };
 

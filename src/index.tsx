@@ -36,7 +36,6 @@ import {
   checkUpdates,
   copySavesToModded,
   getAuthStatus,
-  getDisplayFix,
   getDebugInfo,
   getFrameworkSetup,
   getGameStatus,
@@ -275,7 +274,6 @@ function CurrentGameSection() {
   const [status, setStatus] = useState<GameStatus | undefined>();
   const [frameworkBusy, setFrameworkBusy] = useState(false);
   const [launchOptionsSet, setLaunchOptionsSet] = useState(false);
-  const [displayFixNeeded, setDisplayFixNeeded] = useState(false);
 
   const refreshStatus = () => {
     if (game) {
@@ -289,39 +287,7 @@ function CurrentGameSection() {
           setLaunchOptionsSet(Boolean(r.launch_options_set))
         );
       }
-      if (game.displayFix) {
-        const fix = game.displayFix;
-        getDisplayFix(
-          game.appId,
-          fix.prefsSubpath,
-          fix.section,
-          fix.settings
-        ).then((r) =>
-          setDisplayFixNeeded(Boolean(r.ok && r.exists && !r.compliant))
-        );
-      }
     }
-  };
-
-  const onApplyDisplayFix = async () => {
-    if (!game?.displayFix) return;
-    const fix = game.displayFix;
-    const result = await applyDisplayFix(
-      game.appId,
-      fix.prefsSubpath,
-      fix.section,
-      fix.settings,
-      false
-    );
-    toaster.toast(
-      result.ok
-        ? {
-            title: "Display settings fixed",
-            body: `Takes effect next time ${game.displayName} starts`,
-          }
-        : { title: "Could not update settings", body: result.error ?? "" }
-    );
-    refreshStatus();
   };
 
   const markDone = () => {
@@ -498,18 +464,7 @@ function CurrentGameSection() {
               </Field>
             </PanelSectionRow>
           )}
-          {displayFixNeeded && (
-            <PanelSectionRow>
-              <ButtonItem
-                label="⚠ Display mode"
-                layout="below"
-                description={`${game.displayName} runs in exclusive fullscreen, which can crash when the mod browser opens over it. Switch it to borderless (recommended on handhelds).`}
-                onClick={onApplyDisplayFix}
-              >
-                Fix display settings
-              </ButtonItem>
-            </PanelSectionRow>
-          )}
+
           <PanelSectionRow>
             {status.framework_installed ? (
               <Field label="Step 1">{game.framework.name} installed ✓</Field>
