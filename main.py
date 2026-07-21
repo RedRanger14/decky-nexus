@@ -454,6 +454,39 @@ def _safe_rel_path(rel: str) -> bool:
     return all(p not in ("", ".", "..") for p in parts)
 
 
+def _case_merge_rel(base: str, rel: str) -> str:
+    """Adopt the on-disk casing of every existing path component under base.
+    Wine resolves an exact-case match before falling back to a scan, so twin
+    dirs like Data/Textures + Data/textures silently split mods in half -
+    each request only ever sees one of them."""
+    resolved = []
+    cur = base
+    for part in rel.replace("\\", "/").split("/"):
+        try:
+            entries = os.listdir(cur)
+        except OSError:
+            entries = []
+        match = next((e for e in entries if e.lower() == part.lower()), None)
+        chosen = match if match is not None else part
+        resolved.append(chosen)
+        cur = os.path.join(cur, chosen)
+    return "/".join(resolved)
+
+
+def _version_tuple(v: str):
+    nums = re.findall(r"\d+", v or "")
+    return tuple(int(n) for n in nums) if nums else None
+
+
+def _is_newer_version(current: str, installed: str) -> bool:
+    """Numeric-aware: '6.11' is NEWER than '6.9' (string compare says older).
+    Unparseable versions fall back to plain inequality."""
+    c, i = _version_tuple(current), _version_tuple(installed)
+    if c is None or i is None:
+        return bool(current) and current != installed
+    return c > i
+
+
 def _parse_nxm_url(url: str):
     """Strictly parse an nxm:// mod-file link (the website's 'Slow download' /
     'Mod Manager Download' handoff). Returns None for anything else -
@@ -925,7 +958,7 @@ class Plugin:
                 updates[folder] = {
                     "installed": rec.get("version"),
                     "current": node.get("version"),
-                    "update_available": bool(cur) and cur != installed,
+                    "update_available": _is_newer_version(cur, installed),
                 }
             decky.logger.info(
                 f"check_updates({game_domain!r}): "
@@ -1420,11 +1453,13 @@ class Plugin:
             # manifest, activate any plugin files in plugins.txt.
             payload = _find_data_payload(scratch)
             if payload is None:
+                tops = ", ".join(sorted(entries)[:6])
                 _force_rmtree(scratch)
                 return {
                     "ok": False,
                     "error": "This archive has no recognizable Data payload "
-                    "(FOMOD installers aren't supported yet)",
+                    "(FOMOD/optioned installers aren't supported yet). "
+                    f"It contains: {tops}",
                 }
             os.makedirs(mods_path, exist_ok=True)
             files_rel, plugins = [], []
@@ -1434,16 +1469,17 @@ class Plugin:
                     rel = os.path.relpath(src_file, payload)
                     if not _safe_rel_path(rel):
                         continue
-                    dst = os.path.join(mods_path, rel)
+                    # Reuse existing on-disk casing so we never create twin
+                    # dirs (Textures vs textures) that Wine splits between.
+                    rel = _case_merge_rel(mods_path, rel)
+                    dst = os.path.join(mods_path, *rel.split("/"))
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                     if os.path.isfile(dst):
                         os.remove(dst)
                     shutil.move(src_file, dst)
-                    files_rel.append(rel.replace(os.sep, "/"))
-                    if (
-                        os.sep not in rel
-                        and "/" not in rel
-                        and rel.lower().endswith(PLUGIN_EXTENSIONS)
+                    files_rel.append(rel)
+                    if "/" not in rel and rel.lower().endswith(
+                        PLUGIN_EXTENSIONS
                     ):
                         plugins.append(rel)
             _force_rmtree(scratch)

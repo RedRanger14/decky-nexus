@@ -5,13 +5,24 @@ import {
   Navigation,
   QuickAccessTab,
   Router,
+  ScrollPanelGroup,
   TextField,
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 
 import { ModsResult, NexusMod, getMods, getModsByIds, getTrendingMods } from "./api";
 import { SupportedGame, getActiveGame } from "./games";
-import { setSelectedMod } from "./state";
+import {
+  markBrowseReturn,
+  saveBrowseState,
+  setSelectedMod,
+  takeBrowseRestore,
+} from "./state";
+
+// Steam's scroll panel: right-stick scrolling for free. The published types
+// only declare children, but the underlying component takes Focusable-ish
+// props.
+const Scroller: any = ScrollPanelGroup;
 import { NEXUS_ORANGE } from "./theme";
 
 const SORT_OPTIONS = [
@@ -28,6 +39,7 @@ const ROW_SIZE = 8;
 
 function openMod(game: SupportedGame, mod: NexusMod) {
   setSelectedMod({ game, mod });
+  markBrowseReturn();
   Navigation.Navigate("/nexus-mods/mod");
 }
 
@@ -219,15 +231,20 @@ export function BrowsePage() {
     Router.MainRunningApp ? Number(Router.MainRunningApp.appid) : undefined
   );
 
-  const [sort, setSort] = useState("featured");
-  const [search, setSearch] = useState("");
+  // Coming back from a mod detail restores the previous search/results
+  // instead of resetting to the home rails. (Lazy init: runs once.)
+  const [restored] = useState(() => takeBrowseRestore(game.appId));
+
+  const [sort, setSort] = useState(restored?.sort ?? "featured");
+  const [search, setSearch] = useState(restored?.search ?? "");
 
   // list mode
-  const [mods, setMods] = useState<NexusMod[]>([]);
-  const [total, setTotal] = useState<number | undefined>();
+  const [mods, setMods] = useState<NexusMod[]>(restored?.mods ?? []);
+  const [total, setTotal] = useState<number | undefined>(restored?.total);
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
-  const nextOffset = useRef(0);
+  const nextOffset = useRef(restored?.nextOffset ?? 0);
+  const skipNextFetch = useRef(Boolean(restored));
 
   // home mode
   const [recommended, setRecommended] = useState<NexusMod[]>([]);
@@ -249,6 +266,12 @@ export function BrowsePage() {
   }, [isHome]);
   useEffect(() => {
     if (!pendingFocus.current) return;
+    // Never yank focus away from the search box mid-typing - that blurs
+    // the field and dismisses the on-screen keyboard.
+    if (document.activeElement?.tagName === "INPUT") {
+      pendingFocus.current = false;
+      return;
+    }
     const ready = isHome
       ? recommended.length + trending.length > 0
       : mods.length > 0;
@@ -320,10 +343,27 @@ export function BrowsePage() {
 
   useEffect(() => {
     if (isHome) return;
+    if (skipNextFetch.current) {
+      // Restored results are already on screen - don't reload page one.
+      skipNextFetch.current = false;
+      return;
+    }
     // Debounce while typing; instant for sort changes.
     const timer = setTimeout(() => fetchPage(0, false), search ? 500 : 0);
     return () => clearTimeout(timer);
   }, [game.appId, sort, search]);
+
+  // Keep the hand-back cache current so opening a mod detail can restore.
+  useEffect(() => {
+    saveBrowseState({
+      appId: game.appId,
+      sort,
+      search,
+      mods,
+      total,
+      nextOffset: nextOffset.current,
+    });
+  }, [game.appId, sort, search, mods, total]);
 
   const hasMore = total !== undefined && nextOffset.current < total;
   // Curated recommendations take the hero slots (the "start here" mods -
@@ -345,11 +385,18 @@ export function BrowsePage() {
       style={{
         marginTop: "40px",
         height: "calc(100% - 40px)",
-        overflowY: "auto",
-        padding: "0 24px 24px",
         position: "relative",
       }}
     >
+      <Scroller
+        focusable={false}
+        style={{
+          height: "100%",
+          overflowY: "auto",
+          padding: "0 24px 24px",
+          position: "relative",
+        }}
+      >
       {/* Game hero art as a faded backdrop banner behind the header. */}
       <div
         style={{
@@ -415,6 +462,11 @@ export function BrowsePage() {
               value={search}
               bShowClearAction={true}
               onChange={(e) => setSearch(e?.target?.value ?? "")}
+              onKeyDown={(e) => {
+                // Search is live per keystroke; Enter just puts the
+                // on-screen keyboard away.
+                if (e.key === "Enter") (e.target as HTMLElement).blur();
+              }}
             />
           </div>
           <div style={{ width: "200px", flexShrink: 0 }}>
@@ -434,7 +486,7 @@ export function BrowsePage() {
               <>
                 <SectionHeading title={heroTitle} />
                 <Focusable
-                  autoFocus={true}
+                  autoFocus={document.activeElement?.tagName !== "INPUT"}
                   style={{
                     display: "grid",
                     gridTemplateColumns:
@@ -497,7 +549,7 @@ export function BrowsePage() {
               </div>
             )}
             <Focusable
-              autoFocus={true}
+              autoFocus={document.activeElement?.tagName !== "INPUT"}
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
@@ -523,6 +575,7 @@ export function BrowsePage() {
           </div>
         )}
       </div>
+      </Scroller>
     </Focusable>
   );
 }

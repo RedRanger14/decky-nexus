@@ -2,6 +2,7 @@ import {
   ButtonItem,
   ConfirmModal,
   DialogButton,
+  Focusable,
   ModalRoot,
   PanelSection,
   PanelSectionRow,
@@ -38,6 +39,7 @@ import {
   getFrameworkSetup,
   getGameStatus,
   getInstalledMods,
+  getModDetails,
   getModLoadStatus,
   getNxmQueue,
   getSaveStatus,
@@ -69,6 +71,7 @@ import {
   restartGame,
   setLaunchOptions,
 } from "./steam";
+import { setSelectedMod } from "./state";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
 interface GameContext {
@@ -122,6 +125,23 @@ function resolveGameContext(): GameContext {
 }
 import { BrowsePage } from "./BrowsePage";
 import { ModDetailPage } from "./ModDetailPage";
+
+/** QAM row shortcut: jump from an installed mod straight to its detail page
+ * (to re-check requirements, files, or updates). */
+async function openInstalledModDetail(game: SupportedGame, mod: InstalledMod) {
+  if (!mod.mod_id) return;
+  const result = await getModDetails(game.nexusDomain, mod.mod_id);
+  if (result.ok && result.mod) {
+    setSelectedMod({ game, mod: result.mod });
+    Router.CloseSideMenus();
+    Navigation.Navigate(DETAIL_ROUTE);
+  } else {
+    toaster.toast({
+      title: "Could not open mod",
+      body: result.error ?? mod.name ?? mod.folder,
+    });
+  }
+}
 
 const BROWSE_ROUTE = "/nexus-mods";
 const DETAIL_ROUTE = "/nexus-mods/mod";
@@ -978,21 +998,42 @@ function InstalledModsSection() {
           // mount, so a remount is required for programmatic state changes
           // (e.g. "Disable all") to actually show.
           <PanelSectionRow key={`${mod.folder}:${mod.enabled}`}>
-            <ToggleField
-              label={mod.name ?? mod.folder}
-              description={
-                mod.togglable === false
-                  ? base + badge + " · assets only, always active"
-                  : base + badge
-              }
-              checked={mod.enabled}
-              disabled={
-                busyFolder === mod.folder || busyAll || mod.togglable === false
-              }
-              onChange={(checked: boolean) => {
-                if (checked !== mod.enabled) onToggle(mod, checked);
-              }}
-            />
+            <Focusable
+              style={{ display: "flex", alignItems: "center", gap: "4px" }}
+            >
+              <div style={{ flexGrow: 1, minWidth: 0 }}>
+                <ToggleField
+                  label={mod.name ?? mod.folder}
+                  description={
+                    mod.togglable === false
+                      ? base + badge + " · assets only, always active"
+                      : base + badge
+                  }
+                  checked={mod.enabled}
+                  disabled={
+                    busyFolder === mod.folder ||
+                    busyAll ||
+                    mod.togglable === false
+                  }
+                  onChange={(checked: boolean) => {
+                    if (checked !== mod.enabled) onToggle(mod, checked);
+                  }}
+                />
+              </div>
+              {mod.mod_id !== undefined && (
+                <DialogButton
+                  style={{
+                    minWidth: "34px",
+                    width: "34px",
+                    padding: "6px 0",
+                    flexShrink: 0,
+                  }}
+                  onClick={() => openInstalledModDetail(game, mod)}
+                >
+                  ⓘ
+                </DialogButton>
+              )}
+            </Focusable>
           </PanelSectionRow>
         );
       })}
