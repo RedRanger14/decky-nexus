@@ -1441,6 +1441,7 @@ class Plugin:
         install_mode: str = "folder",
         app_id: int = 0,
         plugins_subpath: str = "",
+        plugins_style: str = "starred",
         payload_choice: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
@@ -1462,6 +1463,7 @@ class Plugin:
                 install_mode,
                 app_id,
                 plugins_subpath,
+                plugins_style,
                 payload_choice,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
