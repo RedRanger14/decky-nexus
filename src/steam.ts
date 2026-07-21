@@ -82,6 +82,20 @@ export function setLaunchOptions(appId: number, options: string): boolean {
   }
 }
 
+/** Force a Steam Play compatibility tool (e.g. "proton_experimental") for
+ * a game - how we swap a native-Linux install to the Windows build that
+ * mod loaders need. Returns false if the client API isn't available. */
+export function setCompatTool(appId: number, toolName: string): boolean {
+  try {
+    const apps = (globalThis as any).SteamClient?.Apps;
+    if (!apps?.SpecifyCompatTool) return false;
+    apps.SpecifyCompatTool(appId, toolName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Terminate the game if running, wait for it to exit, then launch it. */
 export async function restartGame(appId: number): Promise<boolean> {
   const steamClient = (globalThis as any).SteamClient;

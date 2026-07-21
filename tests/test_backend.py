@@ -948,6 +948,22 @@ class TestDataPayload(unittest.TestCase):
         content = open(path).read()
         self.assertIn("[Display]\nbBorderless=1", content)
 
+    def test_check_game_file_rejects_traversal(self):
+        for evil in ("../secrets", "a/../../b", ".."):
+            result = run(main.Plugin().check_game_file("Game", evil))
+            self.assertFalse(result["ok"], evil)
+
+    def test_check_game_file_detects_native_marker(self):
+        install = os.path.join(main.STEAM_COMMON, "NativeGame")
+        shutil.rmtree(install, ignore_errors=True)
+        os.makedirs(install)
+        open(os.path.join(install, "UnityPlayer.so"), "w").write("")
+        result = run(main.Plugin().check_game_file("NativeGame", "UnityPlayer.so"))
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["exists"])
+        result = run(main.Plugin().check_game_file("NativeGame", "game.exe"))
+        self.assertFalse(result["exists"])
+
     def test_requirement_normalization(self):
         """Regression: the v2 API returns requirement modId as a STRING and
         external requirements (VC++ redist links) as modId "0" with an empty

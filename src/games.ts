@@ -59,6 +59,15 @@ export interface SupportedGame {
   pluginsTxtStyle?: "starred" | "listed";
   /** Curated "start here" mods featured as the browse page heroes */
   recommendedModIds?: number[];
+  /** Games that ship a native Linux build that mod loaders can't hook:
+   * when nativeMarker exists in the install dir, mods need the Windows
+   * build - offer a one-tap switch to the given Proton tool. */
+  protonRequired?: {
+    /** File that only exists in the native Linux build */
+    nativeMarker: string;
+    /** Steam Play tool name to force (e.g. "proton_experimental") */
+    tool: string;
+  };
   /** Ini blocks required for mods to load at all (e.g. Fallout 4's
    * loose-files invalidation). Applied automatically after the framework
    * installs; files are created if missing. */
@@ -187,6 +196,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       installKind: "copyRoot",
       // Proton needs the loader dll preferred over the builtin
       launchOptionsTemplate: 'WINEDLLOVERRIDES="winhttp=n,b" %command%',
+    },
+    // Steam installs the native Linux build by default, which BepInEx's
+    // winhttp injection can't hook (verified on device) - mods need the
+    // Windows build under Proton.
+    protonRequired: {
+      nativeMarker: "UnityPlayer.so",
+      tool: "proton_experimental",
     },
   },
   1623730: {
