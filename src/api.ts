@@ -45,6 +45,10 @@ export interface InstallResult {
   ok: boolean;
   folder?: string;
   error?: string;
+  /** Option-style archive: the user must pick one of `options` and retry
+   * with payload_choice set. */
+  needs_choice?: boolean;
+  options?: string[];
 }
 
 export interface InstalledMod {
@@ -132,7 +136,8 @@ export const installMod = callable<
     dl_expires: string,
     install_mode: "folder" | "dataDir",
     app_id: number,
-    plugins_subpath: string
+    plugins_subpath: string,
+    payload_choice: string
   ],
   InstallResult
 >("install_mod");

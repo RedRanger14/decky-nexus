@@ -385,8 +385,9 @@ def _looks_like_data(dir_path: str) -> bool:
 
 def _find_data_payload(scratch: str):
     """Locate the directory whose contents belong in Data/. Handles flat
-    archives, a wrapping folder, and an explicit Data/ folder (up to two
-    levels). Returns None for unrecognizable layouts (e.g. FOMOD-only)."""
+    archives, a wrapping folder (loose readme-type files beside it are
+    ignored), and an explicit Data/ folder (up to two levels). Returns None
+    for unrecognizable layouts (e.g. FOMOD-only)."""
     if _looks_like_data(scratch):
         return scratch
     entries = os.listdir(scratch)
@@ -394,22 +395,44 @@ def _find_data_payload(scratch: str):
     for d in dirs:
         if d.lower() == "data":
             return os.path.join(scratch, d)
-    if len(dirs) == 1 and len(entries) == 1:
+    if len(dirs) == 1:
         inner = os.path.join(scratch, dirs[0])
         if _looks_like_data(inner):
             return inner
-        inner_entries = os.listdir(inner)
         inner_dirs = [
-            e for e in inner_entries if os.path.isdir(os.path.join(inner, e))
+            e for e in os.listdir(inner) if os.path.isdir(os.path.join(inner, e))
         ]
         for d in inner_dirs:
             if d.lower() == "data":
                 return os.path.join(inner, d)
-        if len(inner_dirs) == 1 and len(inner_entries) == 1:
+        if len(inner_dirs) == 1:
             deep = os.path.join(inner, inner_dirs[0])
             if _looks_like_data(deep):
                 return deep
     return None
+
+
+def _payload_options(scratch: str) -> list:
+    """Option-folder archives (mini-FOMODs): several top-level folders that
+    each independently resolve to a Data payload. Returns their scratch-
+    relative paths so the user can pick one."""
+    entries = os.listdir(scratch)
+    dirs = [e for e in entries if os.path.isdir(os.path.join(scratch, e))]
+    base = scratch
+    if len(dirs) == 1:
+        # A wrapper around the option folders.
+        inner = os.path.join(scratch, dirs[0])
+        inner_dirs = [
+            e for e in os.listdir(inner) if os.path.isdir(os.path.join(inner, e))
+        ]
+        if len(inner_dirs) > 1:
+            base, dirs = inner, inner_dirs
+    options = []
+    for d in sorted(dirs, key=str.lower):
+        p = os.path.join(base, d)
+        if _find_data_payload(p) is not None:
+            options.append(os.path.relpath(p, scratch).replace(os.sep, "/"))
+    return options
 
 
 def _remove_data_dir_record(
@@ -1304,10 +1327,12 @@ class Plugin:
         install_mode: str = "folder",
         app_id: int = 0,
         plugins_subpath: str = "",
+        payload_choice: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
-        the website-issued free-download token from an nxm:// link."""
+        the website-issued free-download token from an nxm:// link;
+        payload_choice picks a folder from an option-style archive."""
         try:
             return await self._install_mod_inner(
                 game_domain,
@@ -1323,6 +1348,7 @@ class Plugin:
                 install_mode,
                 app_id,
                 plugins_subpath,
+                payload_choice,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -1344,6 +1370,7 @@ class Plugin:
         install_mode: str = "folder",
         app_id: int = 0,
         plugins_subpath: str = "",
+        payload_choice: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -1452,6 +1479,31 @@ class Plugin:
             # Skyrim-class: merge the payload into Data/, record a per-file
             # manifest, activate any plugin files in plugins.txt.
             payload = _find_data_payload(scratch)
+            if payload is None and payload_choice:
+                if not _safe_rel_path(payload_choice):
+                    _force_rmtree(scratch)
+                    return {"ok": False, "error": "Invalid folder choice"}
+                chosen = os.path.join(scratch, *payload_choice.split("/"))
+                if os.path.isdir(chosen):
+                    payload = _find_data_payload(chosen)
+            if payload is None:
+                options = _payload_options(scratch)
+                if len(options) == 1 and not payload_choice:
+                    # Only one folder actually resolves (e.g. a FOMOD whose
+                    # numbered core is the sole real payload) - just use it.
+                    payload = _find_data_payload(os.path.join(scratch, *options[0].split("/")))
+                elif options and not payload_choice:
+                    _force_rmtree(scratch)
+                    try:
+                        os.remove(archive_path)
+                    except OSError:
+                        pass
+                    await _emit_progress(mod_id, "error", 0, "choose a folder")
+                    return {
+                        "ok": False,
+                        "needs_choice": True,
+                        "options": options,
+                    }
             if payload is None:
                 tops = ", ".join(sorted(entries)[:6])
                 _force_rmtree(scratch)

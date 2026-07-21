@@ -718,6 +718,40 @@ class TestDataPayload(unittest.TestCase):
         self.put("00 Core/CoolMod.esp")
         self.assertIsNone(main._find_data_payload(self.scratch))
 
+    def test_wrapper_beside_loose_readme_is_unwrapped(self):
+        """Regression: archives shipping 'ModFolder/ + readme.txt' were
+        refused because the wrapper rule demanded a lone entry."""
+        self.put("CoolMod-1.0/CoolMod.esp")
+        self.put("readme.txt")
+        self.assertEqual(
+            main._find_data_payload(self.scratch),
+            os.path.join(self.scratch, "CoolMod-1.0"),
+        )
+
+    def test_option_folders_are_offered_as_choices(self):
+        """Mini-FOMOD archives: several alternative folders, each a valid
+        payload - surfaced for the user to pick instead of refused."""
+        self.put("Slim Axes/meshes/weapons/axe.nif")
+        self.put("Slim Maces/meshes/weapons/mace.nif")
+        self.put("readme.txt")
+        self.assertIsNone(main._find_data_payload(self.scratch))
+        self.assertEqual(
+            main._payload_options(self.scratch), ["Slim Axes", "Slim Maces"]
+        )
+
+    def test_option_folders_inside_wrapper(self):
+        self.put("IronEdge/1. Standalone/IronEdge.esp")
+        self.put("IronEdge/2. Replacer/meshes/weapons/iron/sword.nif")
+        self.assertEqual(
+            main._payload_options(self.scratch),
+            ["IronEdge/1. Standalone", "IronEdge/2. Replacer"],
+        )
+
+    def test_fomod_with_single_real_folder_has_one_option(self):
+        self.put("fomod/ModuleConfig.xml")
+        self.put("00 Core/CoolMod.esp")
+        self.assertEqual(main._payload_options(self.scratch), ["00 Core"])
+
     def test_safe_rel_path_rejects_traversal(self):
         self.assertTrue(main._safe_rel_path("meshes/armor/x.nif"))
         for evil in ("../x", "a/../b", "a//b", ".", ".."):
