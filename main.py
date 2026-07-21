@@ -455,6 +455,7 @@ def _add_plugins(path: str, names: list, style: str = "starred") -> None:
     }
     for name in names:
         if name.lower() not in existing:
+            existing.add(name.lower())
             lines.append(name if style == "listed" else "*" + name)
     _write_plugins_txt(path, lines)
 
@@ -1703,8 +1704,10 @@ class Plugin:
                         shutil.move(src_file, dst)
                         if rel not in files_rel:
                             files_rel.append(rel)
-                        if "/" not in rel and rel.lower().endswith(
-                            PLUGIN_EXTENSIONS
+                        if (
+                            "/" not in rel
+                            and rel.lower().endswith(PLUGIN_EXTENSIONS)
+                            and rel not in plugins
                         ):
                             plugins.append(rel)
             _force_rmtree(scratch)

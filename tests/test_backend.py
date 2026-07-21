@@ -727,6 +727,12 @@ class TestPluginsTxt(unittest.TestCase):
         main._remove_plugins(self.path, ["a.esp", "C.esp"])
         self.assertEqual(self.read(), ["B.esp"])
 
+    def test_add_plugins_dedupes_within_one_call(self):
+        """Regression: merge-all installs passed the same esp twice and it
+        landed in Plugins.txt twice (the existing-set never updated)."""
+        main._add_plugins(self.path, ["Penitus.esp", "penitus.esp", "Other.esp"])
+        self.assertEqual(self.read(), ["*Penitus.esp", "*Other.esp"])
+
     def test_listed_style_presence_is_activation(self):
         """FNV/FO3/2011-Skyrim: no stars - a plugin listed in the file IS
         active, disable = delist."""
