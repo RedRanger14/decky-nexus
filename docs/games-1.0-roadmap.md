@@ -23,8 +23,16 @@ All Nexus data below verified live against the v2 API on 2026-07-21.
 | M&B II: Bannerlord | 261550 | `mountandblade2bannerlord` | 3174 | 8,230 | 0.93M |
 | Fallout 3 (user add) | 22300/22370 GOTY | `fallout3` | 120 | 17,150 | — |
 | Palworld (user add: Deck-popular) | 1623730 | `palworld` | 6063 | 2,577 | — |
+| The Witcher 3 (user add) | 292030 | `witcher3` | 952 | 8,807 | — |
 | Balatro (bonus) | 2379780 | `balatro` | 6217 | 721 | — |
 | HK: Silksong (bonus) | 1030300 | `hollowknightsilksong` | 8136 | 773 | — |
+| Subnautica 2 (bonus) | TBD (early access) | `subnautica2` | 9198 | 244 | — |
+
+Witcher 3: mods = folder drop into `<game>/Mods/` (folder mode), but
+script mods conflict without merging (community Script Merger is
+Windows-only) — research pass needed; next-gen update changed paths.
+Subnautica 2: UE5 like Palworld — its top mod is a UE4SS build, so
+expect the same pak-easy / UE4SS-hard split. Research pass needed.
 
 Deck-popularity picks (user, 2026-07-21): Palworld + RDR2 promoted into
 the 1.0 wave; Balatro + Silksong as bonus targets. Note Balatro's and
