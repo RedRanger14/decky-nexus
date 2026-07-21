@@ -87,6 +87,18 @@ function PayloadChoiceModal({
         This mod's archive offers alternative folders — pick the one to
         install. (Check the mod's description if you're unsure.)
       </div>
+      {options.length > 1 && (
+        <ButtonItem
+          layout="below"
+          description="Replacer packs usually want all folders combined"
+          onClick={() => {
+            closeModal?.();
+            onPick("*");
+          }}
+        >
+          Install everything (merge all {options.length} folders)
+        </ButtonItem>
+      )}
       {options.map((opt) => (
         <ButtonItem
           key={opt}
@@ -96,7 +108,7 @@ function PayloadChoiceModal({
             onPick(opt);
           }}
         >
-          {opt.split("/").pop()}
+          {opt}
         </ButtonItem>
       ))}
     </ModalRoot>
@@ -117,6 +129,7 @@ export function ModDetailPage() {
   const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
   const [endorseStatus, setEndorseStatus] = useState<string | undefined>();
   const [endorseBusy, setEndorseBusy] = useState(false);
+  const [imageFull, setImageFull] = useState(false);
 
   const refreshInstalled = (s: SelectedMod) => {
     getInstalledMods(
@@ -138,6 +151,7 @@ export function ModDetailPage() {
     setShowAllFiles(false);
     setInstalledFileIds(new Set());
     setInstalledCopy(undefined);
+    setImageFull(false);
     getModFiles(s.game.nexusDomain, s.mod.modId).then(setFiles);
     getModRequirements(s.game.nexusDomain, s.mod.modId).then((r) =>
       setRequirements(r.ok ? r.requirements ?? [] : [])
@@ -289,6 +303,39 @@ export function ModDetailPage() {
         height: "calc(100% - 40px)",
       }}
     >
+      {imageFull && heroUrl && (
+        <Focusable
+          autoFocus={true}
+          onActivate={() => setImageFull(false)}
+          onCancel={() => setImageFull(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 100,
+            background: "rgba(0, 0, 0, 0.96)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <img
+            src={heroUrl}
+            alt={mod.name}
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              bottom: "14px",
+              right: "20px",
+              fontSize: "13px",
+              opacity: 0.7,
+            }}
+          >
+            B — close
+          </div>
+        </Focusable>
+      )}
       <Scroller
         focusable={false}
         style={{
@@ -300,18 +347,22 @@ export function ModDetailPage() {
       {/* ---- Header: hero image + facts ---- */}
       <Focusable style={{ display: "flex", gap: "20px", padding: "12px 0 4px" }}>
         {heroUrl && (
-          <img
-            src={heroUrl}
-            alt={mod.name}
-            style={{
-              width: "44%",
-              maxHeight: "280px",
-              objectFit: "cover",
-              borderRadius: "8px",
-              flexShrink: 0,
-              alignSelf: "flex-start",
-            }}
-          />
+          <Focusable
+            onActivate={() => setImageFull(true)}
+            style={{ width: "44%", flexShrink: 0, alignSelf: "flex-start" }}
+          >
+            <img
+              src={heroUrl}
+              alt={mod.name}
+              style={{
+                width: "100%",
+                maxHeight: "280px",
+                objectFit: "cover",
+                borderRadius: "8px",
+                display: "block",
+              }}
+            />
+          </Focusable>
         )}
         <div style={{ minWidth: 0, flexGrow: 1 }}>
           <h2 style={{ margin: "0 0 2px 0" }}>{mod.name}</h2>
@@ -433,19 +484,40 @@ export function ModDetailPage() {
                 }}
               >
                 {requirements.map((req) => {
-                  const have = installedMods.some(
-                    (m) => m.mod_id === req.modId
-                  );
+                  // External requirements (VC++ redists etc.) aren't Nexus
+                  // mods - link out instead of trying to open a mod page.
+                  const external = !req.modId || req.modId <= 0;
+                  const have =
+                    !external &&
+                    installedMods.some((m) => m.mod_id === req.modId);
+                  const label = external
+                    ? req.modName || req.notes || req.url || "external"
+                    : `${req.modName}${req.notes ? ` · ${req.notes}` : ""}`;
                   return (
                     <Focusable
-                      key={`${req.modId}-${req.modName}`}
-                      onActivate={() => openRequirement(req)}
+                      key={`${req.modId}-${req.modName}-${req.url}`}
+                      onActivate={() => {
+                        if (!external) {
+                          openRequirement(req);
+                        } else if (req.url) {
+                          Navigation.NavigateToExternalWeb(req.url);
+                        }
+                      }}
                       style={{
                         padding: "3px 12px",
                         borderRadius: "999px",
                         fontSize: "12px",
                         whiteSpace: "nowrap",
-                        ...(have
+                        maxWidth: "100%",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        ...(external
+                          ? {
+                              background: "rgba(255, 255, 255, 0.08)",
+                              border: "1px solid rgba(255, 255, 255, 0.25)",
+                              opacity: 0.85,
+                            }
+                          : have
                           ? {
                               background: "rgba(143, 212, 143, 0.15)",
                               border: "1px solid rgba(143, 212, 143, 0.5)",
@@ -456,9 +528,8 @@ export function ModDetailPage() {
                             }),
                       }}
                     >
-                      {have ? "✓ " : "⬇ "}
-                      {req.modName}
-                      {req.notes ? ` · ${req.notes}` : ""}
+                      {external ? "🌐 " : have ? "✓ " : "⬇ "}
+                      {label}
                     </Focusable>
                   );
                 })}

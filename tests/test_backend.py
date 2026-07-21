@@ -835,6 +835,43 @@ class TestDataPayload(unittest.TestCase):
         self.put("00 Core/CoolMod.esp")
         self.assertEqual(main._payload_options(self.scratch), ["00 Core"])
 
+    def test_nested_category_folders_recurse_to_leaf_payloads(self):
+        """Real archive (Slimmer weapons): category dirs holding per-item
+        payload folders - options must come from the deeper level."""
+        self.put("battleaxes/daedric/meshes/weapons/daedric/axe.nif")
+        self.put("battleaxes/dragonbone/meshes/weapons/db/axe.nif")
+        self.put("maces/iron/meshes/weapons/iron/mace.nif")
+        # "maces" holds a single payload child, so the wrapper rule offers
+        # the category itself; multi-child categories offer each leaf.
+        self.assertEqual(
+            main._payload_options(self.scratch),
+            ["battleaxes/daedric", "battleaxes/dragonbone", "maces"],
+        )
+
+    def test_fomod_dir_beside_variants_is_skipped(self):
+        """Real archive (Iron greatswords): fomod/ metadata beside the
+        variants blocked the old single-wrapper unwrap."""
+        self.put("fomod/ModuleConfig.xml")
+        self.put("Greatswords/Variant 1/meshes/weapons/iron/gs.nif")
+        self.put("Greatswords/Variant 2/meshes/weapons/iron/gs.nif")
+        self.assertEqual(
+            main._payload_options(self.scratch),
+            ["Greatswords/Variant 1", "Greatswords/Variant 2"],
+        )
+
+    def test_deep_wrapper_data_subpackages(self):
+        """Real archive (Imperial Armors Retexture): wrapper/00 Data/<sub-
+        packages> - three levels down."""
+        self.put("Wrapper/00 Data/AmidianAddon/textures/armor/a.dds")
+        self.put("Wrapper/00 Data/AmidianAddon - Sleeves/meshes/armor/b.nif")
+        self.assertEqual(
+            main._payload_options(self.scratch),
+            [
+                "Wrapper/00 Data/AmidianAddon",
+                "Wrapper/00 Data/AmidianAddon - Sleeves",
+            ],
+        )
+
     def test_safe_rel_path_rejects_traversal(self):
         self.assertTrue(main._safe_rel_path("meshes/armor/x.nif"))
         for evil in ("../x", "a/../b", "a//b", ".", ".."):
@@ -904,6 +941,23 @@ class TestDataPayload(unittest.TestCase):
         main._patch_ini_settings(path, "Display", {"bBorderless": "1"})
         content = open(path).read()
         self.assertIn("[Display]\nbBorderless=1", content)
+
+    def test_requirement_normalization(self):
+        """Regression: the v2 API returns requirement modId as a STRING and
+        external requirements (VC++ redist links) as modId "0" with an empty
+        name - clicking one requested mod #0 and surfaced a RuntimeError."""
+        raw = [
+            {"modName": "", "modId": "0",
+             "notes": "MO2 2.5.2+ will not start without this",
+             "url": "https://aka.ms/vs/17/release/vc_redist.x64.exe"},
+            {"modName": "SkyUI", "modId": "12604", "notes": None, "url": None},
+        ]
+        reqs = main._normalize_requirements(raw)
+        self.assertEqual(reqs[0]["modId"], 0)
+        self.assertEqual(reqs[1]["modId"], 12604)
+        self.assertIsInstance(reqs[1]["modId"], int)
+        self.assertEqual(reqs[1]["notes"], "")
+        self.assertEqual(main._normalize_requirements(None), [])
 
     def test_version_compare_is_numeric(self):
         """Regression: SkyUI 6.11 installed showed '6.9 available' - string

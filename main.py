@@ -187,6 +187,27 @@ def _normalize_perms(path: str) -> None:
                     pass
 
 
+def _normalize_requirements(raw: list) -> list:
+    """The v2 API returns requirement modId as a STRING, and external
+    requirements (VC++ redist links etc.) come through as modId "0" with an
+    empty name - only real Nexus mods (modId > 0) are openable in-app."""
+    reqs = []
+    for r in raw or []:
+        try:
+            rid = int(r.get("modId") or 0)
+        except (TypeError, ValueError):
+            rid = 0
+        reqs.append(
+            {
+                "modName": r.get("modName") or "",
+                "modId": rid,
+                "notes": r.get("notes") or "",
+                "url": r.get("url") or "",
+            }
+        )
+    return reqs
+
+
 async def _gql_query(query: str, api_key=None) -> dict:
     """POST one GraphQL query to the v2 endpoint; returns `data` or raises
     RuntimeError with a readable message."""
@@ -526,26 +547,32 @@ def _find_data_payload(scratch: str):
     return None
 
 
-def _payload_options(scratch: str) -> list:
-    """Option-folder archives (mini-FOMODs): several top-level folders that
-    each independently resolve to a Data payload. Returns their scratch-
-    relative paths so the user can pick one."""
-    entries = os.listdir(scratch)
-    dirs = [e for e in entries if os.path.isdir(os.path.join(scratch, e))]
-    base = scratch
-    if len(dirs) == 1:
-        # A wrapper around the option folders.
-        inner = os.path.join(scratch, dirs[0])
-        inner_dirs = [
-            e for e in os.listdir(inner) if os.path.isdir(os.path.join(inner, e))
-        ]
-        if len(inner_dirs) > 1:
-            base, dirs = inner, inner_dirs
+def _payload_options(scratch: str, max_depth: int = 3) -> list:
+    """Option-folder archives (mini-FOMODs): folders that each resolve to a
+    Data payload, possibly nested (category dirs holding per-item payloads,
+    or wrapper/00 Data/sub-package trees). Recurses past folders that don't
+    resolve themselves, skipping fomod metadata dirs. Returns scratch-
+    relative paths for the user to pick from (or merge all)."""
     options = []
-    for d in sorted(dirs, key=str.lower):
-        p = os.path.join(base, d)
-        if _find_data_payload(p) is not None:
-            options.append(os.path.relpath(p, scratch).replace(os.sep, "/"))
+
+    def walk(base: str, rel: str, depth: int) -> None:
+        try:
+            entries = os.listdir(base)
+        except OSError:
+            return
+        for d in sorted(entries, key=str.lower):
+            if d.lower() == "fomod":
+                continue
+            p = os.path.join(base, d)
+            if not os.path.isdir(p):
+                continue
+            r = f"{rel}/{d}" if rel else d
+            if _looks_like_data(p) or _find_data_payload(p) is not None:
+                options.append(r)
+            elif depth < max_depth:
+                walk(p, r, depth + 1)
+
+    walk(scratch, "", 0)
     return options
 
 
@@ -1032,12 +1059,12 @@ class Plugin:
                 api_key,
             )
             nodes = data["legacyMods"]["nodes"]
-            reqs = (
+            raw = (
                 nodes[0]["modRequirements"]["nexusRequirements"]["nodes"]
                 if nodes
                 else []
             )
-            return {"ok": True, "requirements": reqs}
+            return {"ok": True, "requirements": _normalize_requirements(raw)}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -1559,14 +1586,14 @@ class Plugin:
                         }
                     total = int(resp.headers.get("Content-Length") or 0)
                     done = 0
-                    last_pct = -10
+                    last_pct = -1
                     with open(archive_path, "wb") as out:
                         async for chunk in resp.content.iter_chunked(1 << 20):
                             out.write(chunk)
                             done += len(chunk)
                             if total:
                                 pct = int(done * 100 / total)
-                                if pct >= last_pct + 5:
+                                if pct > last_pct:
                                     last_pct = pct
                                     await _emit_progress(
                                         mod_id, "downloading", pct
@@ -1603,13 +1630,34 @@ class Plugin:
                 chosen = os.path.join(scratch, *payload_choice.split("/"))
                 if os.path.isdir(chosen):
                     payload = _find_data_payload(chosen)
-            if payload is None:
+            payload_dirs = [payload] if payload else []
+            if not payload_dirs and payload_choice == "*":
+                # "Install everything": merge every discovered option -
+                # replacer packs ship dozens of per-item folders meant to
+                # combine into one install.
+                payload_dirs = [
+                    _find_data_payload(os.path.join(scratch, *opt.split("/")))
+                    for opt in _payload_options(scratch)
+                ]
+                payload_dirs = [p for p in payload_dirs if p]
+            if not payload_dirs and payload_choice not in ("", "*"):
+                _force_rmtree(scratch)
+                return {"ok": False, "error": "Chosen folder wasn't usable"}
+            if not payload_dirs:
                 options = _payload_options(scratch)
-                if len(options) == 1 and not payload_choice:
+                if len(options) == 1:
                     # Only one folder actually resolves (e.g. a FOMOD whose
                     # numbered core is the sole real payload) - just use it.
-                    payload = _find_data_payload(os.path.join(scratch, *options[0].split("/")))
-                elif options and not payload_choice:
+                    payload_dirs = [
+                        _find_data_payload(
+                            os.path.join(scratch, *options[0].split("/"))
+                        )
+                    ]
+                elif options:
+                    decky.logger.info(
+                        f"install {mod_name!r}: offering "
+                        f"{len(options)} payload options"
+                    )
                     _force_rmtree(scratch)
                     try:
                         os.remove(archive_path)
@@ -1621,8 +1669,13 @@ class Plugin:
                         "needs_choice": True,
                         "options": options,
                     }
-            if payload is None:
+            payload_dirs = [p for p in payload_dirs if p]
+            if not payload_dirs:
                 tops = ", ".join(sorted(entries)[:6])
+                decky.logger.info(
+                    f"install {mod_name!r}: no payload; archive top level: "
+                    f"{tops}"
+                )
                 _force_rmtree(scratch)
                 return {
                     "ok": False,
@@ -1632,25 +1685,28 @@ class Plugin:
                 }
             os.makedirs(mods_path, exist_ok=True)
             files_rel, plugins = [], []
-            for root, _dirs, names in os.walk(payload):
-                for name in names:
-                    src_file = os.path.join(root, name)
-                    rel = os.path.relpath(src_file, payload)
-                    if not _safe_rel_path(rel):
-                        continue
-                    # Reuse existing on-disk casing so we never create twin
-                    # dirs (Textures vs textures) that Wine splits between.
-                    rel = _case_merge_rel(mods_path, rel)
-                    dst = os.path.join(mods_path, *rel.split("/"))
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    if os.path.isfile(dst):
-                        os.remove(dst)
-                    shutil.move(src_file, dst)
-                    files_rel.append(rel)
-                    if "/" not in rel and rel.lower().endswith(
-                        PLUGIN_EXTENSIONS
-                    ):
-                        plugins.append(rel)
+            for payload in payload_dirs:
+                for root, _dirs, names in os.walk(payload):
+                    for name in names:
+                        src_file = os.path.join(root, name)
+                        rel = os.path.relpath(src_file, payload)
+                        if not _safe_rel_path(rel):
+                            continue
+                        # Reuse existing on-disk casing so we never create
+                        # twin dirs (Textures vs textures) that Wine splits
+                        # between.
+                        rel = _case_merge_rel(mods_path, rel)
+                        dst = os.path.join(mods_path, *rel.split("/"))
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        if os.path.isfile(dst):
+                            os.remove(dst)
+                        shutil.move(src_file, dst)
+                        if rel not in files_rel:
+                            files_rel.append(rel)
+                        if "/" not in rel and rel.lower().endswith(
+                            PLUGIN_EXTENSIONS
+                        ):
+                            plugins.append(rel)
             _force_rmtree(scratch)
             try:
                 os.remove(archive_path)
