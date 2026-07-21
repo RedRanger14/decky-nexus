@@ -68,6 +68,14 @@ export interface SupportedGame {
     section: string;
     settings: Record<string, string>;
   };
+  /** Ini blocks required for mods to load at all (e.g. Fallout 4's
+   * loose-files invalidation). Applied automatically after the framework
+   * installs; files are created if missing. */
+  setupInis?: Array<{
+    prefsSubpath: string;
+    section: string;
+    settings: Record<string, string>;
+  }>;
 }
 
 export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
@@ -135,6 +143,50 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // (the classic alt-tab crash) - borderless survives it.
     displayFix: {
       prefsSubpath: "Skyrim Special Edition/SkyrimPrefs.ini",
+      section: "Display",
+      settings: { "bFull Screen": "0", "bBorderless": "1" },
+    },
+  },
+  377160: {
+    appId: 377160,
+    displayName: "Fallout 4",
+    nexusDomain: "fallout4", // verified: game id 1151, ~75k mods
+    installDirName: "Fallout 4", // TODO verify on device
+    modsSubdir: "Data",
+    installMode: "dataDir",
+    // Verified: folder is "Fallout4" (no space); starred format like SSE.
+    // The game auto-loads Fallout4.esm + DLC - never write them here.
+    pluginsTxtSubpath: "Fallout4/Plugins.txt",
+    pluginsTxtStyle: "starred",
+    moddedSaveWarning: false,
+    processName: "Fallout4.exe",
+    framework: {
+      name: "F4SE",
+      detectFile: "f4se_loader.exe",
+      url: "f4se.silverlock.org",
+      nexusModId: 42147, // verified: "Fallout 4 Script Extender (F4SE)"
+      installKind: "copyRoot",
+      // Same recipe as SKSE: swap the launcher for the loader.
+      // TODO verify on device (extrapolated from the SSE recipe).
+      launchOptionsTemplate:
+        "bash -c 'exec \"$" +
+        "{@/Fallout4Launcher.exe/f4se_loader.exe}\"' -- %command%",
+    },
+    recommendedModIds: [4598, 21497], // verified: UFO4P, Mod Configuration Menu
+    // Loose files don't load until archive invalidation is enabled.
+    setupInis: [
+      {
+        prefsSubpath: "Fallout4/Fallout4Custom.ini",
+        section: "Archive",
+        settings: {
+          bInvalidateOlderFiles: "1",
+          sResourceDataDirsFinal: "",
+        },
+      },
+    ],
+    // Same exclusive-fullscreen crash class as Skyrim SE.
+    displayFix: {
+      prefsSubpath: "Fallout4/Fallout4Prefs.ini",
       section: "Display",
       settings: { "bFull Screen": "0", "bBorderless": "1" },
     },

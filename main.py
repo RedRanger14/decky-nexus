@@ -1926,13 +1926,19 @@ class Plugin:
             return {"ok": False, "error": str(e)}
 
     async def apply_display_fix(
-        self, app_id: int, prefs_subpath: str, section: str, settings: dict
+        self,
+        app_id: int,
+        prefs_subpath: str,
+        section: str,
+        settings: dict,
+        create: bool = False,
     ) -> dict:
-        """Patch the prefs ini to the overlay-safe values (backs the file
-        up once as .decky-nexus.bak)."""
+        """Patch a prefs/config ini (backs the file up once as
+        .decky-nexus.bak). create=True writes the file if it doesn't exist
+        yet - setup inis like Fallout4Custom.ini start out absent."""
         try:
             path = _game_prefs_path(app_id, prefs_subpath)
-            if not os.path.isfile(path):
+            if not os.path.isfile(path) and not create:
                 return {
                     "ok": False,
                     "error": "Prefs file not found - launch the game once first",
