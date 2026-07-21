@@ -317,6 +317,65 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(main.APP_HEADERS["Application-Name"], "decky-nexus")
 
 
+class TestCallableArity(unittest.TestCase):
+    """The frontend's api.ts callables and the backend's method signatures
+    must agree on argument counts - decky binds positionally, and a
+    mismatch kills dispatch BEFORE our error handling ever runs (the
+    'Python Exception on every install' regression)."""
+
+    @staticmethod
+    def _count_ts_args(blob: str) -> int:
+        depth = 0
+        count = 0
+        for ch in blob:
+            if ch in "<[({":
+                depth += 1
+            elif ch in ">])}":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                count += 1
+        return count + 1 if blob.strip() else 0
+
+    def test_every_api_ts_callable_fits_its_backend_signature(self):
+        import inspect
+        import re as _re
+
+        src = open(
+            os.path.join(REPO_ROOT, "src", "api.ts"), encoding="utf-8"
+        ).read()
+        pattern = _re.compile(
+            r"callable<\s*\[(.*?)\]\s*,.*?>\(\s*\"([a-z0-9_]+)\"\s*\)",
+            _re.S,
+        )
+        checked = 0
+        for m in pattern.finditer(src):
+            blob, name = m.group(1), m.group(2)
+            ts_args = self._count_ts_args(blob)
+            method = getattr(main.Plugin, name, None)
+            self.assertIsNotNone(method, f"api.ts calls unknown method {name}")
+            params = [
+                p
+                for p in inspect.signature(method).parameters.values()
+                if p.name != "self"
+            ]
+            required = sum(
+                1 for p in params if p.default is inspect.Parameter.empty
+            )
+            self.assertGreaterEqual(
+                ts_args, required,
+                f"{name}: api.ts sends {ts_args} args but backend requires "
+                f"{required}",
+            )
+            self.assertLessEqual(
+                ts_args, len(params),
+                f"{name}: api.ts sends {ts_args} args but backend accepts "
+                f"at most {len(params)}",
+            )
+            checked += 1
+        # Sanity: the scan actually found the callables.
+        self.assertGreater(checked, 20, f"only matched {checked} callables")
+
+
 class GameDirTestCase(unittest.TestCase):
     """Base for tests that need a fake game install under STEAM_COMMON."""
 
