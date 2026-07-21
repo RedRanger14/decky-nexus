@@ -536,13 +536,19 @@ def _looks_like_data(dir_path: str) -> bool:
 
 
 def _looks_like_ue4ss_mod(scratch: str) -> bool:
-    """UE4SS script mods: Scripts/main.lua trees (Lua) or a LogicMods dir
-    (Blueprint). Both need the UE4SS loader, which we don't support yet
-    (open Proton bug) - installing them silently produces 'nothing
+    """UE4SS mods come in three shapes: Scripts/main.lua (Lua), a LogicMods
+    dir (Blueprint), or dlls/main.dll (native) - usually with an
+    enabled.txt marker. All need the UE4SS loader, which we don't support
+    yet (open Proton bug) - installing them silently produces 'nothing
     happened' reports."""
     for root, dirs, names in os.walk(scratch):
         low = [n.lower() for n in names]
-        if "main.lua" in low and os.path.basename(root).lower() == "scripts":
+        base = os.path.basename(root).lower()
+        if "main.lua" in low and base == "scripts":
+            return True
+        if "main.dll" in low and base == "dlls":
+            return True
+        if "enabled.txt" in low:
             return True
         if any(d.lower() == "logicmods" for d in dirs):
             return True
