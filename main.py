@@ -535,6 +535,20 @@ def _looks_like_data(dir_path: str) -> bool:
     return False
 
 
+def _looks_like_ue4ss_mod(scratch: str) -> bool:
+    """UE4SS script mods: Scripts/main.lua trees (Lua) or a LogicMods dir
+    (Blueprint). Both need the UE4SS loader, which we don't support yet
+    (open Proton bug) - installing them silently produces 'nothing
+    happened' reports."""
+    for root, dirs, names in os.walk(scratch):
+        low = [n.lower() for n in names]
+        if "main.lua" in low and os.path.basename(root).lower() == "scripts":
+            return True
+        if any(d.lower() == "logicmods" for d in dirs):
+            return True
+    return False
+
+
 def _find_data_payload(scratch: str):
     """Locate the directory whose contents belong in Data/. Handles flat
     archives, a wrapping folder (loose readme-type files beside it are
@@ -1761,6 +1775,18 @@ class Plugin:
             )
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
+
+        # UE4SS script/Blueprint mods can't run without the UE4SS loader
+        # (unsupported: open Proton bug) - refuse instead of placing files
+        # that will never load.
+        if _looks_like_ue4ss_mod(scratch):
+            _force_rmtree(scratch)
+            return {
+                "ok": False,
+                "error": "This is a UE4SS script mod - the UE4SS loader "
+                "isn't supported on Steam Deck yet. Pak-based mods for "
+                "this game work.",
+            }
 
         # Single top-level folder -> that IS the mod folder. Loose files ->
         # wrap them in a folder named after the mod.

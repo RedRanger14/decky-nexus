@@ -878,6 +878,22 @@ class TestDataPayload(unittest.TestCase):
             ],
         )
 
+    def test_ue4ss_mod_shapes_are_detected(self):
+        """Palworld field report: UE4SS Lua mods (Scripts/main.lua) and
+        Blueprint mods (LogicMods dir) installed silently but can never
+        load without the unsupported UE4SS loader."""
+        self.put("MapUnlocker/Scripts/main.lua")
+        self.assertTrue(main._looks_like_ue4ss_mod(self.scratch))
+        shutil.rmtree(self.scratch)
+        os.makedirs(self.scratch)
+        self.put("LogicMods/PalAnalyzer.pak")
+        self.assertTrue(main._looks_like_ue4ss_mod(self.scratch))
+        shutil.rmtree(self.scratch)
+        os.makedirs(self.scratch)
+        self.put("CoolPakMod/NoCollision_P.pak")
+        self.put("CoolPakMod/Scripts.txt")
+        self.assertFalse(main._looks_like_ue4ss_mod(self.scratch))
+
     def test_safe_rel_path_rejects_traversal(self):
         self.assertTrue(main._safe_rel_path("meshes/armor/x.nif"))
         for evil in ("../x", "a/../b", "a//b", ".", ".."):

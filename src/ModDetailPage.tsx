@@ -19,6 +19,7 @@ import {
   ModRequirement,
   NexusMod,
   getEndorsement,
+  getGameStatus,
   getInstalledMods,
   getModDetails,
   getModFiles,
@@ -130,6 +131,7 @@ export function ModDetailPage() {
   const [endorseStatus, setEndorseStatus] = useState<string | undefined>();
   const [endorseBusy, setEndorseBusy] = useState(false);
   const [imageFull, setImageFull] = useState(false);
+  const [fwInstalled, setFwInstalled] = useState(false);
 
   const refreshInstalled = (s: SelectedMod) => {
     getInstalledMods(
@@ -141,6 +143,15 @@ export function ModDetailPage() {
       setInstalledMods(r.mods ?? []);
       setInstalledCopy(r.mods?.find((m) => m.mod_id === s.mod.modId));
     });
+    // Frameworks (SMAPI/SKSE/BepInEx) don't create mod records - a
+    // requirement pointing at one must still show green when installed.
+    if (s.game.framework) {
+      getGameStatus(
+        s.game.installDirName,
+        s.game.modsSubdir,
+        s.game.framework.detectFile
+      ).then((r) => setFwInstalled(Boolean(r.framework_installed)));
+    }
   };
 
   const loadAll = (s: SelectedMod) => {
@@ -491,7 +502,9 @@ export function ModDetailPage() {
                   const external = !req.modId || req.modId <= 0;
                   const have =
                     !external &&
-                    installedMods.some((m) => m.mod_id === req.modId);
+                    (installedMods.some((m) => m.mod_id === req.modId) ||
+                      (req.modId === game.framework?.nexusModId &&
+                        fwInstalled));
                   const label = external
                     ? req.modName || req.notes || req.url || "external"
                     : `${req.modName}${req.notes ? ` · ${req.notes}` : ""}`;
@@ -515,9 +528,8 @@ export function ModDetailPage() {
                         textOverflow: "ellipsis",
                         ...(external
                           ? {
-                              background: "rgba(255, 255, 255, 0.08)",
-                              border: "1px solid rgba(255, 255, 255, 0.25)",
-                              opacity: 0.85,
+                              background: "rgba(120, 170, 255, 0.15)",
+                              border: "1px solid rgba(120, 170, 255, 0.5)",
                             }
                           : have
                           ? {
@@ -536,9 +548,14 @@ export function ModDetailPage() {
                   );
                 })}
               </Focusable>
-              <div style={{ fontSize: "11px", opacity: 0.65, marginTop: "5px" }}>
-                ✓ = already installed · tap an orange one to view and install
-                it
+              <div style={{ fontSize: "11px", marginTop: "6px" }}>
+                <span style={{ color: "rgb(143, 212, 143)" }}>● installed</span>
+                <span style={{ opacity: 0.5 }}> · </span>
+                <span style={{ color: NEXUS_ORANGE }}>● needs installing</span>
+                <span style={{ opacity: 0.5 }}> · </span>
+                <span style={{ color: "rgb(120, 170, 255)" }}>
+                  ● external link
+                </span>
               </div>
             </div>
           )}
