@@ -248,7 +248,15 @@ export function BrowsePage() {
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
   const nextOffset = useRef(restored?.nextOffset ?? 0);
-  const skipNextFetch = useRef(Boolean(restored));
+  // Skip the mount fetch ONLY when the restored state is list-mode; a
+  // home-mode restore never fetches, so the pending skip used to eat the
+  // NEXT list fetch instead (view-all landed on an empty page).
+  const skipNextFetch = useRef(
+    Boolean(
+      restored &&
+        (restored.search.trim() !== "" || restored.sort !== "featured")
+    )
+  );
 
   // home mode
   const [recommended, setRecommended] = useState<NexusMod[]>([]);
