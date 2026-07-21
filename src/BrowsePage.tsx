@@ -60,10 +60,12 @@ function HeroCard({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
         background: "#1a1d24",
       }}
     >
-      {(mod.pictureUrl ?? mod.thumbnailUrl) && (
+      {(mod.thumbnailUrl ?? mod.pictureUrl) && (
         <img
-          src={mod.pictureUrl ?? mod.thumbnailUrl}
+          src={mod.thumbnailUrl ?? mod.pictureUrl}
           alt={mod.name}
+          loading="lazy"
+          decoding="async"
           style={{
             position: "absolute",
             inset: 0,
@@ -114,6 +116,8 @@ function ModTile({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
         <img
           src={mod.thumbnailUrl}
           alt={mod.name}
+          loading="lazy"
+          decoding="async"
           style={{ width: "100%", aspectRatio: "16 / 9", objectFit: "cover", display: "block" }}
         />
       ) : (
@@ -261,6 +265,11 @@ export function BrowsePage() {
   // content once it exists.
   const contentRef = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef(true);
+  // Gaming Mode's gamepad focus is not DOM focus - checking activeElement
+  // can't detect "the user is typing". Track keystroke recency instead and
+  // refuse to move focus (which dismisses the on-screen keyboard) near one.
+  const lastSearchEdit = useRef(0);
+  const typedRecently = () => Date.now() - lastSearchEdit.current < 1500;
   useEffect(() => {
     pendingFocus.current = true;
   }, [isHome]);
@@ -268,7 +277,7 @@ export function BrowsePage() {
     if (!pendingFocus.current) return;
     // Never yank focus away from the search box mid-typing - that blurs
     // the field and dismisses the on-screen keyboard.
-    if (document.activeElement?.tagName === "INPUT") {
+    if (typedRecently()) {
       pendingFocus.current = false;
       return;
     }
@@ -461,7 +470,10 @@ export function BrowsePage() {
               label="Search"
               value={search}
               bShowClearAction={true}
-              onChange={(e) => setSearch(e?.target?.value ?? "")}
+              onChange={(e) => {
+                lastSearchEdit.current = Date.now();
+                setSearch(e?.target?.value ?? "");
+              }}
               onKeyDown={(e) => {
                 // Search is live per keystroke; Enter just puts the
                 // on-screen keyboard away.
@@ -486,7 +498,7 @@ export function BrowsePage() {
               <>
                 <SectionHeading title={heroTitle} />
                 <Focusable
-                  autoFocus={document.activeElement?.tagName !== "INPUT"}
+                  autoFocus={!typedRecently()}
                   style={{
                     display: "grid",
                     gridTemplateColumns:
@@ -549,7 +561,7 @@ export function BrowsePage() {
               </div>
             )}
             <Focusable
-              autoFocus={document.activeElement?.tagName !== "INPUT"}
+              autoFocus={!typedRecently()}
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",

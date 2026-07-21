@@ -1,7 +1,9 @@
 import {
+  ButtonItem,
   ConfirmModal,
   DialogButton,
   Focusable,
+  ModalRoot,
   Navigation,
   ScrollPanelGroup,
   showModal,
@@ -64,6 +66,42 @@ function stripMarkup(text: string): string {
 }
 
 const DESC_COLLAPSE_LENGTH = 500;
+
+/** Option-style archives ship several alternative folders (a manual-choice
+ * mini-FOMOD). The backend lists them; the user picks one to install. */
+function PayloadChoiceModal({
+  modName,
+  options,
+  onPick,
+  closeModal,
+}: {
+  modName: string;
+  options: string[];
+  onPick: (option: string) => void;
+  closeModal?: () => void;
+}) {
+  return (
+    <ModalRoot closeModal={closeModal}>
+      <h3 style={{ marginTop: 0 }}>{modName}: choose a version</h3>
+      <div style={{ fontSize: "13px", opacity: 0.9, marginBottom: "8px" }}>
+        This mod's archive offers alternative folders — pick the one to
+        install. (Check the mod's description if you're unsure.)
+      </div>
+      {options.map((opt) => (
+        <ButtonItem
+          key={opt}
+          layout="below"
+          onClick={() => {
+            closeModal?.();
+            onPick(opt);
+          }}
+        >
+          {opt.split("/").pop()}
+        </ButtonItem>
+      ))}
+    </ModalRoot>
+  );
+}
 
 export function ModDetailPage() {
   const [sel, setSel] = useState<SelectedMod | undefined>(getSelectedMod());
@@ -148,7 +186,7 @@ export function ModDetailPage() {
     }
   };
 
-  const onInstall = async (file: ModFile) => {
+  const onInstall = async (file: ModFile, payloadChoice = "") => {
     setInstallingFileId(file.file_id);
     setProgress(undefined);
     try {
@@ -163,8 +201,20 @@ export function ModDetailPage() {
         game.modsSubdir,
         "",
         "",
-        ...modeParams(game)
+        ...modeParams(game),
+        payloadChoice
       );
+      if (result.needs_choice && result.options?.length) {
+        // Option-style archive: ask which folder to install, then retry.
+        showModal(
+          <PayloadChoiceModal
+            modName={mod.name}
+            options={result.options}
+            onPick={(opt) => onInstall(file, opt)}
+          />
+        );
+        return;
+      }
       if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
         refreshInstalled(sel);
