@@ -310,7 +310,8 @@ function CurrentGameSection() {
       game.appId,
       fix.prefsSubpath,
       fix.section,
-      fix.settings
+      fix.settings,
+      false
     );
     toaster.toast(
       result.ok
@@ -362,6 +363,19 @@ function CurrentGameSection() {
         game.framework.detectFile,
         game.framework.avoidFileKeywords ?? []
       );
+      // Some games need ini blocks before mods load at all (e.g. FO4's
+      // archive invalidation) - apply them as part of framework setup.
+      if (result.ok && game.setupInis) {
+        for (const ini of game.setupInis) {
+          await applyDisplayFix(
+            game.appId,
+            ini.prefsSubpath,
+            ini.section,
+            ini.settings,
+            true
+          );
+        }
+      }
       if (result.ok && result.install_path) {
         toaster.toast({
           title: `${game.framework.name} installed`,

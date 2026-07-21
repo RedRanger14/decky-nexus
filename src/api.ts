@@ -164,7 +164,8 @@ export const applyDisplayFix = callable<
     app_id: number,
     prefs_subpath: string,
     section: string,
-    settings: Record<string, string>
+    settings: Record<string, string>,
+    create: boolean
   ],
   { ok: boolean; error?: string }
 >("apply_display_fix");
