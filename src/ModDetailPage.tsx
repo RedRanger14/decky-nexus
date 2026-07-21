@@ -356,8 +356,10 @@ export function ModDetailPage() {
               alt={mod.name}
               style={{
                 width: "100%",
-                maxHeight: "280px",
-                objectFit: "cover",
+                height: "280px",
+                // Never crop the artwork - letterbox odd aspect ratios.
+                objectFit: "contain",
+                background: "#0b0e13",
                 borderRadius: "8px",
                 display: "block",
               }}

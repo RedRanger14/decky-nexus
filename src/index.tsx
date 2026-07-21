@@ -23,7 +23,7 @@ import {
   toaster,
 } from "@decky/api";
 import { Fragment, useEffect, useState } from "react";
-import { FaPuzzlePiece } from "react-icons/fa";
+import { FaEye, FaPuzzlePiece } from "react-icons/fa";
 
 import {
   AuthStatus,
@@ -1041,14 +1041,19 @@ function InstalledModsSection() {
               {mod.mod_id !== undefined && (
                 <DialogButton
                   style={{
-                    minWidth: "34px",
-                    width: "34px",
-                    padding: "6px 0",
+                    minWidth: "40px",
+                    width: "40px",
+                    height: "32px",
+                    padding: "0",
                     flexShrink: 0,
+                    alignSelf: "center",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                   onClick={() => openInstalledModDetail(game, mod)}
                 >
-                  ⓘ
+                  <FaEye size={14} />
                 </DialogButton>
               )}
             </Focusable>
