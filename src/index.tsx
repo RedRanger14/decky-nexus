@@ -56,6 +56,7 @@ import {
   ALL_GAMES,
   DEFAULT_GAME,
   getSupportedGame,
+  modeParams,
   noteActiveGame,
   SupportedGame,
 } from "./games";
@@ -302,7 +303,9 @@ function CurrentGameSection() {
       const result = await installFramework(
         game.nexusDomain,
         game.framework.nexusModId,
-        game.installDirName
+        game.installDirName,
+        game.framework.installKind ?? "smapi",
+        game.framework.detectFile
       );
       if (result.ok && result.install_path) {
         toaster.toast({
@@ -503,21 +506,16 @@ function CurrentGameSection() {
 
 function UninstallPickerModal({
   mods,
-  gameDomain,
-  installDir,
-  modsSubdir,
-  protectedFolders,
+  game,
   closeModal,
   onDone,
 }: {
   mods: InstalledMod[];
-  gameDomain: string;
-  installDir: string;
-  modsSubdir: string;
-  protectedFolders: string[];
+  game: SupportedGame;
   closeModal?: () => void;
   onDone: () => void;
 }) {
+  const protectedFolders = game.protectedModFolders ?? [];
   // The picker stays open across uninstalls so several mods can be removed
   // in one visit; it closes itself when nothing is left.
   const [list, setList] = useState(mods);
@@ -535,10 +533,11 @@ function UninstallPickerModal({
         bDestructiveWarning={true}
         onOK={async () => {
           const result = await uninstallMod(
-            gameDomain,
-            installDir,
-            modsSubdir,
-            mod.folder
+            game.nexusDomain,
+            game.installDirName,
+            game.modsSubdir,
+            mod.folder,
+            ...modeParams(game)
           );
           toaster.toast(
             result.ok
@@ -569,10 +568,11 @@ function UninstallPickerModal({
         bDestructiveWarning={true}
         onOK={async () => {
           const result = await uninstallAllMods(
-            gameDomain,
-            installDir,
-            modsSubdir,
-            protectedFolders
+            game.nexusDomain,
+            game.installDirName,
+            game.modsSubdir,
+            protectedFolders,
+            ...modeParams(game)
           );
           toaster.toast(
             result.ok
@@ -633,8 +633,14 @@ function AllInstalledModsSection() {
       ALL_GAMES.map(async (g) => ({
         game: g,
         mods:
-          (await getInstalledMods(g.nexusDomain, g.installDirName, g.modsSubdir))
-            .mods ?? [],
+          (
+            await getInstalledMods(
+              g.nexusDomain,
+              g.installDirName,
+              g.modsSubdir,
+              ...modeParams(g)
+            )
+          ).mods ?? [],
       }))
     ).then((results) => setByGame(results.filter((r) => r.mods.length > 0)));
   };
@@ -654,7 +660,11 @@ function AllInstalledModsSection() {
         game.installDirName,
         game.modsSubdir,
         mod.folder,
-        enabled
+        enabled,
+        game.installMode ?? "folder",
+        game.nexusDomain,
+        game.appId,
+        game.pluginsTxtSubpath ?? ""
       );
       if (!result.ok) {
         toaster.toast({ title: "Could not toggle mod", body: result.error ?? "" });
@@ -775,9 +785,12 @@ function InstalledModsSection() {
 
   const refresh = () => {
     if (game) {
-      getInstalledMods(game.nexusDomain, game.installDirName, game.modsSubdir).then(
-        (r) => setMods(r.ok ? r.mods : [])
-      );
+      getInstalledMods(
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        ...modeParams(game)
+      ).then((r) => setMods(r.ok ? r.mods : []));
       if (game.logAdapter?.kind === "godot") {
         getModLoadStatus(game.logAdapter.userDirName).then((r) =>
           setLoadStates(
@@ -876,7 +889,11 @@ function InstalledModsSection() {
         game.installDirName,
         game.modsSubdir,
         mod.folder,
-        enabled
+        enabled,
+        game.installMode ?? "folder",
+        game.nexusDomain,
+        game.appId,
+        game.pluginsTxtSubpath ?? ""
       );
       if (!result.ok) {
         toaster.toast({ title: "Could not toggle mod", body: result.error ?? "" });
@@ -893,7 +910,11 @@ function InstalledModsSection() {
       const result = await setAllModsEnabled(
         game.installDirName,
         game.modsSubdir,
-        enabled
+        enabled,
+        game.installMode ?? "folder",
+        game.nexusDomain,
+        game.appId,
+        game.pluginsTxtSubpath ?? ""
       );
       if (result.ok && result.errors && result.errors.length > 0) {
         toaster.toast({
@@ -945,9 +966,15 @@ function InstalledModsSection() {
           <PanelSectionRow key={`${mod.folder}:${mod.enabled}`}>
             <ToggleField
               label={mod.name ?? mod.folder}
-              description={base + badge}
+              description={
+                mod.togglable === false
+                  ? base + badge + " · assets only, always active"
+                  : base + badge
+              }
               checked={mod.enabled}
-              disabled={busyFolder === mod.folder || busyAll}
+              disabled={
+                busyFolder === mod.folder || busyAll || mod.togglable === false
+              }
               onChange={(checked: boolean) => {
                 if (checked !== mod.enabled) onToggle(mod, checked);
               }}
@@ -984,10 +1011,7 @@ function InstalledModsSection() {
             showModal(
               <UninstallPickerModal
                 mods={mods ?? []}
-                gameDomain={game.nexusDomain}
-                installDir={game.installDirName}
-                modsSubdir={game.modsSubdir}
-                protectedFolders={game.protectedModFolders ?? []}
+                game={game}
                 onDone={refresh}
               />
             )

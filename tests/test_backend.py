@@ -577,5 +577,271 @@ class TestModLoadStatusEndToEnd(unittest.TestCase):
         self.assertFalse(result["ok"])
 
 
+class TestPluginsTxt(unittest.TestCase):
+    """dataDir mode (Skyrim): plugin activation lives in plugins.txt inside
+    the game's Proton prefix; enabled = '*' prefix."""
+
+    def setUp(self):
+        self.path = os.path.join(TEST_ROOT, "plugins-txt", "plugins.txt")
+        shutil.rmtree(os.path.dirname(self.path), ignore_errors=True)
+
+    def read(self):
+        with open(self.path, encoding="utf-8") as f:
+            return f.read().splitlines()
+
+    def test_path_points_into_proton_prefix(self):
+        path = main._plugins_txt_path(489830, "Skyrim Special Edition/plugins.txt")
+        expected = os.path.join(
+            main.decky.DECKY_USER_HOME, ".steam", "steam", "steamapps",
+            "compatdata", "489830", "pfx", "drive_c", "users", "steamuser",
+            "AppData", "Local", "Skyrim Special Edition", "plugins.txt",
+        )
+        self.assertEqual(path, expected)
+
+    def test_read_missing_file_is_empty(self):
+        self.assertEqual(main._read_plugins_txt(self.path), [])
+
+    def test_add_appends_starred_and_dedupes_case_insensitively(self):
+        main._write_plugins_txt(self.path, ["*SkyUI_SE.esp", "unofficial.esp"])
+        main._add_plugins(self.path, ["skyui_se.esp", "NewMod.esp"])
+        self.assertEqual(
+            self.read(), ["*SkyUI_SE.esp", "unofficial.esp", "*NewMod.esp"]
+        )
+
+    def test_set_active_toggles_star_and_preserves_order(self):
+        main._write_plugins_txt(
+            self.path, ["# comment", "*A.esp", "*B.esp", "C.esp"]
+        )
+        main._set_plugins_active(self.path, ["B.esp"], False)
+        self.assertEqual(self.read(), ["# comment", "*A.esp", "B.esp", "C.esp"])
+        main._set_plugins_active(self.path, ["b.esp", "C.esp"], True)
+        self.assertEqual(self.read(), ["# comment", "*A.esp", "*B.esp", "*C.esp"])
+
+    def test_remove_drops_lines_regardless_of_star(self):
+        main._write_plugins_txt(self.path, ["*A.esp", "B.esp", "*C.esp"])
+        main._remove_plugins(self.path, ["a.esp", "C.esp"])
+        self.assertEqual(self.read(), ["B.esp"])
+
+
+class TestDataPayload(unittest.TestCase):
+    """dataDir mode: find the directory whose contents belong in Data/."""
+
+    def setUp(self):
+        self.scratch = os.path.join(TEST_ROOT, "payload-scratch")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+
+    def put(self, rel):
+        path = os.path.join(self.scratch, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("x")
+
+    def test_flat_archive_with_plugin_is_the_payload(self):
+        self.put("CoolMod.esp")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_marker_dir_counts_as_data(self):
+        self.put("textures/armor/shiny.dds")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_explicit_data_folder_wins(self):
+        self.put("Data/CoolMod.esp")
+        self.put("readme.txt")
+        self.assertEqual(
+            main._find_data_payload(self.scratch),
+            os.path.join(self.scratch, "Data"),
+        )
+
+    def test_single_wrapper_folder_is_unwrapped(self):
+        self.put("CoolMod-1.0/CoolMod.esp")
+        self.assertEqual(
+            main._find_data_payload(self.scratch),
+            os.path.join(self.scratch, "CoolMod-1.0"),
+        )
+
+    def test_wrapper_containing_data_folder(self):
+        self.put("CoolMod-1.0/Data/CoolMod.esp")
+        self.assertEqual(
+            main._find_data_payload(self.scratch),
+            os.path.join(self.scratch, "CoolMod-1.0", "Data"),
+        )
+
+    def test_fomod_only_archive_is_rejected(self):
+        self.put("fomod/ModuleConfig.xml")
+        self.put("00 Core/CoolMod.esp")
+        self.assertIsNone(main._find_data_payload(self.scratch))
+
+    def test_safe_rel_path_rejects_traversal(self):
+        self.assertTrue(main._safe_rel_path("meshes/armor/x.nif"))
+        for evil in ("../x", "a/../b", "a//b", ".", ".."):
+            self.assertFalse(main._safe_rel_path(evil), evil)
+
+
+class TestDataDirFlows(unittest.TestCase):
+    """dataDir mode end-to-end against seeded install records: list with
+    star-derived enabled state, toggle, uninstall exactly the manifest."""
+
+    GAME = "Skyrim Special Edition"
+    DOMAIN = "skyrimspecialedition"
+    APP_ID = 489830
+    SUBPATH = "Skyrim Special Edition/plugins.txt"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        self.data = os.path.join(self.install, "Data")
+        shutil.rmtree(self.install, ignore_errors=True)
+        os.makedirs(self.data)
+        self.plugins_txt = main._plugins_txt_path(self.APP_ID, self.SUBPATH)
+        shutil.rmtree(
+            os.path.dirname(os.path.dirname(self.plugins_txt)), ignore_errors=True
+        )
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.plugin = main.Plugin()
+        # The game's own base file must survive every mod operation.
+        self.put_data_file("Skyrim.esm")
+
+    def put_data_file(self, rel):
+        path = os.path.join(self.data, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("x")
+
+    def seed_mod(self, key, files, plugins, active=True):
+        for rel in files:
+            self.put_data_file(rel)
+        if plugins:
+            main._add_plugins(self.plugins_txt, plugins)
+            if not active:
+                main._set_plugins_active(self.plugins_txt, plugins, False)
+        settings = main._load_settings()
+        settings.setdefault("installed", {}).setdefault(self.DOMAIN, {})[key] = {
+            "mod_id": 1,
+            "file_id": 1,
+            "name": key,
+            "version": "1.0",
+            "mode": "dataDir",
+            "files": files,
+            "plugins": plugins,
+        }
+        main._save_settings(settings)
+
+    def mode_args(self):
+        """(install_mode, app_id, plugins_subpath) - matches modeParams()."""
+        return "dataDir", self.APP_ID, self.SUBPATH
+
+    def toggle_args(self):
+        """set_mod_enabled/set_all_mods_enabled put game_domain after mode."""
+        return "dataDir", self.DOMAIN, self.APP_ID, self.SUBPATH
+
+    def test_list_reads_enabled_from_plugins_txt(self):
+        self.seed_mod("SkyUI", ["SkyUI_SE.esp", "SkyUI_SE.bsa"], ["SkyUI_SE.esp"])
+        self.seed_mod("Disabled", ["Off.esp"], ["Off.esp"], active=False)
+        self.seed_mod("TextureOnly", ["textures/armor/shiny.dds"], [])
+        result = run(
+            self.plugin.get_installed_mods(
+                self.DOMAIN, self.GAME, "Data", *self.mode_args()
+            )
+        )
+        self.assertTrue(result["ok"])
+        by_name = {m["folder"]: m for m in result["mods"]}
+        self.assertTrue(by_name["SkyUI"]["enabled"])
+        self.assertTrue(by_name["SkyUI"]["togglable"])
+        self.assertFalse(by_name["Disabled"]["enabled"])
+        # Asset-only mods have nothing to toggle and count as always active.
+        self.assertTrue(by_name["TextureOnly"]["enabled"])
+        self.assertFalse(by_name["TextureOnly"]["togglable"])
+
+    def test_toggle_stars_and_unstars_plugins(self):
+        self.seed_mod("SkyUI", ["SkyUI_SE.esp"], ["SkyUI_SE.esp"])
+        result = run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "Data", "SkyUI", False, *self.toggle_args()
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(main._read_plugins_txt(self.plugins_txt), ["SkyUI_SE.esp"])
+        result = run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "Data", "SkyUI", True, *self.toggle_args()
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(main._read_plugins_txt(self.plugins_txt), ["*SkyUI_SE.esp"])
+
+    def test_toggle_asset_only_mod_is_refused(self):
+        self.seed_mod("TextureOnly", ["textures/armor/shiny.dds"], [])
+        result = run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "Data", "TextureOnly", False, *self.toggle_args()
+            )
+        )
+        self.assertFalse(result["ok"])
+
+    def test_toggle_all_flips_every_tracked_plugin(self):
+        self.seed_mod("A", ["A.esp"], ["A.esp"])
+        self.seed_mod("B", ["B.esp"], ["B.esp"])
+        result = run(
+            self.plugin.set_all_mods_enabled(
+                self.GAME, "Data", False, *self.toggle_args()
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["moved"], 2)
+        self.assertEqual(
+            main._read_plugins_txt(self.plugins_txt), ["A.esp", "B.esp"]
+        )
+
+    def test_uninstall_removes_only_manifest_files(self):
+        self.seed_mod(
+            "SkyUI",
+            ["SkyUI_SE.esp", "interface/skyui/config.txt"],
+            ["SkyUI_SE.esp"],
+        )
+        self.seed_mod("Other", ["Other.esp"], ["Other.esp"])
+        result = run(
+            self.plugin.uninstall_mod(
+                self.DOMAIN, self.GAME, "Data", "SkyUI", *self.mode_args()
+            )
+        )
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertFalse(os.path.isfile(os.path.join(self.data, "SkyUI_SE.esp")))
+        # Emptied directories are pruned; other mods and the game's own
+        # files are untouched.
+        self.assertFalse(os.path.isdir(os.path.join(self.data, "interface")))
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "Skyrim.esm")))
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "Other.esp")))
+        self.assertEqual(main._read_plugins_txt(self.plugins_txt), ["*Other.esp"])
+        records = main._load_settings().get("installed", {}).get(self.DOMAIN, {})
+        self.assertNotIn("SkyUI", records)
+        self.assertIn("Other", records)
+
+    def test_uninstall_untracked_mod_fails(self):
+        result = run(
+            self.plugin.uninstall_mod(
+                self.DOMAIN, self.GAME, "Data", "Ghost", *self.mode_args()
+            )
+        )
+        self.assertFalse(result["ok"])
+
+    def test_uninstall_all_respects_protected(self):
+        self.seed_mod("UserMod", ["UserMod.esp"], ["UserMod.esp"])
+        self.seed_mod("Precious", ["Precious.esp"], ["Precious.esp"])
+        result = run(
+            self.plugin.uninstall_all_mods(
+                self.DOMAIN, self.GAME, "Data", ["precious"], *self.mode_args()
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 1)
+        self.assertEqual(result["kept"], ["Precious"])
+        self.assertFalse(os.path.isfile(os.path.join(self.data, "UserMod.esp")))
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "Precious.esp")))
+        self.assertEqual(
+            main._read_plugins_txt(self.plugins_txt), ["*Precious.esp"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

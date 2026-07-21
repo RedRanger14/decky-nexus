@@ -269,6 +269,160 @@ def _pick_main_file(file_list: list):
 
 NXM_QUEUE_NAME = "nxm-queue.log"
 
+# ---- dataDir install mode (Skyrim-class games) -------------------------------
+# Mods merge into the game's Data/ dir instead of per-mod folders: installs
+# record a per-file manifest, enable/disable toggles the '*' activation flag
+# in plugins.txt (which lives inside the Proton prefix), uninstall removes
+# exactly the manifest's files.
+
+PLUGIN_EXTENSIONS = (".esp", ".esm", ".esl")
+DATA_MARKER_DIRS = {
+    "meshes", "textures", "scripts", "interface", "sound", "music",
+    "seq", "skse", "strings", "shadersfx", "grass", "materials",
+}
+
+
+def _plugins_txt_path(app_id: int, subpath: str) -> str:
+    """plugins.txt for a Proton game lives inside its compat prefix."""
+    return os.path.join(
+        decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "compatdata",
+        str(int(app_id)), "pfx", "drive_c", "users", "steamuser",
+        "AppData", "Local", *subpath.split("/"),
+    )
+
+
+def _read_plugins_txt(path: str) -> list:
+    if not path or not os.path.isfile(path):
+        return []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read().splitlines()
+
+
+def _write_plugins_txt(path: str, lines: list) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + ("\n" if lines else ""))
+
+
+def _add_plugins(path: str, names: list) -> None:
+    lines = _read_plugins_txt(path)
+    existing = {
+        l.lstrip("*").strip().lower()
+        for l in lines
+        if l.strip() and not l.startswith("#")
+    }
+    for name in names:
+        if name.lower() not in existing:
+            lines.append("*" + name)
+    _write_plugins_txt(path, lines)
+
+
+def _set_plugins_active(path: str, names: list, active: bool) -> None:
+    targets = {n.lower() for n in names}
+    out = []
+    for line in _read_plugins_txt(path):
+        bare = line.lstrip("*").strip()
+        if bare.lower() in targets and not line.startswith("#"):
+            out.append(("*" + bare) if active else bare)
+        else:
+            out.append(line)
+    _write_plugins_txt(path, out)
+
+
+def _remove_plugins(path: str, names: list) -> None:
+    targets = {n.lower() for n in names}
+    lines = [
+        l
+        for l in _read_plugins_txt(path)
+        if l.lstrip("*").strip().lower() not in targets
+    ]
+    _write_plugins_txt(path, lines)
+
+
+def _looks_like_data(dir_path: str) -> bool:
+    try:
+        names = os.listdir(dir_path)
+    except OSError:
+        return False
+    for name in names:
+        low = name.lower()
+        if low.endswith(PLUGIN_EXTENSIONS) or low.endswith((".bsa", ".ba2")):
+            return True
+        if low in DATA_MARKER_DIRS and os.path.isdir(os.path.join(dir_path, name)):
+            return True
+    return False
+
+
+def _find_data_payload(scratch: str):
+    """Locate the directory whose contents belong in Data/. Handles flat
+    archives, a wrapping folder, and an explicit Data/ folder (up to two
+    levels). Returns None for unrecognizable layouts (e.g. FOMOD-only)."""
+    if _looks_like_data(scratch):
+        return scratch
+    entries = os.listdir(scratch)
+    dirs = [e for e in entries if os.path.isdir(os.path.join(scratch, e))]
+    for d in dirs:
+        if d.lower() == "data":
+            return os.path.join(scratch, d)
+    if len(dirs) == 1 and len(entries) == 1:
+        inner = os.path.join(scratch, dirs[0])
+        if _looks_like_data(inner):
+            return inner
+        inner_entries = os.listdir(inner)
+        inner_dirs = [
+            e for e in inner_entries if os.path.isdir(os.path.join(inner, e))
+        ]
+        for d in inner_dirs:
+            if d.lower() == "data":
+                return os.path.join(inner, d)
+        if len(inner_dirs) == 1 and len(inner_entries) == 1:
+            deep = os.path.join(inner, inner_dirs[0])
+            if _looks_like_data(deep):
+                return deep
+    return None
+
+
+def _remove_data_dir_record(
+    game_domain: str, record_key: str, data_path: str,
+    app_id: int, plugins_subpath: str, settings: dict,
+) -> bool:
+    """Delete a dataDir-mode mod's manifest files, prune empty dirs,
+    deactivate+remove its plugins, drop the record. Returns True if the
+    record existed."""
+    records = settings.get("installed", {}).get(game_domain, {})
+    rec = records.get(record_key)
+    if not rec or rec.get("mode") != "dataDir":
+        return False
+    dirs_touched = set()
+    for rel in rec.get("files") or []:
+        if not _safe_rel_path(rel):
+            continue
+        target = os.path.join(data_path, *rel.split("/"))
+        try:
+            if os.path.isfile(target):
+                os.remove(target)
+        except OSError:
+            pass
+        parent = os.path.dirname(target)
+        while parent and len(parent) > len(data_path):
+            dirs_touched.add(parent)
+            parent = os.path.dirname(parent)
+    for d in sorted(dirs_touched, key=len, reverse=True):
+        try:
+            os.rmdir(d)  # only succeeds when empty
+        except OSError:
+            pass
+    plugins = rec.get("plugins") or []
+    if plugins and plugins_subpath:
+        _remove_plugins(_plugins_txt_path(app_id, plugins_subpath), plugins)
+    records.pop(record_key, None)
+    return True
+
+
+def _safe_rel_path(rel: str) -> bool:
+    parts = rel.replace("\\", "/").split("/")
+    return all(p not in ("", ".", "..") for p in parts)
+
 
 def _parse_nxm_url(url: str):
     """Strictly parse an nxm:// mod-file link (the website's 'Slow download' /
@@ -1084,6 +1238,9 @@ class Plugin:
         mods_subdir: str,
         dl_key: str = "",
         dl_expires: str = "",
+        install_mode: str = "folder",
+        app_id: int = 0,
+        plugins_subpath: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -1100,6 +1257,9 @@ class Plugin:
                 mods_subdir,
                 dl_key,
                 dl_expires,
+                install_mode,
+                app_id,
+                plugins_subpath,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -1118,6 +1278,9 @@ class Plugin:
         mods_subdir: str,
         dl_key: str = "",
         dl_expires: str = "",
+        install_mode: str = "folder",
+        app_id: int = 0,
+        plugins_subpath: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -1222,6 +1385,69 @@ class Plugin:
             _force_rmtree(scratch)
             return {"ok": False, "error": "Archive was empty"}
 
+        if install_mode == "dataDir":
+            # Skyrim-class: merge the payload into Data/, record a per-file
+            # manifest, activate any plugin files in plugins.txt.
+            payload = _find_data_payload(scratch)
+            if payload is None:
+                _force_rmtree(scratch)
+                return {
+                    "ok": False,
+                    "error": "This archive has no recognizable Data payload "
+                    "(FOMOD installers aren't supported yet)",
+                }
+            os.makedirs(mods_path, exist_ok=True)
+            files_rel, plugins = [], []
+            for root, _dirs, names in os.walk(payload):
+                for name in names:
+                    src_file = os.path.join(root, name)
+                    rel = os.path.relpath(src_file, payload)
+                    if not _safe_rel_path(rel):
+                        continue
+                    dst = os.path.join(mods_path, rel)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.move(src_file, dst)
+                    files_rel.append(rel.replace(os.sep, "/"))
+                    if (
+                        os.sep not in rel
+                        and "/" not in rel
+                        and rel.lower().endswith(PLUGIN_EXTENSIONS)
+                    ):
+                        plugins.append(rel)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            if not files_rel:
+                return {"ok": False, "error": "Archive contained no files"}
+            if plugins and plugins_subpath:
+                _add_plugins(_plugins_txt_path(app_id, plugins_subpath), plugins)
+            record_key = _safe_name(mod_name)
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            installed[record_key] = {
+                "mod_id": mod_id,
+                "file_id": file_id,
+                "name": mod_name,
+                "version": mod_version,
+                "file_name": file_name,
+                "installed_at": int(time.time()),
+                "mode": "dataDir",
+                "files": files_rel,
+                "plugins": plugins,
+            }
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed {mod_name!r} into Data/ "
+                f"({len(files_rel)} files, {len(plugins)} plugins)"
+            )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": record_key}
+
         # Single top-level folder -> that IS the mod folder. Loose files ->
         # wrap them in a folder named after the mod.
         os.makedirs(mods_path, exist_ok=True)
@@ -1265,7 +1491,12 @@ class Plugin:
         return {"ok": True, "folder": folder}
 
     async def install_framework(
-        self, game_domain: str, mod_id: int, install_dir: str
+        self,
+        game_domain: str,
+        mod_id: int,
+        install_dir: str,
+        install_kind: str = "smapi",
+        detect_file: str = "StardewModdingAPI",
     ) -> dict:
         """Download a mod-loader framework (e.g. SMAPI) from Nexus - so the
         author gets the download credit - and run its unattended installer
@@ -1336,6 +1567,42 @@ class Plugin:
             if err:
                 _force_rmtree(scratch)
                 return {"ok": False, "error": f"Extraction failed: {err}"}
+
+            if install_kind == "copyRoot":
+                # SKSE-style: the archive is the game-dir payload, usually
+                # inside one versioned wrapper folder - flatten and merge.
+                src = scratch
+                top = os.listdir(scratch)
+                if len(top) == 1 and os.path.isdir(os.path.join(scratch, top[0])):
+                    src = os.path.join(scratch, top[0])
+                for root, _dirs, names in os.walk(src):
+                    for name in names:
+                        rel = os.path.relpath(os.path.join(root, name), src)
+                        if not _safe_rel_path(rel):
+                            continue
+                        dst = os.path.join(install_path, rel)
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        if os.path.isfile(dst):
+                            os.remove(dst)
+                        shutil.move(os.path.join(root, name), dst)
+                        if rel.lower().endswith(".exe") or "." not in os.path.basename(rel):
+                            try:
+                                os.chmod(dst, 0o755)
+                            except OSError:
+                                pass
+                _force_rmtree(scratch)
+                installed = any(
+                    n.lower() == detect_file.lower()
+                    or n.startswith(detect_file)
+                    for n in os.listdir(install_path)
+                )
+                if not installed:
+                    return {
+                        "ok": False,
+                        "error": "Framework files not found after extraction",
+                    }
+                decky.logger.info(f"framework (copyRoot) installed into {install_path}")
+                return {"ok": True, "install_path": install_path}
 
             # SMAPI's bundled installer is interactive-only (its unattended
             # flags don't exist, and 'install on Linux.sh' doesn't forward
@@ -1431,8 +1698,45 @@ class Plugin:
     # ---- Installed mods / enable & disable ----------------------------------
 
     async def get_installed_mods(
-        self, game_domain: str, install_dir: str, mods_subdir: str
+        self,
+        game_domain: str,
+        install_dir: str,
+        mods_subdir: str,
+        install_mode: str = "folder",
+        app_id: int = 0,
+        plugins_subpath: str = "",
     ) -> dict:
+        if install_mode == "dataDir":
+            records = _load_settings().get("installed", {}).get(game_domain, {})
+            active = set()
+            if plugins_subpath:
+                for line in _read_plugins_txt(
+                    _plugins_txt_path(app_id, plugins_subpath)
+                ):
+                    if line.startswith("*"):
+                        active.add(line[1:].strip().lower())
+            results = []
+            for key, rec in records.items():
+                if rec.get("mode") != "dataDir":
+                    continue
+                plugins = rec.get("plugins") or []
+                enabled = (not plugins) or any(
+                    p.lower() in active for p in plugins
+                )
+                results.append(
+                    {
+                        "folder": key,
+                        "enabled": enabled,
+                        "tracked": True,
+                        "name": rec.get("name") or key,
+                        "version": rec.get("version") or "",
+                        "mod_id": rec.get("mod_id"),
+                        "togglable": bool(plugins),
+                    }
+                )
+            results.sort(key=lambda m: (m["name"] or "").lower())
+            return {"ok": True, "mods": results}
+
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
         records = _load_settings().get("installed", {}).get(game_domain, {})
 
@@ -1463,8 +1767,40 @@ class Plugin:
         return {"ok": True, "mods": results}
 
     async def set_mod_enabled(
-        self, install_dir: str, mods_subdir: str, folder: str, enabled: bool
+        self,
+        install_dir: str,
+        mods_subdir: str,
+        folder: str,
+        enabled: bool,
+        install_mode: str = "folder",
+        game_domain: str = "",
+        app_id: int = 0,
+        plugins_subpath: str = "",
     ) -> dict:
+        if install_mode == "dataDir":
+            rec = (
+                _load_settings()
+                .get("installed", {})
+                .get(game_domain, {})
+                .get(folder)
+            )
+            if not rec:
+                return {"ok": False, "error": f"{folder} is not tracked"}
+            plugins = rec.get("plugins") or []
+            if not plugins:
+                return {
+                    "ok": False,
+                    "error": "This mod has no plugin file to toggle - its "
+                    "assets are always active",
+                }
+            _set_plugins_active(
+                _plugins_txt_path(app_id, plugins_subpath), plugins, enabled
+            )
+            decky.logger.info(
+                f"{'enabled' if enabled else 'disabled'} plugins for {folder!r}"
+            )
+            return {"ok": True}
+
         # Folder names come from our own directory scan, but never trust a
         # path component: refuse separators outright.
         if os.sep in folder or "/" in folder or folder in (".", ".."):
@@ -1485,9 +1821,27 @@ class Plugin:
         return {"ok": True}
 
     async def set_all_mods_enabled(
-        self, install_dir: str, mods_subdir: str, enabled: bool
+        self,
+        install_dir: str,
+        mods_subdir: str,
+        enabled: bool,
+        install_mode: str = "folder",
+        game_domain: str = "",
+        app_id: int = 0,
+        plugins_subpath: str = "",
     ) -> dict:
-        """Move every mod folder at once - 'play vanilla' / 'restore mods'."""
+        """Move every mod folder at once - 'play vanilla' / 'restore mods'.
+        In dataDir mode, toggles every tracked mod's plugins instead."""
+        if install_mode == "dataDir":
+            records = _load_settings().get("installed", {}).get(game_domain, {})
+            path = _plugins_txt_path(app_id, plugins_subpath)
+            moved = 0
+            for rec in records.values():
+                plugins = rec.get("plugins") or []
+                if rec.get("mode") == "dataDir" and plugins:
+                    _set_plugins_active(path, plugins, enabled)
+                    moved += 1
+            return {"ok": True, "moved": moved, "errors": []}
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
         src_base, dst_base = (
             (disabled_path, mods_path) if enabled else (mods_path, disabled_path)
@@ -1514,11 +1868,29 @@ class Plugin:
         return {"ok": True, "moved": moved, "errors": errors}
 
     async def uninstall_mod(
-        self, game_domain: str, install_dir: str, mods_subdir: str, folder: str
+        self,
+        game_domain: str,
+        install_dir: str,
+        mods_subdir: str,
+        folder: str,
+        install_mode: str = "folder",
+        app_id: int = 0,
+        plugins_subpath: str = "",
     ) -> dict:
-        """Delete a mod's folder (wherever it lives) and forget its record."""
+        """Delete a mod's folder (or, in dataDir mode, its manifest files)
+        and forget its record."""
         if os.sep in folder or "/" in folder or folder in (".", ".."):
             return {"ok": False, "error": "Invalid mod folder name"}
+        if install_mode == "dataDir":
+            settings = _load_settings()
+            _, data_path, _unused = _game_paths(install_dir, mods_subdir)
+            if not _remove_data_dir_record(
+                game_domain, folder, data_path, app_id, plugins_subpath, settings
+            ):
+                return {"ok": False, "error": f"{folder} is not tracked"}
+            _save_settings(settings)
+            decky.logger.info(f"uninstalled dataDir mod {folder!r}")
+            return {"ok": True}
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
         removed = False
         for base in (mods_path, disabled_path):
@@ -1608,11 +1980,36 @@ class Plugin:
         install_dir: str,
         mods_subdir: str,
         protected=None,
+        install_mode: str = "folder",
+        app_id: int = 0,
+        plugins_subpath: str = "",
     ) -> dict:
         """Remove every mod folder (enabled and disabled) except protected
         ones (framework components like SMAPI's SaveBackup)."""
         try:
             protected_set = {p.lower() for p in (protected or [])}
+            if install_mode == "dataDir":
+                settings = _load_settings()
+                _, data_path, _unused = _game_paths(install_dir, mods_subdir)
+                records = settings.get("installed", {}).get(game_domain, {})
+                keys = [
+                    k for k, r in records.items() if r.get("mode") == "dataDir"
+                ]
+                removed_list, kept = [], []
+                for key in keys:
+                    if key.lower() in protected_set:
+                        kept.append(key)
+                        continue
+                    if _remove_data_dir_record(
+                        game_domain, key, data_path, app_id,
+                        plugins_subpath, settings,
+                    ):
+                        removed_list.append(key)
+                _save_settings(settings)
+                decky.logger.info(
+                    f"uninstall_all (dataDir): removed {removed_list}, kept {kept}"
+                )
+                return {"ok": True, "removed": len(removed_list), "kept": kept}
             _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
             settings = _load_settings()
             records = settings.get("installed", {}).get(game_domain, {})

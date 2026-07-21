@@ -25,6 +25,7 @@ import {
   uninstallMod,
 } from "./api";
 import { getCompatHint } from "./compat";
+import { modeParams } from "./games";
 import { SelectedMod, getSelectedMod, setSelectedMod } from "./state";
 import { isGameRunning, restartGame } from "./steam";
 import {
@@ -78,7 +79,8 @@ export function ModDetailPage() {
     getInstalledMods(
       s.game.nexusDomain,
       s.game.installDirName,
-      s.game.modsSubdir
+      s.game.modsSubdir,
+      ...modeParams(s.game)
     ).then((r) => setInstalledCopy(r.mods?.find((m) => m.mod_id === s.mod.modId)));
   };
 
@@ -150,7 +152,10 @@ export function ModDetailPage() {
         mod.name,
         file.version || mod.version,
         game.installDirName,
-        game.modsSubdir
+        game.modsSubdir,
+        "",
+        "",
+        ...modeParams(game)
       );
       if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
@@ -437,7 +442,8 @@ export function ModDetailPage() {
                       game.nexusDomain,
                       game.installDirName,
                       game.modsSubdir,
-                      installedCopy.folder
+                      installedCopy.folder,
+                      ...modeParams(game)
                     );
                     toaster.toast(
                       result.ok

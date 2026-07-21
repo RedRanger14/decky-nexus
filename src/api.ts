@@ -54,6 +54,8 @@ export interface InstalledMod {
   name?: string;
   version?: string;
   mod_id?: number;
+  /** dataDir mode: false when the mod has no plugin file to toggle */
+  togglable?: boolean;
 }
 
 export interface InstalledResult {
@@ -125,7 +127,12 @@ export const installMod = callable<
     mod_name: string,
     mod_version: string,
     install_dir: string,
-    mods_subdir: string
+    mods_subdir: string,
+    dl_key: string,
+    dl_expires: string,
+    install_mode: "folder" | "dataDir",
+    app_id: number,
+    plugins_subpath: string
   ],
   InstallResult
 >("install_mod");
@@ -146,27 +153,65 @@ export const setFrameworkEnabled = callable<
 >("set_framework_enabled");
 
 export const installFramework = callable<
-  [game_domain: string, mod_id: number, install_dir: string],
+  [
+    game_domain: string,
+    mod_id: number,
+    install_dir: string,
+    install_kind: "smapi" | "copyRoot",
+    detect_file: string
+  ],
   { ok: boolean; install_path?: string; error?: string }
 >("install_framework");
 
 export const getInstalledMods = callable<
-  [game_domain: string, install_dir: string, mods_subdir: string],
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    install_mode: "folder" | "dataDir",
+    app_id: number,
+    plugins_subpath: string
+  ],
   InstalledResult
 >("get_installed_mods");
 
 export const setModEnabled = callable<
-  [install_dir: string, mods_subdir: string, folder: string, enabled: boolean],
+  [
+    install_dir: string,
+    mods_subdir: string,
+    folder: string,
+    enabled: boolean,
+    install_mode: "folder" | "dataDir",
+    game_domain: string,
+    app_id: number,
+    plugins_subpath: string
+  ],
   { ok: boolean; error?: string }
 >("set_mod_enabled");
 
 export const setAllModsEnabled = callable<
-  [install_dir: string, mods_subdir: string, enabled: boolean],
+  [
+    install_dir: string,
+    mods_subdir: string,
+    enabled: boolean,
+    install_mode: "folder" | "dataDir",
+    game_domain: string,
+    app_id: number,
+    plugins_subpath: string
+  ],
   { ok: boolean; moved?: number; errors?: string[]; error?: string }
 >("set_all_mods_enabled");
 
 export const uninstallMod = callable<
-  [game_domain: string, install_dir: string, mods_subdir: string, folder: string],
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    folder: string,
+    install_mode: "folder" | "dataDir",
+    app_id: number,
+    plugins_subpath: string
+  ],
   { ok: boolean; error?: string }
 >("uninstall_mod");
 
@@ -175,7 +220,10 @@ export const uninstallAllMods = callable<
     game_domain: string,
     install_dir: string,
     mods_subdir: string,
-    protected_folders: string[]
+    protected_folders: string[],
+    install_mode: "folder" | "dataDir",
+    app_id: number,
+    plugins_subpath: string
   ],
   { ok: boolean; removed?: number; kept?: string[]; error?: string }
 >("uninstall_all_mods");
