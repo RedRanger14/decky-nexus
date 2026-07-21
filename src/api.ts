@@ -137,6 +137,7 @@ export const installMod = callable<
     install_mode: "folder" | "dataDir",
     app_id: number,
     plugins_subpath: string,
+    plugins_style: "starred" | "listed",
     payload_choice: string
   ],
   InstallResult
@@ -202,7 +203,8 @@ export const getInstalledMods = callable<
     mods_subdir: string,
     install_mode: "folder" | "dataDir",
     app_id: number,
-    plugins_subpath: string
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
   ],
   InstalledResult
 >("get_installed_mods");
@@ -216,7 +218,8 @@ export const setModEnabled = callable<
     install_mode: "folder" | "dataDir",
     game_domain: string,
     app_id: number,
-    plugins_subpath: string
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
   ],
   { ok: boolean; error?: string }
 >("set_mod_enabled");
@@ -229,7 +232,8 @@ export const setAllModsEnabled = callable<
     install_mode: "folder" | "dataDir",
     game_domain: string,
     app_id: number,
-    plugins_subpath: string
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
   ],
   { ok: boolean; moved?: number; errors?: string[]; error?: string }
 >("set_all_mods_enabled");
@@ -242,7 +246,8 @@ export const uninstallMod = callable<
     folder: string,
     install_mode: "folder" | "dataDir",
     app_id: number,
-    plugins_subpath: string
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
   ],
   { ok: boolean; error?: string }
 >("uninstall_mod");
@@ -255,7 +260,8 @@ export const uninstallAllMods = callable<
     protected_folders: string[],
     install_mode: "folder" | "dataDir",
     app_id: number,
-    plugins_subpath: string
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
   ],
   { ok: boolean; removed?: number; kept?: string[]; error?: string }
 >("uninstall_all_mods");

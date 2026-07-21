@@ -744,7 +744,8 @@ function AllInstalledModsSection() {
         game.installMode ?? "folder",
         game.nexusDomain,
         game.appId,
-        game.pluginsTxtSubpath ?? ""
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred"
       );
       if (!result.ok) {
         toaster.toast({ title: "Could not toggle mod", body: result.error ?? "" });
@@ -973,7 +974,8 @@ function InstalledModsSection() {
         game.installMode ?? "folder",
         game.nexusDomain,
         game.appId,
-        game.pluginsTxtSubpath ?? ""
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred"
       );
       if (!result.ok) {
         toaster.toast({ title: "Could not toggle mod", body: result.error ?? "" });
@@ -994,7 +996,8 @@ function InstalledModsSection() {
         game.installMode ?? "folder",
         game.nexusDomain,
         game.appId,
-        game.pluginsTxtSubpath ?? ""
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred"
       );
       if (result.ok && result.errors && result.errors.length > 0) {
         toaster.toast({

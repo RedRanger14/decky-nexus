@@ -53,6 +53,10 @@ export interface SupportedGame {
   /** dataDir mode: plugins.txt path relative to the Proton prefix's
    * AppData/Local (e.g. "Skyrim Special Edition/plugins.txt") */
   pluginsTxtSubpath?: string;
+  /** dataDir mode: how plugins.txt activates a plugin. "starred"
+   * (SSE/FO4): '*Name.esp'; "listed" (FNV/FO3/2011 Skyrim): presence in
+   * the file IS activation. Default starred. */
+  pluginsTxtStyle?: "starred" | "listed";
   /** Curated "start here" mods featured as the browse page heroes */
   recommendedModIds?: number[];
   /** Prefs-ini settings this game needs to survive the Steam UI taking
@@ -138,8 +142,15 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
 };
 
 /** Positional params several backend calls need for install-mode dispatch. */
-export function modeParams(g: SupportedGame): ["folder" | "dataDir", number, string] {
-  return [g.installMode ?? "folder", g.appId, g.pluginsTxtSubpath ?? ""];
+export function modeParams(
+  g: SupportedGame
+): ["folder" | "dataDir", number, string, "starred" | "listed"] {
+  return [
+    g.installMode ?? "folder",
+    g.appId,
+    g.pluginsTxtSubpath ?? "",
+    g.pluginsTxtStyle ?? "starred",
+  ];
 }
 
 export function getSupportedGame(appId: number | undefined): SupportedGame | undefined {

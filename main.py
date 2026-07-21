@@ -423,7 +423,9 @@ def _write_plugins_txt(path: str, lines: list) -> None:
         f.write("\n".join(lines) + ("\n" if lines else ""))
 
 
-def _add_plugins(path: str, names: list) -> None:
+def _add_plugins(path: str, names: list, style: str = "starred") -> None:
+    """Activate plugins. 'starred' (SSE/FO4): '*Name.esp' lines; 'listed'
+    (FNV/FO3/Oldrim): a plugin's bare presence in the file activates it."""
     lines = _read_plugins_txt(path)
     existing = {
         l.lstrip("*").strip().lower()
@@ -432,11 +434,20 @@ def _add_plugins(path: str, names: list) -> None:
     }
     for name in names:
         if name.lower() not in existing:
-            lines.append("*" + name)
+            lines.append(name if style == "listed" else "*" + name)
     _write_plugins_txt(path, lines)
 
 
-def _set_plugins_active(path: str, names: list, active: bool) -> None:
+def _set_plugins_active(
+    path: str, names: list, active: bool, style: str = "starred"
+) -> None:
+    if style == "listed":
+        # Presence IS activation: enable = list, disable = delist.
+        if active:
+            _add_plugins(path, names, style)
+        else:
+            _remove_plugins(path, names)
+        return
     targets = {n.lower() for n in names}
     out = []
     for line in _read_plugins_txt(path):
@@ -446,6 +457,20 @@ def _set_plugins_active(path: str, names: list, active: bool) -> None:
         else:
             out.append(line)
     _write_plugins_txt(path, out)
+
+
+def _active_plugins(path: str, style: str = "starred") -> set:
+    """Lower-cased names of plugins the file currently activates."""
+    active = set()
+    for line in _read_plugins_txt(path):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if style == "listed":
+            active.add(stripped.lower())
+        elif line.startswith("*"):
+            active.add(line[1:].strip().lower())
+    return active
 
 
 def _remove_plugins(path: str, names: list) -> None:
@@ -1459,6 +1484,7 @@ class Plugin:
         install_mode: str = "folder",
         app_id: int = 0,
         plugins_subpath: str = "",
+        plugins_style: str = "starred",
         payload_choice: str = "",
     ) -> dict:
         settings = _load_settings()
@@ -1631,7 +1657,11 @@ class Plugin:
             if not files_rel:
                 return {"ok": False, "error": "Archive contained no files"}
             if plugins and plugins_subpath:
-                _add_plugins(_plugins_txt_path(app_id, plugins_subpath), plugins)
+                _add_plugins(
+                    _plugins_txt_path(app_id, plugins_subpath),
+                    plugins,
+                    plugins_style,
+                )
             record_key = _safe_name(mod_name)
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
@@ -1961,16 +1991,15 @@ class Plugin:
         install_mode: str = "folder",
         app_id: int = 0,
         plugins_subpath: str = "",
+        plugins_style: str = "starred",
     ) -> dict:
         if install_mode == "dataDir":
             records = _load_settings().get("installed", {}).get(game_domain, {})
             active = set()
             if plugins_subpath:
-                for line in _read_plugins_txt(
-                    _plugins_txt_path(app_id, plugins_subpath)
-                ):
-                    if line.startswith("*"):
-                        active.add(line[1:].strip().lower())
+                active = _active_plugins(
+                    _plugins_txt_path(app_id, plugins_subpath), plugins_style
+                )
             results = []
             for key, rec in records.items():
                 if rec.get("mode") != "dataDir":
@@ -2032,6 +2061,7 @@ class Plugin:
         game_domain: str = "",
         app_id: int = 0,
         plugins_subpath: str = "",
+        plugins_style: str = "starred",
     ) -> dict:
         if install_mode == "dataDir":
             rec = (
@@ -2050,7 +2080,10 @@ class Plugin:
                     "assets are always active",
                 }
             _set_plugins_active(
-                _plugins_txt_path(app_id, plugins_subpath), plugins, enabled
+                _plugins_txt_path(app_id, plugins_subpath),
+                plugins,
+                enabled,
+                plugins_style,
             )
             decky.logger.info(
                 f"{'enabled' if enabled else 'disabled'} plugins for {folder!r}"
@@ -2085,6 +2118,7 @@ class Plugin:
         game_domain: str = "",
         app_id: int = 0,
         plugins_subpath: str = "",
+        plugins_style: str = "starred",
     ) -> dict:
         """Move every mod folder at once - 'play vanilla' / 'restore mods'.
         In dataDir mode, toggles every tracked mod's plugins instead."""
@@ -2095,7 +2129,7 @@ class Plugin:
             for rec in records.values():
                 plugins = rec.get("plugins") or []
                 if rec.get("mode") == "dataDir" and plugins:
-                    _set_plugins_active(path, plugins, enabled)
+                    _set_plugins_active(path, plugins, enabled, plugins_style)
                     moved += 1
             return {"ok": True, "moved": moved, "errors": []}
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
@@ -2132,6 +2166,7 @@ class Plugin:
         install_mode: str = "folder",
         app_id: int = 0,
         plugins_subpath: str = "",
+        plugins_style: str = "starred",
     ) -> dict:
         """Delete a mod's folder (or, in dataDir mode, its manifest files)
         and forget its record."""
@@ -2239,6 +2274,7 @@ class Plugin:
         install_mode: str = "folder",
         app_id: int = 0,
         plugins_subpath: str = "",
+        plugins_style: str = "starred",
     ) -> dict:
         """Remove every mod folder (enabled and disabled) except protected
         ones (framework components like SMAPI's SaveBackup)."""
