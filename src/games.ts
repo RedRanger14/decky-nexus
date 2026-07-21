@@ -17,6 +17,9 @@ export interface GameFramework {
   /** The framework's own Nexus mod id - downloads route through Nexus so
    * the author gets credit and download counts */
   nexusModId?: number;
+  /** How the framework archive installs: SMAPI's install.dat method, or
+   * flatten-and-copy into the game dir (SKSE-style) */
+  installKind?: "smapi" | "copyRoot";
   /** Steam launch options needed after install; {install_path} is replaced */
   launchOptionsTemplate?: string;
 }
@@ -40,6 +43,12 @@ export interface SupportedGame {
   framework?: GameFramework;
   /** Mod folders bulk operations must never remove (framework components) */
   protectedModFolders?: string[];
+  /** How mods install: per-mod folders (default) or merged into a shared
+   * data dir with per-file manifests and plugins.txt activation (Skyrim) */
+  installMode?: "folder" | "dataDir";
+  /** dataDir mode: plugins.txt path relative to the Proton prefix's
+   * AppData/Local (e.g. "Skyrim Special Edition/plugins.txt") */
+  pluginsTxtSubpath?: string;
   /** Curated "start here" mods featured as the browse page heroes */
   recommendedModIds?: number[];
 }
@@ -77,7 +86,36 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // verified on device: SMAPI logs land in ~/.config/StardewValley/
     logAdapter: { kind: "smapi", configDirName: "StardewValley" },
   },
+  489830: {
+    appId: 489830,
+    displayName: "Skyrim Special Edition",
+    nexusDomain: "skyrimspecialedition", // verified: game id 1704, ~135k mods
+    installDirName: "Skyrim Special Edition",
+    modsSubdir: "Data",
+    installMode: "dataDir",
+    // Proton game: plugins.txt lives inside the compat prefix
+    pluginsTxtSubpath: "Skyrim Special Edition/plugins.txt",
+    moddedSaveWarning: false,
+    processName: "SkyrimSE.exe",
+    framework: {
+      name: "SKSE64",
+      detectFile: "skse64_loader.exe",
+      url: "skse.silverlock.org",
+      nexusModId: 30379, // verified: "Skyrim Script Extender (SKSE64)" by SKSE Team
+      installKind: "copyRoot",
+      // Standard Deck recipe: swap the launcher for the SKSE loader
+      launchOptionsTemplate:
+        "bash -c 'exec \"$" +
+        "{@/SkyrimSELauncher.exe/skse64_loader.exe}\"' -- %command%",
+    },
+    recommendedModIds: [12604, 266], // SkyUI, USSEP - the canon starters
+  },
 };
+
+/** Positional params several backend calls need for install-mode dispatch. */
+export function modeParams(g: SupportedGame): ["folder" | "dataDir", number, string] {
+  return [g.installMode ?? "folder", g.appId, g.pluginsTxtSubpath ?? ""];
+}
 
 export function getSupportedGame(appId: number | undefined): SupportedGame | undefined {
   return appId === undefined ? undefined : SUPPORTED_GAMES[appId];
