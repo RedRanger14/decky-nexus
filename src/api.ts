@@ -383,6 +383,11 @@ export const getNxmQueue = callable<
   { ok: boolean; raw?: string[]; entries?: NxmEntry[]; error?: string }
 >("get_nxm_queue");
 
+export const checkGameFile = callable<
+  [install_dir: string, rel_path: string],
+  { ok: boolean; exists?: boolean; error?: string }
+>("check_game_file");
+
 export const setApiKey = callable<[api_key: string], AuthStatus>("set_api_key");
 export const getAuthStatus = callable<[], AuthStatus>("get_auth_status");
 export const getGameStatus = callable<

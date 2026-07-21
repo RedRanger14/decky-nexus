@@ -1978,6 +1978,15 @@ class Plugin:
     # the user completed the launch-options step per game, and whether the
     # framework is currently enabled (launch options applied) or disabled
     # (cleared - game launches vanilla).
+    async def check_game_file(self, install_dir: str, rel_path: str) -> dict:
+        """Does a file exist inside a game's install dir? Used to detect
+        native-Linux builds (e.g. UnityPlayer.so) that mod loaders can't
+        hook."""
+        if not _safe_rel_path(rel_path or ""):
+            return {"ok": False, "error": "Invalid path"}
+        path = os.path.join(STEAM_COMMON, install_dir, *rel_path.split("/"))
+        return {"ok": True, "exists": os.path.exists(path)}
+
     async def get_display_fix(
         self, app_id: int, prefs_subpath: str, section: str, settings: dict
     ) -> dict:

@@ -33,6 +33,7 @@ import {
   SaveStatus,
   UpdateInfo,
   applyDisplayFix,
+  checkGameFile,
   checkUpdates,
   copySavesToModded,
   getAuthStatus,
@@ -70,6 +71,7 @@ import {
   getViewedLibraryAppId,
   isGameRunning,
   restartGame,
+  setCompatTool,
   setLaunchOptions,
 } from "./steam";
 import { setSelectedMod } from "./state";
@@ -274,6 +276,7 @@ function CurrentGameSection() {
   const [status, setStatus] = useState<GameStatus | undefined>();
   const [frameworkBusy, setFrameworkBusy] = useState(false);
   const [launchOptionsSet, setLaunchOptionsSet] = useState(false);
+  const [nativeBuild, setNativeBuild] = useState(false);
 
   const refreshStatus = () => {
     if (game) {
@@ -282,6 +285,12 @@ function CurrentGameSection() {
         game.modsSubdir,
         game.framework?.detectFile ?? ""
       ).then(setStatus);
+      if (game.protonRequired) {
+        checkGameFile(
+          game.installDirName,
+          game.protonRequired.nativeMarker
+        ).then((r) => setNativeBuild(Boolean(r.ok && r.exists)));
+      }
       if (game.framework) {
         getFrameworkSetup(game.nexusDomain).then((r) =>
           setLaunchOptionsSet(Boolean(r.launch_options_set))
@@ -449,6 +458,35 @@ function CurrentGameSection() {
       {/* Framework games render a uniform numbered checklist: every step has
           a "Step N" heading; the content is a button while actionable and a
           plain ✓ line once done (one-time buttons disappear after use). */}
+      {game.protonRequired && status?.installed && nativeBuild && (
+        <PanelSectionRow>
+          <ButtonItem
+            label="⚠ Wrong game version for mods"
+            layout="below"
+            description={`Steam installed the native Linux version, which mod loaders can't hook. This switches ${game.displayName} to the Windows version via Proton - Steam will download it (your save syncs via Steam Cloud).`}
+            onClick={() => {
+              const ok = setCompatTool(
+                game.appId,
+                game.protonRequired!.tool
+              );
+              toaster.toast(
+                ok
+                  ? {
+                      title: "Switched to Proton",
+                      body: "Steam will update the game - launch it once the download finishes",
+                    }
+                  : {
+                      title: "Could not switch automatically",
+                      body: "Game page → Properties → Compatibility → force Proton Experimental",
+                    }
+              );
+              setTimeout(refreshStatus, 2000);
+            }}
+          >
+            Switch to Proton (required)
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       {game.framework && status?.installed ? (
         <>
           {/* Steam is pointed at the framework's loader but the loader is
@@ -1017,7 +1055,7 @@ function InstalledModsSection() {
           // (e.g. "Disable all") to actually show.
           <PanelSectionRow key={`${mod.folder}:${mod.enabled}`}>
             <Focusable
-              style={{ display: "flex", alignItems: "center", gap: "4px" }}
+              style={{ display: "flex", alignItems: "flex-start", gap: "4px" }}
             >
               <div style={{ flexGrow: 1, minWidth: 0 }}>
                 <ToggleField
@@ -1046,7 +1084,11 @@ function InstalledModsSection() {
                     height: "32px",
                     padding: "0",
                     flexShrink: 0,
-                    alignSelf: "center",
+                    // The toggle knob sits in the field's FIRST line (the
+                    // description renders below), so center against that
+                    // line instead of the whole field.
+                    alignSelf: "flex-start",
+                    marginTop: "5px",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
