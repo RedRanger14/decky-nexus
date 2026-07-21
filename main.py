@@ -257,8 +257,25 @@ def _sort_mod_files(files: list) -> list:
     return files
 
 
-def _pick_main_file(file_list: list):
-    """Latest MAIN-category file; never trust is_primary alone."""
+def _pick_main_file(file_list: list, avoid_keywords: list = ()):
+    """Latest MAIN-category file; never trust is_primary alone.
+
+    avoid_keywords drops files for other stores by name: SKSE publishes
+    Steam and GOG builds as separate MAIN files on one mod page, and the
+    GOG one (uploaded later, so a higher file_id) refuses to run against
+    the Steam game. No fallback past the filter - installing a known-wrong
+    build is worse than reporting there's nothing suitable."""
+    avoid = [k.lower() for k in avoid_keywords if k]
+    if avoid:
+        file_list = [
+            f
+            for f in file_list
+            if not any(
+                k in (f.get("name") or "").lower()
+                or k in (f.get("file_name") or "").lower()
+                for k in avoid
+            )
+        ]
     mains = [f for f in file_list if f.get("category_name") == "MAIN"]
     if mains:
         return max(mains, key=lambda f: f["file_id"])
@@ -1510,6 +1527,7 @@ class Plugin:
         install_dir: str,
         install_kind: str = "smapi",
         detect_file: str = "StardewModdingAPI",
+        avoid_file_keywords: list = None,
     ) -> dict:
         """Download a mod-loader framework (e.g. SMAPI) from Nexus - so the
         author gets the download credit - and run its unattended installer
@@ -1527,9 +1545,13 @@ class Plugin:
             if not files.get("ok"):
                 return files
             file_list = files.get("files") or []
-            main = _pick_main_file(file_list)
+            main = _pick_main_file(file_list, avoid_file_keywords or [])
             if not main:
                 return {"ok": False, "error": "No downloadable file found"}
+            decky.logger.info(
+                f"framework pick for {game_domain}/{mod_id}: "
+                f"{main.get('file_name')!r} (file {main.get('file_id')})"
+            )
 
             link_url = (
                 f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}"

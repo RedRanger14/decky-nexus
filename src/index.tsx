@@ -305,7 +305,8 @@ function CurrentGameSection() {
         game.framework.nexusModId,
         game.installDirName,
         game.framework.installKind ?? "smapi",
-        game.framework.detectFile
+        game.framework.detectFile,
+        game.framework.avoidFileKeywords ?? []
       );
       if (result.ok && result.install_path) {
         toaster.toast({

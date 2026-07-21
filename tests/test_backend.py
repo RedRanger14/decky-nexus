@@ -118,6 +118,28 @@ class TestFileSelection(unittest.TestCase):
         ]
         self.assertEqual(main._pick_main_file(files)["file_id"], 2)
 
+    def test_avoid_keywords_skip_other_store_builds(self):
+        """Regression: SKSE's page hosts Steam AND GOG builds as MAIN files;
+        the GOG one was uploaded later (higher file_id) and won the
+        latest-MAIN rule, then refused to run against the Steam game."""
+        files = [
+            make_file(462377, "MAIN", "Skyrim Script Extender (SKSE64)  Steam", primary=True),
+            make_file(470991, "MAIN", "Skyrim Script Extender (SKSE64) GOG"),
+        ]
+        # Without the filter the GOG build wins - that's the bug.
+        self.assertEqual(main._pick_main_file(files)["file_id"], 470991)
+        picked = main._pick_main_file(files, ["GOG"])
+        self.assertEqual(picked["file_id"], 462377)
+
+    def test_avoid_keywords_match_file_name_too(self):
+        f = make_file(1, "MAIN", "Framework")
+        f["file_name"] = "Framework-GOG-1.0.7z"
+        self.assertIsNone(main._pick_main_file([f], ["gog"]))
+
+    def test_avoid_keywords_exhausting_all_files_returns_none(self):
+        files = [make_file(1, "MAIN", "Only GOG build")]
+        self.assertIsNone(main._pick_main_file(files, ["GOG"]))
+
     def test_pick_main_returns_none_when_only_old_versions(self):
         files = [make_file(1, "OLD_VERSION", "ancient", primary=True)]
         self.assertIsNone(main._pick_main_file(files))

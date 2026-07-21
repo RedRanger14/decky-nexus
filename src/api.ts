@@ -158,7 +158,8 @@ export const installFramework = callable<
     mod_id: number,
     install_dir: string,
     install_kind: "smapi" | "copyRoot",
-    detect_file: string
+    detect_file: string,
+    avoid_file_keywords: string[]
   ],
   { ok: boolean; install_path?: string; error?: string }
 >("install_framework");
