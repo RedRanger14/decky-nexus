@@ -299,16 +299,9 @@ DATA_MARKER_DIRS = {
 }
 
 
-def _plugins_txt_path(app_id: int, subpath: str) -> str:
-    """Plugins.txt for a Proton game lives inside its compat prefix. The
-    game creates it through Wine's case-insensitive lookup, so the on-disk
-    casing can differ from ours - reuse an existing file of any casing
-    rather than create a duplicate next to it."""
-    path = os.path.join(
-        decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "compatdata",
-        str(int(app_id)), "pfx", "drive_c", "users", "steamuser",
-        "AppData", "Local", *subpath.split("/"),
-    )
+def _adopt_case(path: str) -> str:
+    """If the exact path is missing but a sibling differs only by case,
+    return the sibling - Wine-created files can carry any casing."""
     if os.path.exists(path):
         return path
     parent, want = os.path.dirname(path), os.path.basename(path).lower()
@@ -319,6 +312,102 @@ def _plugins_txt_path(app_id: int, subpath: str) -> str:
     except OSError:
         pass
     return path
+
+
+def _prefix_user_path(app_id: int, *parts: str) -> str:
+    """A path inside the Proton prefix's Windows user profile."""
+    return os.path.join(
+        decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "compatdata",
+        str(int(app_id)), "pfx", "drive_c", "users", "steamuser", *parts,
+    )
+
+
+def _plugins_txt_path(app_id: int, subpath: str) -> str:
+    """Plugins.txt for a Proton game lives inside its compat prefix. The
+    game creates it through Wine's case-insensitive lookup, so the on-disk
+    casing can differ from ours - reuse an existing file of any casing
+    rather than create a duplicate next to it."""
+    return _adopt_case(
+        _prefix_user_path(app_id, "AppData", "Local", *subpath.split("/"))
+    )
+
+
+def _game_prefs_path(app_id: int, subpath: str) -> str:
+    """A game's prefs ini under Documents/My Games in the Proton prefix."""
+    return _adopt_case(
+        _prefix_user_path(app_id, "Documents", "My Games", *subpath.split("/"))
+    )
+
+
+def _read_ini_settings(path: str, section: str, keys: list) -> dict:
+    """Current values of the given keys in [section]. Case-insensitive on
+    section and key names (Bethesda inis mix casings freely)."""
+    values = {}
+    if not os.path.isfile(path):
+        return values
+    want = {k.lower(): k for k in keys}
+    in_section = False
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                in_section = stripped[1:-1].lower() == section.lower()
+                continue
+            if in_section and "=" in stripped and not stripped.startswith((";", "#")):
+                key, _, val = stripped.partition("=")
+                canon = want.get(key.strip().lower())
+                if canon:
+                    values[canon] = val.strip()
+    return values
+
+
+def _patch_ini_settings(path: str, section: str, settings: dict) -> None:
+    """Set keys in [section], preserving everything else (order, comments,
+    unrelated sections). Missing keys are appended to the section; a missing
+    section is appended to the file. Writes a one-time .decky-nexus.bak."""
+    lines = []
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        backup = path + ".decky-nexus.bak"
+        if not os.path.isfile(backup):
+            shutil.copy2(path, backup)
+
+    remaining = {k.lower(): (k, v) for k, v in settings.items()}
+    out = []
+    in_section = False
+    section_end = None  # where to append keys the section doesn't have yet
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section:
+                section_end = len(out)
+            in_section = stripped[1:-1].lower() == section.lower()
+            out.append(line)
+            continue
+        if in_section and "=" in stripped and not stripped.startswith((";", "#")):
+            key = stripped.partition("=")[0].strip().lower()
+            if key in remaining:
+                canon, val = remaining.pop(key)
+                out.append(f"{canon}={val}")
+                continue
+        out.append(line)
+    if in_section:
+        section_end = len(out)
+
+    if remaining:
+        pairs = [f"{k}={v}" for k, v in remaining.values()]
+        if section_end is not None:
+            out[section_end:section_end] = pairs
+        else:
+            if out and out[-1].strip():
+                out.append("")
+            out.append(f"[{section}]")
+            out.extend(pairs)
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(out) + "\n")
 
 
 def _read_plugins_txt(path: str) -> list:
@@ -1782,6 +1871,50 @@ class Plugin:
     # the user completed the launch-options step per game, and whether the
     # framework is currently enabled (launch options applied) or disabled
     # (cleared - game launches vanilla).
+    async def get_display_fix(
+        self, app_id: int, prefs_subpath: str, section: str, settings: dict
+    ) -> dict:
+        """Check a game's prefs ini for overlay-hostile display settings
+        (e.g. Skyrim's exclusive fullscreen crashes when the Steam UI takes
+        over the screen)."""
+        try:
+            path = _game_prefs_path(app_id, prefs_subpath)
+            if not os.path.isfile(path):
+                return {"ok": True, "exists": False, "compliant": True}
+            current = _read_ini_settings(path, section, list(settings.keys()))
+            compliant = all(
+                current.get(k, "").lower() == str(v).lower()
+                for k, v in settings.items()
+            )
+            return {
+                "ok": True,
+                "exists": True,
+                "compliant": compliant,
+                "current": current,
+            }
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+
+    async def apply_display_fix(
+        self, app_id: int, prefs_subpath: str, section: str, settings: dict
+    ) -> dict:
+        """Patch the prefs ini to the overlay-safe values (backs the file
+        up once as .decky-nexus.bak)."""
+        try:
+            path = _game_prefs_path(app_id, prefs_subpath)
+            if not os.path.isfile(path):
+                return {
+                    "ok": False,
+                    "error": "Prefs file not found - launch the game once first",
+                }
+            _patch_ini_settings(path, section, settings)
+            decky.logger.info(
+                f"display fix applied to {prefs_subpath!r}: {settings}"
+            )
+            return {"ok": True}
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+
     async def get_framework_setup(self, game_domain: str) -> dict:
         state = _load_settings().get("framework_setup", {}).get(game_domain, {})
         launch_set = bool(state.get("launch_options_set"))

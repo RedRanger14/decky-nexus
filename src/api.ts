@@ -142,6 +142,32 @@ export const installMod = callable<
   InstallResult
 >("install_mod");
 
+export const getDisplayFix = callable<
+  [
+    app_id: number,
+    prefs_subpath: string,
+    section: string,
+    settings: Record<string, string>
+  ],
+  {
+    ok: boolean;
+    exists?: boolean;
+    compliant?: boolean;
+    current?: Record<string, string>;
+    error?: string;
+  }
+>("get_display_fix");
+
+export const applyDisplayFix = callable<
+  [
+    app_id: number,
+    prefs_subpath: string,
+    section: string,
+    settings: Record<string, string>
+  ],
+  { ok: boolean; error?: string }
+>("apply_display_fix");
+
 export const getFrameworkSetup = callable<
   [game_domain: string],
   { ok: boolean; launch_options_set?: boolean; enabled?: boolean }

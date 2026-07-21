@@ -55,6 +55,15 @@ export interface SupportedGame {
   pluginsTxtSubpath?: string;
   /** Curated "start here" mods featured as the browse page heroes */
   recommendedModIds?: number[];
+  /** Prefs-ini settings this game needs to survive the Steam UI taking
+   * over the screen (e.g. exclusive fullscreen crashes Proton games when
+   * the mod browser opens). Checked and offered as a one-tap fix. */
+  displayFix?: {
+    /** Path under Documents/My Games/ in the Proton prefix */
+    prefsSubpath: string;
+    section: string;
+    settings: Record<string, string>;
+  };
 }
 
 export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
@@ -118,6 +127,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         "{@/SkyrimSELauncher.exe/skse64_loader.exe}\"' -- %command%",
     },
     recommendedModIds: [12604, 266], // SkyUI, USSEP - the canon starters
+    // Exclusive fullscreen dies when gamescope switches to the Steam UI
+    // (the classic alt-tab crash) - borderless survives it.
+    displayFix: {
+      prefsSubpath: "Skyrim Special Edition/SkyrimPrefs.ini",
+      section: "Display",
+      settings: { "bFull Screen": "0", "bBorderless": "1" },
+    },
   },
 };
 
