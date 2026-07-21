@@ -3,6 +3,7 @@ import {
   DialogButton,
   Focusable,
   Navigation,
+  ScrollPanelGroup,
   showModal,
 } from "@decky/ui";
 import { addEventListener, removeEventListener, toaster } from "@decky/api";
@@ -26,6 +27,9 @@ import {
 } from "./api";
 import { getCompatHint } from "./compat";
 import { modeParams } from "./games";
+
+// Steam's scroll panel: right-stick scrolling (untyped props upstream).
+const Scroller: any = ScrollPanelGroup;
 import { SelectedMod, getSelectedMod, setSelectedMod } from "./state";
 import { isGameRunning, restartGame } from "./steam";
 import {
@@ -72,6 +76,7 @@ export function ModDetailPage() {
   const [installingFileId, setInstallingFileId] = useState<number | undefined>();
   const [installedFileIds, setInstalledFileIds] = useState<Set<number>>(new Set());
   const [installedCopy, setInstalledCopy] = useState<InstalledMod | undefined>();
+  const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
   const [endorseStatus, setEndorseStatus] = useState<string | undefined>();
   const [endorseBusy, setEndorseBusy] = useState(false);
 
@@ -81,7 +86,10 @@ export function ModDetailPage() {
       s.game.installDirName,
       s.game.modsSubdir,
       ...modeParams(s.game)
-    ).then((r) => setInstalledCopy(r.mods?.find((m) => m.mod_id === s.mod.modId)));
+    ).then((r) => {
+      setInstalledMods(r.mods ?? []);
+      setInstalledCopy(r.mods?.find((m) => m.mod_id === s.mod.modId));
+    });
   };
 
   const loadAll = (s: SelectedMod) => {
@@ -229,10 +237,16 @@ export function ModDetailPage() {
       style={{
         marginTop: "40px",
         height: "calc(100% - 40px)",
-        overflowY: "auto",
-        padding: "0 24px 24px",
       }}
     >
+      <Scroller
+        focusable={false}
+        style={{
+          height: "100%",
+          overflowY: "auto",
+          padding: "0 24px 24px",
+        }}
+      >
       {/* ---- Header: hero image + facts ---- */}
       <Focusable style={{ display: "flex", gap: "20px", padding: "12px 0 4px" }}>
         {heroUrl && (
@@ -346,34 +360,64 @@ export function ModDetailPage() {
             </div>
           )}
           {requirements && requirements.length > 0 && (
-            <Focusable
+            <div
               style={{
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: "6px",
                 marginTop: "10px",
+                padding: "8px 12px 10px",
+                background: "rgba(120, 170, 255, 0.08)",
+                borderLeft: "3px solid rgba(120, 170, 255, 0.6)",
+                borderRadius: "4px",
               }}
             >
-              <span style={{ fontSize: "13px", opacity: 0.8 }}>Requires:</span>
-              {requirements.map((req) => (
-                <Focusable
-                  key={`${req.modId}-${req.modName}`}
-                  onActivate={() => openRequirement(req)}
-                  style={{
-                    padding: "3px 12px",
-                    background: "rgba(120, 170, 255, 0.15)",
-                    border: "1px solid rgba(120, 170, 255, 0.35)",
-                    borderRadius: "999px",
-                    fontSize: "12px",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {req.modName}
-                  {req.notes ? ` · ${req.notes}` : ""}
-                </Focusable>
-              ))}
-            </Focusable>
+              <div
+                style={{ fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}
+              >
+                Required mods
+              </div>
+              <Focusable
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                {requirements.map((req) => {
+                  const have = installedMods.some(
+                    (m) => m.mod_id === req.modId
+                  );
+                  return (
+                    <Focusable
+                      key={`${req.modId}-${req.modName}`}
+                      onActivate={() => openRequirement(req)}
+                      style={{
+                        padding: "3px 12px",
+                        borderRadius: "999px",
+                        fontSize: "12px",
+                        whiteSpace: "nowrap",
+                        ...(have
+                          ? {
+                              background: "rgba(143, 212, 143, 0.15)",
+                              border: "1px solid rgba(143, 212, 143, 0.5)",
+                            }
+                          : {
+                              background: "rgba(218, 142, 53, 0.15)",
+                              border: `1px solid ${NEXUS_ORANGE}88`,
+                            }),
+                      }}
+                    >
+                      {have ? "✓ " : "⬇ "}
+                      {req.modName}
+                      {req.notes ? ` · ${req.notes}` : ""}
+                    </Focusable>
+                  );
+                })}
+              </Focusable>
+              <div style={{ fontSize: "11px", opacity: 0.65, marginTop: "5px" }}>
+                ✓ = already installed · tap an orange one to view and install
+                it
+              </div>
+            </div>
           )}
         </div>
       </Focusable>
@@ -594,6 +638,7 @@ export function ModDetailPage() {
           Back to browse
         </DialogButton>
       </Focusable>
+      </Scroller>
     </div>
   );
 }

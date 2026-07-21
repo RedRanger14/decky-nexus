@@ -723,6 +723,39 @@ class TestDataPayload(unittest.TestCase):
         for evil in ("../x", "a/../b", "a//b", ".", ".."):
             self.assertFalse(main._safe_rel_path(evil), evil)
 
+    def test_case_merge_adopts_existing_dir_casing(self):
+        """Regression: A Quality World Map created Data/Textures, then other
+        mods created Data/textures - Wine resolves the exact-case dir first,
+        so half the mods' textures became invisible to the game."""
+        base = os.path.join(TEST_ROOT, "case-merge")
+        shutil.rmtree(base, ignore_errors=True)
+        os.makedirs(os.path.join(base, "Textures", "terrain"))
+        self.assertEqual(
+            main._case_merge_rel(base, "textures/armor/imperial/a.dds"),
+            "Textures/armor/imperial/a.dds",
+        )
+        # Deeper components reuse existing casing too.
+        self.assertEqual(
+            main._case_merge_rel(base, "TEXTURES/TERRAIN/map.dds"),
+            "Textures/terrain/map.dds",
+        )
+        # Nothing existing: the payload's own casing is kept.
+        self.assertEqual(
+            main._case_merge_rel(base, "meshes/weapons/x.nif"),
+            "meshes/weapons/x.nif",
+        )
+
+    def test_version_compare_is_numeric(self):
+        """Regression: SkyUI 6.11 installed showed '6.9 available' - string
+        comparison thinks 6.9 is a different (hence 'new') version."""
+        self.assertFalse(main._is_newer_version("6.9", "6.11"))
+        self.assertTrue(main._is_newer_version("6.12", "6.11"))
+        self.assertTrue(main._is_newer_version("1.0", "0.9.9"))
+        self.assertFalse(main._is_newer_version("1.0", "1.0"))
+        # Unparseable versions fall back to plain inequality.
+        self.assertTrue(main._is_newer_version("beta", "alpha"))
+        self.assertFalse(main._is_newer_version("", "1.0"))
+
 
 class TestDataDirFlows(unittest.TestCase):
     """dataDir mode end-to-end against seeded install records: list with
