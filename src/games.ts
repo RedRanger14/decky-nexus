@@ -20,6 +20,10 @@ export interface GameFramework {
   /** How the framework archive installs: SMAPI's install.dat method, or
    * flatten-and-copy into the game dir (SKSE-style) */
   installKind?: "smapi" | "copyRoot";
+  /** Skip files whose name contains any of these (case-insensitive) when
+   * auto-picking the download - filters out other stores' builds (e.g.
+   * SKSE publishes Steam and GOG variants on the same mod page) */
+  avoidFileKeywords?: string[];
   /** Steam launch options needed after install; {install_path} is replaced */
   launchOptionsTemplate?: string;
 }
@@ -105,6 +109,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       url: "skse.silverlock.org",
       nexusModId: 30379, // verified: "Skyrim Script Extender (SKSE64)" by SKSE Team
       installKind: "copyRoot",
+      // The mod page hosts Steam AND GOG builds as MAIN files; the GOG one
+      // (higher file_id) refuses to run against the Steam game.
+      avoidFileKeywords: ["GOG"],
       // Standard Deck recipe: swap the launcher for the SKSE loader
       launchOptionsTemplate:
         "bash -c 'exec \"$" +
