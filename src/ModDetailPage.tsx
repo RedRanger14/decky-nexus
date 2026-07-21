@@ -227,7 +227,9 @@ export function ModDetailPage() {
         "",
         "",
         ...modeParams(game),
-        payloadChoice
+        payloadChoice,
+        game.ue4ss?.modsSubdir ?? "",
+        game.ue4ss?.logicModsSubdir ?? ""
       );
       if (result.needs_choice && result.options?.length) {
         // Option-style archive: ask which folder to install, then retry.

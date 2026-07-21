@@ -336,7 +336,8 @@ function CurrentGameSection() {
         game.installDirName,
         game.framework.installKind ?? "smapi",
         game.framework.detectFile,
-        game.framework.avoidFileKeywords ?? []
+        game.framework.avoidFileKeywords ?? [],
+        game.framework.installSubdir ?? ""
       );
       // Some games need ini blocks before mods load at all (e.g. FO4's
       // archive invalidation) - apply them as part of framework setup.

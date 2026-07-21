@@ -24,6 +24,9 @@ export interface GameFramework {
    * auto-picking the download - filters out other stores' builds (e.g.
    * SKSE publishes Steam and GOG variants on the same mod page) */
   avoidFileKeywords?: string[];
+  /** copyRoot target relative to the game root when the loader lives
+   * deeper (UE4SS: "Pal/Binaries/Win64") */
+  installSubdir?: string;
   /** Steam launch options needed after install; {install_path} is replaced */
   launchOptionsTemplate?: string;
 }
@@ -67,6 +70,13 @@ export interface SupportedGame {
     nativeMarker: string;
     /** Steam Play tool name to force (e.g. "proton_experimental") */
     tool: string;
+  };
+  /** UE4SS games: where script/Blueprint mods route. Lua and native mods
+   * become folders (with enabled.txt) under modsSubdir; Blueprint paks go
+   * flat into logicModsSubdir. Absent = UE4SS mods are refused. */
+  ue4ss?: {
+    modsSubdir: string;
+    logicModsSubdir: string;
   };
   /** Ini blocks required for mods to load at all (e.g. Fallout 4's
    * loose-files invalidation). Applied automatically after the framework
@@ -211,11 +221,26 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     nexusDomain: "palworld", // verified: game id 6063
     installDirName: "Palworld",
     // UE5 pak drop-ins auto-load from ~mods; the folder doesn't ship with
-    // the game (our installer creates it). UE4SS script mods are gated on
-    // an open Proton bug - pak tier only for now.
+    // the game (our installer creates it).
     modsSubdir: "Pal/Content/Paks/~mods", // TODO verify subfolder pak mounting
     moddedSaveWarning: false,
     processName: "Palworld-Win64-Shipping.exe",
+    // Script mods (the biggest ones) need UE4SS. Palworld uses a fork;
+    // mod 3405 is the Linux/Proton-fixes build ("UE4SS Palworld").
+    // Archive verified: dwmapi.dll + ue4ss/ at root -> Pal/Binaries/Win64.
+    framework: {
+      name: "UE4SS",
+      detectFile: "Pal/Binaries/Win64/dwmapi.dll",
+      url: "docs.ue4ss.com",
+      nexusModId: 3405,
+      installKind: "copyRoot",
+      installSubdir: "Pal/Binaries/Win64",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dwmapi=n,b" %command%',
+    },
+    ue4ss: {
+      modsSubdir: "Pal/Binaries/Win64/ue4ss/Mods",
+      logicModsSubdir: "Pal/Content/Paks/LogicMods",
+    },
   },
 };
 
