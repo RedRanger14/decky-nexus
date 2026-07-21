@@ -668,6 +668,30 @@ class TestPluginsTxt(unittest.TestCase):
         main._remove_plugins(self.path, ["a.esp", "C.esp"])
         self.assertEqual(self.read(), ["B.esp"])
 
+    def test_listed_style_presence_is_activation(self):
+        """FNV/FO3/2011-Skyrim: no stars - a plugin listed in the file IS
+        active, disable = delist."""
+        main._add_plugins(self.path, ["Mod.esp"], style="listed")
+        self.assertEqual(self.read(), ["Mod.esp"])
+        self.assertEqual(
+            main._active_plugins(self.path, "listed"), {"mod.esp"}
+        )
+        main._set_plugins_active(self.path, ["Mod.esp"], False, style="listed")
+        self.assertEqual(self.read(), [])
+        self.assertEqual(main._active_plugins(self.path, "listed"), set())
+        main._set_plugins_active(self.path, ["Mod.esp"], True, style="listed")
+        self.assertEqual(self.read(), ["Mod.esp"])
+
+    def test_starred_style_active_plugins(self):
+        main._write_plugins_txt(
+            self.path, ["# note", "*On.esp", "Off.esp"]
+        )
+        self.assertEqual(main._active_plugins(self.path), {"on.esp"})
+        # Same file read as listed-style would count both non-comments.
+        self.assertEqual(
+            main._active_plugins(self.path, "listed"), {"*on.esp", "off.esp"}
+        )
+
 
 class TestDataPayload(unittest.TestCase):
     """dataDir mode: find the directory whose contents belong in Data/."""
