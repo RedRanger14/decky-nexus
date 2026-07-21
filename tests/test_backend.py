@@ -461,6 +461,147 @@ class TestUninstall(GameDirTestCase):
         self.assertFalse(os.path.isdir(target))
 
 
+class TestUe4ssRouting(unittest.TestCase):
+    """UE4SS mods route to the loader's dirs: Lua/native mods as folders
+    under ue4ss/Mods (with an enabled.txt drop-file), Blueprint paks flat
+    into LogicMods."""
+
+    GAME = "Palworld Test"
+    UE4SS = "Pal/Binaries/Win64/ue4ss/Mods"
+    LOGIC = "Pal/Content/Paks/LogicMods"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        os.makedirs(self.install)
+        self.scratch = os.path.join(TEST_ROOT, "ue4ss-scratch")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.plugin = main.Plugin()
+
+    def put(self, rel):
+        p = os.path.join(self.scratch, *rel.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("x")
+
+    def seed_record(self, key, route):
+        settings = main._load_settings()
+        settings.setdefault("installed", {}).setdefault("palworld", {})[key] = {
+            "mod_id": 1, "name": key, "version": "1.0", **route,
+        }
+        main._save_settings(settings)
+
+    def test_lua_mod_routes_to_ue4ss_mods_with_enabled_marker(self):
+        self.put("MapUnlocker/Scripts/main.lua")
+        route = main._route_ue4ss_payload(
+            self.scratch, self.install, self.UE4SS, self.LOGIC, "Map Unlocker"
+        )
+        self.assertEqual(route["mode"], "folder")
+        self.assertEqual(route["target"], self.UE4SS)
+        dst = os.path.join(self.install, *self.UE4SS.split("/"), "MapUnlocker")
+        self.assertTrue(os.path.isfile(os.path.join(dst, "Scripts", "main.lua")))
+        self.assertTrue(os.path.isfile(os.path.join(dst, "enabled.txt")))
+
+    def test_native_dll_mod_routes_as_folder(self):
+        self.put("TinyFollowers50/dlls/main.dll")
+        self.put("TinyFollowers50/enabled.txt")
+        route = main._route_ue4ss_payload(
+            self.scratch, self.install, self.UE4SS, self.LOGIC, "Tiny Followers"
+        )
+        self.assertEqual(route["folder"], "TinyFollowers50")
+        dst = os.path.join(
+            self.install, *self.UE4SS.split("/"), "TinyFollowers50"
+        )
+        self.assertTrue(os.path.isfile(os.path.join(dst, "dlls", "main.dll")))
+
+    def test_logicmods_paks_go_flat_into_logicmods(self):
+        self.put("LogicMods/PalAnalyzer.pak")
+        route = main._route_ue4ss_payload(
+            self.scratch, self.install, self.UE4SS, self.LOGIC, "Pal Analyzer"
+        )
+        self.assertEqual(route["mode"], "files")
+        self.assertEqual(route["files"], ["PalAnalyzer.pak"])
+        self.assertTrue(
+            os.path.isfile(
+                os.path.join(
+                    self.install, *self.LOGIC.split("/"), "PalAnalyzer.pak"
+                )
+            )
+        )
+
+    def test_target_records_list_toggle_uninstall(self):
+        # Simulate an installed Lua mod: folder in place + record.
+        self.put("MapUnlocker/Scripts/main.lua")
+        route = main._route_ue4ss_payload(
+            self.scratch, self.install, self.UE4SS, self.LOGIC, "MapUnlocker"
+        )
+        self.seed_record("MapUnlocker", route)
+        mods = run(
+            self.plugin.get_installed_mods("palworld", self.GAME, "Pal/Content/Paks/~mods")
+        )["mods"]
+        self.assertEqual(len(mods), 1)
+        self.assertTrue(mods[0]["enabled"])
+        # Disable: folder moves to the -disabled sibling of the UE4SS dir.
+        result = run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "Pal/Content/Paks/~mods", "MapUnlocker", False,
+                "folder", "palworld",
+            )
+        )
+        self.assertTrue(result["ok"], result.get("error"))
+        base = os.path.join(self.install, *self.UE4SS.split("/"))
+        self.assertTrue(os.path.isdir(base + "-disabled/MapUnlocker"))
+        mods = run(
+            self.plugin.get_installed_mods("palworld", self.GAME, "Pal/Content/Paks/~mods")
+        )["mods"]
+        self.assertFalse(mods[0]["enabled"])
+        # Uninstall removes it from the routed location and the records.
+        result = run(
+            self.plugin.uninstall_mod(
+                "palworld", self.GAME, "Pal/Content/Paks/~mods", "MapUnlocker"
+            )
+        )
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertFalse(os.path.isdir(base + "-disabled/MapUnlocker"))
+        self.assertEqual(
+            main._load_settings()["installed"]["palworld"], {}
+        )
+
+    def test_logicmods_record_lists_untogglable_and_uninstalls(self):
+        self.put("LogicMods/PalAnalyzer.pak")
+        route = main._route_ue4ss_payload(
+            self.scratch, self.install, self.UE4SS, self.LOGIC, "Pal Analyzer"
+        )
+        self.seed_record("Pal Analyzer", route)
+        mods = run(
+            self.plugin.get_installed_mods("palworld", self.GAME, "Pal/Content/Paks/~mods")
+        )["mods"]
+        self.assertEqual(mods[0]["togglable"], False)
+        result = run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "Pal/Content/Paks/~mods", "Pal Analyzer", False,
+                "folder", "palworld",
+            )
+        )
+        self.assertFalse(result["ok"])
+        result = run(
+            self.plugin.uninstall_mod(
+                "palworld", self.GAME, "Pal/Content/Paks/~mods", "Pal Analyzer"
+            )
+        )
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertFalse(
+            os.path.isfile(
+                os.path.join(
+                    self.install, *self.LOGIC.split("/"), "PalAnalyzer.pak"
+                )
+            )
+        )
+
+
 class TestSaves(unittest.TestCase):
     ACCOUNT = "123456789"
     APP_ID = 999001

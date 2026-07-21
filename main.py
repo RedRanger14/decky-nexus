@@ -555,6 +555,63 @@ def _looks_like_ue4ss_mod(scratch: str) -> bool:
     return False
 
 
+def _route_ue4ss_payload(
+    scratch: str,
+    install_path: str,
+    ue4ss_subdir: str,
+    logicmods_subdir: str,
+    mod_name: str,
+) -> dict:
+    """Place a UE4SS-shaped payload where the loader actually looks:
+    Lua/native mods as folders under ue4ss/Mods (with an enabled.txt
+    drop-file), Blueprint paks flat into LogicMods. Returns the install
+    record to store."""
+    # Blueprint mods: LogicMods/*.pak anywhere in the payload.
+    logic_paks = []
+    for root, dirs, names in os.walk(scratch):
+        if os.path.basename(root).lower() == "logicmods":
+            logic_paks.extend(
+                os.path.join(root, n)
+                for n in names
+                if n.lower().endswith(".pak")
+            )
+    if logic_paks:
+        target = os.path.join(install_path, *logicmods_subdir.split("/"))
+        os.makedirs(target, exist_ok=True)
+        moved = []
+        for src in logic_paks:
+            name = os.path.basename(src)
+            dst = os.path.join(target, name)
+            if os.path.isfile(dst):
+                os.remove(dst)
+            shutil.move(src, dst)
+            moved.append(name)
+        return {"mode": "files", "target": logicmods_subdir, "files": moved}
+
+    # Lua / native mods: the folder containing Scripts/ or dlls/ IS the mod.
+    entries = os.listdir(scratch)
+    if len(entries) == 1 and os.path.isdir(os.path.join(scratch, entries[0])):
+        src, folder = os.path.join(scratch, entries[0]), entries[0]
+    else:
+        folder = _safe_name(mod_name)
+        src = os.path.join(scratch, folder)
+        os.makedirs(src, exist_ok=True)
+        for e in entries:
+            if e != folder:
+                shutil.move(os.path.join(scratch, e), os.path.join(src, e))
+    target = os.path.join(install_path, *ue4ss_subdir.split("/"))
+    os.makedirs(target, exist_ok=True)
+    dst = os.path.join(target, folder)
+    _force_rmtree(dst)
+    shutil.move(src, dst)
+    # enabled.txt activates a mod without touching mods.txt load order.
+    marker = os.path.join(dst, "enabled.txt")
+    if not os.path.isfile(marker):
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("")
+    return {"mode": "folder", "target": ue4ss_subdir, "folder": folder}
+
+
 def _find_data_payload(scratch: str):
     """Locate the directory whose contents belong in Data/. Handles flat
     archives, a wrapping folder (loose readme-type files beside it are
@@ -1507,6 +1564,8 @@ class Plugin:
         plugins_subpath: str = "",
         plugins_style: str = "starred",
         payload_choice: str = "",
+        ue4ss_subdir: str = "",
+        logicmods_subdir: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -1529,6 +1588,8 @@ class Plugin:
                 plugins_subpath,
                 plugins_style,
                 payload_choice,
+                ue4ss_subdir,
+                logicmods_subdir,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -1552,6 +1613,8 @@ class Plugin:
         plugins_subpath: str = "",
         plugins_style: str = "starred",
         payload_choice: str = "",
+        ue4ss_subdir: str = "",
+        logicmods_subdir: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -1782,17 +1845,47 @@ class Plugin:
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
 
-        # UE4SS script/Blueprint mods can't run without the UE4SS loader
-        # (unsupported: open Proton bug) - refuse instead of placing files
-        # that will never load.
+        # UE4SS script/Blueprint mods: route them to the loader's dirs when
+        # the game declares UE4SS support; refuse with a clear message when
+        # it doesn't (files placed elsewhere silently never load).
         if _looks_like_ue4ss_mod(scratch):
+            if not ue4ss_subdir:
+                _force_rmtree(scratch)
+                return {
+                    "ok": False,
+                    "error": "This is a UE4SS script mod - the UE4SS loader "
+                    "isn't supported for this game yet. Pak-based mods "
+                    "work.",
+                }
+            install_path = os.path.join(STEAM_COMMON, install_dir)
+            route = _route_ue4ss_payload(
+                scratch, install_path, ue4ss_subdir,
+                logicmods_subdir or ue4ss_subdir, mod_name,
+            )
             _force_rmtree(scratch)
-            return {
-                "ok": False,
-                "error": "This is a UE4SS script mod - the UE4SS loader "
-                "isn't supported on Steam Deck yet. Pak-based mods for "
-                "this game work.",
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            record_key = route.get("folder") or _safe_name(mod_name)
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            installed[record_key] = {
+                "mod_id": mod_id,
+                "file_id": file_id,
+                "name": mod_name,
+                "version": mod_version,
+                "file_name": file_name,
+                "installed_at": int(time.time()),
+                **route,
             }
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed UE4SS mod {mod_name!r} -> {route.get('target')!r}"
+            )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": record_key}
 
         # Single top-level folder -> that IS the mod folder. Loose files ->
         # wrap them in a folder named after the mod.
@@ -1844,6 +1937,7 @@ class Plugin:
         install_kind: str = "smapi",
         detect_file: str = "StardewModdingAPI",
         avoid_file_keywords: list = None,
+        install_subdir: str = "",
     ) -> dict:
         """Download a mod-loader framework (e.g. SMAPI) from Nexus - so the
         author gets the download credit - and run its unattended installer
@@ -1922,6 +2016,16 @@ class Plugin:
             if install_kind == "copyRoot":
                 # SKSE-style: the archive is the game-dir payload, usually
                 # inside one versioned wrapper folder - flatten and merge.
+                # install_subdir targets loaders that live deeper than the
+                # game root (UE4SS: Pal/Binaries/Win64).
+                dest_root = install_path
+                if install_subdir:
+                    if not _safe_rel_path(install_subdir):
+                        return {"ok": False, "error": "Invalid install subdir"}
+                    dest_root = os.path.join(
+                        install_path, *install_subdir.split("/")
+                    )
+                    os.makedirs(dest_root, exist_ok=True)
                 src = scratch
                 top = os.listdir(scratch)
                 if len(top) == 1 and os.path.isdir(os.path.join(scratch, top[0])):
@@ -1931,7 +2035,7 @@ class Plugin:
                         rel = os.path.relpath(os.path.join(root, name), src)
                         if not _safe_rel_path(rel):
                             continue
-                        dst = os.path.join(install_path, rel)
+                        dst = os.path.join(dest_root, rel)
                         os.makedirs(os.path.dirname(dst), exist_ok=True)
                         if os.path.isfile(dst):
                             os.remove(dst)
@@ -1942,18 +2046,25 @@ class Plugin:
                             except OSError:
                                 pass
                 _force_rmtree(scratch)
-                installed = any(
-                    n.lower() == detect_file.lower()
-                    or n.startswith(detect_file)
-                    for n in os.listdir(install_path)
-                )
+                # detect_file may itself be a subpath relative to the game
+                # root (matches get_game_status).
+                if "/" in detect_file:
+                    installed = os.path.exists(
+                        os.path.join(install_path, *detect_file.split("/"))
+                    )
+                else:
+                    installed = any(
+                        n.lower() == detect_file.lower()
+                        or n.startswith(detect_file)
+                        for n in os.listdir(dest_root)
+                    )
                 if not installed:
                     return {
                         "ok": False,
                         "error": "Framework files not found after extraction",
                     }
-                decky.logger.info(f"framework (copyRoot) installed into {install_path}")
-                return {"ok": True, "install_path": install_path}
+                decky.logger.info(f"framework (copyRoot) installed into {dest_root}")
+                return {"ok": True, "install_path": dest_root}
 
             # SMAPI's bundled installer is interactive-only (its unattended
             # flags don't exist, and 'install on Linux.sh' doesn't forward
@@ -2170,6 +2281,44 @@ class Plugin:
         results: list = []
         scan(mods_path, True)
         scan(disabled_path, False)
+        # Mods routed to alternate targets (UE4SS dirs, LogicMods) don't
+        # live in the scanned dirs - list them from their records.
+        install_path = os.path.join(STEAM_COMMON, install_dir)
+        for key, rec in records.items():
+            target = rec.get("target")
+            if not target:
+                continue
+            if rec.get("mode") == "files":
+                results.append(
+                    {
+                        "folder": key,
+                        "enabled": True,
+                        "tracked": True,
+                        "name": rec.get("name") or key,
+                        "version": rec.get("version") or "",
+                        "mod_id": rec.get("mod_id"),
+                        "togglable": False,
+                    }
+                )
+                continue
+            base = os.path.join(install_path, *target.split("/"))
+            folder = rec.get("folder") or key
+            if os.path.isdir(os.path.join(base, folder)):
+                enabled = True
+            elif os.path.isdir(os.path.join(base + "-disabled", folder)):
+                enabled = False
+            else:
+                continue  # record is stale; hide rather than mislead
+            results.append(
+                {
+                    "folder": key,
+                    "enabled": enabled,
+                    "tracked": True,
+                    "name": rec.get("name") or key,
+                    "version": rec.get("version") or "",
+                    "mod_id": rec.get("mod_id"),
+                }
+            )
         # Stable alphabetical order regardless of enabled state - toggling a
         # mod must not make it jump around the list.
         results.sort(key=lambda m: (m["name"] or m["folder"]).lower())
@@ -2218,6 +2367,37 @@ class Plugin:
         # path component: refuse separators outright.
         if os.sep in folder or "/" in folder or folder in (".", ".."):
             return {"ok": False, "error": "Invalid mod folder name"}
+        rec = (
+            _load_settings()
+            .get("installed", {})
+            .get(game_domain, {})
+            .get(folder)
+            if game_domain
+            else None
+        )
+        if rec and rec.get("target"):
+            if rec.get("mode") == "files":
+                return {
+                    "ok": False,
+                    "error": "This mod has no toggle - uninstall it instead",
+                }
+            install_path = os.path.join(STEAM_COMMON, install_dir)
+            base = os.path.join(install_path, *rec["target"].split("/"))
+            real = rec.get("folder") or folder
+            src_base, dst_base = (
+                (base + "-disabled", base) if enabled else (base, base + "-disabled")
+            )
+            src = os.path.join(src_base, real)
+            dst = os.path.join(dst_base, real)
+            if not os.path.isdir(src):
+                return {"ok": False, "error": f"{real} not found"}
+            os.makedirs(dst_base, exist_ok=True)
+            shutil.move(src, dst)
+            decky.logger.info(
+                f"{'enabled' if enabled else 'disabled'} {real!r} in "
+                f"{rec['target']!r}"
+            )
+            return {"ok": True}
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
         src_base, dst_base = (
             (disabled_path, mods_path) if enabled else (mods_path, disabled_path)
@@ -2305,6 +2485,31 @@ class Plugin:
                 return {"ok": False, "error": f"{folder} is not tracked"}
             _save_settings(settings)
             decky.logger.info(f"uninstalled dataDir mod {folder!r}")
+            return {"ok": True}
+        # Alternate-target records (UE4SS dirs, LogicMods) uninstall from
+        # where they were routed, not the scanned mods dir.
+        settings = _load_settings()
+        rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+        if rec and rec.get("target"):
+            install_path = os.path.join(STEAM_COMMON, install_dir)
+            base = os.path.join(install_path, *rec["target"].split("/"))
+            if rec.get("mode") == "files":
+                for name in rec.get("files") or []:
+                    if not _safe_rel_path(name) or "/" in name:
+                        continue
+                    try:
+                        os.remove(os.path.join(base, name))
+                    except OSError:
+                        pass
+            else:
+                real = rec.get("folder") or folder
+                _force_rmtree(os.path.join(base, real))
+                _force_rmtree(os.path.join(base + "-disabled", real))
+            settings["installed"][game_domain].pop(folder, None)
+            _save_settings(settings)
+            decky.logger.info(
+                f"uninstalled {folder!r} from {rec.get('target')!r}"
+            )
             return {"ok": True}
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
         removed = False
@@ -2469,10 +2674,15 @@ class Plugin:
             "mods_dir_exists": os.path.isdir(mods_path),
         }
         if framework_file:
-            status["framework_installed"] = installed and any(
-                name.startswith(framework_file)
-                for name in os.listdir(install_path)
-            )
+            if "/" in framework_file:
+                status["framework_installed"] = installed and os.path.exists(
+                    os.path.join(install_path, *framework_file.split("/"))
+                )
+            else:
+                status["framework_installed"] = installed and any(
+                    name.startswith(framework_file)
+                    for name in os.listdir(install_path)
+                )
         decky.logger.info(f"game status for {install_dir!r}: {status}")
         return status
 

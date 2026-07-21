@@ -138,7 +138,9 @@ export const installMod = callable<
     app_id: number,
     plugins_subpath: string,
     plugins_style: "starred" | "listed",
-    payload_choice: string
+    payload_choice: string,
+    ue4ss_subdir: string,
+    logicmods_subdir: string
   ],
   InstallResult
 >("install_mod");
@@ -192,7 +194,8 @@ export const installFramework = callable<
     install_dir: string,
     install_kind: "smapi" | "copyRoot",
     detect_file: string,
-    avoid_file_keywords: string[]
+    avoid_file_keywords: string[],
+    install_subdir: string
   ],
   { ok: boolean; install_path?: string; error?: string }
 >("install_framework");
