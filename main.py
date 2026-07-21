@@ -24,12 +24,28 @@ STEAM_USERDATA = os.path.join(decky.DECKY_USER_HOME, ".steam", "steam", "userdat
 
 NEXUS_API_BASE = "https://api.nexusmods.com"
 NEXUS_V2_GRAPHQL = f"{NEXUS_API_BASE}/v2/graphql"
+
+
+def _read_app_version() -> str:
+    """Single source of truth: the package.json sitting next to main.py
+    (repo root in dev, the plugin dir on device)."""
+    try:
+        with open(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "package.json"),
+            encoding="utf-8",
+        ) as f:
+            return json.load(f).get("version") or "0.0.0"
+    except (OSError, ValueError):
+        return "0.0.0"
+
+
+APP_VERSION = _read_app_version()
 # The Nexus acceptable-use policy requires clients to identify themselves,
 # and the v2 endpoint's WAF rejects requests without a real User-Agent.
 APP_HEADERS = {
     "Application-Name": "decky-nexus",
-    "Application-Version": "0.1.0",
-    "User-Agent": "decky-nexus/0.1.0 (SteamOS; Decky Loader plugin)",
+    "Application-Version": APP_VERSION,
+    "User-Agent": f"decky-nexus/{APP_VERSION} (SteamOS; Decky Loader plugin)",
 }
 
 

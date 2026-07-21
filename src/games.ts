@@ -169,6 +169,38 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       },
     ],
   },
+  1030300: {
+    appId: 1030300,
+    displayName: "Hollow Knight: Silksong",
+    nexusDomain: "hollowknightsilksong", // verified: game id 8136
+    installDirName: "Hollow Knight Silksong",
+    // BepInEx convention: plugin dlls in per-mod folders
+    modsSubdir: "BepInEx/plugins",
+    moddedSaveWarning: false,
+    processName: "Hollow Knight Silksong", // TODO verify comm under Proton
+    framework: {
+      name: "BepInEx",
+      detectFile: "winhttp.dll",
+      url: "docs.bepinex.dev",
+      // verified: "BepInEx 5 with Configuration Manager" on Nexus
+      nexusModId: 26,
+      installKind: "copyRoot",
+      // Proton needs the loader dll preferred over the builtin
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="winhttp=n,b" %command%',
+    },
+  },
+  1623730: {
+    appId: 1623730,
+    displayName: "Palworld",
+    nexusDomain: "palworld", // verified: game id 6063
+    installDirName: "Palworld",
+    // UE5 pak drop-ins auto-load from ~mods; the folder doesn't ship with
+    // the game (our installer creates it). UE4SS script mods are gated on
+    // an open Proton bug - pak tier only for now.
+    modsSubdir: "Pal/Content/Paks/~mods", // TODO verify subfolder pak mounting
+    moddedSaveWarning: false,
+    processName: "Palworld-Win64-Shipping.exe",
+  },
 };
 
 /** Positional params several backend calls need for install-mode dispatch. */

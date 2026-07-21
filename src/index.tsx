@@ -1453,10 +1453,32 @@ function DevSection() {
   );
 }
 
+/** Build identifier so QA always knows which version is on the device. */
+function VersionBadge() {
+  const [version, setVersion] = useState<string | undefined>();
+  useEffect(() => {
+    ping().then((r) => setVersion(r.plugin_version)).catch(() => {});
+  }, []);
+  if (!version) return null;
+  return (
+    <div
+      style={{
+        textAlign: "right",
+        fontSize: "11px",
+        opacity: 0.5,
+        padding: "0 16px",
+      }}
+    >
+      v{version}
+    </div>
+  );
+}
+
 function Content() {
   const ctx = resolveGameContext();
   return (
     <>
+      <VersionBadge />
       <CurrentGameSection />
       {ctx.game ? (
         <>
