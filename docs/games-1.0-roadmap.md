@@ -62,21 +62,32 @@ Our existing install modes and what each game needs:
   bypass — support decision pending research), **RDR2** (script hook +
   Rockstar launcher complications).
 
-## Suggested build order
+## Suggested build order (updated with all research + user picks)
 
-1. **Fallout 4** — dataDir clone of Skyrim SE; F4SE ≈ SKSE64 recipe;
-   biggest mod catalog outside Skyrim. Cheapest big win.
-2. **Cyberpunk 2077, archive-mods tier** — drop-in .archive files only;
-   frameworks as a later tier.
-3. **Fallout: New Vegas** — dataDir with listed-style plugins.txt;
-   xNVSE recipe.
-4. **Bannerlord** — folder mode into Modules/ + activation step.
-5. **Baldur's Gate 3** — new pak+lsx machinery (or patch-7 native
-   detection), highest new-code cost of the viable set.
-6. **RE4 remake** — pak-patch naming allocator.
-7. **Skyrim 2011** — same work as FNV; decide if the audience justifies
-   it (game is delisted? — verify).
-8. **Elden Ring / RDR2** — research verdicts pending; likely post-1.0.
+Tier 1 — reuse existing machinery, biggest wins first:
+1. **Fallout 4** — dataDir clone of SSE (registry entry landed,
+   experimental; needs device verification). Biggest catalog.
+2. **Hollow Knight: Silksong** — copyRoot + folder mode as-is; the
+   Deck modding tools gap makes this a visibility win.
+3. **Palworld (pak tier)** — folder mode + mkdir; Deck-popular.
+4. **Cyberpunk 2077 (archive tier)** — drop-in .archive files.
+5. **Bannerlord** — folder mode into Modules/ + LauncherData.xml step.
+
+Tier 2 — one new mechanism each:
+6. **Balatro** — prefix-AppData mods root + two-part framework.
+7. **Fallout: New Vegas** — listed plugins.txt (done) + mtime ordering
+   + invalidation ini + xNVSE overrides recipe.
+8. **RE4 remake** — pak-patch sequence allocator.
+9. **RDR2** (user-promoted) — LML/ScriptHook copyRoot + overrides
+   launch option + "story mode only" warning.
+10. **Skyrim 2011** — FNV sibling (still sold on Steam).
+
+Tier 3 — big or gated:
+11. **Baldur's Gate 3** — LSPK parser + modsettings.lsx + dual-build.
+12. **Fallout 3** — dual SKUs + FOSE needs exe downgrade (Anniversary
+    Patcher run inside the prefix).
+13. **Palworld UE4SS tier** — blocked on the Proton subfolder bug.
+14. **Elden Ring** — needs a product decision (anti-cheat/offline).
 
 ## Cross-game platform work this exposes
 
@@ -137,6 +148,46 @@ complete.)*
   `WINEDLLOVERRIDES="dinput8,ScriptHookRDR2=n,b" %command%` on Deck
   [VERIFIED community tutorial], plus Rockstar launcher interposing and
   a hard "story mode only — never Red Dead Online" warning.
+
+## Research: Palworld / Balatro / Silksong (completed 2026-07-21)
+
+### Hollow Knight: Silksong — EASY, everything already exists
+- BepInEx 5 package IS on Nexus (mod 26 / newer 986): standard zip into
+  game root (`BepInEx/` + winhttp.dll + doorstop_config.ini) → our
+  copyRoot framework mode as-is. Launch option
+  `WINEDLLOVERRIDES="winhttp=n,b" %command%` + force Proton.
+- Mods = DLLs into `BepInEx/plugins/<name>/` → our folder mode.
+- Deck quirk: Steam defaults to the Windows build under Proton anyway
+  (native build has controller bugs); guides standardize on Proton.
+- **r2modman's Deck launch for Silksong is currently broken** (open
+  issue) — a genuine opening for us to be THE way to mod it on deck.
+- Dir "Hollow Knight Silksong"; exe "Hollow Knight Silksong.exe".
+
+### Balatro — EASY-MEDIUM
+- Stack: lovely-injector (`version.dll` into game dir +
+  `WINEDLLOVERRIDES="version=n,b" %command%`) + Steamodded, which is
+  itself just a mod folder — and it's Nexus mod 45 (author credit ✓).
+- Mods live in the PREFIX, not the game dir:
+  `compatdata/2379780/pfx/.../AppData/Roaming/Balatro/Mods` — needs a
+  prefix-AppData mods root (backend already has the path helper).
+  No activation file; SMODS scans folders → folder mode.
+- lovely-injector is GitHub-distributed (like BG3SE) — framework
+  install can't route through Nexus for that piece.
+- Dir/exe: Balatro / Balatro.exe (fused LÖVE binary).
+
+### Palworld — pak tier EASY, UE4SS tier HARD (gate it)
+- Pak mods: create `Pal/Content/Paks/~mods/`, drop paks, zero Proton
+  config → folder mode with fixed subpath.
+- UE4SS: Palworld uses a FORK (Okaetsu experimental-palworld; Nexus
+  mirrors 3035/1121, Linux-fixes fork 3405). Installs into
+  `Pal/Binaries/Win64` (not root), needs `dwmapi=n,b` override, and has
+  an OPEN Proton bug (ue4ss subfolder DLLs not loading, #1189). Its
+  `ue4ss/Mods/mods.txt` enable file is directly analogous to our
+  plugins.txt code. Verdict: ship pak-only, gate UE4SS behind the
+  Linux-fixes fork later.
+- Palworld 1.0 (July 2026) added Steam Workshop incl. a UE4SS item —
+  detect/refuse double-injection if the Workshop copy is present.
+- Dir "Palworld"; detect process on Palworld-Win64-Shipping.exe.
 
 ## Research: Bethesda family (completed 2026-07-21)
 
