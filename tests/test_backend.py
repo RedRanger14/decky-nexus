@@ -779,6 +779,49 @@ class TestDataPayload(unittest.TestCase):
             "meshes/weapons/x.nif",
         )
 
+    def test_ini_patch_preserves_and_sets(self):
+        """Display-mode doctor: patch [Display] keys in place, preserving
+        comments, unrelated sections, and adding what's missing."""
+        path = os.path.join(TEST_ROOT, "prefs", "SkyrimPrefs.ini")
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as f:
+            f.write(
+                "[General]\nsLanguage=ENGLISH\n\n"
+                "[Display]\n; comment kept\nbFull Screen=1\n"
+                "iSize W=2560\n\n[Audio]\nfVolume=1.0\n"
+            )
+        main._patch_ini_settings(
+            path, "Display", {"bFull Screen": "0", "bBorderless": "1"}
+        )
+        content = open(path).read()
+        self.assertIn("bFull Screen=0", content)
+        self.assertIn("bBorderless=1", content)
+        self.assertIn("; comment kept", content)
+        self.assertIn("sLanguage=ENGLISH", content)
+        self.assertIn("iSize W=2560", content)
+        self.assertIn("fVolume=1.0", content)
+        # New key landed inside [Display], not after [Audio]
+        self.assertLess(content.index("bBorderless=1"), content.index("[Audio]"))
+        # One-time backup written
+        self.assertTrue(os.path.isfile(path + ".decky-nexus.bak"))
+        self.assertIn("bFull Screen=1", open(path + ".decky-nexus.bak").read())
+        # Read-back: case-insensitive keys, values as stored
+        vals = main._read_ini_settings(
+            path, "display", ["BFULL SCREEN", "bBorderless"]
+        )
+        self.assertEqual(vals["BFULL SCREEN"], "0")
+
+    def test_ini_patch_creates_missing_section(self):
+        path = os.path.join(TEST_ROOT, "prefs2", "Prefs.ini")
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as f:
+            f.write("[General]\nsLanguage=ENGLISH\n")
+        main._patch_ini_settings(path, "Display", {"bBorderless": "1"})
+        content = open(path).read()
+        self.assertIn("[Display]\nbBorderless=1", content)
+
     def test_version_compare_is_numeric(self):
         """Regression: SkyUI 6.11 installed showed '6.9 available' - string
         comparison thinks 6.9 is a different (hence 'new') version."""
