@@ -417,6 +417,19 @@ function CurrentGameSection() {
           plain ✓ line once done (one-time buttons disappear after use). */}
       {game.framework && status?.installed ? (
         <>
+          {/* Steam is pointed at the framework's loader but the loader is
+              gone (uninstalled/removed): the game silently won't start.
+              Say so instead of letting the user discover it. */}
+          {launchOptionsSet && !status.framework_installed && (
+            <PanelSectionRow>
+              <Field label="⚠ Game won't start">
+                {game.displayName} is set to launch through{" "}
+                {game.framework.name}, which isn't installed. Install{" "}
+                {game.framework.name} below (or clear the game's launch
+                options to play without mods).
+              </Field>
+            </PanelSectionRow>
+          )}
           <PanelSectionRow>
             {status.framework_installed ? (
               <Field label="Step 1">{game.framework.name} installed ✓</Field>
