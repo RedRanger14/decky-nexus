@@ -549,12 +549,12 @@ export function ModDetailPage() {
                 })}
               </Focusable>
               <div style={{ fontSize: "11px", marginTop: "6px" }}>
-                <span style={{ color: "rgb(143, 212, 143)" }}>● installed</span>
+                <span style={{ color: "rgb(143, 212, 143)" }}>● Installed</span>
                 <span style={{ opacity: 0.5 }}> · </span>
-                <span style={{ color: NEXUS_ORANGE }}>● needs installing</span>
+                <span style={{ color: NEXUS_ORANGE }}>● Needs installing</span>
                 <span style={{ opacity: 0.5 }}> · </span>
                 <span style={{ color: "rgb(120, 170, 255)" }}>
-                  ● external link
+                  ● External link
                 </span>
               </div>
             </div>
