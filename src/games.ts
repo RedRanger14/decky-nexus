@@ -93,8 +93,10 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     installDirName: "Skyrim Special Edition",
     modsSubdir: "Data",
     installMode: "dataDir",
-    // Proton game: plugins.txt lives inside the compat prefix
-    pluginsTxtSubpath: "Skyrim Special Edition/plugins.txt",
+    // Proton game: Plugins.txt lives inside the compat prefix. The game
+    // writes it with a capital P (verified on device) - casing matters on
+    // the deck's filesystem even though Wine's lookups are insensitive.
+    pluginsTxtSubpath: "Skyrim Special Edition/Plugins.txt",
     moddedSaveWarning: false,
     processName: "SkyrimSE.exe",
     framework: {

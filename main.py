@@ -283,12 +283,25 @@ DATA_MARKER_DIRS = {
 
 
 def _plugins_txt_path(app_id: int, subpath: str) -> str:
-    """plugins.txt for a Proton game lives inside its compat prefix."""
-    return os.path.join(
+    """Plugins.txt for a Proton game lives inside its compat prefix. The
+    game creates it through Wine's case-insensitive lookup, so the on-disk
+    casing can differ from ours - reuse an existing file of any casing
+    rather than create a duplicate next to it."""
+    path = os.path.join(
         decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "compatdata",
         str(int(app_id)), "pfx", "drive_c", "users", "steamuser",
         "AppData", "Local", *subpath.split("/"),
     )
+    if os.path.exists(path):
+        return path
+    parent, want = os.path.dirname(path), os.path.basename(path).lower()
+    try:
+        for entry in os.listdir(parent):
+            if entry.lower() == want:
+                return os.path.join(parent, entry)
+    except OSError:
+        pass
+    return path
 
 
 def _read_plugins_txt(path: str) -> list:
