@@ -389,6 +389,11 @@ export const getNxmQueue = callable<
   { ok: boolean; raw?: string[]; entries?: NxmEntry[]; error?: string }
 >("get_nxm_queue");
 
+export const checkDocsFile = callable<
+  [app_id: number, subpath: string],
+  { ok: boolean; exists?: boolean; error?: string }
+>("check_docs_file");
+
 export const checkGameFile = callable<
   [install_dir: string, rel_path: string],
   { ok: boolean; exists?: boolean; error?: string }

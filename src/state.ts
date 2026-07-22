@@ -63,3 +63,64 @@ export function takeBrowseRestore(appId: number): BrowseCache | undefined {
   returnToBrowse = false;
   return take && browseCache?.appId === appId ? browseCache : undefined;
 }
+
+// ---- Download tracker ---------------------------------------------------------
+// Installs emit install_progress events; a module-level store lets the QAM
+// show active downloads even when the user navigates away mid-download.
+
+export interface ActiveDownload {
+  modId: number;
+  name: string;
+  phase: string;
+  percent: number;
+}
+
+const downloads = new Map<number, ActiveDownload>();
+const downloadListeners = new Set<() => void>();
+
+function notifyDownloads(): void {
+  downloadListeners.forEach((l) => l());
+}
+
+export function nameDownload(modId: number, name: string): void {
+  downloads.set(modId, { modId, name, phase: "starting", percent: 0 });
+  notifyDownloads();
+}
+
+export function updateDownload(
+  modId: number,
+  phase: string,
+  percent: number
+): void {
+  const existing = downloads.get(modId);
+  if (phase === "done" || phase === "error") {
+    // Keep terminal states visible briefly, then clear.
+    if (existing) {
+      downloads.set(modId, { ...existing, phase, percent });
+      notifyDownloads();
+      setTimeout(() => {
+        downloads.delete(modId);
+        notifyDownloads();
+      }, 8000);
+    }
+    return;
+  }
+  downloads.set(modId, {
+    modId,
+    name: existing ? existing.name : "Mod " + modId,
+    phase,
+    percent,
+  });
+  notifyDownloads();
+}
+
+export function getDownloads(): ActiveDownload[] {
+  return Array.from(downloads.values());
+}
+
+export function subscribeDownloads(listener: () => void): () => void {
+  downloadListeners.add(listener);
+  return () => {
+    downloadListeners.delete(listener);
+  };
+}

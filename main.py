@@ -1929,6 +1929,7 @@ class Plugin:
                     plugins_style,
                 )
             record_key = _safe_name(mod_name)
+            settings = _load_settings()  # re-read: parallel installs
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
             )
@@ -1974,6 +1975,7 @@ class Plugin:
             except OSError:
                 pass
             record_key = route.get("folder") or _safe_name(mod_name)
+            settings = _load_settings()  # re-read: parallel installs
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
             )
@@ -2026,6 +2028,7 @@ class Plugin:
             except OSError:
                 pass
             record_key = _safe_name(mod_name)
+            settings = _load_settings()  # re-read: parallel installs
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
             )
@@ -2048,9 +2051,68 @@ class Plugin:
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
 
+        # Archives that ship the mods DIRECTORY itself (Bannerlord zips
+        # rooted at Modules/, Stardew at Mods/, BepInEx at plugins/):
+        # unwrap it, or the mod nests invisibly (Modules/Modules/X).
+        os.makedirs(mods_path, exist_ok=True)
+        target_name = os.path.basename(mods_subdir.rstrip("/")).lower()
+        if (
+            len(entries) == 1
+            and entries[0].lower() == target_name
+            and os.path.isdir(os.path.join(scratch, entries[0]))
+        ):
+            wrapper = os.path.join(scratch, entries[0])
+            scratch_entries = os.listdir(wrapper)
+            children = [
+                e
+                for e in scratch_entries
+                if os.path.isdir(os.path.join(wrapper, e))
+            ]
+            if children:
+                # Install every child as its own mod folder (multi-module
+                # archives are common on Bannerlord).
+                settings = _load_settings()  # re-read: parallel installs
+                installed_rec = settings.setdefault("installed", {}).setdefault(
+                    game_domain, {}
+                )
+                for child in children:
+                    dst = os.path.join(mods_path, child)
+                    _force_rmtree(dst)
+                    shutil.move(os.path.join(wrapper, child), dst)
+                    rec = {
+                        "mod_id": mod_id,
+                        "file_id": file_id,
+                        "name": mod_name if len(children) == 1 else child,
+                        "version": mod_version,
+                        "file_name": file_name,
+                        "installed_at": int(time.time()),
+                    }
+                    if launcher_xml_subpath:
+                        module_id = _submodule_id(dst)
+                        if module_id:
+                            rec["moduleId"] = module_id
+                            rec["launcherXml"] = launcher_xml_subpath
+                            _set_module_selected(
+                                _launcher_xml_path(app_id, launcher_xml_subpath),
+                                module_id,
+                                True,
+                            )
+                    installed_rec[child] = rec
+                _save_settings(settings)
+                _force_rmtree(scratch)
+                try:
+                    os.remove(archive_path)
+                except OSError:
+                    pass
+                decky.logger.info(
+                    f"installed {mod_name!r}: unwrapped "
+                    f"{entries[0]}/ -> {children}"
+                )
+                await _emit_progress(mod_id, "done", 100)
+                return {"ok": True, "folder": children[0]}
+
         # Single top-level folder -> that IS the mod folder. Loose files ->
         # wrap them in a folder named after the mod.
-        os.makedirs(mods_path, exist_ok=True)
         if len(entries) == 1 and os.path.isdir(os.path.join(scratch, entries[0])):
             folder = entries[0]
             src = os.path.join(scratch, folder)
@@ -2099,6 +2161,7 @@ class Plugin:
                     f"module {module_id!r} activation: "
                     f"{'ok' if activated else 'deferred (no LauncherData.xml yet)'}"
                 )
+        settings = _load_settings()  # re-read: parallel installs
         installed = settings.setdefault("installed", {}).setdefault(game_domain, {})
         installed[folder] = record
         _save_settings(settings)
@@ -2299,6 +2362,15 @@ class Plugin:
     # the user completed the launch-options step per game, and whether the
     # framework is currently enabled (launch options applied) or disabled
     # (cleared - game launches vanilla).
+    async def check_docs_file(self, app_id: int, subpath: str) -> dict:
+        """Does a file exist under the prefix's Documents? Used for
+        first-run notices (e.g. Bannerlord's LauncherData.xml only exists
+        once the game has run)."""
+        if not _safe_rel_path(subpath or ""):
+            return {"ok": False, "error": "Invalid path"}
+        path = _prefix_user_path(app_id, "Documents", *subpath.split("/"))
+        return {"ok": True, "exists": os.path.exists(_adopt_case(path))}
+
     async def check_game_file(self, install_dir: str, rel_path: str) -> dict:
         """Does a file exist inside a game's install dir? Used to detect
         native-Linux builds (e.g. UnityPlayer.so) that mod loaders can't

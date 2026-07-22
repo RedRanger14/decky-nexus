@@ -32,7 +32,9 @@ import {
   ModLoadState,
   SaveStatus,
   UpdateInfo,
+  InstallProgress,
   applyDisplayFix,
+  checkDocsFile,
   checkGameFile,
   checkUpdates,
   copySavesToModded,
@@ -74,7 +76,13 @@ import {
   setCompatTool,
   setLaunchOptions,
 } from "./steam";
-import { setDetailOrigin, setSelectedMod } from "./state";
+import {
+  getDownloads,
+  setDetailOrigin,
+  setSelectedMod,
+  subscribeDownloads,
+  updateDownload,
+} from "./state";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
 interface GameContext {
@@ -278,6 +286,7 @@ function CurrentGameSection() {
   const [frameworkBusy, setFrameworkBusy] = useState(false);
   const [launchOptionsSet, setLaunchOptionsSet] = useState(false);
   const [nativeBuild, setNativeBuild] = useState(false);
+  const [firstRunNeeded, setFirstRunNeeded] = useState(false);
 
   const refreshStatus = () => {
     if (game) {
@@ -291,6 +300,11 @@ function CurrentGameSection() {
           game.installDirName,
           game.protonRequired.nativeMarker
         ).then((r) => setNativeBuild(Boolean(r.ok && r.exists)));
+      }
+      if (game.firstRunNotice) {
+        checkDocsFile(game.appId, game.firstRunNotice.goneWhenDocsFile).then(
+          (r) => setFirstRunNeeded(Boolean(r.ok && !r.exists))
+        );
       }
       if (game.framework) {
         getFrameworkSetup(game.nexusDomain).then((r) =>
@@ -460,6 +474,13 @@ function CurrentGameSection() {
       {/* Framework games render a uniform numbered checklist: every step has
           a "Step N" heading; the content is a button while actionable and a
           plain ✓ line once done (one-time buttons disappear after use). */}
+      {firstRunNeeded && status?.installed && game.firstRunNotice && (
+        <PanelSectionRow>
+          <Field label="ℹ Before you mod">
+            {game.firstRunNotice.message}
+          </Field>
+        </PanelSectionRow>
+      )}
       {game.protonRequired && status?.installed && nativeBuild && (
         <PanelSectionRow>
           <ButtonItem
@@ -1504,6 +1525,36 @@ function DevSection() {
   );
 }
 
+/** Active downloads at a glance - installs keep going while the user
+ * browses elsewhere; this is where they check on them. */
+function DownloadsSection() {
+  const [items, setItems] = useState(getDownloads());
+  useEffect(() => subscribeDownloads(() => setItems(getDownloads())), []);
+  if (items.length === 0) return null;
+  return (
+    <PanelSection title="Downloads">
+      {items.map((d) => (
+        <PanelSectionRow key={d.modId}>
+          <Field
+            label={d.name}
+            description={
+              d.phase === "downloading"
+                ? `Downloading… ${d.percent}%`
+                : d.phase === "extracting"
+                ? "Installing…"
+                : d.phase === "done"
+                ? "Done ✓"
+                : d.phase === "error"
+                ? "Failed ⚠"
+                : "Starting…"
+            }
+          />
+        </PanelSectionRow>
+      ))}
+    </PanelSection>
+  );
+}
+
 /** Build identifier so QA always knows which version is on the device. */
 function VersionBadge() {
   const [version, setVersion] = useState<string | undefined>();
@@ -1530,6 +1581,7 @@ function Content() {
   return (
     <>
       <VersionBadge />
+      <DownloadsSection />
       <CurrentGameSection />
       {ctx.game ? (
         <>
@@ -1551,6 +1603,12 @@ export default definePlugin(() => {
   routerHook.addRoute(BROWSE_ROUTE, BrowsePage, { exact: true });
   routerHook.addRoute(DETAIL_ROUTE, ModDetailPage, { exact: true });
 
+  // Feed the QAM Downloads section from anywhere in the UI.
+  const progressListener = addEventListener<[p: InstallProgress]>(
+    "install_progress",
+    (p) => updateDownload(p.mod_id, p.phase, p.percent)
+  );
+
   // Verifies the backend -> frontend event channel via the Ping button.
   const listener = addEventListener<[message: string]>(
     "backend_event",
@@ -1568,6 +1626,7 @@ export default definePlugin(() => {
       routerHook.removeRoute(DETAIL_ROUTE);
       routerHook.removeRoute(BROWSE_ROUTE);
       removeEventListener("backend_event", listener);
+      removeEventListener("install_progress", progressListener);
     },
   };
 });
