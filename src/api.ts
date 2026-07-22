@@ -147,7 +147,9 @@ export const installMod = callable<
     ue4ss_subdir: string,
     logicmods_subdir: string,
     launcher_xml_subpath: string,
-    flat_extensions: string[]
+    flat_extensions: string[],
+    page_version: string,
+    record_source: string
   ],
   InstallResult
 >("install_mod");
@@ -178,6 +180,11 @@ export const applyDisplayFix = callable<
   ],
   { ok: boolean; error?: string }
 >("apply_display_fix");
+
+export const dismissUpdate = callable<
+  [game_domain: string, folder: string, version: string],
+  { ok: boolean; error?: string }
+>("dismiss_update");
 
 export const installFomod = callable<
   [token: string, selected_ids: string[]],

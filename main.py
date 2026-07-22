@@ -771,6 +771,150 @@ def _is_newer_version(current: str, installed: str) -> bool:
     return c > i
 
 
+
+# ---- Minimal XML -------------------------------------------------------------
+# Decky's embedded Python ships WITHOUT the xml package (no pyexpat), so
+# xml.etree is unavailable on device (worked in dev, crashed in the field).
+# FOMOD ModuleConfig / SubModule.xml / LauncherData.xml are simple XML, so
+# this compact regex tokenizer covers them: elements, attributes, text,
+# comments, CDATA, self-closing tags, and basic entities. Not a general
+# XML parser - good enough for well-formed mod metadata.
+
+_XML_TOKEN = re.compile(
+    r"<!--.*?-->"                 # comments
+    r"|<!\[CDATA\[.*?\]\]>"   # cdata
+    r"|<\?.*?\?>"               # declarations
+    r"|<[^>]+>"                   # tags
+    r"|[^<]+",                    # text
+    re.S,
+)
+_XML_ATTR = re.compile(r"""([\w:.-]+)\s*=\s*("([^"]*)"|'([^']*)')""")
+
+
+def _xml_unescape(text: str) -> str:
+    return (
+        text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+    )
+
+
+def _xml_escape(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+class XmlNode:
+    __slots__ = ("tag", "attrib", "text", "children")
+
+    def __init__(self, tag: str):
+        self.tag = tag
+        self.attrib = {}
+        self.text = ""
+        self.children = []
+
+    def get(self, name, default=None):
+        return self.attrib.get(name, default)
+
+    def find(self, tag):
+        for c in self.children:
+            if c.tag == tag:
+                return c
+        return None
+
+    def findall(self, tag):
+        return [c for c in self.children if c.tag == tag]
+
+    def iter(self, tag=None):
+        if tag is None or self.tag == tag:
+            yield self
+        for c in self.children:
+            yield from c.iter(tag)
+
+    def __iter__(self):
+        return iter(self.children)
+
+    def append(self, node):
+        self.children.append(node)
+
+    def remove(self, node):
+        self.children.remove(node)
+
+
+def xml_parse(text: str) -> XmlNode:
+    root = XmlNode("__root__")
+    stack = [root]
+    for m in _XML_TOKEN.finditer(text):
+        tok = m.group(0)
+        if tok.startswith("<!--") or tok.startswith("<?"):
+            continue
+        if tok.startswith("<![CDATA["):
+            stack[-1].text += tok[9:-3]
+            continue
+        if tok.startswith("</"):
+            if len(stack) > 1:
+                stack.pop()
+            continue
+        if tok.startswith("<"):
+            body = tok[1:-1].strip()
+            self_closing = body.endswith("/")
+            if self_closing:
+                body = body[:-1].rstrip()
+            if body.startswith("!"):
+                continue  # doctype etc.
+            space = body.find(" ")
+            tag = body if space < 0 else body[:space]
+            node = XmlNode(tag)
+            if space >= 0:
+                for am in _XML_ATTR.finditer(body[space:]):
+                    node.attrib[am.group(1)] = _xml_unescape(
+                        am.group(3) if am.group(3) is not None else am.group(4) or ""
+                    )
+            stack[-1].append(node)
+            if not self_closing:
+                stack.append(node)
+            continue
+        # text
+        stack[-1].text += _xml_unescape(tok)
+    # single document element expected
+    for c in root.children:
+        return c
+    return root
+
+
+def xml_parse_file(path: str) -> XmlNode:
+    with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+        return xml_parse(f.read())
+
+
+def xml_serialize(node: XmlNode, indent: int = 0) -> str:
+    pad = "  " * indent
+    attrs = "".join(
+        ' %s="%s"' % (k, _xml_escape(v)) for k, v in node.attrib.items()
+    )
+    text = (node.text or "").strip()
+    if not node.children and not text:
+        return "%s<%s%s />" % (pad, node.tag, attrs)
+    if not node.children:
+        return "%s<%s%s>%s</%s>" % (pad, node.tag, attrs, _xml_escape(text), node.tag)
+    inner = "\n".join(xml_serialize(c, indent + 1) for c in node.children)
+    return "%s<%s%s>\n%s\n%s</%s>" % (pad, node.tag, attrs, inner, pad, node.tag)
+
+
+def xml_write_file(path: str, node: XmlNode) -> None:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write('<?xml version="1.0" encoding="utf-8"?>\n')
+        f.write(xml_serialize(node))
+        f.write("\n")
+
+
 # ---- Bannerlord module activation ------------------------------------------
 # Modules are folders under Modules/, but the launcher only loads ones
 # selected in LauncherData.xml (Documents/Mount and Blade II Bannerlord/
@@ -784,9 +928,7 @@ def _submodule_id(module_dir: str):
     if not os.path.isfile(path):
         return None
     try:
-        import xml.etree.ElementTree as ET
-
-        root = ET.parse(path).getroot()
+        root = xml_parse_file(path)
         node = root.find("Id")
         if node is None:
             return None
@@ -809,11 +951,7 @@ def _set_module_selected(path: str, module_id: str, selected: bool) -> bool:
     if not os.path.isfile(path):
         return False
     try:
-        import xml.etree.ElementTree as ET
-
-        tree = ET.parse(path)
-        root = tree.getroot()
-        entries = root.iter("UserModData")
+        root = xml_parse_file(path)
         parent = None
         for node in root.iter():
             for child in node:
@@ -827,9 +965,10 @@ def _set_module_selected(path: str, module_id: str, selected: bool) -> bool:
             if id_node is not None and (id_node.text or "").strip() == module_id:
                 sel = entry.find("IsSelected")
                 if sel is None:
-                    sel = ET.SubElement(entry, "IsSelected")
+                    sel = XmlNode("IsSelected")
+                    entry.append(sel)
                 sel.text = "true" if selected else "false"
-                tree.write(path, encoding="utf-8", xml_declaration=True)
+                xml_write_file(path, root)
                 return True
         if parent is None:
             # No entries yet: use a ModDatas container if one exists.
@@ -838,12 +977,15 @@ def _set_module_selected(path: str, module_id: str, selected: bool) -> bool:
             )
         if parent is None:
             return False
-        entry = ET.SubElement(parent, "UserModData")
-        ET.SubElement(entry, "Id").text = module_id
-        ET.SubElement(entry, "IsSelected").text = (
-            "true" if selected else "false"
-        )
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        entry = XmlNode("UserModData")
+        id_node = XmlNode("Id")
+        id_node.text = module_id
+        entry.append(id_node)
+        sel = XmlNode("IsSelected")
+        sel.text = "true" if selected else "false"
+        entry.append(sel)
+        parent.append(entry)
+        xml_write_file(path, root)
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -853,10 +995,7 @@ def _remove_module_entry(path: str, module_id: str) -> None:
     if not os.path.isfile(path):
         return
     try:
-        import xml.etree.ElementTree as ET
-
-        tree = ET.parse(path)
-        root = tree.getroot()
+        root = xml_parse_file(path)
         for node in root.iter():
             for child in list(node):
                 if child.tag == "UserModData":
@@ -866,7 +1005,7 @@ def _remove_module_entry(path: str, module_id: str) -> None:
                         and (id_node.text or "").strip() == module_id
                     ):
                         node.remove(child)
-            tree.write(path, encoding="utf-8", xml_declaration=True)
+        xml_write_file(path, root)
     except Exception:  # noqa: BLE001
         pass
 
@@ -1027,14 +1166,12 @@ def _fomod_plugin_type(plugin_node, data_path: str) -> str:
 def _parse_fomod(scratch: str, data_path: str):
     """ModuleConfig.xml -> (wizard dict for the frontend, applier context).
     Returns None when the archive has no parsable FOMOD config."""
-    import xml.etree.ElementTree as ET
-
     cfg = _fomod_config_path(scratch)
     if not cfg:
         return None
     try:
-        root = ET.parse(cfg).getroot()
-    except ET.ParseError:
+        root = xml_parse_file(cfg)
+    except Exception:  # noqa: BLE001 - malformed community XML
         return None
     fomod_base = os.path.dirname(os.path.dirname(cfg))
 
@@ -1805,8 +1942,21 @@ query GetCollection($slug: String!, $domainName: String!) {
                 node = current.get(rec["mod_id"])
                 if not node:
                     continue
+                # Collection installs are pinned by the curator - nagging
+                # users to update them off-plan does more harm than good.
+                if rec.get("source") == "collection":
+                    continue
                 cur = _norm_version(node.get("version"))
-                installed = _norm_version(rec.get("version"))
+                # Compare in page-version units when we recorded them - the
+                # FILE version and the mod PAGE version are different
+                # numbering schemes and cross-comparing loops forever.
+                installed = _norm_version(
+                    rec.get("page_version") or rec.get("version")
+                )
+                if rec.get("ignore_update") and _norm_version(
+                    rec["ignore_update"]
+                ) == cur:
+                    continue
                 updates[folder] = {
                     "installed": rec.get("version"),
                     "current": node.get("version"),
@@ -2162,6 +2312,8 @@ query GetCollection($slug: String!, $domainName: String!) {
         logicmods_subdir: str = "",
         launcher_xml_subpath: str = "",
         flat_extensions: list = None,
+        page_version: str = "",
+        record_source: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -2188,6 +2340,8 @@ query GetCollection($slug: String!, $domainName: String!) {
                 logicmods_subdir,
                 launcher_xml_subpath,
                 flat_extensions,
+                page_version,
+                record_source,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -2215,6 +2369,8 @@ query GetCollection($slug: String!, $domainName: String!) {
         logicmods_subdir: str = "",
         launcher_xml_subpath: str = "",
         flat_extensions: list = None,
+        page_version: str = "",
+        record_source: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -2348,6 +2504,8 @@ query GetCollection($slug: String!, $domainName: String!) {
                             "app_id": app_id,
                             "plugins_subpath": plugins_subpath,
                             "plugins_style": plugins_style,
+                            "page_version": page_version,
+                            "record_source": record_source,
                         }
                         try:
                             os.remove(archive_path)
@@ -2484,6 +2642,8 @@ query GetCollection($slug: String!, $domainName: String!) {
                 "version": mod_version,
                 "file_name": file_name,
                 "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
                 "mode": "dataDir",
                 "files": files_rel,
                 "plugins": plugins,
@@ -2530,6 +2690,8 @@ query GetCollection($slug: String!, $domainName: String!) {
                 "version": mod_version,
                 "file_name": file_name,
                 "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
                 **route,
             }
             _save_settings(settings)
@@ -2583,6 +2745,8 @@ query GetCollection($slug: String!, $domainName: String!) {
                 "version": mod_version,
                 "file_name": file_name,
                 "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
                 "mode": "files",
                 "target": mods_subdir,
                 "files": moved,
@@ -2630,6 +2794,8 @@ query GetCollection($slug: String!, $domainName: String!) {
                         "version": mod_version,
                         "file_name": file_name,
                         "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
                     }
                     if launcher_xml_subpath:
                         module_id = _submodule_id(dst)
@@ -2688,6 +2854,8 @@ query GetCollection($slug: String!, $domainName: String!) {
             "version": mod_version,
             "file_name": file_name,
             "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
         }
         # Bannerlord-style launcher games: modules need selecting in the
         # launcher's XML config; the Id lives in the module's SubModule.xml.
@@ -2779,6 +2947,8 @@ query GetCollection($slug: String!, $domainName: String!) {
                 "version": entry["mod_version"],
                 "file_name": entry["file_name"],
                 "installed_at": int(time.time()),
+                "page_version": entry.get("page_version") or "",
+                "source": entry.get("record_source") or "",
                 "mode": "dataDir",
                 "files": files_rel,
                 "plugins": plugins,
@@ -3014,6 +3184,24 @@ query GetCollection($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Invalid path"}
         path = os.path.join(STEAM_COMMON, install_dir, *rel_path.split("/"))
         return {"ok": True, "exists": os.path.exists(path)}
+
+    async def dismiss_update(
+        self, game_domain: str, folder: str, version: str
+    ) -> dict:
+        """Remember that the user declined this version - the update stops
+        appearing until a NEWER version exists."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        settings = _load_settings()
+        rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+        if not rec:
+            return {"ok": False, "error": f"{folder} is not tracked"}
+        rec["ignore_update"] = version
+        _save_settings(settings)
+        decky.logger.info(
+            f"update {version!r} dismissed for {folder!r} ({game_domain})"
+        )
+        return {"ok": True}
 
     async def get_display_fix(
         self, app_id: int, prefs_subpath: str, section: str, settings: dict

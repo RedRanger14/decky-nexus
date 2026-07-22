@@ -602,6 +602,17 @@ class TestUe4ssRouting(unittest.TestCase):
         )
 
 
+class TestDeviceRuntimeConstraints(unittest.TestCase):
+    def test_no_stdlib_xml_imports(self):
+        """Decky's embedded Python has no xml package (no pyexpat) - the
+        FOMOD wizard shipped dead because dev python has it. main.py must
+        only use the bundled mini parser."""
+        src = open(main.__file__, encoding="utf-8").read()
+        self.assertNotIn("import xml.", src)
+        self.assertNotIn("from xml ", src)
+        self.assertNotIn("from xml.", src)
+
+
 class TestFomod(unittest.TestCase):
     """FOMOD wizard parsing and staging against a representative
     ModuleConfig.xml (steps, groups, flags, conditional installs)."""

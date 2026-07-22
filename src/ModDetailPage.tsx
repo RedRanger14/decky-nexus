@@ -305,7 +305,9 @@ export function ModDetailPage() {
         game.ue4ss?.modsSubdir ?? "",
         game.ue4ss?.logicModsSubdir ?? "",
         game.launcherXmlSubpath ?? "",
-        game.flatModExtensions ?? []
+        game.flatModExtensions ?? [],
+        mod.version,
+        ""
       );
       if (result.needs_fomod && result.fomod_token && result.wizard) {
         // FOMOD archive: run the wizard, then finish with the choices.
