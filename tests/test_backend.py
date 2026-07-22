@@ -805,6 +805,79 @@ class TestFomodCuratorChoices(unittest.TestCase):
         self.assertIn("0.0.1", ids)
 
 
+class TestWitcherRouting(unittest.TestCase):
+    """TW3 archives: mod*/dlc* folders, menu XMLs into both filelists,
+    and the script-conflict gate."""
+
+    GAME = "The Witcher 3 Test"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.mods = os.path.join(self.install, "mods")
+        os.makedirs(self.mods)
+        self.scratch = os.path.join(TEST_ROOT, "w3-scratch")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+
+    def put(self, rel):
+        p = os.path.join(self.scratch, *rel.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("x")
+
+    def test_classifies_mod_dlc_and_menu_xml(self):
+        self.put("mods/modCoolThing/content/blob.bundle")
+        self.put("dlc/dlcCoolThing/content/blob.bundle")
+        self.put("bin/config/r4game/user_config_matrix/pc/coolthing.xml")
+        mods, dlcs, xmls, err = main._route_witcher_payload(
+            self.scratch, self.install, self.mods, "Cool Thing"
+        )
+        self.assertIsNone(err)
+        self.assertEqual([os.path.basename(d) for d in mods], ["modCoolThing"])
+        self.assertEqual([os.path.basename(d) for d in dlcs], ["dlcCoolThing"])
+        self.assertEqual([os.path.basename(x) for x in xmls], ["coolthing.xml"])
+
+    def test_loose_content_wraps_with_mod_prefix(self):
+        self.put("content/texture.cache")
+        mods, dlcs, xmls, err = main._route_witcher_payload(
+            self.scratch, self.install, self.mods, "Loose Pack"
+        )
+        self.assertIsNone(err)
+        self.assertEqual(len(mods), 1)
+        self.assertTrue(os.path.basename(mods[0]).startswith("mod"))
+
+    def test_script_conflict_is_refused(self):
+        conflict = os.path.join(
+            self.mods, "modExisting", "content", "scripts", "game", "hit.ws"
+        )
+        os.makedirs(os.path.dirname(conflict))
+        with open(conflict, "w") as f:
+            f.write("x")
+        self.put("modNew/content/scripts/game/hit.ws")
+        mods, dlcs, xmls, err = main._route_witcher_payload(
+            self.scratch, self.install, self.mods, "New Mod"
+        )
+        self.assertIsNotNone(err)
+        self.assertIn("modExisting", err)
+
+    def test_filelist_append_is_idempotent(self):
+        pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))
+        os.makedirs(pc)
+        with open(os.path.join(pc, "dx11filelist.txt"), "w") as f:
+            f.write("existing.xml;" + chr(10))
+        main._w3_filelist_append(pc, "coolthing.xml")
+        main._w3_filelist_append(pc, "coolthing.xml")
+        content = open(os.path.join(pc, "dx11filelist.txt")).read()
+        self.assertEqual(content.count("coolthing.xml;"), 1)
+        self.assertIn("existing.xml;", content)
+        # dx12 list created and populated too
+        self.assertIn(
+            "coolthing.xml;",
+            open(os.path.join(pc, "dx12filelist.txt")).read(),
+        )
+
+
 class TestBannerlordModules(unittest.TestCase):
     """Module activation lives in LauncherData.xml; the Id comes from the
     module's SubModule.xml, not the folder name."""

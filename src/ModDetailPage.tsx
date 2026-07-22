@@ -307,7 +307,8 @@ export function ModDetailPage() {
         game.launcherXmlSubpath ?? "",
         game.flatModExtensions ?? [],
         mod.version,
-        ""
+        "",
+        game.witcherLayout ?? false
       );
       if (result.needs_fomod && result.fomod_token && result.wizard) {
         // FOMOD archive: run the wizard, then finish with the choices.

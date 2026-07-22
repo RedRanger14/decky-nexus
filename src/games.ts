@@ -75,6 +75,9 @@ export interface SupportedGame {
     /** Steam Play tool name to force (e.g. "proton_experimental") */
     tool: string;
   };
+  /** The Witcher 3's layered layout: "mod" and "dlc" prefixed folders,
+   * menu-XML filelist registration, and a script-conflict gate. */
+  witcherLayout?: boolean;
   /** Flat-file games (Cyberpunk archive/pc/mod): the game loads FILES
    * from the mods dir, not folders - installs move matching files flat
    * with per-file records. Lists the loadable extensions. */
@@ -312,6 +315,20 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       "FastMode",
     ],
     recommendedModIds: [612, 2018], // verified: Mod Configuration Menu (61k endo), ButterLib
+  },
+  292030: {
+    appId: 292030,
+    displayName: "The Witcher 3",
+    nexusDomain: "witcher3", // verified: game id 952, ~8.8k mods
+    installDirName: "The Witcher 3", // TODO verify on device
+    modsSubdir: "mods",
+    witcherLayout: true,
+    moddedSaveWarning: false,
+    processName: "witcher3.exe",
+    // Next-gen loads everything in mods/ automatically - no framework,
+    // no launch options. Script-conflicting mods are refused at install
+    // (Script Merger is Windows-only); menu XMLs are registered in both
+    // dx11/dx12 filelists per the next-gen requirement.
   },
   1091500: {
     appId: 1091500,

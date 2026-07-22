@@ -149,7 +149,8 @@ export const installMod = callable<
     launcher_xml_subpath: string,
     flat_extensions: string[],
     page_version: string,
-    record_source: string
+    record_source: string,
+    witcher_layout: boolean
   ],
   InstallResult
 >("install_mod");

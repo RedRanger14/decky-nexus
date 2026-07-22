@@ -924,6 +924,151 @@ def xml_write_file(path: str, node: XmlNode) -> None:
         f.write("\n")
 
 
+
+# ---- Witcher 3 layout --------------------------------------------------------
+# Next-gen TW3 (research-verified): mod folders (must start with "mod")
+# go to <game>/mods/, DLC-sized components to <game>/dlc/, menu-mod XMLs
+# to bin/config/r4game/user_config_matrix/pc/ AND appended (with a
+# semicolon) to dx11filelist.txt + dx12filelist.txt. Script mods editing
+# the same .ws file as an installed mod are refused - unresolved script
+# conflicts are a fatal compile error at launch and Script Merger is
+# Windows-only.
+
+W3_MENU_DIR = "bin/config/r4game/user_config_matrix/pc"
+
+
+def _w3_filelist_append(pc_dir: str, xml_name: str) -> None:
+    for fl in ("dx11filelist.txt", "dx12filelist.txt"):
+        path = _adopt_case(os.path.join(pc_dir, fl))
+        lines = []
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+                lines = f.read().splitlines()
+        entry = f"{xml_name};"
+        if entry not in [l.strip() for l in lines]:
+            lines.append(entry)
+            with open(path, "w", encoding="utf-8", newline="\r\n") as f:
+                f.write("\n".join(lines) + "\n")
+
+
+def _w3_installed_scripts(mods_path: str) -> dict:
+    """Installed script paths -> owning mod folder (for conflict checks)."""
+    owners = {}
+    if not os.path.isdir(mods_path):
+        return owners
+    for folder in os.listdir(mods_path):
+        scripts = os.path.join(mods_path, folder, "content", "scripts")
+        if not os.path.isdir(scripts):
+            continue
+        for root, _dirs, names in os.walk(scripts):
+            for n in names:
+                if n.lower().endswith(".ws"):
+                    rel = os.path.relpath(os.path.join(root, n), scripts)
+                    owners[rel.replace(os.sep, "/").lower()] = folder
+    return owners
+
+
+def _w3_payload_scripts(folder_path: str) -> list:
+    scripts = os.path.join(folder_path, "content", "scripts")
+    out = []
+    if not os.path.isdir(scripts):
+        return out
+    for root, _dirs, names in os.walk(scripts):
+        for n in names:
+            if n.lower().endswith(".ws"):
+                rel = os.path.relpath(os.path.join(root, n), scripts)
+                out.append(rel.replace(os.sep, "/").lower())
+    return out
+
+
+def _route_witcher_payload(
+    scratch: str, install_path: str, mods_path: str, mod_name: str
+):
+    """Classify a TW3 archive into mod folders, dlc folders, and menu
+    XMLs. Returns (mod_folders, dlc_folders, menu_xmls, error) with paths
+    still inside scratch - the caller moves them."""
+    mod_dirs, dlc_dirs, menu_xmls = [], [], []
+
+    def classify_dir(path: str, name: str) -> bool:
+        low = name.lower()
+        if low.startswith("mod"):
+            mod_dirs.append(path)
+            return True
+        if low.startswith("dlc") and low != "dlc":
+            dlc_dirs.append(path)
+            return True
+        return False
+
+    def scan_level(base: str, depth: int) -> None:
+        try:
+            entries = os.listdir(base)
+        except OSError:
+            return
+        for e in entries:
+            p = os.path.join(base, e)
+            low = e.lower()
+            if os.path.isdir(p):
+                if low == "mods" or low == "dlc":
+                    # container dirs: their children are the real items
+                    for child in os.listdir(p):
+                        cp = os.path.join(p, child)
+                        if os.path.isdir(cp):
+                            if low == "mods":
+                                mod_dirs.append(cp)
+                            else:
+                                dlc_dirs.append(cp)
+                    continue
+                if classify_dir(p, e):
+                    continue
+                if low == "bin":
+                    continue  # handled by the xml sweep below
+                if depth < 2:
+                    scan_level(p, depth + 1)
+            elif low.endswith(".xml"):
+                # menu xmls also ship loose or under bin/.../pc
+                if "user_config_matrix" in p.replace(os.sep, "/").lower():
+                    menu_xmls.append(p)
+
+    scan_level(scratch, 0)
+    # xml sweep for the canonical bin path anywhere in the tree
+    for root, _dirs, names in os.walk(scratch):
+        if "user_config_matrix" in root.replace(os.sep, "/").lower():
+            for n in names:
+                if n.lower().endswith(".xml"):
+                    p = os.path.join(root, n)
+                    if p not in menu_xmls:
+                        menu_xmls.append(p)
+
+    if not mod_dirs and not dlc_dirs:
+        # Loose content/ at root: wrap as a mod folder.
+        if os.path.isdir(os.path.join(scratch, "content")):
+            wrap = os.path.join(scratch, "mod" + _safe_name(mod_name))
+            os.makedirs(wrap, exist_ok=True)
+            shutil.move(
+                os.path.join(scratch, "content"),
+                os.path.join(wrap, "content"),
+            )
+            mod_dirs.append(wrap)
+        else:
+            return [], [], menu_xmls, (
+                "No Witcher 3 mod layout found in this archive (expected "
+                "mod*/dlc* folders or a content/ folder)"
+            )
+
+    # Script-conflict gate against everything already installed.
+    owners = _w3_installed_scripts(mods_path)
+    for d in mod_dirs:
+        for rel in _w3_payload_scripts(d):
+            owner = owners.get(rel)
+            if owner and owner.lower() != os.path.basename(d).lower():
+                return [], [], [], (
+                    f"Script conflict: this mod and '{owner}' both edit "
+                    f"scripts/{rel}. Merging scripts needs Script Merger "
+                    "(Windows-only) - not supported on Steam Deck yet."
+                )
+    return mod_dirs, dlc_dirs, menu_xmls, None
+
+
 # ---- Bannerlord module activation ------------------------------------------
 # Modules are folders under Modules/, but the launcher only loads ones
 # selected in LauncherData.xml (Documents/Mount and Blade II Bannerlord/
@@ -2518,6 +2663,7 @@ query Link($slug: String!, $domainName: String!) {
         flat_extensions: list = None,
         page_version: str = "",
         record_source: str = "",
+        witcher_layout: bool = False,
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -2546,6 +2692,7 @@ query Link($slug: String!, $domainName: String!) {
                 flat_extensions,
                 page_version,
                 record_source,
+                witcher_layout,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -2575,6 +2722,7 @@ query Link($slug: String!, $domainName: String!) {
         flat_extensions: list = None,
         page_version: str = "",
         record_source: str = "",
+        witcher_layout: bool = False,
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -2904,6 +3052,83 @@ query Link($slug: String!, $domainName: String!) {
             )
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
+
+        # Witcher 3: classify into mod folders / dlc folders / menu XMLs,
+        # gate on script conflicts, and register menu XMLs in both
+        # filelists (next-gen requirement).
+        if witcher_layout:
+            install_path = os.path.join(STEAM_COMMON, install_dir)
+            mod_dirs, dlc_dirs, menu_xmls, w3_err = _route_witcher_payload(
+                scratch, install_path, mods_path, mod_name
+            )
+            if w3_err:
+                _force_rmtree(scratch)
+                return {"ok": False, "error": w3_err}
+            os.makedirs(mods_path, exist_ok=True)
+            settings = _load_settings()  # re-read: parallel installs
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            base_rec = {
+                "mod_id": mod_id,
+                "file_id": file_id,
+                "version": mod_version,
+                "file_name": file_name,
+                "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
+            }
+            first_folder = None
+            for d in mod_dirs:
+                folder = os.path.basename(d)
+                dst = os.path.join(mods_path, folder)
+                _force_rmtree(dst)
+                shutil.move(d, dst)
+                installed[folder] = {
+                    **base_rec,
+                    "name": mod_name if len(mod_dirs) == 1 else folder,
+                }
+                first_folder = first_folder or folder
+            dlc_root = os.path.join(install_path, "dlc")
+            os.makedirs(dlc_root, exist_ok=True)
+            for d in dlc_dirs:
+                folder = os.path.basename(d)
+                dst = os.path.join(dlc_root, folder)
+                _force_rmtree(dst)
+                shutil.move(d, dst)
+                installed[folder] = {
+                    **base_rec,
+                    "name": f"{mod_name} ({folder})",
+                    "target": "dlc",
+                    "folder": folder,
+                }
+                first_folder = first_folder or folder
+            pc_dir = os.path.join(install_path, *W3_MENU_DIR.split("/"))
+            xml_names = []
+            if menu_xmls:
+                os.makedirs(pc_dir, exist_ok=True)
+                for x in menu_xmls:
+                    name = os.path.basename(x)
+                    dstx = os.path.join(pc_dir, name)
+                    if os.path.isfile(dstx):
+                        os.remove(dstx)
+                    shutil.move(x, dstx)
+                    _w3_filelist_append(pc_dir, name)
+                    xml_names.append(name)
+                if first_folder and first_folder in installed:
+                    installed[first_folder]["menuXmls"] = xml_names
+            _save_settings(settings)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            decky.logger.info(
+                f"installed W3 {mod_name!r}: {len(mod_dirs)} mod folder(s), "
+                f"{len(dlc_dirs)} dlc, {len(xml_names)} menu xml(s)"
+            )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": first_folder or _safe_name(mod_name)}
 
         # Flat-file games (Cyberpunk archive/pc/mod): the game loads files,
         # not folders - move matching files flat and keep a per-file record.
