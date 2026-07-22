@@ -19,7 +19,15 @@ import {
 } from "./api";
 import { modeParams } from "./games";
 import { installPinned } from "./install";
-import { getSelectedCollection } from "./state";
+import {
+  CollectionRowState,
+  beginCollectionRun,
+  endCollectionRun,
+  getCollectionRun,
+  getSelectedCollection,
+  setCollectionRow,
+  subscribeCollectionRun,
+} from "./state";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
 const Scroller: any = ScrollPanelGroup;
@@ -30,15 +38,21 @@ function fmtBytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-type RowState = "pending" | "installing" | "done" | "skipped" | "failed";
-
 export function CollectionPage() {
   const sel = getSelectedCollection();
   const [detail, setDetail] = useState<CollectionDetail | undefined>();
   const [error, setError] = useState<string | undefined>();
-  const [rowState, setRowState] = useState<Record<number, RowState>>({});
-  const [installing, setInstalling] = useState(false);
   const [installedIds, setInstalledIds] = useState<Set<number>>(new Set());
+  // Batch state lives in a module store so navigating away and back
+  // shows live progress instead of a stale page.
+  const [, force] = useState(0);
+  useEffect(() => subscribeCollectionRun(() => force((n) => n + 1)), []);
+  const run = getCollectionRun();
+  const runIsOurs = run?.slug === sel?.collection.slug;
+  const rowState: Record<number, CollectionRowState> = runIsOurs
+    ? run!.rows
+    : {};
+  const installing = Boolean(runIsOurs && run!.running);
 
   useEffect(() => {
     if (!sel) return;
@@ -80,11 +94,11 @@ export function CollectionPage() {
 
   const installAll = async () => {
     if (!detail || installing) return;
-    setInstalling(true);
+    beginCollectionRun(collection.slug, remaining.length);
     try {
       let failures = 0;
       for (const f of remaining) {
-        setRowState((prev) => ({ ...prev, [f.fileId]: "installing" }));
+        setCollectionRow(f.fileId, "installing");
         const result = await installPinned(
           game,
           f.modId,
@@ -94,16 +108,16 @@ export function CollectionPage() {
           f.version
         );
         if (result.ok) {
-          setRowState((prev) => ({ ...prev, [f.fileId]: "done" }));
-        } else if (result.needs_choice) {
-          setRowState((prev) => ({ ...prev, [f.fileId]: "skipped" }));
+          setCollectionRow(f.fileId, "done");
+        } else if (result.needs_choice || result.needs_fomod) {
+          setCollectionRow(f.fileId, "skipped");
           toaster.toast({
-            title: `${f.modName}: needs a manual choice`,
-            body: "Open its mod page to pick a folder",
+            title: `${f.modName}: needs manual choices`,
+            body: "Open its mod page to pick options",
           });
         } else {
           failures += 1;
-          setRowState((prev) => ({ ...prev, [f.fileId]: "failed" }));
+          setCollectionRow(f.fileId, "failed");
           toaster.toast({
             title: `${f.modName} failed`,
             body: result.error ?? "",
@@ -118,7 +132,7 @@ export function CollectionPage() {
             : `Finished with ${failures} failure(s) - see the list`,
       });
     } finally {
-      setInstalling(false);
+      endCollectionRun();
     }
   };
 
@@ -192,9 +206,13 @@ export function CollectionPage() {
             style={{ flexGrow: 2, minWidth: "260px" }}
           >
             {installing
-              ? "Installing collection…"
+              ? `Installing… ${runIsOurs ? run!.finished : 0}/${
+                  runIsOurs ? run!.total : remaining.length
+                }`
               : remaining.length === 0 && detail
               ? "Everything installed ✓"
+              : detail && remaining.length < required.length
+              ? `⬇ Resume collection (${remaining.length} left)`
               : `⬇ Install collection (${remaining.length} mods)`}
           </DialogButton>
           <DialogButton

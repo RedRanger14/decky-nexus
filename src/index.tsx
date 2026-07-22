@@ -77,13 +77,14 @@ import {
   setLaunchOptions,
 } from "./steam";
 import {
+  getCollectionRun,
   getDownloads,
   setDetailOrigin,
   setSelectedMod,
+  subscribeCollectionRun,
   subscribeDownloads,
   updateDownload,
 } from "./state";
-import { installLatest } from "./install";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
 interface GameContext {
@@ -137,7 +138,10 @@ function resolveGameContext(): GameContext {
 }
 import { BrowsePage } from "./BrowsePage";
 import { CollectionPage } from "./CollectionPage";
+import { DownloadsPage } from "./DownloadsPage";
 import { ModDetailPage } from "./ModDetailPage";
+import { UpdatesPage } from "./UpdatesPage";
+import { scanUpdates } from "./updates";
 
 /** QAM row shortcut: jump from an installed mod straight to its detail page
  * (to re-check requirements, files, or updates). */
@@ -160,6 +164,8 @@ async function openInstalledModDetail(game: SupportedGame, mod: InstalledMod) {
 const BROWSE_ROUTE = "/nexus-mods";
 const DETAIL_ROUTE = "/nexus-mods/mod";
 const COLLECTION_ROUTE = "/nexus-mods/collection";
+const DOWNLOADS_ROUTE = "/nexus-mods/downloads";
+const UPDATES_ROUTE = "/nexus-mods/updates";
 
 interface BackendInfo {
   user: string;
@@ -1528,139 +1534,66 @@ function DevSection() {
   );
 }
 
-interface PendingUpdate {
-  game: SupportedGame;
-  folder: string;
-  modId: number;
-  name: string;
-  current: string;
-}
-
-/** "Your mods have updates" panel with one-click update. Scoped to the
- * current game when the panel is in a game's context; cross-game (with
- * Update all) only on neutral ground - updates for a game you're not
- * looking at are noise. */
-function UpdatesSection({ scopedGame }: { scopedGame?: SupportedGame }) {
-  const [pending, setPending] = useState<PendingUpdate[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [checked, setChecked] = useState(false);
-
-  const scan = async () => {
-    const found: PendingUpdate[] = [];
-    for (const game of scopedGame ? [scopedGame] : ALL_GAMES) {
-      const [mods, updates] = await Promise.all([
-        getInstalledMods(
-          game.nexusDomain,
-          game.installDirName,
-          game.modsSubdir,
-          ...modeParams(game),
-          game.protectedModFolders ?? []
-        ),
-        checkUpdates(game.nexusDomain),
-      ]);
-      if (!updates.ok || !updates.updates) continue;
-      const byFolder = new Map(
-        (mods.mods ?? []).map((m) => [m.folder, m])
-      );
-      for (const [folder, info] of Object.entries(updates.updates)) {
-        const mod = byFolder.get(folder);
-        if (info.update_available && mod?.mod_id) {
-          found.push({
-            game,
-            folder,
-            modId: mod.mod_id,
-            name: mod.name ?? folder,
-            current: info.current,
-          });
-        }
-      }
-    }
-    setPending(found);
-    setChecked(true);
-  };
-
+/** QAM shortcut to the full-screen Downloads page, with a live activity
+ * indicator. The heavy list lives on the page - the QAM stays lean. */
+function DownloadsButton() {
+  const [, force] = useState(0);
   useEffect(() => {
-    setChecked(false);
-    setPending([]);
-    scan();
-  }, [scopedGame?.appId]);
-
-  const updateOne = async (u: PendingUpdate) => {
-    const result = await installLatest(u.game, u.modId, u.name, u.current);
-    if (result.ok) {
-      setPending((prev) => prev.filter((p) => p !== u));
-    } else {
-      toaster.toast({ title: `${u.name} update failed`, body: result.error ?? "" });
-    }
-  };
-
-  const updateAll = async () => {
-    setBusy(true);
-    try {
-      for (const u of [...pending]) {
-        await updateOne(u);
-      }
-      toaster.toast({ title: "Updates applied", body: "Restart affected games to load them" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!checked || pending.length === 0) return null;
+    const un1 = subscribeDownloads(() => force((n) => n + 1));
+    const un2 = subscribeCollectionRun(() => force((n) => n + 1));
+    return () => {
+      un1();
+      un2();
+    };
+  }, []);
+  const active = getDownloads().length;
+  const run = getCollectionRun();
+  const busy = active > 0 || Boolean(run?.running);
+  const label = run?.running
+    ? `Downloads · collection ${run.finished}/${run.total}`
+    : active > 0
+    ? `Downloads · ${active} active`
+    : "Downloads";
   return (
-    <PanelSection title={`Updates (${pending.length})`}>
-      <PanelSectionRow>
-        <ButtonItem layout="below" disabled={busy} onClick={updateAll}>
-          {busy ? "Updating…" : `⬆ Update all (${pending.length})`}
-        </ButtonItem>
-      </PanelSectionRow>
-      {pending.map((u) => (
-        <PanelSectionRow key={`${u.game.appId}:${u.folder}`}>
-          <ButtonItem
-            layout="below"
-            disabled={busy}
-            description={
-              scopedGame
-                ? `New version ${u.current}`
-                : `${u.game.displayName} · new version ${u.current}`
-            }
-            onClick={() => updateOne(u)}
-          >
-            {`⬆ ${u.name}`}
-          </ButtonItem>
-        </PanelSectionRow>
-      ))}
-    </PanelSection>
+    <PanelSectionRow>
+      <ButtonItem
+        layout="below"
+        onClick={() => {
+          Router.CloseSideMenus();
+          Navigation.Navigate(DOWNLOADS_ROUTE);
+        }}
+      >
+        {busy ? `⏳ ${label}` : label}
+      </ButtonItem>
+    </PanelSectionRow>
   );
 }
 
-/** Active downloads at a glance - installs keep going while the user
- * browses elsewhere; this is where they check on them. */
-function DownloadsSection() {
-  const [items, setItems] = useState(getDownloads());
-  useEffect(() => subscribeDownloads(() => setItems(getDownloads())), []);
-  if (items.length === 0) return null;
+/** QAM shortcut to the full-screen Updates page, with a pending count. */
+function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
+  const [count, setCount] = useState<number | undefined>();
+  useEffect(() => {
+    let stale = false;
+    setCount(undefined);
+    scanUpdates(scopedGame).then((found) => {
+      if (!stale) setCount(found.length);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [scopedGame?.appId]);
   return (
-    <PanelSection title="Downloads">
-      {items.map((d) => (
-        <PanelSectionRow key={d.modId}>
-          <Field
-            label={d.name}
-            description={
-              d.phase === "downloading"
-                ? `Downloading… ${d.percent}%`
-                : d.phase === "extracting"
-                ? "Installing…"
-                : d.phase === "done"
-                ? "Done ✓"
-                : d.phase === "error"
-                ? "Failed ⚠"
-                : "Starting…"
-            }
-          />
-        </PanelSectionRow>
-      ))}
-    </PanelSection>
+    <PanelSectionRow>
+      <ButtonItem
+        layout="below"
+        onClick={() => {
+          Router.CloseSideMenus();
+          Navigation.Navigate(UPDATES_ROUTE);
+        }}
+      >
+        {count ? `⬆ Updates · ${count} available` : "Updates"}
+      </ButtonItem>
+    </PanelSectionRow>
   );
 }
 
@@ -1690,8 +1623,8 @@ function Content() {
   return (
     <>
       <VersionBadge />
-      <UpdatesSection scopedGame={ctx.game} />
-      <DownloadsSection />
+      <UpdatesButton scopedGame={ctx.game} />
+      <DownloadsButton />
       <CurrentGameSection />
       {ctx.game ? (
         <>
@@ -1713,6 +1646,8 @@ export default definePlugin(() => {
   routerHook.addRoute(BROWSE_ROUTE, BrowsePage, { exact: true });
   routerHook.addRoute(DETAIL_ROUTE, ModDetailPage, { exact: true });
   routerHook.addRoute(COLLECTION_ROUTE, CollectionPage, { exact: true });
+  routerHook.addRoute(DOWNLOADS_ROUTE, DownloadsPage, { exact: true });
+  routerHook.addRoute(UPDATES_ROUTE, UpdatesPage, { exact: true });
 
   // Feed the QAM Downloads section from anywhere in the UI.
   const progressListener = addEventListener<[p: InstallProgress]>(
@@ -1736,6 +1671,9 @@ export default definePlugin(() => {
     onDismount() {
       routerHook.removeRoute(DETAIL_ROUTE);
       routerHook.removeRoute(BROWSE_ROUTE);
+      routerHook.removeRoute(COLLECTION_ROUTE);
+      routerHook.removeRoute(DOWNLOADS_ROUTE);
+      routerHook.removeRoute(UPDATES_ROUTE);
       removeEventListener("backend_event", listener);
       removeEventListener("install_progress", progressListener);
     },

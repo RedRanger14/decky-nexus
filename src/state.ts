@@ -106,6 +106,8 @@ export function nameDownload(modId: number, name: string): void {
   notifyDownloads();
 }
 
+const completed: ActiveDownload[] = [];
+
 export function updateDownload(
   modId: number,
   phase: string,
@@ -113,14 +115,13 @@ export function updateDownload(
 ): void {
   const existing = downloads.get(modId);
   if (phase === "done" || phase === "error") {
-    // Keep terminal states visible briefly, then clear.
+    // Move terminal states to the completed list (Downloads page shows
+    // them until cleared).
     if (existing) {
-      downloads.set(modId, { ...existing, phase, percent });
+      downloads.delete(modId);
+      completed.unshift({ ...existing, phase, percent });
+      if (completed.length > 30) completed.pop();
       notifyDownloads();
-      setTimeout(() => {
-        downloads.delete(modId);
-        notifyDownloads();
-      }, 8000);
     }
     return;
   }
@@ -133,6 +134,15 @@ export function updateDownload(
   notifyDownloads();
 }
 
+export function getCompletedDownloads(): ActiveDownload[] {
+  return [...completed];
+}
+
+export function clearCompletedDownloads(): void {
+  completed.length = 0;
+  notifyDownloads();
+}
+
 export function getDownloads(): ActiveDownload[] {
   return Array.from(downloads.values());
 }
@@ -142,4 +152,64 @@ export function subscribeDownloads(listener: () => void): () => void {
   return () => {
     downloadListeners.delete(listener);
   };
+}
+
+// ---- Collection batch run ------------------------------------------------------
+// The install loop lives OUTSIDE the page component: navigating away must
+// not orphan the batch's UI state (the loop itself always survived - the
+// page just forgot about it).
+
+export type CollectionRowState =
+  | "pending"
+  | "installing"
+  | "done"
+  | "skipped"
+  | "failed";
+
+export interface CollectionRun {
+  slug: string;
+  running: boolean;
+  total: number;
+  finished: number;
+  rows: Record<number, CollectionRowState>;
+}
+
+let collectionRun: CollectionRun | undefined;
+const runListeners = new Set<() => void>();
+
+function notifyRun(): void {
+  runListeners.forEach((l) => l());
+}
+
+export function getCollectionRun(): CollectionRun | undefined {
+  return collectionRun;
+}
+
+export function subscribeCollectionRun(listener: () => void): () => void {
+  runListeners.add(listener);
+  return () => {
+    runListeners.delete(listener);
+  };
+}
+
+export function beginCollectionRun(slug: string, total: number): void {
+  collectionRun = { slug, running: true, total, finished: 0, rows: {} };
+  notifyRun();
+}
+
+export function setCollectionRow(
+  fileId: number,
+  state: CollectionRowState
+): void {
+  if (!collectionRun) return;
+  collectionRun.rows[fileId] = state;
+  if (state === "done" || state === "skipped" || state === "failed") {
+    collectionRun.finished += 1;
+  }
+  notifyRun();
+}
+
+export function endCollectionRun(): void {
+  if (collectionRun) collectionRun.running = false;
+  notifyRun();
 }

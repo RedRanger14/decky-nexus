@@ -285,11 +285,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       url: "nexusmods.com/mountandblade2bannerlord/mods/1",
       nexusModId: 1, // verified: "Bannerlord Software Extender (BLSE)"
       installKind: "copyRoot",
-      // Swap the TaleWorlds launcher for BLSE's (verified exe names on
-      // device): same recipe family as SKSE/F4SE.
-      launchOptionsTemplate:
-        "bash -c 'exec \"$" +
-        "{@/TaleWorlds.MountAndBlade.Launcher.exe/Bannerlord.BLSE.LauncherEx.exe}\"' -- %command%",
+      // NO launch template yet: the LauncherEx swap broke boot on device
+      // (2026-07-22) - likely a missing .NET runtime in the prefix. The
+      // Standalone loader is the next candidate; verify before shipping.
     },
     // Modules activate via the launcher's XML (Vortex manages the same
     // file). Created by the launcher on first run - activation is

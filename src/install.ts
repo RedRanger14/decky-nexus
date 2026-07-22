@@ -29,6 +29,19 @@ export async function installPinned(
   version = ""
 ): Promise<InstallResult> {
   nameDownload(modId, modName);
+  return installModWith(game, modId, fileId, fileName, modName, version, "collection");
+}
+
+function installModWith(
+  game: SupportedGame,
+  modId: number,
+  fileId: number,
+  fileName: string,
+  modName: string,
+  version: string,
+  source: string,
+  pageVersion = ""
+): Promise<InstallResult> {
   return installMod(
     game.nexusDomain,
     modId,
@@ -45,7 +58,9 @@ export async function installPinned(
     game.ue4ss?.modsSubdir ?? "",
     game.ue4ss?.logicModsSubdir ?? "",
     game.launcherXmlSubpath ?? "",
-    game.flatModExtensions ?? []
+    game.flatModExtensions ?? [],
+    pageVersion,
+    source
   );
 }
 
@@ -56,7 +71,7 @@ export async function installLatest(
   game: SupportedGame,
   modId: number,
   modName: string,
-  fallbackVersion = ""
+  pageVersion = ""
 ): Promise<InstallResult> {
   const files = await getModFiles(game.nexusDomain, modId);
   const file = files.files?.[0];
@@ -64,22 +79,14 @@ export async function installLatest(
     return { ok: false, error: "No downloadable file found" };
   }
   nameDownload(modId, modName);
-  return installMod(
-    game.nexusDomain,
+  return installModWith(
+    game,
     modId,
     file.file_id,
     file.file_name,
     modName,
-    file.version || fallbackVersion,
-    game.installDirName,
-    game.modsSubdir,
+    file.version || pageVersion,
     "",
-    "",
-    ...modeParams(game),
-    "",
-    game.ue4ss?.modsSubdir ?? "",
-    game.ue4ss?.logicModsSubdir ?? "",
-    game.launcherXmlSubpath ?? "",
-    game.flatModExtensions ?? []
+    pageVersion
   );
 }
