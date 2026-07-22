@@ -4,10 +4,19 @@
 import {
   InstallResult,
   getModFiles,
+  installFomod,
   installMod,
 } from "./api";
 import { SupportedGame, modeParams } from "./games";
 import { nameDownload } from "./state";
+
+/** Complete a FOMOD install after the wizard. */
+export async function finishFomod(
+  token: string,
+  selectedIds: string[]
+): Promise<InstallResult> {
+  return installFomod(token, selectedIds);
+}
 
 /** Install a SPECIFIC pinned file (collections pin exact file ids).
  * Same pipeline, same Downloads-panel tracking. */

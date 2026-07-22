@@ -31,7 +31,8 @@ import {
 } from "./api";
 import { getCompatHint } from "./compat";
 import { modeParams } from "./games";
-import { installLatest } from "./install";
+import { finishFomod, installLatest } from "./install";
+import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 
 // Steam's scroll panel: right-stick scrolling (untyped props upstream).
 const Scroller: any = ScrollPanelGroup;
@@ -306,6 +307,29 @@ export function ModDetailPage() {
         game.launcherXmlSubpath ?? "",
         game.flatModExtensions ?? []
       );
+      if (result.needs_fomod && result.fomod_token && result.wizard) {
+        // FOMOD archive: run the wizard, then finish with the choices.
+        showModal(
+          <FomodWizardModal
+            wizard={result.wizard as FomodWizardData}
+            onInstall={async (ids) => {
+              nameDownload(mod.modId, mod.name);
+              const done = await finishFomod(result.fomod_token!, ids);
+              if (done.ok) {
+                setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
+                refreshInstalled(sel);
+                toaster.toast({ title: `${mod.name} installed`, body: "" });
+              } else {
+                toaster.toast({
+                  title: "Install failed",
+                  body: done.error ?? "",
+                });
+              }
+            }}
+          />
+        );
+        return;
+      }
       if (result.needs_choice && result.options?.length) {
         // Option-style archive: ask which folder to install, then retry.
         showModal(
