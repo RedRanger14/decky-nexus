@@ -14,8 +14,10 @@ import { useEffect, useState } from "react";
 import {
   CollectionDetail,
   CollectionFile,
+  NexusMod,
   getCollection,
   getInstalledMods,
+  getModDetails,
 } from "./api";
 import { modeParams } from "./games";
 import { installPinned } from "./install";
@@ -43,6 +45,8 @@ export function CollectionPage() {
   const [detail, setDetail] = useState<CollectionDetail | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [installedIds, setInstalledIds] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [modInfo, setModInfo] = useState<Record<number, NexusMod | null>>({});
   // Batch state lives in a module store so navigating away and back
   // shows live progress instead of a stale page.
   const [, force] = useState(0);
@@ -134,6 +138,23 @@ export function CollectionPage() {
     } finally {
       endCollectionRun();
     }
+  };
+
+  const toggleExpand = (f: CollectionFile) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(f.fileId)) {
+        next.delete(f.fileId);
+      } else {
+        next.add(f.fileId);
+        if (!(f.modId in modInfo)) {
+          getModDetails(game.nexusDomain, f.modId).then((r) =>
+            setModInfo((m) => ({ ...m, [f.modId]: r.ok ? r.mod ?? null : null }))
+          );
+        }
+      }
+      return next;
+    });
   };
 
   const stateBadge = (f: CollectionFile): string => {
@@ -250,34 +271,91 @@ export function CollectionPage() {
           <Focusable
             style={{ display: "flex", flexDirection: "column", gap: "4px" }}
           >
-            {required.map((f) => (
-              <div
-                key={f.fileId}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  padding: "6px 10px",
-                  background: "rgba(255,255,255,0.05)",
-                  borderRadius: "4px",
-                  fontSize: "13px",
-                }}
-              >
-                <span
+            {required.map((f) => {
+              const open = expanded.has(f.fileId);
+              const info = modInfo[f.modId];
+              return (
+                <Focusable
+                  key={f.fileId}
+                  onActivate={() => toggleExpand(f)}
                   style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    padding: "6px 10px",
+                    background: "rgba(255,255,255,0.05)",
+                    borderRadius: "4px",
+                    fontSize: "13px",
                   }}
                 >
-                  {stateBadge(f)}
-                  {f.modName}
-                  {f.version ? ` · v${f.version}` : ""}
-                </span>
-                <span style={{ opacity: 0.6, flexShrink: 0, marginLeft: "10px" }}>
-                  {fmtBytes(f.sizeKb * 1024)}
-                </span>
-              </div>
-            ))}
+                  <div
+                    style={{ display: "flex", justifyContent: "space-between" }}
+                  >
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {open ? "▾ " : "▸ "}
+                      {stateBadge(f)}
+                      {f.modName}
+                      {f.version ? ` · v${f.version}` : ""}
+                    </span>
+                    <span
+                      style={{ opacity: 0.6, flexShrink: 0, marginLeft: "10px" }}
+                    >
+                      {fmtBytes(f.sizeKb * 1024)}
+                    </span>
+                  </div>
+                  {open && (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "10px",
+                        marginTop: "6px",
+                        paddingTop: "6px",
+                        borderTop: "1px solid rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      {info === undefined && (
+                        <span style={{ opacity: 0.6, fontSize: "12px" }}>
+                          Loading…
+                        </span>
+                      )}
+                      {info === null && (
+                        <span style={{ opacity: 0.6, fontSize: "12px" }}>
+                          Details unavailable.
+                        </span>
+                      )}
+                      {info && (
+                        <>
+                          {info.thumbnailUrl && (
+                            <img
+                              src={info.thumbnailUrl}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              style={{
+                                width: "96px",
+                                height: "54px",
+                                objectFit: "cover",
+                                borderRadius: "4px",
+                                flexShrink: 0,
+                              }}
+                            />
+                          )}
+                          <div style={{ fontSize: "12px", opacity: 0.85 }}>
+                            <div style={{ opacity: 0.7 }}>
+                              by {info.author} · {f.fileName}
+                            </div>
+                            {info.summary}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </Focusable>
+              );
+            })}
             {optional.length > 0 && (
               <div
                 style={{ fontSize: "12px", opacity: 0.65, margin: "8px 0 2px" }}

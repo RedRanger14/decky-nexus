@@ -89,12 +89,17 @@ MOD_FIELDS = """
 TRENDING_WINDOW_DAYS = 30
 
 
-def _build_mods_query(with_search: bool, trending_since=None) -> str:
+def _build_mods_query(
+    with_search: bool, trending_since=None, include_adult: bool = False
+) -> str:
     """Compose the browse query. WILDCARD does substring matching
     server-side; date filters take epoch seconds (verified - ISO datetimes
     break the backing Lucene query). 'Trending' = created within the window,
-    sorted by downloads."""
+    sorted by downloads. Adult content is excluded unless the user opted
+    in (mirrors the site's default)."""
     filters = ["gameDomainName: [{ value: $domain, op: EQUALS }]"]
+    if not include_adult:
+        filters.append("adultContent: [{ value: false }]")
     params = "$domain: String!, $count: Int!, $offset: Int!"
     if with_search:
         filters.append("name: [{ value: $search, op: WILDCARD }]")
@@ -222,6 +227,10 @@ def _normalize_requirements(raw: list) -> list:
             }
         )
     return reqs
+
+
+def _show_adult() -> bool:
+    return bool(_load_settings().get("show_adult"))
 
 
 async def _gql_query_vars(query: str, variables: dict, api_key=None) -> dict:
@@ -1613,7 +1622,9 @@ class Plugin:
         if search:
             variables["search"] = search
         payload = {
-            "query": _build_mods_query(bool(search), trending_since),
+            "query": _build_mods_query(
+                bool(search), trending_since, include_adult=_show_adult()
+            ),
             "variables": variables,
         }
         headers = {
@@ -1758,17 +1769,28 @@ class Plugin:
     # collections downloader (verified field names); installs run through
     # the normal per-game pipeline one file at a time, in collection order.
 
-    async def get_collections(self, game_domain: str, count: int = 8) -> dict:
-        """Most-endorsed published collections for a game."""
+    async def get_collections(
+        self, game_domain: str, count: int = 8, search: str = ""
+    ) -> dict:
+        """Most-endorsed published collections for a game, optionally
+        name-filtered (the search toggle on the browse page)."""
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         api_key = _load_settings().get("api_key")
+        search_filter = (
+            "generalSearch: [{ value: $search, op: WILDCARD }]"
+            if search
+            else ""
+        )
+        search_param = ", $search: String!" if search else ""
         query = """
-query TrendingCollections($gameDomain: String!, $count: Int) {
+query TrendingCollections($gameDomain: String!, $count: Int%SEARCHPARAM%) {
   collectionsV2(
     filter: {
       gameDomain: [{ value: $gameDomain }]
       hasPublishedRevision: [{ value: true }]
+      %SEARCH%
+      %ADULT%
     }
     sort: [{ endorsements: { direction: DESC } }]
     count: $count
@@ -1784,10 +1806,19 @@ query TrendingCollections($gameDomain: String!, $count: Int) {
     }
   }
 }"""
-        try:
-            data = await _gql_query_vars(
-                query, {"gameDomain": game_domain, "count": int(count)}, api_key
+        query = (
+            query.replace("%SEARCHPARAM%", search_param)
+            .replace("%SEARCH%", search_filter)
+            .replace(
+                "%ADULT%",
+                "" if _show_adult() else "adultContent: [{ value: false }]",
             )
+        )
+        variables = {"gameDomain": game_domain, "count": int(count)}
+        if search:
+            variables["search"] = search
+        try:
+            data = await _gql_query_vars(query, variables, api_key)
             out = []
             for n in data["collectionsV2"]["nodes"]:
                 rev = n.get("latestPublishedRevision") or {}
@@ -2246,10 +2277,13 @@ query GetCollection($slug: String!, $domainName: String!) {
         except asyncio.TimeoutError:
             return {"ok": False, "error": "Nexus Mods API timed out"}
 
+        show_adult = _show_adult()
         mods = [
             _map_v1_mod(m)
             for m in body
-            if m.get("name") and m.get("available", True)
+            if m.get("name")
+            and m.get("available", True)
+            and (show_adult or not m.get("contains_adult_content"))
         ]
         mods = [m for m in mods if not m["adultContent"]][: int(count)]
         return {"ok": True, "total": len(mods), "mods": mods}
@@ -3184,6 +3218,16 @@ query GetCollection($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Invalid path"}
         path = os.path.join(STEAM_COMMON, install_dir, *rel_path.split("/"))
         return {"ok": True, "exists": os.path.exists(path)}
+
+    async def get_show_adult(self) -> dict:
+        return {"ok": True, "show_adult": _show_adult()}
+
+    async def set_show_adult(self, value: bool) -> dict:
+        settings = _load_settings()
+        settings["show_adult"] = bool(value)
+        _save_settings(settings)
+        decky.logger.info(f"show_adult set to {bool(value)}")
+        return {"ok": True}
 
     async def dismiss_update(
         self, game_domain: str, folder: str, version: str

@@ -355,7 +355,7 @@ export interface CollectionDetail {
 }
 
 export const getCollections = callable<
-  [game_domain: string, count: number],
+  [game_domain: string, count: number, search: string],
   { ok: boolean; collections?: CollectionSummary[]; error?: string }
 >("get_collections");
 
@@ -457,6 +457,15 @@ export const checkGameFile = callable<
   [install_dir: string, rel_path: string],
   { ok: boolean; exists?: boolean; error?: string }
 >("check_game_file");
+
+export const getShowAdult = callable<
+  [],
+  { ok: boolean; show_adult?: boolean }
+>("get_show_adult");
+export const setShowAdult = callable<
+  [value: boolean],
+  { ok: boolean }
+>("set_show_adult");
 
 export const setApiKey = callable<[api_key: string], AuthStatus>("set_api_key");
 export const getAuthStatus = callable<[], AuthStatus>("get_auth_status");
