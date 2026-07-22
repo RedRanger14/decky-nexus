@@ -412,7 +412,9 @@ export function BrowsePage() {
         style={{
           height: "100%",
           overflowY: "auto",
-          padding: "0 24px 24px",
+          // 80px bottom clears the SteamOS footer bar, which otherwise
+          // overlaps the last row (Load more / Restart game / bottom tiles).
+          padding: "0 24px 80px",
           position: "relative",
         }}
       >

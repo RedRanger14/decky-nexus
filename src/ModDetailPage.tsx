@@ -31,6 +31,7 @@ import {
 } from "./api";
 import { getCompatHint } from "./compat";
 import { modeParams } from "./games";
+import { installLatest } from "./install";
 
 // Steam's scroll panel: right-stick scrolling (untyped props upstream).
 const Scroller: any = ScrollPanelGroup;
@@ -239,44 +240,19 @@ export function ModDetailPage() {
         return !c.external && !c.have && !c.optional;
       });
       for (const req of missing) {
-        const det = await getModDetails(game.nexusDomain, req.modId);
-        if (!det.ok || !det.mod) {
-          toaster.toast({ title: "Skipped", body: req.modName });
-          continue;
-        }
-        const files = await getModFiles(game.nexusDomain, req.modId);
-        const file = files.files?.[0];
-        if (!file) {
-          toaster.toast({ title: "No file found", body: det.mod.name });
-          continue;
-        }
-        nameDownload(det.mod.modId, det.mod.name);
-        const result = await installMod(
-          game.nexusDomain,
-          det.mod.modId,
-          file.file_id,
-          file.file_name,
-          det.mod.name,
-          file.version || det.mod.version,
-          game.installDirName,
-          game.modsSubdir,
-          "",
-          "",
-          ...modeParams(game),
-          "",
-          game.ue4ss?.modsSubdir ?? "",
-          game.ue4ss?.logicModsSubdir ?? "",
-          game.launcherXmlSubpath ?? "",
-          game.flatModExtensions ?? []
+        const result = await installLatest(
+          game,
+          req.modId,
+          req.modName || `Mod ${req.modId}`
         );
         if (result.needs_choice) {
           toaster.toast({
-            title: `${det.mod.name}: choose manually`,
+            title: `${req.modName}: choose manually`,
             body: "This one offers versions - open its page to pick",
           });
         } else if (!result.ok) {
           toaster.toast({
-            title: `${det.mod.name} failed`,
+            title: `${req.modName} failed`,
             body: result.error ?? "",
           });
         }
@@ -463,7 +439,9 @@ export function ModDetailPage() {
         style={{
           height: "100%",
           overflowY: "auto",
-          padding: "0 24px 24px",
+          // 80px bottom clears the SteamOS footer bar, which otherwise
+          // overlaps the last row (Load more / Restart game / bottom tiles).
+          padding: "0 24px 80px",
         }}
       >
       {/* ---- Header: hero image + facts ---- */}

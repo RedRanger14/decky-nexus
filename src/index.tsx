@@ -83,6 +83,7 @@ import {
   subscribeDownloads,
   updateDownload,
 } from "./state";
+import { installLatest } from "./install";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
 interface GameContext {
@@ -1525,6 +1526,105 @@ function DevSection() {
   );
 }
 
+interface PendingUpdate {
+  game: SupportedGame;
+  folder: string;
+  modId: number;
+  name: string;
+  current: string;
+}
+
+/** Cross-game "your mods have updates" panel with one-click update.
+ * Owning both the store and the installer is what makes this possible -
+ * we know the installed version AND can fetch + reinstall the latest. */
+function UpdatesSection() {
+  const [pending, setPending] = useState<PendingUpdate[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [checked, setChecked] = useState(false);
+
+  const scan = async () => {
+    const found: PendingUpdate[] = [];
+    for (const game of ALL_GAMES) {
+      const [mods, updates] = await Promise.all([
+        getInstalledMods(
+          game.nexusDomain,
+          game.installDirName,
+          game.modsSubdir,
+          ...modeParams(game),
+          game.protectedModFolders ?? []
+        ),
+        checkUpdates(game.nexusDomain),
+      ]);
+      if (!updates.ok || !updates.updates) continue;
+      const byFolder = new Map(
+        (mods.mods ?? []).map((m) => [m.folder, m])
+      );
+      for (const [folder, info] of Object.entries(updates.updates)) {
+        const mod = byFolder.get(folder);
+        if (info.update_available && mod?.mod_id) {
+          found.push({
+            game,
+            folder,
+            modId: mod.mod_id,
+            name: mod.name ?? folder,
+            current: info.current,
+          });
+        }
+      }
+    }
+    setPending(found);
+    setChecked(true);
+  };
+
+  useEffect(() => {
+    scan();
+  }, []);
+
+  const updateOne = async (u: PendingUpdate) => {
+    const result = await installLatest(u.game, u.modId, u.name, u.current);
+    if (result.ok) {
+      setPending((prev) => prev.filter((p) => p !== u));
+    } else {
+      toaster.toast({ title: `${u.name} update failed`, body: result.error ?? "" });
+    }
+  };
+
+  const updateAll = async () => {
+    setBusy(true);
+    try {
+      for (const u of [...pending]) {
+        await updateOne(u);
+      }
+      toaster.toast({ title: "Updates applied", body: "Restart affected games to load them" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!checked || pending.length === 0) return null;
+  return (
+    <PanelSection title={`Updates (${pending.length})`}>
+      <PanelSectionRow>
+        <ButtonItem layout="below" disabled={busy} onClick={updateAll}>
+          {busy ? "Updating…" : `⬆ Update all (${pending.length})`}
+        </ButtonItem>
+      </PanelSectionRow>
+      {pending.map((u) => (
+        <PanelSectionRow key={`${u.game.appId}:${u.folder}`}>
+          <ButtonItem
+            layout="below"
+            disabled={busy}
+            description={`${u.game.displayName} · new version ${u.current}`}
+            onClick={() => updateOne(u)}
+          >
+            {`⬆ ${u.name}`}
+          </ButtonItem>
+        </PanelSectionRow>
+      ))}
+    </PanelSection>
+  );
+}
+
 /** Active downloads at a glance - installs keep going while the user
  * browses elsewhere; this is where they check on them. */
 function DownloadsSection() {
@@ -1581,6 +1681,7 @@ function Content() {
   return (
     <>
       <VersionBadge />
+      <UpdatesSection />
       <DownloadsSection />
       <CurrentGameSection />
       {ctx.game ? (
