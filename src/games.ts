@@ -273,6 +273,24 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     modsSubdir: "Modules",
     moddedSaveWarning: false,
     processName: "Bannerlord.exe",
+    // BLSE is Bannerlord's script extender: current ButterLib/MCM declare
+    // a dependency on its assembly resolver, and its LauncherEx replaces
+    // the TaleWorlds launcher (and quiets its version-metadata alarms).
+    // Archive verified: bin/Win64_Shipping_Client + Gaming.Desktop variant
+    // at root -> copyRoot merges into the game root (no-flatten rule keys
+    // off the detect file's "bin/" component).
+    framework: {
+      name: "BLSE",
+      detectFile: "bin/Win64_Shipping_Client/Bannerlord.BLSE.LauncherEx.exe",
+      url: "nexusmods.com/mountandblade2bannerlord/mods/1",
+      nexusModId: 1, // verified: "Bannerlord Software Extender (BLSE)"
+      installKind: "copyRoot",
+      // Swap the TaleWorlds launcher for BLSE's (verified exe names on
+      // device): same recipe family as SKSE/F4SE.
+      launchOptionsTemplate:
+        "bash -c 'exec \"$" +
+        "{@/TaleWorlds.MountAndBlade.Launcher.exe/Bannerlord.BLSE.LauncherEx.exe}\"' -- %command%",
+    },
     // Modules activate via the launcher's XML (Vortex manages the same
     // file). Created by the launcher on first run - activation is
     // best-effort until then; the launcher also auto-detects modules.
