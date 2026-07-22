@@ -47,6 +47,7 @@ import {
   getModLoadStatus,
   getNxmQueue,
   getSaveStatus,
+  getShowAdult,
   getSmapiLoadStatus,
   installFramework,
   registerNxmHandler,
@@ -55,6 +56,7 @@ import {
   setFrameworkEnabled,
   setApiKey,
   setModEnabled,
+  setShowAdult as setShowAdultBackend,
   uninstallAllMods,
   uninstallMod,
 } from "./api";
@@ -1304,9 +1306,11 @@ function AccountSection() {
   const [auth, setAuth] = useState<AuthStatus | undefined>();
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showAdult, setShowAdult] = useState(false);
 
   useEffect(() => {
     getAuthStatus().then(setAuth);
+    getShowAdult().then((r) => setShowAdult(Boolean(r.show_adult)));
   }, []);
 
   const onSave = async () => {
@@ -1344,7 +1348,18 @@ function AccountSection() {
             Sign out
           </ButtonItem>
         </PanelSectionRow>
-      </PanelSection>
+            <PanelSectionRow key={`adult:${showAdult}`}>
+        <ToggleField
+          label="Show adult content"
+          description="Off by default - mirrors the Nexus Mods site setting"
+          checked={showAdult}
+          onChange={(v: boolean) => {
+            setShowAdult(v);
+            setShowAdultBackend(v);
+          }}
+        />
+      </PanelSectionRow>
+    </PanelSection>
     );
   }
 

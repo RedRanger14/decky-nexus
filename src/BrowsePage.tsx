@@ -48,6 +48,68 @@ const SORT_OPTIONS = [
 const PAGE_SIZE = 24;
 const ROW_SIZE = 8;
 
+function CollectionCard({
+  game,
+  c,
+}: {
+  game: SupportedGame;
+  c: CollectionSummary;
+}) {
+  return (
+    <Focusable
+      onActivate={() => {
+        setSelectedCollection({ game, collection: c });
+        setDetailOrigin("browse");
+        Navigation.Navigate("/nexus-mods/collection");
+      }}
+      style={{
+        display: "flex",
+        gap: "10px",
+        background: "rgba(255,255,255,0.06)",
+        borderRadius: "6px",
+        overflow: "hidden",
+        padding: "8px",
+      }}
+    >
+      {c.thumbnailUrl && (
+        <img
+          src={c.thumbnailUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          style={{
+            width: "64px",
+            height: "64px",
+            objectFit: "cover",
+            borderRadius: "4px",
+            flexShrink: 0,
+          }}
+        />
+      )}
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontWeight: 600,
+            fontSize: "13.5px",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {c.name}
+        </div>
+        <div style={{ fontSize: "11.5px", opacity: 0.65 }}>by {c.author}</div>
+        <div style={{ fontSize: "11.5px", opacity: 0.65 }}>
+          {c.modCount} mods ·{" "}
+          {c.totalSize >= 1 << 30
+            ? `${(c.totalSize / (1 << 30)).toFixed(1)} GB`
+            : `${Math.round(c.totalSize / (1 << 20))} MB`}
+        </div>
+      </div>
+    </Focusable>
+  );
+}
+
 function openMod(game: SupportedGame, mod: NexusMod) {
   setSelectedMod({ game, mod });
   setDetailOrigin("browse");
@@ -316,6 +378,12 @@ export function BrowsePage() {
   });
 
   const [lastPageFull, setLastPageFull] = useState(true);
+  const [searchScope, setSearchScope] = useState<"mods" | "collections">(
+    "mods"
+  );
+  const [searchCollections, setSearchCollections] = useState<
+    CollectionSummary[]
+  >([]);
 
   const fetchPage = async (offset: number, append: boolean) => {
     setLoading(true);
@@ -359,7 +427,7 @@ export function BrowsePage() {
     setNewest([]);
     setPopular([]);
     setTotal(undefined);
-    getCollections(game.nexusDomain, 6).then((r) => {
+    getCollections(game.nexusDomain, 6, "").then((r) => {
       if (!cancelled && r.ok) setCollections(r.collections ?? []);
     });
     if (game.recommendedModIds?.length) {
@@ -379,6 +447,20 @@ export function BrowsePage() {
       cancelled = true;
     };
   }, [game.appId]);
+
+  // Collection search runs alongside the mod search (cheap: one query).
+  useEffect(() => {
+    if (isHome || !search.trim()) {
+      setSearchCollections([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      getCollections(game.nexusDomain, 20, search.trim()).then((r) => {
+        if (r.ok) setSearchCollections(r.collections ?? []);
+      });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [game.appId, search]);
 
   useEffect(() => {
     if (isHome) return;
@@ -559,60 +641,7 @@ export function BrowsePage() {
                   }}
                 >
                   {collections.map((c) => (
-                    <Focusable
-                      key={c.slug}
-                      onActivate={() => {
-                        setSelectedCollection({ game, collection: c });
-                        setDetailOrigin("browse");
-                        Navigation.Navigate("/nexus-mods/collection");
-                      }}
-                      style={{
-                        display: "flex",
-                        gap: "10px",
-                        background: "rgba(255,255,255,0.06)",
-                        borderRadius: "6px",
-                        overflow: "hidden",
-                        padding: "8px",
-                      }}
-                    >
-                      {c.thumbnailUrl && (
-                        <img
-                          src={c.thumbnailUrl}
-                          alt=""
-                          loading="lazy"
-                          decoding="async"
-                          style={{
-                            width: "64px",
-                            height: "64px",
-                            objectFit: "cover",
-                            borderRadius: "4px",
-                            flexShrink: 0,
-                          }}
-                        />
-                      )}
-                      <div style={{ minWidth: 0 }}>
-                        <div
-                          style={{
-                            fontWeight: 600,
-                            fontSize: "13.5px",
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {c.name}
-                        </div>
-                        <div style={{ fontSize: "11.5px", opacity: 0.65 }}>
-                          by {c.author}
-                        </div>
-                        <div style={{ fontSize: "11.5px", opacity: 0.65 }}>
-                          {c.modCount} mods ·{" "}
-                          {c.totalSize >= 1 << 30
-                            ? `${(c.totalSize / (1 << 30)).toFixed(1)} GB`
-                            : `${Math.round(c.totalSize / (1 << 20))} MB`}
-                        </div>
-                      </div>
-                    </Focusable>
+                    <CollectionCard key={c.slug} game={game} c={c} />
                   ))}
                 </Focusable>
               </>
@@ -665,6 +694,52 @@ export function BrowsePage() {
                 No mods match “{search.trim()}”.
               </div>
             )}
+            {search.trim() !== "" && (
+              <Focusable
+                style={{ display: "flex", gap: "6px", marginTop: "8px" }}
+              >
+                {(["mods", "collections"] as const).map((scope) => (
+                  <Focusable
+                    key={scope}
+                    onActivate={() => setSearchScope(scope)}
+                    style={{
+                      padding: "4px 14px",
+                      borderRadius: "999px",
+                      fontSize: "12.5px",
+                      fontWeight: 600,
+                      background:
+                        searchScope === scope
+                          ? NEXUS_ORANGE
+                          : "rgba(255,255,255,0.08)",
+                      color: searchScope === scope ? "#1a1d24" : undefined,
+                    }}
+                  >
+                    {scope === "mods"
+                      ? `Mods${total !== undefined ? ` (${total})` : ""}`
+                      : `Collections (${searchCollections.length})`}
+                  </Focusable>
+                ))}
+              </Focusable>
+            )}
+            {search.trim() !== "" && searchScope === "collections" ? (
+              <Focusable
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: "12px",
+                  marginTop: "8px",
+                }}
+              >
+                {searchCollections.map((c) => (
+                  <CollectionCard key={c.slug} game={game} c={c} />
+                ))}
+                {searchCollections.length === 0 && (
+                  <div style={{ opacity: 0.7, fontSize: "13px" }}>
+                    No collections match "{search.trim()}".
+                  </div>
+                )}
+              </Focusable>
+            ) : (
             <Focusable
               autoFocus={!typedRecently()}
               style={{
@@ -678,6 +753,7 @@ export function BrowsePage() {
                 <ModTile key={mod.modId} mod={mod} game={game} />
               ))}
             </Focusable>
+            )}
             {hasMore && (
               <Focusable style={{ margin: "16px auto 0", maxWidth: "320px" }}>
                 <ButtonItem
