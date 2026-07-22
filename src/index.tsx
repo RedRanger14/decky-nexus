@@ -74,7 +74,7 @@ import {
   setCompatTool,
   setLaunchOptions,
 } from "./steam";
-import { setSelectedMod } from "./state";
+import { setDetailOrigin, setSelectedMod } from "./state";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
 interface GameContext {
@@ -136,6 +136,7 @@ async function openInstalledModDetail(game: SupportedGame, mod: InstalledMod) {
   const result = await getModDetails(game.nexusDomain, mod.mod_id);
   if (result.ok && result.mod) {
     setSelectedMod({ game, mod: result.mod });
+    setDetailOrigin("qam");
     Router.CloseSideMenus();
     Navigation.Navigate(DETAIL_ROUTE);
   } else {

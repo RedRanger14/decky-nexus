@@ -5,6 +5,7 @@ import {
   Focusable,
   ModalRoot,
   Navigation,
+  QuickAccessTab,
   ScrollPanelGroup,
   showModal,
 } from "@decky/ui";
@@ -33,7 +34,12 @@ import { modeParams } from "./games";
 
 // Steam's scroll panel: right-stick scrolling (untyped props upstream).
 const Scroller: any = ScrollPanelGroup;
-import { SelectedMod, getSelectedMod, setSelectedMod } from "./state";
+import {
+  SelectedMod,
+  getDetailOrigin,
+  getSelectedMod,
+  setSelectedMod,
+} from "./state";
 import { isGameRunning, restartGame } from "./steam";
 import {
   ACCENT_DANGER,
@@ -312,8 +318,18 @@ export function ModDetailPage() {
   const updatedDate = mod.updatedAt ? new Date(mod.updatedAt).toLocaleDateString() : "";
   const descLong = (description?.length ?? 0) > DESC_COLLAPSE_LENGTH;
 
+  const goBack = () => {
+    Navigation.NavigateBack();
+    if (getDetailOrigin() === "qam") {
+      // Opened from the installed-mods eye button: restore the panel the
+      // user was in rather than dumping them on the previous window.
+      Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
+    }
+  };
+
   return (
-    <div
+    <Focusable
+      onCancel={goBack}
       style={{
         marginTop: "40px",
         height: "calc(100% - 40px)",
@@ -505,11 +521,14 @@ export function ModDetailPage() {
                   // External requirements (VC++ redists etc.) aren't Nexus
                   // mods - link out instead of trying to open a mod page.
                   const external = !req.modId || req.modId <= 0;
+                  const fwIds = [
+                    game.framework?.nexusModId,
+                    ...(game.framework?.aliasModIds ?? []),
+                  ].filter(Boolean);
                   const have =
                     !external &&
                     (installedMods.some((m) => m.mod_id === req.modId) ||
-                      (req.modId === game.framework?.nexusModId &&
-                        fwInstalled));
+                      (fwInstalled && fwIds.includes(req.modId)));
                   const label = external
                     ? req.modName || req.notes || req.url || "external"
                     : `${req.modName}${req.notes ? ` · ${req.notes}` : ""}`;
@@ -778,12 +797,12 @@ export function ModDetailPage() {
         )}
         <DialogButton
           style={{ flexGrow: 1 }}
-          onClick={() => Navigation.NavigateBack()}
+          onClick={goBack}
         >
-          Back to browse
+          {getDetailOrigin() === "qam" ? "Back" : "Back to browse"}
         </DialogButton>
       </Focusable>
       </Scroller>
-    </div>
+    </Focusable>
   );
 }
