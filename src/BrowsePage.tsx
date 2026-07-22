@@ -15,6 +15,7 @@ import { SupportedGame, getActiveGame } from "./games";
 import {
   markBrowseReturn,
   saveBrowseState,
+  setDetailOrigin,
   setSelectedMod,
   takeBrowseRestore,
 } from "./state";
@@ -39,6 +40,7 @@ const ROW_SIZE = 8;
 
 function openMod(game: SupportedGame, mod: NexusMod) {
   setSelectedMod({ game, mod });
+  setDetailOrigin("browse");
   markBrowseReturn();
   Navigation.Navigate("/nexus-mods/mod");
 }

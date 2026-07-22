@@ -18,6 +18,20 @@ export function getSelectedMod(): SelectedMod | undefined {
   return current;
 }
 
+// ---- Detail-page origin ------------------------------------------------------
+// B on the detail page should return WHERE THE USER CAME FROM: the browse
+// page (default back-nav) or the QAM panel (the installed-mods eye button).
+
+let detailOrigin: "browse" | "qam" = "browse";
+
+export function setDetailOrigin(origin: "browse" | "qam"): void {
+  detailOrigin = origin;
+}
+
+export function getDetailOrigin(): "browse" | "qam" {
+  return detailOrigin;
+}
+
 // ---- Browse-state hand-back --------------------------------------------------
 // Returning from the detail page must not reset the browse page's search and
 // results. The browse page continuously saves its list state here; opening a

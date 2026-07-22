@@ -17,6 +17,10 @@ export interface GameFramework {
   /** The framework's own Nexus mod id - downloads route through Nexus so
    * the author gets credit and download counts */
   nexusModId?: number;
+  /** Other Nexus mod ids that ARE this framework (mirrors/repacks) - mod
+   * requirements point at any of them, and all should read as installed
+   * once the framework is. */
+  aliasModIds?: number[];
   /** How the framework archive installs: SMAPI's install.dat method, or
    * flatten-and-copy into the game dir (SKSE-style) */
   installKind?: "smapi" | "copyRoot";
@@ -211,6 +215,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       url: "docs.bepinex.dev",
       // verified: "BepInEx 5 with Configuration Manager" on Nexus
       nexusModId: 26,
+      aliasModIds: [26, 986], // the newer re-upload counts too
       installKind: "copyRoot",
       // Proton needs the loader dll preferred over the builtin
       launchOptionsTemplate: 'WINEDLLOVERRIDES="winhttp=n,b" %command%',
@@ -241,6 +246,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       detectFile: "Pal/Binaries/Win64/dwmapi.dll",
       url: "docs.ue4ss.com",
       nexusModId: 3405,
+      // Mods requirement-link any of the UE4SS uploads interchangeably.
+      aliasModIds: [3405, 3035, 1121],
       installKind: "copyRoot",
       installSubdir: "Pal/Binaries/Win64",
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dwmapi=n,b" %command%',
