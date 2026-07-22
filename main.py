@@ -224,6 +224,32 @@ def _normalize_requirements(raw: list) -> list:
     return reqs
 
 
+async def _gql_query_vars(query: str, variables: dict, api_key=None) -> dict:
+    """Like _gql_query but with GraphQL variables (collections queries)."""
+    headers = {
+        **_api_headers(api_key),
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=20)
+    ) as session:
+        async with session.post(
+            NEXUS_V2_GRAPHQL,
+            json={"query": query, "variables": variables},
+            headers=headers,
+            ssl=SSL_CONTEXT,
+        ) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"HTTP {resp.status}")
+            body = await resp.json()
+            if body.get("errors"):
+                raise RuntimeError(
+                    body["errors"][0].get("message", "GraphQL error")
+                )
+            return body["data"]
+
+
 async def _gql_query(query: str, api_key=None) -> dict:
     """POST one GraphQL query to the v2 endpoint; returns `data` or raises
     RuntimeError with a readable message."""
@@ -1259,6 +1285,146 @@ class Plugin:
                 else []
             )
             return {"ok": True, "requirements": _normalize_requirements(raw)}
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    # ---- Collections ---------------------------------------------------------
+    # Curated mod lists with pinned file ids. Queries mirror the Nexus labs
+    # collections downloader (verified field names); installs run through
+    # the normal per-game pipeline one file at a time, in collection order.
+
+    async def get_collections(self, game_domain: str, count: int = 8) -> dict:
+        """Most-endorsed published collections for a game."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        api_key = _load_settings().get("api_key")
+        query = """
+query TrendingCollections($gameDomain: String!, $count: Int) {
+  collectionsV2(
+    filter: {
+      gameDomain: [{ value: $gameDomain }]
+      hasPublishedRevision: [{ value: true }]
+    }
+    sort: [{ endorsements: { direction: DESC } }]
+    count: $count
+  ) {
+    nodes {
+      name
+      slug
+      summary
+      endorsements
+      tileImage { thumbnailUrl(size: small) }
+      user { name }
+      latestPublishedRevision { modCount totalSize }
+    }
+  }
+}"""
+        try:
+            data = await _gql_query_vars(
+                query, {"gameDomain": game_domain, "count": int(count)}, api_key
+            )
+            out = []
+            for n in data["collectionsV2"]["nodes"]:
+                rev = n.get("latestPublishedRevision") or {}
+                out.append(
+                    {
+                        "name": n.get("name") or "",
+                        "slug": n.get("slug") or "",
+                        "summary": n.get("summary") or "",
+                        "endorsements": n.get("endorsements") or 0,
+                        "author": (n.get("user") or {}).get("name") or "",
+                        "thumbnailUrl": (n.get("tileImage") or {}).get(
+                            "thumbnailUrl"
+                        ),
+                        "modCount": rev.get("modCount") or 0,
+                        "totalSize": int(rev.get("totalSize") or 0),
+                    }
+                )
+            decky.logger.info(
+                f"get_collections({game_domain!r}): {len(out)} returned"
+            )
+            return {"ok": True, "collections": out}
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def get_collection(self, slug: str, game_domain: str) -> dict:
+        """A collection's latest revision: ordered, pinned mod files."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        api_key = _load_settings().get("api_key")
+        query = """
+query GetCollection($slug: String!, $domainName: String!) {
+  collectionRevision(slug: $slug, domainName: $domainName) {
+    revisionNumber
+    modCount
+    totalSize
+    collection { name summary user { name } }
+    modFiles {
+      fileId
+      optional
+      file {
+        fileId
+        modId
+        name
+        version
+        sizeInBytes
+        mod { name }
+      }
+    }
+    externalResources { name resourceType resourceUrl optional }
+  }
+}"""
+        try:
+            data = await _gql_query_vars(
+                query, {"slug": slug, "domainName": game_domain}, api_key
+            )
+            rev = data["collectionRevision"]
+            coll = rev.get("collection") or {}
+            files = []
+            for mf in rev.get("modFiles") or []:
+                f = mf.get("file") or {}
+                if not f.get("modId") or not f.get("fileId"):
+                    continue
+                files.append(
+                    {
+                        "modId": int(f["modId"]),
+                        "fileId": int(f["fileId"]),
+                        "modName": (f.get("mod") or {}).get("name")
+                        or f.get("name")
+                        or "",
+                        "fileName": f.get("name") or "",
+                        "version": f.get("version") or "",
+                        "sizeKb": int(int(f.get("sizeInBytes") or 0) / 1024),
+                        "optional": bool(mf.get("optional")),
+                    }
+                )
+            externals = [
+                {
+                    "name": r.get("name") or "",
+                    "url": r.get("resourceUrl") or "",
+                    "optional": bool(r.get("optional")),
+                }
+                for r in rev.get("externalResources") or []
+            ]
+            decky.logger.info(
+                f"get_collection({slug!r}): {len(files)} files, "
+                f"{len(externals)} external"
+            )
+            return {
+                "ok": True,
+                "collection": {
+                    "name": coll.get("name") or slug,
+                    "summary": coll.get("summary") or "",
+                    "author": (coll.get("user") or {}).get("name") or "",
+                    "revision": rev.get("revisionNumber"),
+                    "modCount": rev.get("modCount") or len(files),
+                    "totalSize": int(rev.get("totalSize") or 0),
+                    "files": files,
+                    "externals": externals,
+                },
+            }
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
