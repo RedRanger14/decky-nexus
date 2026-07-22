@@ -204,6 +204,93 @@ export function ModDetailPage() {
   // installing the raw zip as a drop-in mod just parks the installer in Mods/.
   const isFrameworkMod = game.framework?.nexusModId === mod.modId;
 
+  // One classification, shared by the chips and the install-all button.
+  const classifyRequirement = (req: ModRequirement) => {
+    const external = !req.modId || req.modId <= 0;
+    const fwIds = [
+      game.framework?.nexusModId,
+      ...(game.framework?.aliasModIds ?? []),
+    ].filter(Boolean);
+    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const have =
+      !external &&
+      (installedMods.some(
+        (m) =>
+          m.mod_id === req.modId ||
+          Boolean(
+            m.name && req.modName && norm(m.name) === norm(req.modName)
+          )
+      ) ||
+        (fwInstalled && fwIds.includes(req.modId)));
+    const optional = !have && /optional/i.test(req.notes ?? "");
+    return { external, have, optional };
+  };
+
+  const [reqBatchBusy, setReqBatchBusy] = useState(false);
+
+  /** Install every missing required (non-optional) Nexus mod, in the
+   * order the mod page lists them. The Downloads panel tracks each. */
+  const installMissingRequirements = async () => {
+    if (!requirements || reqBatchBusy) return;
+    setReqBatchBusy(true);
+    try {
+      const missing = requirements.filter((r) => {
+        const c = classifyRequirement(r);
+        return !c.external && !c.have && !c.optional;
+      });
+      for (const req of missing) {
+        const det = await getModDetails(game.nexusDomain, req.modId);
+        if (!det.ok || !det.mod) {
+          toaster.toast({ title: "Skipped", body: req.modName });
+          continue;
+        }
+        const files = await getModFiles(game.nexusDomain, req.modId);
+        const file = files.files?.[0];
+        if (!file) {
+          toaster.toast({ title: "No file found", body: det.mod.name });
+          continue;
+        }
+        nameDownload(det.mod.modId, det.mod.name);
+        const result = await installMod(
+          game.nexusDomain,
+          det.mod.modId,
+          file.file_id,
+          file.file_name,
+          det.mod.name,
+          file.version || det.mod.version,
+          game.installDirName,
+          game.modsSubdir,
+          "",
+          "",
+          ...modeParams(game),
+          "",
+          game.ue4ss?.modsSubdir ?? "",
+          game.ue4ss?.logicModsSubdir ?? "",
+          game.launcherXmlSubpath ?? "",
+          game.flatModExtensions ?? []
+        );
+        if (result.needs_choice) {
+          toaster.toast({
+            title: `${det.mod.name}: choose manually`,
+            body: "This one offers versions - open its page to pick",
+          });
+        } else if (!result.ok) {
+          toaster.toast({
+            title: `${det.mod.name} failed`,
+            body: result.error ?? "",
+          });
+        }
+      }
+      refreshInstalled(sel);
+      toaster.toast({
+        title: "Required mods done",
+        body: `${missing.length} processed - check the chips`,
+      });
+    } finally {
+      setReqBatchBusy(false);
+    }
+  };
+
   const openRequirement = async (req: ModRequirement) => {
     if (!req.modId) return;
     const result = await getModDetails(game.nexusDomain, req.modId);
@@ -508,9 +595,35 @@ export function ModDetailPage() {
               }}
             >
               <div
-                style={{ fontSize: "13px", fontWeight: 600, marginBottom: "6px" }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "6px",
+                }}
               >
-                Required mods
+                <span style={{ fontSize: "13px", fontWeight: 600 }}>
+                  Required mods
+                </span>
+                {requirements.some((r) => {
+                  const c = classifyRequirement(r);
+                  return !c.external && !c.have && !c.optional;
+                }) && (
+                  <DialogButton
+                    disabled={reqBatchBusy}
+                    onClick={installMissingRequirements}
+                    style={{
+                      minWidth: "0",
+                      width: "auto",
+                      padding: "4px 12px",
+                      fontSize: "12px",
+                    }}
+                  >
+                    {reqBatchBusy
+                      ? "Installing…"
+                      : "⬇ Install all missing"}
+                  </DialogButton>
+                )}
               </div>
               <Focusable
                 style={{
@@ -521,34 +634,8 @@ export function ModDetailPage() {
                 }}
               >
                 {requirements.map((req) => {
-                  // External requirements (VC++ redists etc.) aren't Nexus
-                  // mods - link out instead of trying to open a mod page.
-                  const external = !req.modId || req.modId <= 0;
-                  const fwIds = [
-                    game.framework?.nexusModId,
-                    ...(game.framework?.aliasModIds ?? []),
-                  ].filter(Boolean);
-                  // Authors link whichever upload of a dependency they
-                  // like - also match installed mods by normalized NAME,
-                  // or chips stay orange for mods you demonstrably have.
-                  const norm = (t: string) =>
-                    t.toLowerCase().replace(/[^a-z0-9]/g, "");
-                  const have =
-                    !external &&
-                    (installedMods.some(
-                      (m) =>
-                        m.mod_id === req.modId ||
-                        Boolean(
-                          m.name &&
-                            req.modName &&
-                            norm(m.name) === norm(req.modName)
-                        )
-                    ) ||
-                      (fwInstalled && fwIds.includes(req.modId)));
-                  // Optional-for-this-platform requirements must not read
-                  // as missing prerequisites.
-                  const optional =
-                    !have && /optional/i.test(req.notes ?? "");
+                  const { external, have, optional } =
+                    classifyRequirement(req);
                   const label = external
                     ? req.modName || req.notes || req.url || "external"
                     : `${req.modName}${req.notes ? ` · ${req.notes}` : ""}`;
