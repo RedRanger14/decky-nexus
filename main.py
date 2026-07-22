@@ -2269,7 +2269,17 @@ class Plugin:
                     os.makedirs(dest_root, exist_ok=True)
                 src = scratch
                 top = os.listdir(scratch)
-                if len(top) == 1 and os.path.isdir(os.path.join(scratch, top[0])):
+                # Flatten a single version-wrapper folder (skse64_2_02_06/),
+                # but NOT a real structure dir: BLSE ships bin/... which is
+                # already game-root-relative - flattening it would dump
+                # Win64_Shipping_Client at the root. The detect file's first
+                # path component tells us which dirs are structural.
+                detect_root = detect_file.split("/")[0].lower()
+                if (
+                    len(top) == 1
+                    and os.path.isdir(os.path.join(scratch, top[0]))
+                    and top[0].lower() != detect_root
+                ):
                     src = os.path.join(scratch, top[0])
                 for root, _dirs, names in os.walk(src):
                     for name in names:
