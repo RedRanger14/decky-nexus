@@ -38,6 +38,7 @@ import {
   SelectedMod,
   getDetailOrigin,
   getSelectedMod,
+  nameDownload,
   setSelectedMod,
 } from "./state";
 import { isGameRunning, restartGame } from "./steam";
@@ -50,6 +51,7 @@ import {
 } from "./theme";
 
 function fmtSize(sizeKb: number): string {
+  if (sizeKb >= 1024 * 1024) return `${(sizeKb / 1024 / 1024).toFixed(1)} GB`;
   if (sizeKb >= 1024) return `${(sizeKb / 1024).toFixed(1)} MB`;
   return `${sizeKb} KB`;
 }
@@ -221,6 +223,7 @@ export function ModDetailPage() {
   const onInstall = async (file: ModFile, payloadChoice = "") => {
     setInstallingFileId(file.file_id);
     setProgress(undefined);
+    nameDownload(mod.modId, mod.name);
     try {
       const result = await installMod(
         game.nexusDomain,
@@ -525,10 +528,27 @@ export function ModDetailPage() {
                     game.framework?.nexusModId,
                     ...(game.framework?.aliasModIds ?? []),
                   ].filter(Boolean);
+                  // Authors link whichever upload of a dependency they
+                  // like - also match installed mods by normalized NAME,
+                  // or chips stay orange for mods you demonstrably have.
+                  const norm = (t: string) =>
+                    t.toLowerCase().replace(/[^a-z0-9]/g, "");
                   const have =
                     !external &&
-                    (installedMods.some((m) => m.mod_id === req.modId) ||
+                    (installedMods.some(
+                      (m) =>
+                        m.mod_id === req.modId ||
+                        Boolean(
+                          m.name &&
+                            req.modName &&
+                            norm(m.name) === norm(req.modName)
+                        )
+                    ) ||
                       (fwInstalled && fwIds.includes(req.modId)));
+                  // Optional-for-this-platform requirements must not read
+                  // as missing prerequisites.
+                  const optional =
+                    !have && /optional/i.test(req.notes ?? "");
                   const label = external
                     ? req.modName || req.notes || req.url || "external"
                     : `${req.modName}${req.notes ? ` · ${req.notes}` : ""}`;
@@ -560,13 +580,19 @@ export function ModDetailPage() {
                               background: "rgba(143, 212, 143, 0.15)",
                               border: "1px solid rgba(143, 212, 143, 0.5)",
                             }
+                          : optional
+                          ? {
+                              background: "rgba(255, 255, 255, 0.06)",
+                              border: "1px dashed rgba(255, 255, 255, 0.35)",
+                              opacity: 0.8,
+                            }
                           : {
                               background: "rgba(218, 142, 53, 0.15)",
                               border: `1px solid ${NEXUS_ORANGE}88`,
                             }),
                       }}
                     >
-                      {external ? "🌐 " : have ? "✓ " : "⬇ "}
+                      {external ? "🌐 " : have ? "✓ " : optional ? "○ " : "⬇ "}
                       {label}
                     </Focusable>
                   );
@@ -580,6 +606,8 @@ export function ModDetailPage() {
                 <span style={{ color: "rgb(120, 170, 255)" }}>
                   ● External link
                 </span>
+                <span style={{ opacity: 0.5 }}> · </span>
+                <span style={{ opacity: 0.7 }}>○ Optional</span>
               </div>
             </div>
           )}

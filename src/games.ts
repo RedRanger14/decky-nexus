@@ -79,6 +79,14 @@ export interface SupportedGame {
    * from the mods dir, not folders - installs move matching files flat
    * with per-file records. Lists the loadable extensions. */
   flatModExtensions?: string[];
+  /** Shown at the top of the game panel until the given Documents-file
+   * exists - for games that must run once before modding works (their
+   * launcher creates the activation config on first run). */
+  firstRunNotice?: {
+    message: string;
+    /** Documents-relative file whose existence clears the notice */
+    goneWhenDocsFile: string;
+  };
   /** Launcher-selected modules (Bannerlord): activation lives in an XML
    * under Documents in the Proton prefix; module Ids come from each
    * module's SubModule.xml. */
@@ -269,6 +277,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // file). Created by the launcher on first run - activation is
     // best-effort until then; the launcher also auto-detects modules.
     launcherXmlSubpath: "Mount and Blade II Bannerlord/Configs/LauncherData.xml",
+    firstRunNotice: {
+      message:
+        "First time? Launch the game once before installing mods - its launcher creates the file that activates them.",
+      goneWhenDocsFile:
+        "Mount and Blade II Bannerlord/Configs/LauncherData.xml",
+    },
     // The game's own modules live in Modules/ too - never list or touch.
     protectedModFolders: [
       // verified on device - the full official set for 1.2
