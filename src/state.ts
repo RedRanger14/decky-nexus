@@ -64,6 +64,25 @@ export function takeBrowseRestore(appId: number): BrowseCache | undefined {
   return take && browseCache?.appId === appId ? browseCache : undefined;
 }
 
+// ---- Collection hand-off -------------------------------------------------------
+
+import { CollectionSummary } from "./api";
+
+export interface SelectedCollection {
+  game: SupportedGame;
+  collection: CollectionSummary;
+}
+
+let currentCollection: SelectedCollection | undefined;
+
+export function setSelectedCollection(sel: SelectedCollection | undefined): void {
+  currentCollection = sel;
+}
+
+export function getSelectedCollection(): SelectedCollection | undefined {
+  return currentCollection;
+}
+
 // ---- Download tracker ---------------------------------------------------------
 // Installs emit install_progress events; a module-level store lets the QAM
 // show active downloads even when the user navigates away mid-download.

@@ -10,12 +10,21 @@ import {
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 
-import { ModsResult, NexusMod, getMods, getModsByIds, getTrendingMods } from "./api";
+import {
+  CollectionSummary,
+  ModsResult,
+  NexusMod,
+  getCollections,
+  getMods,
+  getModsByIds,
+  getTrendingMods,
+} from "./api";
 import { SupportedGame, getActiveGame } from "./games";
 import {
   markBrowseReturn,
   saveBrowseState,
   setDetailOrigin,
+  setSelectedCollection,
   setSelectedMod,
   takeBrowseRestore,
 } from "./state";
@@ -261,6 +270,7 @@ export function BrowsePage() {
   );
 
   // home mode
+  const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [recommended, setRecommended] = useState<NexusMod[]>([]);
   const [trending, setTrending] = useState<NexusMod[]>([]);
   const [newest, setNewest] = useState<NexusMod[]>([]);
@@ -337,11 +347,15 @@ export function BrowsePage() {
         if (!cancelled && result.ok && result.total !== undefined)
           setTotal((t) => t ?? result.total);
       };
+    setCollections([]);
     setRecommended([]);
     setTrending([]);
     setNewest([]);
     setPopular([]);
     setTotal(undefined);
+    getCollections(game.nexusDomain, 6).then((r) => {
+      if (!cancelled && r.ok) setCollections(r.collections ?? []);
+    });
     if (game.recommendedModIds?.length) {
       getModsByIds(game.nexusDomain, game.recommendedModIds).then(
         apply(setRecommended)
@@ -520,6 +534,76 @@ export function BrowsePage() {
                 >
                   {heroMods.map((mod) => (
                     <HeroCard key={mod.modId} mod={mod} game={game} />
+                  ))}
+                </Focusable>
+              </>
+            )}
+            {collections.length > 0 && (
+              <>
+                <SectionHeading title="Collections" />
+                <Focusable
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: "12px",
+                    marginBottom: "6px",
+                  }}
+                >
+                  {collections.map((c) => (
+                    <Focusable
+                      key={c.slug}
+                      onActivate={() => {
+                        setSelectedCollection({ game, collection: c });
+                        setDetailOrigin("browse");
+                        Navigation.Navigate("/nexus-mods/collection");
+                      }}
+                      style={{
+                        display: "flex",
+                        gap: "10px",
+                        background: "rgba(255,255,255,0.06)",
+                        borderRadius: "6px",
+                        overflow: "hidden",
+                        padding: "8px",
+                      }}
+                    >
+                      {c.thumbnailUrl && (
+                        <img
+                          src={c.thumbnailUrl}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          style={{
+                            width: "64px",
+                            height: "64px",
+                            objectFit: "cover",
+                            borderRadius: "4px",
+                            flexShrink: 0,
+                          }}
+                        />
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: "13.5px",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {c.name}
+                        </div>
+                        <div style={{ fontSize: "11.5px", opacity: 0.65 }}>
+                          by {c.author}
+                        </div>
+                        <div style={{ fontSize: "11.5px", opacity: 0.65 }}>
+                          {c.modCount} mods ·{" "}
+                          {c.totalSize >= 1 << 30
+                            ? `${(c.totalSize / (1 << 30)).toFixed(1)} GB`
+                            : `${Math.round(c.totalSize / (1 << 20))} MB`}
+                        </div>
+                      </div>
+                    </Focusable>
                   ))}
                 </Focusable>
               </>

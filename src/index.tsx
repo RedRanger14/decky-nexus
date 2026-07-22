@@ -136,6 +136,7 @@ function resolveGameContext(): GameContext {
   return { neutral: true };
 }
 import { BrowsePage } from "./BrowsePage";
+import { CollectionPage } from "./CollectionPage";
 import { ModDetailPage } from "./ModDetailPage";
 
 /** QAM row shortcut: jump from an installed mod straight to its detail page
@@ -158,6 +159,7 @@ async function openInstalledModDetail(game: SupportedGame, mod: InstalledMod) {
 
 const BROWSE_ROUTE = "/nexus-mods";
 const DETAIL_ROUTE = "/nexus-mods/mod";
+const COLLECTION_ROUTE = "/nexus-mods/collection";
 
 interface BackendInfo {
   user: string;
@@ -1703,6 +1705,7 @@ export default definePlugin(() => {
 
   routerHook.addRoute(BROWSE_ROUTE, BrowsePage, { exact: true });
   routerHook.addRoute(DETAIL_ROUTE, ModDetailPage, { exact: true });
+  routerHook.addRoute(COLLECTION_ROUTE, CollectionPage, { exact: true });
 
   // Feed the QAM Downloads section from anywhere in the UI.
   const progressListener = addEventListener<[p: InstallProgress]>(

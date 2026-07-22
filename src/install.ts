@@ -9,6 +9,37 @@ import {
 import { SupportedGame, modeParams } from "./games";
 import { nameDownload } from "./state";
 
+/** Install a SPECIFIC pinned file (collections pin exact file ids).
+ * Same pipeline, same Downloads-panel tracking. */
+export async function installPinned(
+  game: SupportedGame,
+  modId: number,
+  fileId: number,
+  fileName: string,
+  modName: string,
+  version = ""
+): Promise<InstallResult> {
+  nameDownload(modId, modName);
+  return installMod(
+    game.nexusDomain,
+    modId,
+    fileId,
+    fileName,
+    modName,
+    version,
+    game.installDirName,
+    game.modsSubdir,
+    "",
+    "",
+    ...modeParams(game),
+    "",
+    game.ue4ss?.modsSubdir ?? "",
+    game.ue4ss?.logicModsSubdir ?? "",
+    game.launcherXmlSubpath ?? "",
+    game.flatModExtensions ?? []
+  );
+}
+
 /** Install a mod's primary (latest main) file through the full pipeline.
  * Registers the download so the QAM Downloads panel tracks it. Returns
  * the InstallResult (needs_choice archives are surfaced to the caller). */

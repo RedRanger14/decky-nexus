@@ -305,6 +305,48 @@ export interface ModRequirement {
   url?: string;
 }
 
+export interface CollectionSummary {
+  name: string;
+  slug: string;
+  summary: string;
+  endorsements: number;
+  author: string;
+  thumbnailUrl?: string;
+  modCount: number;
+  totalSize: number;
+}
+
+export interface CollectionFile {
+  modId: number;
+  fileId: number;
+  modName: string;
+  fileName: string;
+  version: string;
+  sizeKb: number;
+  optional: boolean;
+}
+
+export interface CollectionDetail {
+  name: string;
+  summary: string;
+  author: string;
+  revision?: number;
+  modCount: number;
+  totalSize: number;
+  files: CollectionFile[];
+  externals: { name: string; url: string; optional: boolean }[];
+}
+
+export const getCollections = callable<
+  [game_domain: string, count: number],
+  { ok: boolean; collections?: CollectionSummary[]; error?: string }
+>("get_collections");
+
+export const getCollection = callable<
+  [slug: string, game_domain: string],
+  { ok: boolean; collection?: CollectionDetail; error?: string }
+>("get_collection");
+
 export const getModDetails = callable<
   [game_domain: string, mod_id: number],
   { ok: boolean; mod?: NexusMod; error?: string }
