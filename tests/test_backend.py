@@ -746,6 +746,65 @@ class TestFomod(unittest.TestCase):
         self.assertIsNotNone(resolved)
 
 
+class TestFomodCuratorChoices(unittest.TestCase):
+    """Collection manifests record the curator's FOMOD selections (Vortex
+    shape); the matcher maps them onto our wizard's plugin ids."""
+
+    STEPS = [
+        {
+            "name": "Resolution",
+            "groups": [
+                {
+                    "name": "Texture size",
+                    "type": "SelectExactlyOne",
+                    "plugins": [
+                        {"id": "0.0.0", "name": "4K", "type": "Recommended"},
+                        {"id": "0.0.1", "name": "2K", "type": "Optional"},
+                    ],
+                }
+            ],
+        },
+        {
+            "name": "Extras",
+            "groups": [
+                {
+                    "name": "Extras",
+                    "type": "SelectAny",
+                    "plugins": [
+                        {"id": "1.0.0", "name": "Glow maps", "type": "Optional"},
+                        {"id": "1.0.1", "name": "Required core", "type": "Required"},
+                    ],
+                }
+            ],
+        },
+    ]
+
+    def test_curator_selection_matches_by_group_and_name(self):
+        curator = {
+            "type": "fomod",
+            "options": [
+                {"name": "Texture size", "choices": ["2K"]},
+                {"name": "Extras", "choices": ["Glow maps"]},
+            ],
+        }
+        ids = main._match_fomod_choices(self.STEPS, curator)
+        self.assertIn("0.0.1", ids)       # curator picked 2K
+        self.assertNotIn("0.0.0", ids)    # not the recommended 4K
+        self.assertIn("1.0.0", ids)       # glow maps
+        self.assertIn("1.0.1", ids)       # Required always in
+
+    def test_no_curator_data_falls_back_to_defaults(self):
+        ids = main._match_fomod_choices(self.STEPS, {})
+        self.assertIn("0.0.0", ids)   # Recommended default
+        self.assertIn("1.0.1", ids)   # Required
+        self.assertNotIn("0.0.1", ids)
+
+    def test_name_matching_is_normalized(self):
+        curator = {"options": [{"name": "texture-size!", "choices": ["2k"]}]}
+        ids = main._match_fomod_choices(self.STEPS, curator)
+        self.assertIn("0.0.1", ids)
+
+
 class TestBannerlordModules(unittest.TestCase):
     """Module activation lives in LauncherData.xml; the Id comes from the
     module's SubModule.xml, not the folder name."""

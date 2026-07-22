@@ -16,8 +16,10 @@ import {
   CollectionFile,
   NexusMod,
   getCollection,
+  getCollectionManifest,
   getInstalledMods,
   getModDetails,
+  installFomodAuto,
 } from "./api";
 import { modeParams } from "./games";
 import { installPinned } from "./install";
@@ -99,11 +101,18 @@ export function CollectionPage() {
   const installAll = async () => {
     if (!detail || installing) return;
     beginCollectionRun(collection.slug, remaining.length);
+    // The curator's FOMOD selections travel in the collection manifest -
+    // fetch once so wizard mods install hands-off with their choices.
+    const manifest = await getCollectionManifest(
+      collection.slug,
+      game.nexusDomain
+    );
+    const curatorChoices = manifest.ok ? manifest.choices ?? {} : {};
     try {
       let failures = 0;
       for (const f of remaining) {
         setCollectionRow(f.fileId, "installing");
-        const result = await installPinned(
+        let result = await installPinned(
           game,
           f.modId,
           f.fileId,
@@ -111,9 +120,18 @@ export function CollectionPage() {
           f.modName,
           f.version
         );
+        if (result.needs_fomod && result.fomod_token) {
+          const choices = curatorChoices[String(f.fileId)];
+          // Curator choices when recorded; wizard defaults otherwise -
+          // either way the collection keeps installing hands-off.
+          result = await installFomodAuto(
+            result.fomod_token,
+            choices ?? {}
+          );
+        }
         if (result.ok) {
           setCollectionRow(f.fileId, "done");
-        } else if (result.needs_choice || result.needs_fomod) {
+        } else if (result.needs_choice) {
           setCollectionRow(f.fileId, "skipped");
           toaster.toast({
             title: `${f.modName}: needs manual choices`,
