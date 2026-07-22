@@ -261,7 +261,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     appId: 261550,
     displayName: "Mount & Blade II: Bannerlord",
     nexusDomain: "mountandblade2bannerlord", // verified: game id 3174
-    installDirName: "Mount & Blade II Bannerlord", // TODO verify on device
+    installDirName: "Mount & Blade II Bannerlord", // verified on device
     modsSubdir: "Modules",
     moddedSaveWarning: false,
     processName: "Bannerlord.exe",
@@ -271,6 +271,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     launcherXmlSubpath: "Mount and Blade II Bannerlord/Configs/LauncherData.xml",
     // The game's own modules live in Modules/ too - never list or touch.
     protectedModFolders: [
+      // verified on device - the full official set for 1.2
       "Native",
       "SandBoxCore",
       "CustomBattle",
@@ -278,6 +279,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       "StoryMode",
       "Multiplayer",
       "BirthAndDeath",
+      "FastMode",
     ],
     recommendedModIds: [612, 2018], // verified: Mod Configuration Menu (61k endo), ButterLib
   },
