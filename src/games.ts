@@ -71,6 +71,14 @@ export interface SupportedGame {
     /** Steam Play tool name to force (e.g. "proton_experimental") */
     tool: string;
   };
+  /** Flat-file games (Cyberpunk archive/pc/mod): the game loads FILES
+   * from the mods dir, not folders - installs move matching files flat
+   * with per-file records. Lists the loadable extensions. */
+  flatModExtensions?: string[];
+  /** Launcher-selected modules (Bannerlord): activation lives in an XML
+   * under Documents in the Proton prefix; module Ids come from each
+   * module's SubModule.xml. */
+  launcherXmlSubpath?: string;
   /** UE4SS games: where script/Blueprint mods route. Lua and native mods
    * become folders (with enabled.txt) under modsSubdir; Blueprint paks go
    * flat into logicModsSubdir. Absent = UE4SS mods are refused. */
@@ -241,6 +249,46 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       modsSubdir: "Pal/Binaries/Win64/ue4ss/Mods",
       logicModsSubdir: "Pal/Content/Paks/LogicMods",
     },
+  },
+  261550: {
+    appId: 261550,
+    displayName: "Mount & Blade II: Bannerlord",
+    nexusDomain: "mountandblade2bannerlord", // verified: game id 3174
+    installDirName: "Mount & Blade II Bannerlord", // TODO verify on device
+    modsSubdir: "Modules",
+    moddedSaveWarning: false,
+    processName: "Bannerlord.exe",
+    // Modules activate via the launcher's XML (Vortex manages the same
+    // file). Created by the launcher on first run - activation is
+    // best-effort until then; the launcher also auto-detects modules.
+    launcherXmlSubpath: "Mount and Blade II Bannerlord/Configs/LauncherData.xml",
+    // The game's own modules live in Modules/ too - never list or touch.
+    protectedModFolders: [
+      "Native",
+      "SandBoxCore",
+      "CustomBattle",
+      "SandBox",
+      "StoryMode",
+      "Multiplayer",
+      "BirthAndDeath",
+    ],
+    recommendedModIds: [612, 2018], // verified: Mod Configuration Menu (61k endo), ButterLib
+  },
+  1091500: {
+    appId: 1091500,
+    displayName: "Cyberpunk 2077",
+    nexusDomain: "cyberpunk2077", // verified: game id 3333
+    installDirName: "Cyberpunk 2077",
+    // Archive tier: .archive (+ ArchiveXL .xl) files load flat from
+    // archive/pc/mod, alphabetical override, no framework needed.
+    // The CET/RED4ext script tier is a later addition.
+    modsSubdir: "archive/pc/mod",
+    flatModExtensions: [".archive", ".xl"],
+    moddedSaveWarning: false,
+    processName: "Cyberpunk2077.exe",
+    // No curated heroes yet: the domain's top mods are all frameworks
+    // (CET/redscript/RED4ext), which the archive tier can't install -
+    // trending fills the hero slots instead.
   },
 };
 

@@ -602,6 +602,134 @@ class TestUe4ssRouting(unittest.TestCase):
         )
 
 
+class TestBannerlordModules(unittest.TestCase):
+    """Module activation lives in LauncherData.xml; the Id comes from the
+    module's SubModule.xml, not the folder name."""
+
+    LAUNCHER_XML = (
+        '<?xml version="1.0"?>\n'
+        "<UserData>\n  <GameType>Singleplayer</GameType>\n"
+        "  <SingleplayerData>\n    <ModDatas>\n"
+        "      <UserModData><Id>Native</Id><IsSelected>true</IsSelected></UserModData>\n"
+        "      <UserModData><Id>SandBox</Id><IsSelected>true</IsSelected></UserModData>\n"
+        "    </ModDatas>\n  </SingleplayerData>\n</UserData>\n"
+    )
+
+    def setUp(self):
+        self.dir = os.path.join(TEST_ROOT, "bannerlord")
+        shutil.rmtree(self.dir, ignore_errors=True)
+        os.makedirs(self.dir)
+        self.xml = os.path.join(self.dir, "LauncherData.xml")
+        with open(self.xml, "w") as f:
+            f.write(self.LAUNCHER_XML)
+
+    def read(self):
+        return open(self.xml).read()
+
+    def test_submodule_id_prefers_value_attribute(self):
+        mod = os.path.join(self.dir, "CoolModule")
+        os.makedirs(mod)
+        with open(os.path.join(mod, "SubModule.xml"), "w") as f:
+            f.write('<Module><Name value="Cool"/><Id value="CoolMod"/></Module>')
+        self.assertEqual(main._submodule_id(mod), "CoolMod")
+        self.assertIsNone(main._submodule_id(os.path.join(self.dir, "nope")))
+
+    def test_append_new_module_entry(self):
+        self.assertTrue(main._set_module_selected(self.xml, "CoolMod", True))
+        content = self.read()
+        self.assertIn("<Id>CoolMod</Id>", content)
+        self.assertIn("Native", content)  # existing entries preserved
+
+    def test_toggle_existing_entry(self):
+        main._set_module_selected(self.xml, "CoolMod", True)
+        main._set_module_selected(self.xml, "CoolMod", False)
+        import xml.etree.ElementTree as ET
+
+        root = ET.parse(self.xml).getroot()
+        entry = next(
+            e for e in root.iter("UserModData")
+            if (e.find("Id").text or "") == "CoolMod"
+        )
+        self.assertEqual(entry.find("IsSelected").text, "false")
+
+    def test_remove_entry(self):
+        main._set_module_selected(self.xml, "CoolMod", True)
+        main._remove_module_entry(self.xml, "CoolMod")
+        self.assertNotIn("CoolMod", self.read())
+        self.assertIn("Native", self.read())
+
+    def test_missing_file_is_nonfatal(self):
+        missing = os.path.join(self.dir, "nope", "LauncherData.xml")
+        self.assertFalse(main._set_module_selected(missing, "X", True))
+        main._remove_module_entry(missing, "X")  # must not raise
+
+    def test_hidden_folders_excluded_from_listing(self):
+        """Official Bannerlord modules live in Modules/ - they must never
+        show up as toggleable mods."""
+        game = "Bannerlord Test"
+        install = os.path.join(main.STEAM_COMMON, game)
+        shutil.rmtree(install, ignore_errors=True)
+        for folder in ("Native", "SandBox", "CoolMod"):
+            os.makedirs(os.path.join(install, "Modules", folder))
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        result = run(
+            main.Plugin().get_installed_mods(
+                "mountandblade2bannerlord", game, "Modules",
+                "folder", 0, "", "starred", ["Native", "SandBox"],
+            )
+        )
+        self.assertEqual([m["folder"] for m in result["mods"]], ["CoolMod"])
+
+
+class TestFlatFileMods(unittest.TestCase):
+    """Cyberpunk archive tier: the game loads FILES from archive/pc/mod,
+    so installs place matching files flat with per-file records."""
+
+    GAME = "Cyberpunk Test"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        os.makedirs(os.path.join(self.install, "archive", "pc", "mod"))
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.plugin = main.Plugin()
+
+    def seed_files_record(self, key, names):
+        for n in names:
+            with open(
+                os.path.join(self.install, "archive", "pc", "mod", n), "w"
+            ) as f:
+                f.write("x")
+        settings = main._load_settings()
+        settings.setdefault("installed", {}).setdefault(
+            "cyberpunk2077", {}
+        )[key] = {
+            "mod_id": 1, "name": key, "version": "1.0",
+            "mode": "files", "target": "archive/pc/mod", "files": names,
+        }
+        main._save_settings(settings)
+
+    def test_files_record_lists_and_uninstalls(self):
+        self.seed_files_record("Cool Retex", ["cool.archive", "cool.xl"])
+        mods = run(
+            self.plugin.get_installed_mods(
+                "cyberpunk2077", self.GAME, "archive/pc/mod"
+            )
+        )["mods"]
+        self.assertEqual(len(mods), 1)
+        self.assertEqual(mods[0]["togglable"], False)
+        result = run(
+            self.plugin.uninstall_mod(
+                "cyberpunk2077", self.GAME, "archive/pc/mod", "Cool Retex"
+            )
+        )
+        self.assertTrue(result["ok"], result.get("error"))
+        left = os.listdir(os.path.join(self.install, "archive", "pc", "mod"))
+        self.assertEqual(left, [])
+
+
 class TestSaves(unittest.TestCase):
     ACCOUNT = "123456789"
     APP_ID = 999001

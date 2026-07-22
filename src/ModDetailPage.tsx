@@ -138,7 +138,8 @@ export function ModDetailPage() {
       s.game.nexusDomain,
       s.game.installDirName,
       s.game.modsSubdir,
-      ...modeParams(s.game)
+      ...modeParams(s.game),
+      s.game.protectedModFolders ?? []
     ).then((r) => {
       setInstalledMods(r.mods ?? []);
       setInstalledCopy(r.mods?.find((m) => m.mod_id === s.mod.modId));
@@ -229,7 +230,9 @@ export function ModDetailPage() {
         ...modeParams(game),
         payloadChoice,
         game.ue4ss?.modsSubdir ?? "",
-        game.ue4ss?.logicModsSubdir ?? ""
+        game.ue4ss?.logicModsSubdir ?? "",
+        game.launcherXmlSubpath ?? "",
+        game.flatModExtensions ?? []
       );
       if (result.needs_choice && result.options?.length) {
         // Option-style archive: ask which folder to install, then retry.

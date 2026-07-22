@@ -140,7 +140,9 @@ export const installMod = callable<
     plugins_style: "starred" | "listed",
     payload_choice: string,
     ue4ss_subdir: string,
-    logicmods_subdir: string
+    logicmods_subdir: string,
+    launcher_xml_subpath: string,
+    flat_extensions: string[]
   ],
   InstallResult
 >("install_mod");
@@ -208,7 +210,8 @@ export const getInstalledMods = callable<
     install_mode: "folder" | "dataDir",
     app_id: number,
     plugins_subpath: string,
-    plugins_style: "starred" | "listed"
+    plugins_style: "starred" | "listed",
+    hidden_folders: string[]
   ],
   InstalledResult
 >("get_installed_mods");
