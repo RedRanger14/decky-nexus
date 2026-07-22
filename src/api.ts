@@ -191,6 +191,16 @@ export const installFomod = callable<
   InstallResult
 >("install_fomod");
 
+export const installFomodAuto = callable<
+  [token: string, curator_choices: unknown],
+  InstallResult
+>("install_fomod_auto");
+
+export const getCollectionManifest = callable<
+  [slug: string, game_domain: string],
+  { ok: boolean; choices?: Record<string, unknown>; error?: string }
+>("get_collection_manifest");
+
 export const getFrameworkSetup = callable<
   [game_domain: string],
   { ok: boolean; launch_options_set?: boolean; enabled?: boolean }

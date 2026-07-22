@@ -1337,6 +1337,80 @@ def _fomod_stage(ctx: dict, selected_ids: list, staging: str) -> int:
     return count
 
 
+def _match_fomod_choices(steps: list, curator_choices) -> list:
+    """Map curator FOMOD choices (Vortex manifest shape: nested dicts with
+    group names and selected option-name lists) onto our wizard's plugin
+    ids. Groups without curator data fall back to defaults (Required +
+    Recommended, or the first option of a pick-one group). Name matching
+    is normalized - manifests and ModuleConfigs disagree on punctuation."""
+
+    def norm(t: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", (t or "").lower())
+
+    # Collect group-name -> set of selected option names from whatever
+    # structure the manifest uses (defensively walked).
+    selected_by_group: dict = {}
+    loose_selected: set = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            gname = node.get("name") or node.get("group")
+            opts = node.get("choices") or node.get("options")
+            if gname and isinstance(opts, list) and all(
+                isinstance(o, str) for o in opts
+            ):
+                selected_by_group.setdefault(norm(str(gname)), set()).update(
+                    norm(o) for o in opts
+                )
+            elif (
+                gname
+                and isinstance(node.get("idx"), (int, str))
+                or (gname and node.get("selected") is True)
+            ):
+                loose_selected.add(norm(str(gname)))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(curator_choices)
+
+    ids = []
+    for step in steps:
+        for group in step.get("groups") or []:
+            plugins = group.get("plugins") or []
+            gkey = norm(group.get("name") or "")
+            curated = selected_by_group.get(gkey)
+            picked = []
+            for plugin in plugins:
+                pkey = norm(plugin.get("name") or "")
+                if plugin.get("type") == "Required":
+                    picked.append(plugin["id"])
+                elif curated is not None and pkey in curated:
+                    picked.append(plugin["id"])
+                elif curated is None and pkey in loose_selected:
+                    picked.append(plugin["id"])
+            if not picked and curated is None:
+                # No curator data for this group: defaults.
+                if group.get("type") == "SelectAll":
+                    picked = [p["id"] for p in plugins]
+                else:
+                    recommended = [
+                        p["id"]
+                        for p in plugins
+                        if p.get("type") == "Recommended"
+                    ]
+                    picked = recommended
+                    if not picked and group.get("type") in (
+                        "SelectExactlyOne",
+                        "SelectAtLeastOne",
+                    ) and plugins:
+                        picked = [plugins[0]["id"]]
+            ids.extend(picked)
+    return ids
+
+
 def _prune_pending_fomods() -> None:
     now = time.time()
     for token in list(PENDING_FOMODS):
@@ -1921,6 +1995,102 @@ query GetCollection($slug: String!, $domainName: String!) {
                     "externals": externals,
                 },
             }
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def get_collection_manifest(
+        self, slug: str, game_domain: str
+    ) -> dict:
+        """Download the collection's own manifest (collection.json inside
+        the revision archive) and return per-file FOMOD choices - the
+        curator's wizard selections, so collection installs can run FOMODs
+        hands-off."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        api_key = _load_settings().get("api_key")
+        try:
+            data = await _gql_query_vars(
+                """
+query Link($slug: String!, $domainName: String!) {
+  collectionRevision(slug: $slug, domainName: $domainName) { downloadLink }
+}""",
+                {"slug": slug, "domainName": game_domain},
+                api_key,
+            )
+            link_path = data["collectionRevision"]["downloadLink"]
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=120)
+            ) as session:
+                async with session.get(
+                    f"{NEXUS_API_BASE}{link_path}",
+                    headers=_api_headers(api_key),
+                    ssl=SSL_CONTEXT,
+                ) as resp:
+                    if resp.status != 200:
+                        return {
+                            "ok": False,
+                            "error": f"Manifest link HTTP {resp.status}",
+                        }
+                    body = await resp.json()
+                uri = None
+                if isinstance(body, dict):
+                    uri = body.get("download_url") or body.get("uri")
+                    if not uri and isinstance(body.get("download_links"), list):
+                        links = body["download_links"]
+                        uri = links[0].get("URI") if links else None
+                elif isinstance(body, list) and body:
+                    uri = body[0].get("URI")
+                if not uri:
+                    return {"ok": False, "error": "No manifest download link"}
+                os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+                arc = os.path.join(DOWNLOADS_DIR, f"collection-{slug}.arc")
+                async with session.get(
+                    uri.replace(" ", "%20"), ssl=SSL_CONTEXT
+                ) as resp:
+                    if resp.status != 200:
+                        return {
+                            "ok": False,
+                            "error": f"Manifest download HTTP {resp.status}",
+                        }
+                    with open(arc, "wb") as out:
+                        out.write(await resp.read())
+            scratch = os.path.join(DOWNLOADS_DIR, f"collection-{slug}")
+            _force_rmtree(scratch)
+            os.makedirs(scratch)
+            err = _extract_archive(arc, scratch)
+            try:
+                os.remove(arc)
+            except OSError:
+                pass
+            if err:
+                _force_rmtree(scratch)
+                return {"ok": False, "error": err}
+            manifest_path = None
+            for root, _dirs, names in os.walk(scratch):
+                for n in names:
+                    if n.lower() == "collection.json":
+                        manifest_path = os.path.join(root, n)
+                        break
+            if not manifest_path:
+                _force_rmtree(scratch)
+                return {"ok": False, "error": "collection.json not found"}
+            with open(manifest_path, "r", encoding="utf-8-sig") as f:
+                manifest = json.load(f)
+            _force_rmtree(scratch)
+            choices = {}
+            for mod in manifest.get("mods") or []:
+                source = mod.get("source") or {}
+                file_id = source.get("fileId")
+                mod_choices = mod.get("choices")
+                if file_id and mod_choices:
+                    choices[str(file_id)] = mod_choices
+            decky.logger.info(
+                f"collection manifest {slug!r}: {len(choices)} mods carry "
+                f"installer choices"
+            )
+            return {"ok": True, "choices": choices}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -2998,6 +3168,21 @@ query GetCollection($slug: String!, $domainName: String!) {
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception("install_fomod crashed")
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def install_fomod_auto(self, token: str, curator_choices) -> dict:
+        """Finish a parked FOMOD using a collection curator's recorded
+        choices instead of showing the wizard."""
+        entry = PENDING_FOMODS.get(token)
+        if not entry:
+            return {"ok": False, "error": "This install expired - retry it"}
+        ids = _match_fomod_choices(
+            entry["ctx"]["steps"], curator_choices or {}
+        )
+        decky.logger.info(
+            f"fomod auto-install: matched {len(ids)} options from curator "
+            f"choices for {entry['mod_name']!r}"
+        )
+        return await self.install_fomod(token, ids)
 
     async def install_framework(
         self,
