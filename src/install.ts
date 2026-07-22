@@ -60,7 +60,8 @@ function installModWith(
     game.launcherXmlSubpath ?? "",
     game.flatModExtensions ?? [],
     pageVersion,
-    source
+    source,
+    game.witcherLayout ?? false
   );
 }
 
