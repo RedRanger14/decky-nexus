@@ -1536,17 +1536,18 @@ interface PendingUpdate {
   current: string;
 }
 
-/** Cross-game "your mods have updates" panel with one-click update.
- * Owning both the store and the installer is what makes this possible -
- * we know the installed version AND can fetch + reinstall the latest. */
-function UpdatesSection() {
+/** "Your mods have updates" panel with one-click update. Scoped to the
+ * current game when the panel is in a game's context; cross-game (with
+ * Update all) only on neutral ground - updates for a game you're not
+ * looking at are noise. */
+function UpdatesSection({ scopedGame }: { scopedGame?: SupportedGame }) {
   const [pending, setPending] = useState<PendingUpdate[]>([]);
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState(false);
 
   const scan = async () => {
     const found: PendingUpdate[] = [];
-    for (const game of ALL_GAMES) {
+    for (const game of scopedGame ? [scopedGame] : ALL_GAMES) {
       const [mods, updates] = await Promise.all([
         getInstalledMods(
           game.nexusDomain,
@@ -1579,8 +1580,10 @@ function UpdatesSection() {
   };
 
   useEffect(() => {
+    setChecked(false);
+    setPending([]);
     scan();
-  }, []);
+  }, [scopedGame?.appId]);
 
   const updateOne = async (u: PendingUpdate) => {
     const result = await installLatest(u.game, u.modId, u.name, u.current);
@@ -1616,7 +1619,11 @@ function UpdatesSection() {
           <ButtonItem
             layout="below"
             disabled={busy}
-            description={`${u.game.displayName} · new version ${u.current}`}
+            description={
+              scopedGame
+                ? `New version ${u.current}`
+                : `${u.game.displayName} · new version ${u.current}`
+            }
             onClick={() => updateOne(u)}
           >
             {`⬆ ${u.name}`}
@@ -1683,7 +1690,7 @@ function Content() {
   return (
     <>
       <VersionBadge />
-      <UpdatesSection />
+      <UpdatesSection scopedGame={ctx.game} />
       <DownloadsSection />
       <CurrentGameSection />
       {ctx.game ? (
