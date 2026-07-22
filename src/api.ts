@@ -49,6 +49,11 @@ export interface InstallResult {
    * with payload_choice set. */
   needs_choice?: boolean;
   options?: string[];
+  /** FOMOD archive: show the wizard, then call installFomod with the
+   * token and selected plugin ids. */
+  needs_fomod?: boolean;
+  fomod_token?: string;
+  wizard?: unknown;
 }
 
 export interface InstalledMod {
@@ -173,6 +178,11 @@ export const applyDisplayFix = callable<
   ],
   { ok: boolean; error?: string }
 >("apply_display_fix");
+
+export const installFomod = callable<
+  [token: string, selected_ids: string[]],
+  InstallResult
+>("install_fomod");
 
 export const getFrameworkSetup = callable<
   [game_domain: string],

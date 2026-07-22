@@ -871,6 +871,334 @@ def _remove_module_entry(path: str, module_id: str) -> None:
         pass
 
 
+
+# ---- FOMOD installers ---------------------------------------------------------
+# The Bethesda-ecosystem install wizard: fomod/ModuleConfig.xml describes
+# steps -> groups -> options with condition flags and conditional file
+# installs. We parse it into a JSON wizard for the frontend, keep the
+# extracted archive pending, and apply the user's selections through the
+# normal dataDir merge. Spec: FOMOD ModuleConfig 5.0 (as implemented by
+# Vortex/MO2); images and edge-case dependency types are v1-simplified.
+
+PENDING_FOMODS: dict = {}
+FOMOD_TTL_SECONDS = 30 * 60
+
+
+def _fomod_config_path(scratch: str):
+    for root, dirs, names in os.walk(scratch):
+        for n in names:
+            if n.lower() == "moduleconfig.xml" and os.path.basename(
+                root
+            ).lower() == "fomod":
+                return os.path.join(root, n)
+    return None
+
+
+def _fomod_norm_source(path: str) -> str:
+    return (path or "").replace("\\", "/").strip("/")
+
+
+def _fomod_case_resolve(base: str, rel: str):
+    """Resolve an XML source path against the archive case-insensitively
+    (authors write Windows-cased paths)."""
+    cur = base
+    for part in _fomod_norm_source(rel).split("/"):
+        if not part:
+            continue
+        try:
+            entries = os.listdir(cur)
+        except OSError:
+            return None
+        match = next((e for e in entries if e.lower() == part.lower()), None)
+        if match is None:
+            return None
+        cur = os.path.join(cur, match)
+    return cur
+
+
+def _fomod_parse_files(node) -> list:
+    """<files> node -> [{kind, source, dest, priority}]"""
+    out = []
+    if node is None:
+        return out
+    for child in node:
+        tag = child.tag.lower()
+        if tag not in ("file", "folder"):
+            continue
+        out.append(
+            {
+                "kind": tag,
+                "source": child.get("source") or "",
+                "dest": child.get("destination"),
+                "priority": int(child.get("priority") or 0),
+            }
+        )
+    return out
+
+
+def _fomod_parse_deps(node, data_path: str):
+    """Composite dependency -> a tree the frontend can evaluate with flag
+    state only: file/game dependencies are baked to constants here."""
+    if node is None:
+        return None
+    conds = []
+    for child in node:
+        tag = child.tag.lower()
+        if tag == "flagdependency":
+            conds.append(
+                {
+                    "kind": "flag",
+                    "name": child.get("flag") or "",
+                    "value": child.get("value") or "",
+                }
+            )
+        elif tag == "filedependency":
+            want = (child.get("state") or "Active").lower()
+            fname = child.get("file") or ""
+            exists = os.path.exists(os.path.join(data_path, fname))
+            ok = exists if want in ("active", "inactive") else not exists
+            conds.append({"kind": "const", "value": bool(ok)})
+        elif tag == "dependencies":
+            sub = _fomod_parse_deps(child, data_path)
+            if sub:
+                conds.append(sub)
+        else:
+            # gameDependency / fommDependency: assume satisfied
+            conds.append({"kind": "const", "value": True})
+    return {
+        "kind": "group",
+        "op": (node.get("operator") or "And").lower(),
+        "conds": conds,
+    }
+
+
+def _fomod_eval_deps(tree, flags: dict) -> bool:
+    if tree is None:
+        return True
+    kind = tree.get("kind")
+    if kind == "const":
+        return bool(tree.get("value"))
+    if kind == "flag":
+        return flags.get(tree.get("name") or "") == (tree.get("value") or "")
+    conds = tree.get("conds") or []
+    results = [_fomod_eval_deps(c, flags) for c in conds]
+    if not results:
+        return True
+    return any(results) if tree.get("op") == "or" else all(results)
+
+
+def _fomod_plugin_type(plugin_node, data_path: str) -> str:
+    td = plugin_node.find("typeDescriptor")
+    if td is None:
+        return "Optional"
+    t = td.find("type")
+    if t is not None:
+        return t.get("name") or "Optional"
+    dt = td.find("dependencyType")
+    if dt is not None:
+        # Evaluate patterns whose deps are already decidable (file/game
+        # baked); flag-dependent patterns fall back to the default type.
+        default = "Optional"
+        d = dt.find("defaultType")
+        if d is not None:
+            default = d.get("name") or "Optional"
+        patterns = dt.find("patterns")
+        if patterns is not None:
+            for pat in patterns.findall("pattern"):
+                deps = _fomod_parse_deps(pat.find("dependencies"), data_path)
+
+                def has_flags(tree) -> bool:
+                    if not tree:
+                        return False
+                    if tree.get("kind") == "flag":
+                        return True
+                    return any(
+                        has_flags(c) for c in tree.get("conds") or []
+                    )
+
+                if deps and not has_flags(deps) and _fomod_eval_deps(deps, {}):
+                    t2 = pat.find("type")
+                    if t2 is not None:
+                        return t2.get("name") or default
+        return default
+    return "Optional"
+
+
+def _parse_fomod(scratch: str, data_path: str):
+    """ModuleConfig.xml -> (wizard dict for the frontend, applier context).
+    Returns None when the archive has no parsable FOMOD config."""
+    import xml.etree.ElementTree as ET
+
+    cfg = _fomod_config_path(scratch)
+    if not cfg:
+        return None
+    try:
+        root = ET.parse(cfg).getroot()
+    except ET.ParseError:
+        return None
+    fomod_base = os.path.dirname(os.path.dirname(cfg))
+
+    name_node = root.find("moduleName")
+    module_name = (
+        (name_node.text or "").strip() if name_node is not None else ""
+    )
+
+    required = _fomod_parse_files(root.find("requiredInstallFiles"))
+
+    steps = []
+    steps_node = root.find("installSteps")
+    plugin_index = {}
+    if steps_node is not None:
+        for si, step in enumerate(steps_node.findall("installStep")):
+            groups = []
+            ofg = step.find("optionalFileGroups")
+            if ofg is not None:
+                for gi, group in enumerate(ofg.findall("group")):
+                    plugins = []
+                    plugins_node = group.find("plugins")
+                    if plugins_node is not None:
+                        for pi, plugin in enumerate(
+                            plugins_node.findall("plugin")
+                        ):
+                            pid = f"{si}.{gi}.{pi}"
+                            desc = plugin.find("description")
+                            flags = {}
+                            cf = plugin.find("conditionFlags")
+                            if cf is not None:
+                                for fl in cf.findall("flag"):
+                                    flags[fl.get("name") or ""] = (
+                                        fl.text or ""
+                                    ).strip()
+                            files = _fomod_parse_files(plugin.find("files"))
+                            ptype = _fomod_plugin_type(plugin, data_path)
+                            plugin_index[pid] = {
+                                "files": files,
+                                "flags": flags,
+                            }
+                            plugins.append(
+                                {
+                                    "id": pid,
+                                    "name": plugin.get("name") or f"Option {pi + 1}",
+                                    "description": (
+                                        (desc.text or "").strip()
+                                        if desc is not None
+                                        else ""
+                                    ),
+                                    "type": ptype,
+                                    "flags": flags,
+                                }
+                            )
+                    groups.append(
+                        {
+                            "name": group.get("name") or "",
+                            "type": group.get("type") or "SelectAny",
+                            "plugins": plugins,
+                        }
+                    )
+            steps.append(
+                {
+                    "name": step.get("name") or f"Step {si + 1}",
+                    "visible": _fomod_parse_deps(
+                        step.find("visible"), data_path
+                    ),
+                    "groups": groups,
+                }
+            )
+
+    conditional = []
+    cfi = root.find("conditionalFileInstalls")
+    if cfi is not None:
+        patterns = cfi.find("patterns")
+        if patterns is not None:
+            for pat in patterns.findall("pattern"):
+                conditional.append(
+                    {
+                        "deps": _fomod_parse_deps(
+                            pat.find("dependencies"), data_path
+                        ),
+                        "files": _fomod_parse_files(pat.find("files")),
+                    }
+                )
+
+    wizard = {"moduleName": module_name, "steps": steps}
+    ctx = {
+        "fomod_base": fomod_base,
+        "required": required,
+        "conditional": conditional,
+        "plugin_index": plugin_index,
+        "steps": steps,
+    }
+    return wizard, ctx
+
+
+def _fomod_selected_files(ctx: dict, selected_ids: list):
+    """The user's selections -> ordered file operations (priority applied:
+    ascending, later overwrites) + the final flag state."""
+    flags = {}
+    ops = list(ctx["required"])
+    for pid in selected_ids:
+        entry = ctx["plugin_index"].get(pid)
+        if not entry:
+            continue
+        ops.extend(entry["files"])
+        flags.update(entry["flags"])
+    for pattern in ctx["conditional"]:
+        if _fomod_eval_deps(pattern["deps"], flags):
+            ops.extend(pattern["files"])
+    ops.sort(key=lambda o: o.get("priority") or 0)
+    return ops, flags
+
+
+def _fomod_stage(ctx: dict, selected_ids: list, staging: str) -> int:
+    """Copy the selected sources into a staging dir shaped like a Data
+    payload; returns the number of files staged."""
+    ops, _flags = _fomod_selected_files(ctx, selected_ids)
+    base = ctx["fomod_base"]
+    count = 0
+    for op in ops:
+        src = _fomod_case_resolve(base, op["source"])
+        if src is None:
+            decky.logger.info(f"fomod: source missing: {op['source']!r}")
+            continue
+        dest = op["dest"]
+        dest = _fomod_norm_source(
+            dest if dest is not None else op["source"]
+        )
+        if op["kind"] == "folder" or os.path.isdir(src):
+            for root, _dirs, names in os.walk(src):
+                for n in names:
+                    rel = os.path.relpath(os.path.join(root, n), src)
+                    rel = rel.replace(os.sep, "/")
+                    target_rel = f"{dest}/{rel}" if dest else rel
+                    if not _safe_rel_path(target_rel):
+                        continue
+                    dst = os.path.join(staging, *target_rel.split("/"))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.copy2(os.path.join(root, n), dst)
+                    count += 1
+        else:
+            target_rel = dest or os.path.basename(src)
+            if not _safe_rel_path(target_rel):
+                continue
+            dst = os.path.join(staging, *target_rel.split("/"))
+            os.makedirs(os.path.dirname(dst) or staging, exist_ok=True)
+            if os.path.isfile(dst):
+                os.remove(dst)
+            shutil.copy2(src, dst)
+            count += 1
+    return count
+
+
+def _prune_pending_fomods() -> None:
+    now = time.time()
+    for token in list(PENDING_FOMODS):
+        if now - PENDING_FOMODS[token].get("at", 0) > FOMOD_TTL_SECONDS:
+            entry = PENDING_FOMODS.pop(token)
+            _force_rmtree(entry.get("scratch") or "")
+
+
 def _parse_nxm_url(url: str):
     """Strictly parse an nxm:// mod-file link (the website's 'Slow download' /
     'Mod Manager Download' handoff). Returns None for anything else -
@@ -1992,6 +2320,56 @@ query GetCollection($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Archive was empty"}
 
         if install_mode == "dataDir":
+            # FOMOD wizard archives: parse the wizard, park the extraction,
+            # and let the user pick options in the UI - install_fomod
+            # finishes the job with the same merge below.
+            if not payload_choice and _fomod_config_path(scratch):
+                _, data_path_now, _unused2 = _game_paths(
+                    install_dir, mods_subdir
+                )
+                parsed = _parse_fomod(scratch, data_path_now)
+                if parsed:
+                    wizard, ctx = parsed
+                    if wizard["steps"]:
+                        _prune_pending_fomods()
+                        token = f"{mod_id}-{file_id}-{int(time.time())}"
+                        PENDING_FOMODS[token] = {
+                            "at": time.time(),
+                            "scratch": scratch,
+                            "ctx": ctx,
+                            "game_domain": game_domain,
+                            "mod_id": mod_id,
+                            "file_id": file_id,
+                            "file_name": file_name,
+                            "mod_name": mod_name,
+                            "mod_version": mod_version,
+                            "install_dir": install_dir,
+                            "mods_subdir": mods_subdir,
+                            "app_id": app_id,
+                            "plugins_subpath": plugins_subpath,
+                            "plugins_style": plugins_style,
+                        }
+                        try:
+                            os.remove(archive_path)
+                        except OSError:
+                            pass
+                        await _emit_progress(
+                            mod_id, "error", 0, "fomod wizard"
+                        )
+                        return {
+                            "ok": False,
+                            "needs_fomod": True,
+                            "fomod_token": token,
+                            "wizard": wizard,
+                        }
+                    # Wizard-less FOMOD (only requiredInstallFiles): stage
+                    # it directly and continue as a normal payload.
+                    staging = os.path.join(scratch, "__fomod_staged__")
+                    os.makedirs(staging, exist_ok=True)
+                    if _fomod_stage(ctx, [], staging) > 0:
+                        for e in os.listdir(scratch):
+                            if e != "__fomod_staged__":
+                                _force_rmtree(os.path.join(scratch, e))
             # Skyrim-class: merge the payload into Data/, record a per-file
             # manifest, activate any plugin files in plugins.txt.
             payload = _find_data_payload(scratch)
@@ -2335,6 +2713,87 @@ query GetCollection($slug: String!, $domainName: String!) {
         decky.logger.info(f"installed {mod_name!r} -> {mods_path}/{folder}")
         await _emit_progress(mod_id, "done", 100)
         return {"ok": True, "folder": folder}
+
+    async def install_fomod(self, token: str, selected_ids: list) -> dict:
+        """Finish a parked FOMOD install with the user's wizard selections.
+        Stages the selected sources, then runs the same dataDir merge as a
+        normal install (case-merged paths, per-file manifest, plugins.txt
+        activation)."""
+        try:
+            entry = PENDING_FOMODS.pop(token, None)
+            if not entry:
+                return {
+                    "ok": False,
+                    "error": "This install expired - start it again",
+                }
+            scratch = entry["scratch"]
+            staging = os.path.join(scratch, "__fomod_staged__")
+            _force_rmtree(staging)
+            os.makedirs(staging)
+            staged = _fomod_stage(entry["ctx"], list(selected_ids or []), staging)
+            if staged == 0:
+                _force_rmtree(scratch)
+                return {"ok": False, "error": "Nothing selected to install"}
+
+            _, mods_path, _unused = _game_paths(
+                entry["install_dir"], entry["mods_subdir"]
+            )
+            os.makedirs(mods_path, exist_ok=True)
+            files_rel, plugins = [], []
+            for root, _dirs, names in os.walk(staging):
+                for name in names:
+                    src_file = os.path.join(root, name)
+                    rel = os.path.relpath(src_file, staging)
+                    if not _safe_rel_path(rel):
+                        continue
+                    rel = _case_merge_rel(mods_path, rel)
+                    dst = os.path.join(mods_path, *rel.split("/"))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.move(src_file, dst)
+                    if rel not in files_rel:
+                        files_rel.append(rel)
+                    if "/" not in rel and rel.lower().endswith(
+                        PLUGIN_EXTENSIONS
+                    ) and rel not in plugins:
+                        plugins.append(rel)
+            _force_rmtree(scratch)
+            if plugins and entry["plugins_subpath"]:
+                _add_plugins(
+                    _plugins_txt_path(
+                        entry["app_id"], entry["plugins_subpath"]
+                    ),
+                    plugins,
+                    entry["plugins_style"],
+                )
+            record_key = _safe_name(entry["mod_name"])
+            settings = _load_settings()
+            installed = settings.setdefault("installed", {}).setdefault(
+                entry["game_domain"], {}
+            )
+            installed[record_key] = {
+                "mod_id": entry["mod_id"],
+                "file_id": entry["file_id"],
+                "name": entry["mod_name"],
+                "version": entry["mod_version"],
+                "file_name": entry["file_name"],
+                "installed_at": int(time.time()),
+                "mode": "dataDir",
+                "files": files_rel,
+                "plugins": plugins,
+            }
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed FOMOD {entry['mod_name']!r}: {len(files_rel)} "
+                f"files, {len(plugins)} plugins, "
+                f"{len(selected_ids or [])} options"
+            )
+            await _emit_progress(entry["mod_id"], "done", 100)
+            return {"ok": True, "folder": record_key}
+        except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
+            decky.logger.exception("install_fomod crashed")
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     async def install_framework(
         self,

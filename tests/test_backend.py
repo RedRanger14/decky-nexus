@@ -602,6 +602,139 @@ class TestUe4ssRouting(unittest.TestCase):
         )
 
 
+class TestFomod(unittest.TestCase):
+    """FOMOD wizard parsing and staging against a representative
+    ModuleConfig.xml (steps, groups, flags, conditional installs)."""
+
+    CONFIG = """<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <moduleName>Test Armor Pack</moduleName>
+  <requiredInstallFiles>
+    <folder source="Core\\Data" destination="" priority="0" />
+  </requiredInstallFiles>
+  <installSteps order="Explicit">
+    <installStep name="Resolution">
+      <optionalFileGroups order="Explicit">
+        <group name="Texture size" type="SelectExactlyOne">
+          <plugins order="Explicit">
+            <plugin name="4K">
+              <description>Big textures</description>
+              <files><folder source="Options\\4K" destination="textures" priority="1" /></files>
+              <conditionFlags><flag name="res">4k</flag></conditionFlags>
+              <typeDescriptor><type name="Recommended" /></typeDescriptor>
+            </plugin>
+            <plugin name="2K">
+              <description>Small textures</description>
+              <files><folder source="Options\\2K" destination="textures" priority="1" /></files>
+              <conditionFlags><flag name="res">2k</flag></conditionFlags>
+              <typeDescriptor><type name="Optional" /></typeDescriptor>
+            </plugin>
+          </plugins>
+        </group>
+      </optionalFileGroups>
+    </installStep>
+    <installStep name="Extras">
+      <visible>
+        <flagDependency flag="res" value="4k" />
+      </visible>
+      <optionalFileGroups order="Explicit">
+        <group name="Extras" type="SelectAny">
+          <plugins order="Explicit">
+            <plugin name="Glow maps">
+              <description>Shiny</description>
+              <files><file source="Extras\\glow.dds" destination="textures/glow.dds" /></files>
+              <typeDescriptor><type name="Optional" /></typeDescriptor>
+            </plugin>
+          </plugins>
+        </group>
+      </optionalFileGroups>
+    </installStep>
+  </installSteps>
+  <conditionalFileInstalls>
+    <patterns>
+      <pattern>
+        <dependencies operator="And">
+          <flagDependency flag="res" value="4k" />
+        </dependencies>
+        <files><file source="Patches\\hd.esp" destination="hd.esp" /></files>
+      </pattern>
+    </patterns>
+  </conditionalFileInstalls>
+</config>"""
+
+    def setUp(self):
+        self.scratch = os.path.join(TEST_ROOT, "fomod-scratch")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        for rel, content in (
+            ("fomod/ModuleConfig.xml", self.CONFIG),
+            ("Core/Data/base.esp", "x"),
+            ("Options/4K/armor/big.dds", "x"),
+            ("Options/2K/armor/small.dds", "x"),
+            ("Extras/glow.dds", "x"),
+            ("Patches/hd.esp", "x"),
+        ):
+            p = os.path.join(self.scratch, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write(content)
+        self.data = os.path.join(TEST_ROOT, "fomod-data")
+        shutil.rmtree(self.data, ignore_errors=True)
+        os.makedirs(self.data)
+
+    def test_wizard_parses_steps_groups_and_types(self):
+        wizard, ctx = main._parse_fomod(self.scratch, self.data)
+        self.assertEqual(wizard["moduleName"], "Test Armor Pack")
+        self.assertEqual(len(wizard["steps"]), 2)
+        group = wizard["steps"][0]["groups"][0]
+        self.assertEqual(group["type"], "SelectExactlyOne")
+        self.assertEqual(group["plugins"][0]["type"], "Recommended")
+        # Step 2 visibility depends on the res flag
+        vis = wizard["steps"][1]["visible"]
+        self.assertTrue(main._fomod_eval_deps(vis, {"res": "4k"}))
+        self.assertFalse(main._fomod_eval_deps(vis, {"res": "2k"}))
+
+    def test_staging_applies_selection_flags_and_conditionals(self):
+        _wizard, ctx = main._parse_fomod(self.scratch, self.data)
+        staging = os.path.join(TEST_ROOT, "fomod-staging")
+        shutil.rmtree(staging, ignore_errors=True)
+        os.makedirs(staging)
+        # Choose 4K + glow maps: required base + 4K tree + glow + the
+        # conditional hd.esp (res=4k flag) must all stage.
+        count = main._fomod_stage(ctx, ["0.0.0", "1.0.0"], staging)
+        self.assertEqual(count, 4)
+        self.assertTrue(os.path.isfile(os.path.join(staging, "base.esp")))
+        self.assertTrue(
+            os.path.isfile(
+                os.path.join(staging, "textures", "armor", "big.dds")
+            )
+        )
+        self.assertTrue(
+            os.path.isfile(os.path.join(staging, "textures", "glow.dds"))
+        )
+        self.assertTrue(os.path.isfile(os.path.join(staging, "hd.esp")))
+        self.assertFalse(
+            os.path.isfile(
+                os.path.join(staging, "textures", "armor", "small.dds")
+            )
+        )
+
+    def test_staging_2k_selection_skips_conditional(self):
+        _wizard, ctx = main._parse_fomod(self.scratch, self.data)
+        staging = os.path.join(TEST_ROOT, "fomod-staging2")
+        shutil.rmtree(staging, ignore_errors=True)
+        os.makedirs(staging)
+        count = main._fomod_stage(ctx, ["0.0.1"], staging)
+        self.assertEqual(count, 2)  # base.esp + small.dds; no hd.esp
+        self.assertFalse(os.path.isfile(os.path.join(staging, "hd.esp")))
+
+    def test_windows_cased_sources_resolve(self):
+        # XML says Core\\Data; on disk we made Core/Data - also try odd case
+        _wizard, ctx = main._parse_fomod(self.scratch, self.data)
+        resolved = main._fomod_case_resolve(
+            ctx["fomod_base"], "CORE\\\\DATA"
+        )
+        self.assertIsNotNone(resolved)
+
+
 class TestBannerlordModules(unittest.TestCase):
     """Module activation lives in LauncherData.xml; the Id comes from the
     module's SubModule.xml, not the folder name."""
