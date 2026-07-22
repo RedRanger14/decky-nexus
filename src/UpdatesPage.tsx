@@ -15,6 +15,7 @@ import { dismissUpdate } from "./api";
 import { installLatest } from "./install";
 import { PendingUpdate, scanUpdates } from "./updates";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
+import { TabBar, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -65,6 +66,15 @@ export function UpdatesPage() {
 
   return (
     <Focusable
+      // Even when the page has no focusable rows, B must land here (not
+      // fall through to Steam's default close) - hence the focusable
+      // fallback + autofocus.
+      autoFocus={true}
+      noFocusRing={true}
+      // onActivate makes this a real focus target even with no focusable
+      // children, so B lands on onCancel instead of Steam's default.
+      onActivate={() => {}}
+      onButtonDown={handleTabButtons("updates")}
       onCancel={() => {
         Navigation.NavigateBack();
         Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
@@ -76,6 +86,7 @@ export function UpdatesPage() {
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 80px" }}
       >
         <style>{PRIMARY_BUTTON_CSS}</style>
+        <TabBar currentId="updates" />
         <h2 style={{ margin: "12px 0 4px" }}>Updates</h2>
         <div style={{ fontSize: "12.5px", opacity: 0.65, marginBottom: "10px" }}>
           Mods installed as part of a collection aren't shown - collections

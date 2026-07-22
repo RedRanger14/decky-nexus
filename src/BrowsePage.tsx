@@ -34,6 +34,7 @@ import {
 // props.
 const Scroller: any = ScrollPanelGroup;
 import { NEXUS_ORANGE } from "./theme";
+import { TabBar, handleTabButtons } from "./Tabs";
 
 const SORT_OPTIONS = [
   { data: "featured", label: "Featured" },
@@ -314,6 +315,8 @@ export function BrowsePage() {
     return () => clearTimeout(timer);
   });
 
+  const [lastPageFull, setLastPageFull] = useState(true);
+
   const fetchPage = async (offset: number, append: boolean) => {
     setLoading(true);
     try {
@@ -328,6 +331,9 @@ export function BrowsePage() {
         setError(undefined);
         setTotal(result.total);
         nextOffset.current = offset + PAGE_SIZE;
+        // A short page means the well is dry regardless of what the
+        // total claims (search totals can be stale or absent).
+        setLastPageFull((result.mods ?? []).length >= PAGE_SIZE);
         setMods((prev) => (append ? [...prev, ...(result.mods ?? [])] : result.mods ?? []));
       } else {
         setError(result.error);
@@ -398,7 +404,8 @@ export function BrowsePage() {
     });
   }, [game.appId, sort, search, mods, total]);
 
-  const hasMore = total !== undefined && nextOffset.current < total;
+  const hasMore =
+    lastPageFull && total !== undefined && nextOffset.current < total;
   // Curated recommendations take the hero slots (the "start here" mods -
   // libraries and loaders); games without curation fall back to trending.
   const hasRecommended = recommended.length > 0;
@@ -411,6 +418,7 @@ export function BrowsePage() {
     // onCancel: B returns to the plugin's QAM panel instead of dumping the
     // user on the home screen with everything closed.
     <Focusable
+      onButtonDown={handleTabButtons("store")}
       onCancel={() => {
         Navigation.NavigateBack();
         Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
@@ -467,6 +475,7 @@ export function BrowsePage() {
       </div>
 
       <div style={{ position: "relative", zIndex: 1 }}>
+        <TabBar currentId="store" />
         {/* ---- Header: [game art] [title/count] ..... [search] [sort] ---- */}
         <Focusable
           style={{
