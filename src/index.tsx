@@ -140,6 +140,7 @@ import { BrowsePage } from "./BrowsePage";
 import { CollectionPage } from "./CollectionPage";
 import { DownloadsPage } from "./DownloadsPage";
 import { ModDetailPage } from "./ModDetailPage";
+import { ManagerPage } from "./ManagerPage";
 import { UpdatesPage } from "./UpdatesPage";
 import { scanUpdates } from "./updates";
 
@@ -166,6 +167,7 @@ const DETAIL_ROUTE = "/nexus-mods/mod";
 const COLLECTION_ROUTE = "/nexus-mods/collection";
 const DOWNLOADS_ROUTE = "/nexus-mods/downloads";
 const UPDATES_ROUTE = "/nexus-mods/updates";
+const MANAGER_ROUTE = "/nexus-mods/manager";
 
 interface BackendInfo {
   user: string;
@@ -1556,15 +1558,15 @@ function DownloadsButton() {
     : "Downloads";
   return (
     <PanelSectionRow>
-      <ButtonItem
-        layout="below"
+      <DialogButton
+        style={{ width: "100%" }}
         onClick={() => {
           Router.CloseSideMenus();
           Navigation.Navigate(DOWNLOADS_ROUTE);
         }}
       >
         {busy ? `⏳ ${label}` : label}
-      </ButtonItem>
+      </DialogButton>
     </PanelSectionRow>
   );
 }
@@ -1584,15 +1586,15 @@ function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
   }, [scopedGame?.appId]);
   return (
     <PanelSectionRow>
-      <ButtonItem
-        layout="below"
+      <DialogButton
+        style={{ width: "100%" }}
         onClick={() => {
           Router.CloseSideMenus();
           Navigation.Navigate(UPDATES_ROUTE);
         }}
       >
         {count ? `⬆ Updates · ${count} available` : "Updates"}
-      </ButtonItem>
+      </DialogButton>
     </PanelSectionRow>
   );
 }
@@ -1623,8 +1625,10 @@ function Content() {
   return (
     <>
       <VersionBadge />
-      <UpdatesButton scopedGame={ctx.game} />
-      <DownloadsButton />
+      <PanelSection>
+        <UpdatesButton scopedGame={ctx.game} />
+        <DownloadsButton />
+      </PanelSection>
       <CurrentGameSection />
       {ctx.game ? (
         <>
@@ -1648,6 +1652,7 @@ export default definePlugin(() => {
   routerHook.addRoute(COLLECTION_ROUTE, CollectionPage, { exact: true });
   routerHook.addRoute(DOWNLOADS_ROUTE, DownloadsPage, { exact: true });
   routerHook.addRoute(UPDATES_ROUTE, UpdatesPage, { exact: true });
+  routerHook.addRoute(MANAGER_ROUTE, ManagerPage, { exact: true });
 
   // Feed the QAM Downloads section from anywhere in the UI.
   const progressListener = addEventListener<[p: InstallProgress]>(
@@ -1674,6 +1679,7 @@ export default definePlugin(() => {
       routerHook.removeRoute(COLLECTION_ROUTE);
       routerHook.removeRoute(DOWNLOADS_ROUTE);
       routerHook.removeRoute(UPDATES_ROUTE);
+      routerHook.removeRoute(MANAGER_ROUTE);
       removeEventListener("backend_event", listener);
       removeEventListener("install_progress", progressListener);
     },

@@ -17,6 +17,7 @@ import {
   subscribeCollectionRun,
   subscribeDownloads,
 } from "./state";
+import { TabBar, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -72,6 +73,15 @@ export function DownloadsPage() {
 
   return (
     <Focusable
+      // Even when the page has no focusable rows, B must land here (not
+      // fall through to Steam's default close) - hence the focusable
+      // fallback + autofocus.
+      autoFocus={true}
+      noFocusRing={true}
+      // onActivate makes this a real focus target even with no focusable
+      // children, so B lands on onCancel instead of Steam's default.
+      onActivate={() => {}}
+      onButtonDown={handleTabButtons("downloads")}
       onCancel={() => {
         Navigation.NavigateBack();
         Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
@@ -82,6 +92,7 @@ export function DownloadsPage() {
         focusable={false}
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 80px" }}
       >
+        <TabBar currentId="downloads" />
         <h2 style={{ margin: "12px 0 10px" }}>Downloads</h2>
 
         {run && (
