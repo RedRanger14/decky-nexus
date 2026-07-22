@@ -28,11 +28,34 @@ All Nexus data below verified live against the v2 API on 2026-07-21.
 | HK: Silksong (bonus) | 1030300 | `hollowknightsilksong` | 8136 | 773 | — |
 | Subnautica 2 (bonus) | TBD (early access) | `subnautica2` | 9198 | 244 | — |
 
-Witcher 3: mods = folder drop into `<game>/Mods/` (folder mode), but
-script mods conflict without merging (community Script Merger is
-Windows-only) — research pass needed; next-gen update changed paths.
 Subnautica 2: UE5 like Palworld — its top mod is a UE4SS build, so
-expect the same pak-easy / UE4SS-hard split. Research pass needed.
+expect the same pak-easy / UE4SS-hard split; reuses the v0.3.0 UE4SS
+machinery. Research pass needed for its paths.
+
+## Research: The Witcher 3 next-gen (completed 2026-07-22)
+
+MODERATE — and better than feared: **REDmod does not apply to TW3**
+(that was a Cyberpunk-only mechanism; the confusion came from a
+site-wide news article). No deploy step, no launch flag.
+
+- Mods = `mod*`-prefixed folders into `<game>/mods/` (folder mode;
+  create dir, lowercase). Many mods also ship `dlc*` folders → 
+  `<game>/dlc/`. REDkit-era (4.04a+) mods use the same folders.
+- Menu-mod XMLs → `bin/config/r4game/user_config_matrix/pc/` AND the
+  filename must be appended (semicolon-terminated) to dx11filelist.txt
+  + dx12filelist.txt — automatable, idempotent (Deck runs DX11).
+- **Script conflicts are the hard wall**: two mods editing the same
+  `.ws` → fatal compile error at launch; Script Merger is Windows GUI.
+  v1 = allow script-free mods + non-colliding single script mods,
+  refuse collisions with a clear message (collision scan = compare
+  `content/scripts/**` paths across installed mods — we have
+  manifests). Linux CLI merger (apocalyptech/w3scriptmerge) = v2 spike.
+- Load order: alphabetical; `mods.settings` INI in prefix Documents
+  for priority/disable (v2).
+- Exe: bin/x64/witcher3.exe (+x64_dx12 variant); dir "The Witcher 3";
+  ~200-bundle hard limit remains on 4.04 (fine for v1 scale).
+- v1 mapping: folder mode + a dlc-component extension + filelist
+  automation + script-collision gate.
 
 Deck-popularity picks (user, 2026-07-21): Palworld + RDR2 promoted into
 the 1.0 wave; Balatro + Silksong as bonus targets. Note Balatro's and

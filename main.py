@@ -745,6 +745,106 @@ def _is_newer_version(current: str, installed: str) -> bool:
     return c > i
 
 
+# ---- Bannerlord module activation ------------------------------------------
+# Modules are folders under Modules/, but the launcher only loads ones
+# selected in LauncherData.xml (Documents/Mount and Blade II Bannerlord/
+# Configs/). The Id comes from each module's SubModule.xml - NOT the folder
+# name. Vortex manages the same file, so the shape is battle-tested.
+
+
+def _submodule_id(module_dir: str):
+    """The module Id from SubModule.xml ('<Id value="X"/>' style)."""
+    path = os.path.join(module_dir, "SubModule.xml")
+    if not os.path.isfile(path):
+        return None
+    try:
+        import xml.etree.ElementTree as ET
+
+        root = ET.parse(path).getroot()
+        node = root.find("Id")
+        if node is None:
+            return None
+        return node.get("value") or (node.text or "").strip() or None
+    except Exception:  # noqa: BLE001 - malformed community XML
+        return None
+
+
+def _launcher_xml_path(app_id: int, subpath: str) -> str:
+    return _adopt_case(
+        _prefix_user_path(app_id, "Documents", *subpath.split("/"))
+    )
+
+
+def _set_module_selected(path: str, module_id: str, selected: bool) -> bool:
+    """Set (or append) a module's IsSelected in LauncherData.xml. Best
+    effort: returns False when the file doesn't exist yet (launcher never
+    run) - the launcher also auto-detects modules, so this is convenience,
+    not correctness."""
+    if not os.path.isfile(path):
+        return False
+    try:
+        import xml.etree.ElementTree as ET
+
+        tree = ET.parse(path)
+        root = tree.getroot()
+        entries = root.iter("UserModData")
+        parent = None
+        for node in root.iter():
+            for child in node:
+                if child.tag == "UserModData":
+                    parent = node
+                    break
+            if parent is not None:
+                break
+        for entry in root.iter("UserModData"):
+            id_node = entry.find("Id")
+            if id_node is not None and (id_node.text or "").strip() == module_id:
+                sel = entry.find("IsSelected")
+                if sel is None:
+                    sel = ET.SubElement(entry, "IsSelected")
+                sel.text = "true" if selected else "false"
+                tree.write(path, encoding="utf-8", xml_declaration=True)
+                return True
+        if parent is None:
+            # No entries yet: use a ModDatas container if one exists.
+            parent = next(
+                (n for n in root.iter() if n.tag == "ModDatas"), None
+            )
+        if parent is None:
+            return False
+        entry = ET.SubElement(parent, "UserModData")
+        ET.SubElement(entry, "Id").text = module_id
+        ET.SubElement(entry, "IsSelected").text = (
+            "true" if selected else "false"
+        )
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _remove_module_entry(path: str, module_id: str) -> None:
+    if not os.path.isfile(path):
+        return
+    try:
+        import xml.etree.ElementTree as ET
+
+        tree = ET.parse(path)
+        root = tree.getroot()
+        for node in root.iter():
+            for child in list(node):
+                if child.tag == "UserModData":
+                    id_node = child.find("Id")
+                    if (
+                        id_node is not None
+                        and (id_node.text or "").strip() == module_id
+                    ):
+                        node.remove(child)
+            tree.write(path, encoding="utf-8", xml_declaration=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _parse_nxm_url(url: str):
     """Strictly parse an nxm:// mod-file link (the website's 'Slow download' /
     'Mod Manager Download' handoff). Returns None for anything else -
@@ -1566,6 +1666,8 @@ class Plugin:
         payload_choice: str = "",
         ue4ss_subdir: str = "",
         logicmods_subdir: str = "",
+        launcher_xml_subpath: str = "",
+        flat_extensions: list = None,
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -1590,6 +1692,8 @@ class Plugin:
                 payload_choice,
                 ue4ss_subdir,
                 logicmods_subdir,
+                launcher_xml_subpath,
+                flat_extensions,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -1615,6 +1719,8 @@ class Plugin:
         payload_choice: str = "",
         ue4ss_subdir: str = "",
         logicmods_subdir: str = "",
+        launcher_xml_subpath: str = "",
+        flat_extensions: list = None,
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -1887,6 +1993,61 @@ class Plugin:
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
 
+        # Flat-file games (Cyberpunk archive/pc/mod): the game loads files,
+        # not folders - move matching files flat and keep a per-file record.
+        if flat_extensions:
+            exts = tuple(e.lower() for e in flat_extensions)
+            flat = []
+            for root, _dirs, names in os.walk(scratch):
+                flat.extend(
+                    os.path.join(root, n)
+                    for n in names
+                    if n.lower().endswith(exts)
+                )
+            if not flat:
+                _force_rmtree(scratch)
+                return {
+                    "ok": False,
+                    "error": "No loadable mod files found in this archive "
+                    f"(expected {', '.join(flat_extensions)})",
+                }
+            os.makedirs(mods_path, exist_ok=True)
+            moved = []
+            for src in flat:
+                name = os.path.basename(src)
+                dst = os.path.join(mods_path, name)
+                if os.path.isfile(dst):
+                    os.remove(dst)
+                shutil.move(src, dst)
+                moved.append(name)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            record_key = _safe_name(mod_name)
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            installed[record_key] = {
+                "mod_id": mod_id,
+                "file_id": file_id,
+                "name": mod_name,
+                "version": mod_version,
+                "file_name": file_name,
+                "installed_at": int(time.time()),
+                "mode": "files",
+                "target": mods_subdir,
+                "files": moved,
+            }
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed {mod_name!r}: {len(moved)} flat files -> "
+                f"{mods_subdir!r}"
+            )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": record_key}
+
         # Single top-level folder -> that IS the mod folder. Loose files ->
         # wrap them in a folder named after the mod.
         os.makedirs(mods_path, exist_ok=True)
@@ -1914,8 +2075,7 @@ class Plugin:
             pass
 
         # 4) Record the install.
-        installed = settings.setdefault("installed", {}).setdefault(game_domain, {})
-        installed[folder] = {
+        record = {
             "mod_id": mod_id,
             "file_id": file_id,
             "name": mod_name,
@@ -1923,6 +2083,24 @@ class Plugin:
             "file_name": file_name,
             "installed_at": int(time.time()),
         }
+        # Bannerlord-style launcher games: modules need selecting in the
+        # launcher's XML config; the Id lives in the module's SubModule.xml.
+        if launcher_xml_subpath:
+            module_id = _submodule_id(os.path.join(mods_path, folder))
+            if module_id:
+                record["moduleId"] = module_id
+                record["launcherXml"] = launcher_xml_subpath
+                activated = _set_module_selected(
+                    _launcher_xml_path(app_id, launcher_xml_subpath),
+                    module_id,
+                    True,
+                )
+                decky.logger.info(
+                    f"module {module_id!r} activation: "
+                    f"{'ok' if activated else 'deferred (no LauncherData.xml yet)'}"
+                )
+        installed = settings.setdefault("installed", {}).setdefault(game_domain, {})
+        installed[folder] = record
         _save_settings(settings)
 
         decky.logger.info(f"installed {mod_name!r} -> {mods_path}/{folder}")
@@ -2227,6 +2405,7 @@ class Plugin:
         app_id: int = 0,
         plugins_subpath: str = "",
         plugins_style: str = "starred",
+        hidden_folders: list = None,
     ) -> dict:
         if install_mode == "dataDir":
             records = _load_settings().get("installed", {}).get(game_domain, {})
@@ -2260,11 +2439,15 @@ class Plugin:
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
         records = _load_settings().get("installed", {}).get(game_domain, {})
 
+        hidden = {h.lower() for h in (hidden_folders or [])}
+
         def scan(base: str, enabled: bool):
             if not os.path.isdir(base):
                 return
             for folder in sorted(os.listdir(base)):
                 if not os.path.isdir(os.path.join(base, folder)):
+                    continue
+                if folder.lower() in hidden:
                     continue
                 rec = records.get(folder)
                 results.append(
@@ -2335,6 +2518,7 @@ class Plugin:
         app_id: int = 0,
         plugins_subpath: str = "",
         plugins_style: str = "starred",
+        hidden_folders: list = None,
     ) -> dict:
         if install_mode == "dataDir":
             rec = (
@@ -2410,6 +2594,14 @@ class Plugin:
         if os.path.isdir(dst):
             return {"ok": False, "error": f"{folder} already exists in {dst_base}"}
         os.rename(src, dst)
+        # Launcher-selected modules (Bannerlord): keep LauncherData.xml in
+        # step so the launcher doesn't re-run a disabled module.
+        if rec and rec.get("moduleId") and rec.get("launcherXml"):
+            _set_module_selected(
+                _launcher_xml_path(app_id, rec["launcherXml"]),
+                rec["moduleId"],
+                enabled,
+            )
         decky.logger.info(f"{'enabled' if enabled else 'disabled'} mod {folder!r}")
         return {"ok": True}
 
@@ -2521,8 +2713,15 @@ class Plugin:
         if not removed:
             return {"ok": False, "error": f"{folder} not found"}
         settings = _load_settings()
-        settings.get("installed", {}).get(game_domain, {}).pop(folder, None)
+        dropped = settings.get("installed", {}).get(game_domain, {}).pop(
+            folder, None
+        )
         _save_settings(settings)
+        if dropped and dropped.get("moduleId") and dropped.get("launcherXml"):
+            _remove_module_entry(
+                _launcher_xml_path(app_id, dropped["launcherXml"]),
+                dropped["moduleId"],
+            )
         decky.logger.info(f"uninstalled mod {folder!r}")
         return {"ok": True}
 

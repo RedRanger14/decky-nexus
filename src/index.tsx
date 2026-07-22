@@ -726,7 +726,8 @@ function AllInstalledModsSection() {
               g.nexusDomain,
               g.installDirName,
               g.modsSubdir,
-              ...modeParams(g)
+              ...modeParams(g),
+              g.protectedModFolders ?? []
             )
           ).mods ?? [],
       }))
@@ -878,7 +879,8 @@ function InstalledModsSection() {
         game.nexusDomain,
         game.installDirName,
         game.modsSubdir,
-        ...modeParams(game)
+        ...modeParams(game),
+        game.protectedModFolders ?? []
       ).then((r) => setMods(r.ok ? r.mods : []));
       if (game.logAdapter?.kind === "godot") {
         getModLoadStatus(game.logAdapter.userDirName).then((r) =>
