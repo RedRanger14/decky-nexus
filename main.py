@@ -229,6 +229,18 @@ def _normalize_requirements(raw: list) -> list:
     return reqs
 
 
+def _collection_sort_field(sort: str) -> str:
+    """Frontend sort keys -> collectionsV2 sort fields (verified against
+    the live API - 'totalDownloads' does not exist; it's 'downloads')."""
+    return {
+        "endorsements": "endorsements",
+        "downloads": "downloads",
+        "updatedAt": "updatedAt",
+        "createdAt": "createdAt",
+        "trending": "recentRating",
+    }.get(sort, "endorsements")
+
+
 def _show_adult() -> bool:
     return bool(_load_settings().get("show_adult"))
 
@@ -1994,6 +2006,7 @@ class Plugin:
         count: int = 8,
         search: str = "",
         sort: str = "endorsements",
+        offset: int = 0,
     ) -> dict:
         """Most-endorsed published collections for a game, optionally
         name-filtered (the search toggle on the browse page)."""
@@ -2007,7 +2020,7 @@ class Plugin:
         )
         search_param = ", $search: String!" if search else ""
         query = """
-query TrendingCollections($gameDomain: String!, $count: Int%SEARCHPARAM%) {
+query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCHPARAM%) {
   collectionsV2(
     filter: {
       gameDomain: [{ value: $gameDomain }]
@@ -2017,6 +2030,7 @@ query TrendingCollections($gameDomain: String!, $count: Int%SEARCHPARAM%) {
     }
     sort: [{ %SORT%: { direction: DESC } }]
     count: $count
+    offset: $offset
   ) {
     nodes {
       name
@@ -2029,12 +2043,7 @@ query TrendingCollections($gameDomain: String!, $count: Int%SEARCHPARAM%) {
     }
   }
 }"""
-        sort_field = {
-            "endorsements": "endorsements",
-            "downloads": "totalDownloads",
-            "updatedAt": "updatedAt",
-            "createdAt": "createdAt",
-        }.get(sort, "endorsements")
+        sort_field = _collection_sort_field(sort)
         query = (
             query.replace("%SEARCHPARAM%", search_param)
             .replace("%SEARCH%", search_filter)
@@ -2044,7 +2053,11 @@ query TrendingCollections($gameDomain: String!, $count: Int%SEARCHPARAM%) {
                 "" if _show_adult() else "adultContent: [{ value: false }]",
             )
         )
-        variables = {"gameDomain": game_domain, "count": int(count)}
+        variables = {
+            "gameDomain": game_domain,
+            "count": int(count),
+            "offset": int(offset),
+        }
         if search:
             variables["search"] = search
         try:
@@ -2259,7 +2272,8 @@ query Link($slug: String!, $domainName: String!) {
         try:
             game_id = await _resolve_game_id(game_domain, api_key)
             data = await _gql_query(
-                "{ legacyMods(ids: [{gameId: %d, modId: %d}]) { nodes {%s\n description } } }"
+                "{ legacyMods(ids: [{gameId: %d, modId: %d}]) { nodes {%s\n"
+                " description uploader { name memberId donationsEnabled } } } }"
                 % (game_id, int(mod_id), MOD_FIELDS),
                 api_key,
             )

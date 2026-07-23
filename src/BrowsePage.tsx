@@ -400,12 +400,22 @@ export function BrowsePage() {
   const [allCollections, setAllCollections] = useState<CollectionSummary[]>(
     []
   );
+  const [collectionsHasMore, setCollectionsHasMore] = useState(true);
+  const fetchCollectionsPage = (offset: number, append: boolean) => {
+    getCollections(game.nexusDomain, 30, "", collectionsSort, offset).then(
+      (r) => {
+        if (!r.ok) return;
+        const page = r.collections ?? [];
+        setCollectionsHasMore(page.length >= 30);
+        setAllCollections((prev) => (append ? [...prev, ...page] : page));
+      }
+    );
+  };
   useEffect(() => {
     if (!collectionsMode) return;
     setAllCollections([]);
-    getCollections(game.nexusDomain, 30, "", collectionsSort).then((r) => {
-      if (r.ok) setAllCollections(r.collections ?? []);
-    });
+    setCollectionsHasMore(true);
+    fetchCollectionsPage(0, false);
   }, [collectionsMode, collectionsSort, game.appId]);
 
   const fetchPage = async (offset: number, append: boolean) => {
@@ -450,7 +460,7 @@ export function BrowsePage() {
     setNewest([]);
     setPopular([]);
     setTotal(undefined);
-    getCollections(game.nexusDomain, 5, "", "endorsements").then((r) => {
+    getCollections(game.nexusDomain, 5, "", "endorsements", 0).then((r) => {
       if (!cancelled && r.ok) setCollections(r.collections ?? []);
     });
     if (game.recommendedModIds?.length) {
@@ -478,7 +488,7 @@ export function BrowsePage() {
       return;
     }
     const timer = setTimeout(() => {
-      getCollections(game.nexusDomain, 20, effectiveSearch, "endorsements").then((r) => {
+      getCollections(game.nexusDomain, 20, effectiveSearch, "endorsements", 0).then((r) => {
         if (r.ok) setSearchCollections(r.collections ?? []);
       });
     }, 500);
@@ -527,6 +537,13 @@ export function BrowsePage() {
       onCancel={() => {
         if (collectionsMode) {
           setCollectionsMode(false);
+          return;
+        }
+        if (!isHome) {
+          // Entered a results view (view-all / search): B steps back to
+          // the home rails, not out of the page.
+          setSort("featured");
+          setSearch("");
           return;
         }
         Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
@@ -610,6 +627,8 @@ export function BrowsePage() {
             </div>
           </div>
           <div style={{ flexGrow: 1 }} />
+          {!collectionsMode && (
+          <>
           <div style={{ width: "300px", flexShrink: 0 }}>
             <TextField
               label="Search"
@@ -634,6 +653,8 @@ export function BrowsePage() {
               strDefaultLabel="Sort"
             />
           </div>
+          </>
+          )}
         </Focusable>
 
         {collectionsMode ? (
@@ -682,6 +703,18 @@ export function BrowsePage() {
               <div style={{ opacity: 0.8, padding: "12px 0" }}>
                 Loading collections…
               </div>
+            )}
+            {collectionsHasMore && allCollections.length > 0 && (
+              <Focusable style={{ margin: "14px auto 0", maxWidth: "320px" }}>
+                <ButtonItem
+                  layout="below"
+                  onClick={() =>
+                    fetchCollectionsPage(allCollections.length, true)
+                  }
+                >
+                  Load more ({allCollections.length} shown)
+                </ButtonItem>
+              </Focusable>
             )}
           </div>
         ) : isHome ? (

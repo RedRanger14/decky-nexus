@@ -1547,6 +1547,25 @@ class TestDataPayload(unittest.TestCase):
         self.assertEqual(reqs[1]["notes"], "")
         self.assertEqual(main._normalize_requirements(None), [])
 
+    def test_collection_sort_fields_are_valid_api_names(self):
+        """Regression: 'downloads' was mapped to a nonexistent field
+        (totalDownloads) - the API errored and the UI showed zero results.
+        These names are verified against the live collectionsV2 schema."""
+        self.assertEqual(main._collection_sort_field("downloads"), "downloads")
+        self.assertEqual(
+            main._collection_sort_field("endorsements"), "endorsements"
+        )
+        self.assertEqual(main._collection_sort_field("updatedAt"), "updatedAt")
+        self.assertEqual(main._collection_sort_field("createdAt"), "createdAt")
+        # unknown keys fall back safely
+        self.assertEqual(main._collection_sort_field("bogus"), "endorsements")
+        # every mapped value must be one of the schema-verified fields
+        for key in ("endorsements", "downloads", "updatedAt", "createdAt", "trending"):
+            self.assertIn(
+                main._collection_sort_field(key),
+                {"endorsements", "downloads", "updatedAt", "createdAt", "recentRating"},
+            )
+
     def test_version_compare_is_numeric(self):
         """Regression: SkyUI 6.11 installed showed '6.9 available' - string
         comparison thinks 6.9 is a different (hence 'new') version."""

@@ -92,6 +92,8 @@ export interface ActiveDownload {
   name: string;
   phase: string;
   percent: number;
+  /** Which game this install belongs to (for row click-through). */
+  gameAppId?: number;
 }
 
 const downloads = new Map<number, ActiveDownload>();
@@ -101,9 +103,26 @@ function notifyDownloads(): void {
   downloadListeners.forEach((l) => l());
 }
 
-export function nameDownload(modId: number, name: string): void {
-  downloads.set(modId, { modId, name, phase: "starting", percent: 0 });
+export function nameDownload(
+  modId: number,
+  name: string,
+  gameAppId?: number
+): void {
+  downloads.set(modId, {
+    modId,
+    name,
+    phase: "starting",
+    percent: 0,
+    gameAppId,
+  });
   notifyDownloads();
+}
+
+/** Live percent for a mod's active download (collection row fills). */
+export function getDownloadPercent(modId: number): number | undefined {
+  const d = downloads.get(modId);
+  if (!d) return undefined;
+  return d.phase === "extracting" ? 100 : d.percent;
 }
 
 const completed: ActiveDownload[] = [];
@@ -130,6 +149,7 @@ export function updateDownload(
     name: existing ? existing.name : "Mod " + modId,
     phase,
     percent,
+    gameAppId: existing?.gameAppId,
   });
   notifyDownloads();
 }
@@ -210,6 +230,21 @@ export function setCollectionRow(
 }
 
 export function endCollectionRun(): void {
-  if (collectionRun) collectionRun.running = false;
+  if (!collectionRun) return;
+  collectionRun.running = false;
+  // Surface the finished run in Completed and clear the banner shortly -
+  // a 32/32 banner that never leaves reads as "stuck".
+  completed.unshift({
+    modId: -Math.abs(collectionRun.total * 1000 + collectionRun.finished),
+    name: `Collection · ${collectionRun.finished}/${collectionRun.total} processed`,
+    phase: "done",
+    percent: 100,
+  });
+  if (completed.length > 30) completed.pop();
   notifyRun();
+  notifyDownloads();
+  setTimeout(() => {
+    collectionRun = undefined;
+    notifyRun();
+  }, 8000);
 }

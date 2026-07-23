@@ -28,7 +28,7 @@ export async function installPinned(
   modName: string,
   version = ""
 ): Promise<InstallResult> {
-  nameDownload(modId, modName);
+  nameDownload(modId, modName, game.appId);
   return installModWith(game, modId, fileId, fileName, modName, version, "collection");
 }
 
@@ -79,7 +79,7 @@ export async function installLatest(
   if (!file) {
     return { ok: false, error: "No downloadable file found" };
   }
-  nameDownload(modId, modName);
+  nameDownload(modId, modName, game.appId);
   return installModWith(
     game,
     modId,

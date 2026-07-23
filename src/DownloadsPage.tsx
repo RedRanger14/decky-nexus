@@ -14,9 +14,13 @@ import {
   getCollectionRun,
   getCompletedDownloads,
   getDownloads,
+  setDetailOrigin,
+  setSelectedMod,
   subscribeCollectionRun,
   subscribeDownloads,
 } from "./state";
+import { getModDetails } from "./api";
+import { getSupportedGame } from "./games";
 import { TabBar, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
@@ -25,13 +29,17 @@ function Row({
   name,
   status,
   dim,
+  onActivate,
 }: {
   name: string;
   status: string;
   dim?: boolean;
+  onActivate?: () => void;
 }) {
+  const Tag: any = onActivate ? Focusable : "div";
   return (
-    <div
+    <Tag
+      onActivate={onActivate}
       style={{
         display: "flex",
         justifyContent: "space-between",
@@ -52,8 +60,20 @@ function Row({
         {name}
       </span>
       <span style={{ flexShrink: 0, marginLeft: "12px" }}>{status}</span>
-    </div>
+    </Tag>
   );
+}
+
+/** Row click-through: open the mod's detail page in its game context. */
+async function openDownloadTarget(modId: number, gameAppId?: number) {
+  const game = getSupportedGame(gameAppId);
+  if (!game || modId <= 0) return;
+  const result = await getModDetails(game.nexusDomain, modId);
+  if (result.ok && result.mod) {
+    setSelectedMod({ game, mod: result.mod });
+    setDetailOrigin("browse"); // B returns here, not to the QAM
+    Navigation.Navigate("/nexus-mods/mod");
+  }
 }
 
 export function DownloadsPage() {
@@ -99,7 +119,10 @@ export function DownloadsPage() {
         <h2 style={{ margin: "12px 0 10px" }}>Downloads</h2>
 
         {run && (
-          <div style={{ marginBottom: "14px" }}>
+          <Focusable
+            onActivate={() => Navigation.Navigate("/nexus-mods/collection")}
+            style={{ marginBottom: "14px" }}
+          >
             <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px" }}>
               Collection: {run.finished}/{run.total}{" "}
               {run.running ? "installing…" : "finished"}
@@ -122,7 +145,7 @@ export function DownloadsPage() {
                 }}
               />
             </div>
-          </div>
+          </Focusable>
         )}
 
         <div style={{ fontSize: "13px", fontWeight: 600, margin: "8px 0 6px" }}>
@@ -137,6 +160,7 @@ export function DownloadsPage() {
           {active.map((d) => (
             <Row
               key={d.modId}
+              onActivate={() => openDownloadTarget(d.modId, d.gameAppId)}
               name={d.name}
               status={
                 d.phase === "downloading"
@@ -178,6 +202,7 @@ export function DownloadsPage() {
           {completed.map((d, i) => (
             <Row
               key={`${d.modId}-${i}`}
+              onActivate={() => openDownloadTarget(d.modId, d.gameAppId)}
               name={d.name}
               status={d.phase === "done" ? "Done ✓" : "Failed ⚠"}
               dim
