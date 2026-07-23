@@ -11,6 +11,7 @@ import {
 } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
+import { FaEye } from "react-icons/fa";
 
 import {
   AttentionItem,
@@ -39,6 +40,8 @@ import {
   getDownloadPercent,
   getSelectedCollection,
   setCollectionRow,
+  setDetailOrigin,
+  setSelectedMod,
   subscribeCollectionRun,
   subscribeDownloads,
   updateDownload,
@@ -128,18 +131,32 @@ export function CollectionPage() {
   }
   const { game, collection } = sel;
 
+  const attentionIds = new Set(attention.map((a) => a.file_id));
+  // Actionable = the user can resolve them (choices/wizards); tools can
+  // never install here and only get a note.
+  const actionable = attention.filter((a) => a.reason !== "tool");
+  const actionableIds = new Set(actionable.map((a) => a.file_id));
+  const toolSkips = attention.filter((a) => a.reason === "tool");
+
   const required = detail?.files.filter((f) => !f.optional) ?? [];
   const optional = detail?.files.filter((f) => f.optional) ?? [];
+  // Pending-attention mods are NOT "remaining": re-queueing them just
+  // re-parks (or re-skips) them - they resolve via Finish setup instead.
   const remaining = required.filter(
-    (f) => !installedIds.has(f.modId) && rowState[f.fileId] !== "done"
+    (f) =>
+      !installedIds.has(f.modId) &&
+      rowState[f.fileId] !== "done" &&
+      !attentionIds.has(f.fileId)
   );
   const optionalRemaining = optional.filter(
-    (f) => !installedIds.has(f.modId) && rowState[f.fileId] !== "done"
+    (f) =>
+      !installedIds.has(f.modId) &&
+      rowState[f.fileId] !== "done" &&
+      !attentionIds.has(f.fileId)
   );
   // "Resume" only makes sense for a run THIS page started - already
   // owning some of a collection's mods individually is not a resume.
   const partialFromRun = runIsOurs && !run!.running && run!.finished > 0;
-  const attentionIds = new Set(attention.map((a) => a.file_id));
 
   const installAll = async (includeOptional = false) => {
     if (!detail || installing) return;
@@ -217,9 +234,19 @@ export function CollectionPage() {
             });
           } else if (result.unsupported_tool) {
             // Desktop tools (xEdit, patchers) aren't failures - the
-            // game never loads them; they just can't live here.
+            // game never loads them; they just can't live here. Persist
+            // the skip so they stop counting as "remaining" forever.
             dropDownload(f.modId);
             setCollectionRow(f.fileId, "skipped");
+            freshAttention.push({
+              file_id: f.fileId,
+              mod_id: f.modId,
+              mod_name: f.modName,
+              file_name: f.fileName,
+              version: f.version,
+              reason: "tool",
+              options: [],
+            });
             toaster.toast({
               title: `${f.modName}: PC tool - skipped`,
               body: "Utilities like this run on a desktop, not in-game",
@@ -297,21 +324,41 @@ export function CollectionPage() {
       );
     });
 
-  /** Resolve every pending manual decision in one guided pass: each mod
-   * re-installs to its decision point, shows its modal, and finishes. */
-  const finishSetup = async () => {
-    if (!detail || installing || finishingFileId !== undefined) return;
-    let pendingList = [...attention];
-    for (const item of [...attention]) {
-      setFinishingFileId(item.file_id);
-      try {
-        let choice = "";
-        if (item.reason === "choices" && item.options.length > 0) {
-          const picked = await pickChoice(item.mod_name, item.options);
-          if (picked === undefined) continue; // backed out - stays pending
-          choice = picked;
+  /** Resolve ONE pending manual decision: re-install to the decision
+   * point, show its modal, finish. Returns true when it installed. */
+  const resolveAttentionItem = async (item: AttentionItem) => {
+    setFinishingFileId(item.file_id);
+    try {
+      let choice = "";
+      if (item.reason === "choices" && item.options.length > 0) {
+        const picked = await pickChoice(item.mod_name, item.options);
+        if (picked === undefined) return false; // backed out - stays pending
+        choice = picked;
+      }
+      let result = await installPinned(
+        game,
+        item.mod_id,
+        item.file_id,
+        item.file_name,
+        item.mod_name,
+        item.version,
+        collection.slug,
+        choice
+      );
+      if (result.needs_fomod && result.fomod_token && result.wizard) {
+        const ids = await runWizard(result.wizard as FomodWizardData);
+        if (ids === undefined) {
+          dropDownload(item.mod_id);
+          return false;
         }
-        let result = await installPinned(
+        result = await finishFomod(result.fomod_token, ids);
+      } else if (result.needs_choice && result.options?.length) {
+        const picked = await pickChoice(item.mod_name, result.options);
+        if (picked === undefined) {
+          dropDownload(item.mod_id);
+          return false;
+        }
+        result = await installPinned(
           game,
           item.mod_id,
           item.file_id,
@@ -319,52 +366,65 @@ export function CollectionPage() {
           item.mod_name,
           item.version,
           collection.slug,
-          choice
+          picked
         );
-        if (result.needs_fomod && result.fomod_token && result.wizard) {
-          const ids = await runWizard(result.wizard as FomodWizardData);
-          if (ids === undefined) {
-            dropDownload(item.mod_id);
-            continue;
-          }
-          result = await finishFomod(result.fomod_token, ids);
-        } else if (result.needs_choice && result.options?.length) {
-          const picked = await pickChoice(item.mod_name, result.options);
-          if (picked === undefined) {
-            dropDownload(item.mod_id);
-            continue;
-          }
-          result = await installPinned(
-            game,
-            item.mod_id,
-            item.file_id,
-            item.file_name,
-            item.mod_name,
-            item.version,
-            collection.slug,
-            picked
-          );
-        }
-        if (result.ok) {
-          pendingList = pendingList.filter(
-            (a) => a.file_id !== item.file_id
-          );
-          persistAttention(pendingList);
-        } else {
-          updateDownload(item.mod_id, "error", 0);
-          toaster.toast({
-            title: `${item.mod_name} failed`,
-            body: result.error ?? "",
-          });
-        }
-      } catch (e) {
-        updateDownload(item.mod_id, "error", 0);
-        toaster.toast({ title: `${item.mod_name} failed`, body: String(e) });
-      } finally {
-        setFinishingFileId(undefined);
+      }
+      if (result.ok) return true;
+      updateDownload(item.mod_id, "error", 0);
+      toaster.toast({
+        title: `${item.mod_name} failed`,
+        body: result.error ?? "",
+      });
+      return false;
+    } catch (e) {
+      updateDownload(item.mod_id, "error", 0);
+      toaster.toast({ title: `${item.mod_name} failed`, body: String(e) });
+      return false;
+    } finally {
+      setFinishingFileId(undefined);
+    }
+  };
+
+  /** Resolve every pending manual decision in one guided pass. */
+  const finishSetup = async () => {
+    if (!detail || finishingFileId !== undefined) return;
+    let pendingList = [...attention];
+    for (const item of [...actionable]) {
+      const ok = await resolveAttentionItem(item);
+      if (ok) {
+        pendingList = pendingList.filter((a) => a.file_id !== item.file_id);
+        persistAttention(pendingList);
       }
     }
     refreshInstalled();
+  };
+
+  /** One row's "Make choices & install" - usable even while the batch
+   * is still working through other mods. */
+  const resolveSingle = async (item: AttentionItem) => {
+    if (finishingFileId !== undefined) return;
+    const ok = await resolveAttentionItem(item);
+    if (ok) {
+      persistAttention(attention.filter((a) => a.file_id !== item.file_id));
+      refreshInstalled();
+    }
+  };
+
+  /** Eye button: open the mod's full detail page (fetching details if
+   * the accordion hasn't loaded them yet). */
+  const openModPage = async (f: CollectionFile) => {
+    let info = modInfo[f.modId];
+    if (!info) {
+      const r = await getModDetails(game.nexusDomain, f.modId);
+      info = r.ok ? r.mod ?? null : null;
+    }
+    if (!info) {
+      toaster.toast({ title: "Could not open mod", body: f.modName });
+      return;
+    }
+    setSelectedMod({ game, mod: info });
+    setDetailOrigin("browse");
+    Navigation.Navigate("/nexus-mods/mod");
   };
 
   const toggleExpand = (f: CollectionFile) => {
@@ -387,7 +447,8 @@ export function CollectionPage() {
   const stateBadge = (f: CollectionFile): string => {
     if (installedIds.has(f.modId) || rowState[f.fileId] === "done")
       return "✓ ";
-    if (attentionIds.has(f.fileId)) return "⚙ ";
+    if (actionableIds.has(f.fileId)) return "⚙ ";
+    if (attentionIds.has(f.fileId)) return "⏭ ";
     const st = rowState[f.fileId];
     if (st === "installing") return "";
     if (st === "failed") return "⚠ ";
@@ -469,7 +530,7 @@ export function CollectionPage() {
               ? `⬇ Install remaining (${remaining.length} of ${required.length})`
               : `⬇ Install collection (${remaining.length} mods)`}
           </DialogButton>
-          {attention.length > 0 && !installing && (
+          {actionable.length > 0 && (
             <DialogButton
               disabled={finishingFileId !== undefined}
               onClick={finishSetup}
@@ -481,7 +542,7 @@ export function CollectionPage() {
             >
               {finishingFileId !== undefined
                 ? "Finishing…"
-                : `⚙ Finish setup (${attention.length})`}
+                : `⚙ Finish setup (${actionable.length})`}
             </DialogButton>
           )}
           {optionalRemaining.length > 0 && (
@@ -522,6 +583,20 @@ export function CollectionPage() {
               are already installed - only the missing ones will download.
             </div>
           )}
+        {toolSkips.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              opacity: 0.7,
+              margin: "-6px 0 12px",
+            }}
+          >
+            ⏭ {toolSkips.length} PC modding tool
+            {toolSkips.length === 1 ? "" : "s"} skipped (
+            {toolSkips.map((t) => t.mod_name).join(", ")}) - they run on a
+            desktop, not in-game, and don't count as missing.
+          </div>
+        )}
 
         {error && (
           <div style={{ color: "#ff8a8a", padding: "8px 0" }}>{error}</div>
@@ -566,7 +641,14 @@ export function CollectionPage() {
                   ? getDownloadPercent(f.modId) ?? 0
                   : undefined;
               const needsChoices =
-                attentionIds.has(f.fileId) && !installedIds.has(f.modId);
+                actionableIds.has(f.fileId) && !installedIds.has(f.modId);
+              const isToolSkip =
+                attentionIds.has(f.fileId) &&
+                !actionableIds.has(f.fileId) &&
+                !installedIds.has(f.modId);
+              const attentionItem = needsChoices
+                ? attention.find((a) => a.file_id === f.fileId)
+                : undefined;
               return (
                 <Focusable
                   key={f.fileId}
@@ -609,6 +691,9 @@ export function CollectionPage() {
                           {" "}
                           · needs choices
                         </span>
+                      )}
+                      {isToolSkip && (
+                        <span style={{ opacity: 0.55 }}> · PC tool</span>
                       )}
                     </span>
                     <span
@@ -654,12 +739,57 @@ export function CollectionPage() {
                               }}
                             />
                           )}
-                          <div style={{ fontSize: "12px", opacity: 0.85 }}>
+                          <div
+                            style={{
+                              fontSize: "12px",
+                              opacity: 0.85,
+                              flexGrow: 1,
+                              minWidth: 0,
+                            }}
+                          >
                             <div style={{ opacity: 0.7 }}>
                               by {info.author} · {f.fileName}
                             </div>
                             {info.summary}
                           </div>
+                          <Focusable
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "6px",
+                              flexShrink: 0,
+                              alignSelf: "center",
+                            }}
+                          >
+                            <DialogButton
+                              onClick={() => openModPage(f)}
+                              style={{
+                                minWidth: "0",
+                                width: "44px",
+                                padding: "8px 0",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <FaEye />
+                            </DialogButton>
+                            {attentionItem && (
+                              <DialogButton
+                                disabled={finishingFileId !== undefined}
+                                onClick={() => resolveSingle(attentionItem)}
+                                style={{
+                                  minWidth: "0",
+                                  width: "auto",
+                                  padding: "8px 12px",
+                                  fontSize: "12px",
+                                  background: "rgba(74,169,255,0.22)",
+                                }}
+                              >
+                                Make choices
+                              </DialogButton>
+                            )}
+                          </Focusable>
                         </>
                       )}
                     </div>
