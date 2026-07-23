@@ -97,20 +97,34 @@ export function CollectionPage() {
   const remaining = required.filter(
     (f) => !installedIds.has(f.modId) && rowState[f.fileId] !== "done"
   );
+  const optionalRemaining = optional.filter(
+    (f) => !installedIds.has(f.modId) && rowState[f.fileId] !== "done"
+  );
+  // "Resume" only makes sense for a run THIS page started - already
+  // owning some of a collection's mods individually is not a resume.
+  const partialFromRun = runIsOurs && !run!.running && run!.finished > 0;
 
-  const installAll = async () => {
+  const installAll = async (includeOptional = false) => {
     if (!detail || installing) return;
-    beginCollectionRun(collection.slug, remaining.length);
-    // The curator's FOMOD selections travel in the collection manifest -
-    // fetch once so wizard mods install hands-off with their choices.
-    const manifest = await getCollectionManifest(
-      collection.slug,
-      game.nexusDomain
-    );
-    const curatorChoices = manifest.ok ? manifest.choices ?? {} : {};
+    const queue = includeOptional
+      ? [...remaining, ...optionalRemaining]
+      : remaining;
+    beginCollectionRun(collection.slug, queue.length);
     try {
+      // The curator's FOMOD selections travel in the collection manifest -
+      // fetch once so wizard mods install hands-off with their choices.
+      let curatorChoices: Record<string, unknown> = {};
+      try {
+        const manifest = await getCollectionManifest(
+          collection.slug,
+          game.nexusDomain
+        );
+        if (manifest.ok) curatorChoices = manifest.choices ?? {};
+      } catch {
+        // Manifest is an enhancement - never let it stall the batch.
+      }
       let failures = 0;
-      for (const f of remaining) {
+      for (const f of queue) {
         setCollectionRow(f.fileId, "installing");
         let result = await installPinned(
           game,
@@ -188,14 +202,17 @@ export function CollectionPage() {
   return (
     <Focusable
       onCancel={() => {
-        Navigation.NavigateBack();
+        // QAM first so gamepad focus lands INSIDE it - then pop the page.
+        // The old order left focus on the page behind the menu, so B in
+        // the QAM re-triggered page handlers instead of closing it.
         Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
+        setTimeout(() => Navigation.NavigateBack(), 50);
       }}
       style={{ marginTop: "40px", height: "calc(100% - 40px)" }}
     >
       <Scroller
         focusable={false}
-        style={{ height: "100%", overflowY: "auto", padding: "0 24px 80px" }}
+        style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <style>{PRIMARY_BUTTON_CSS}</style>
         <Focusable style={{ display: "flex", gap: "18px", padding: "12px 0" }}>
@@ -241,7 +258,7 @@ export function CollectionPage() {
           <DialogButton
             className={PRIMARY_BUTTON_CLASS}
             disabled={!detail || installing || remaining.length === 0}
-            onClick={installAll}
+            onClick={() => installAll(false)}
             style={{ flexGrow: 2, minWidth: "260px" }}
           >
             {installing
@@ -250,12 +267,23 @@ export function CollectionPage() {
                 }`
               : remaining.length === 0 && detail
               ? "Everything installed ✓"
-              : detail && remaining.length < required.length
+              : partialFromRun
               ? `⬇ Resume collection (${remaining.length} left)`
+              : detail && remaining.length < required.length
+              ? `⬇ Install remaining (${remaining.length} of ${required.length})`
               : `⬇ Install collection (${remaining.length} mods)`}
           </DialogButton>
+          {optionalRemaining.length > 0 && (
+            <DialogButton
+              disabled={!detail || installing}
+              onClick={() => installAll(true)}
+              style={{ flexGrow: 1, minWidth: "170px" }}
+            >
+              + optional ({remaining.length + optionalRemaining.length})
+            </DialogButton>
+          )}
           <DialogButton
-            style={{ flexGrow: 1, minWidth: "140px" }}
+            style={{ flexGrow: 1, minWidth: "120px" }}
             onClick={() => {
               Navigation.NavigateBack();
             }}
@@ -281,7 +309,16 @@ export function CollectionPage() {
           >
             This collection references {detail.externals.length} external
             file(s) we can't fetch automatically:{" "}
-            {detail.externals.map((e) => e.name).join(", ")}
+            {detail.externals
+              .map((e) =>
+                game.framework &&
+                e.name
+                  .toLowerCase()
+                  .includes(game.framework.name.toLowerCase().slice(0, 4))
+                  ? `${e.name} (this is ${game.framework.name} - Step 1 on the game's panel installs it)`
+                  : e.name
+              )
+              .join(", ")}
           </div>
         )}
 

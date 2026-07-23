@@ -2,8 +2,8 @@
 // backend-parsed wizard JSON. Flags from selected options gate later
 // steps' visibility (evaluated here); the backend re-derives flags
 // authoritatively when applying.
-import { ButtonItem, Focusable, ModalRoot } from "@decky/ui";
-import { useMemo, useState } from "react";
+import { DialogButton, Focusable, ModalRoot } from "@decky/ui";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { NEXUS_ORANGE } from "./theme";
 
@@ -92,6 +92,13 @@ export function FomodWizardModal({
     defaultSelection(wizard.steps)
   );
   const [stepIdx, setStepIdx] = useState(0);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Each step starts at the top - carrying the previous step's scroll
+  // position forces the user to scroll back up every time.
+  useEffect(() => {
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  }, [stepIdx]);
 
   // Flags accumulate from selected plugins of steps BEFORE the current
   // one; a step's visibility is judged against them.
@@ -168,6 +175,10 @@ export function FomodWizardModal({
           {step.name} · step {stepIdx + 1} of {visibleSteps.length}
         </div>
       )}
+      <div
+        ref={bodyRef}
+        style={{ maxHeight: "52vh", overflowY: "auto", paddingRight: "4px" }}
+      >
       {step?.groups.map((group, gi) => (
         <div key={gi} style={{ marginBottom: "10px" }}>
           <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>
@@ -223,18 +234,21 @@ export function FomodWizardModal({
           </Focusable>
         </div>
       ))}
-      <Focusable style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
-        {stepIdx > 0 && (
-          <ButtonItem layout="below" onClick={() => setStepIdx(stepIdx - 1)}>
-            ← Back
-          </ButtonItem>
-        )}
-        <ButtonItem
-          layout="below"
+      </div>
+      <Focusable style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
+        <DialogButton
+          disabled={stepIdx === 0}
+          onClick={() => setStepIdx(Math.max(0, stepIdx - 1))}
+          style={{ flex: 1, minWidth: 0 }}
+        >
+          ← Back
+        </DialogButton>
+        <DialogButton
           onClick={() => (isLast ? finish() : setStepIdx(stepIdx + 1))}
+          style={{ flex: 1, minWidth: 0 }}
         >
           {isLast ? "Install with these options" : "Next →"}
-        </ButtonItem>
+        </DialogButton>
       </Focusable>
     </ModalRoot>
   );

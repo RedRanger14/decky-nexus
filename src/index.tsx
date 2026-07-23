@@ -179,7 +179,7 @@ interface BackendInfo {
   decky_version: string;
 }
 
-const ping = callable<[], BackendInfo>("ping");
+const ping = callable<[emit_event?: boolean], BackendInfo>("ping");
 
 /** Brand-orange call-to-action for the QAM (hover/focus states included). */
 function OrangeActionButton({
@@ -1433,7 +1433,7 @@ function DevSection() {
   const onPing = async () => {
     try {
       setError(undefined);
-      setInfo(await ping());
+      setInfo(await ping(true));
     } catch (e) {
       setError(String(e));
     }
@@ -1602,7 +1602,7 @@ function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
   return (
     <PanelSectionRow>
       <DialogButton
-        style={{ width: "100%" }}
+        style={{ width: "100%", marginBottom: "8px" }}
         onClick={() => {
           Router.CloseSideMenus();
           Navigation.Navigate(UPDATES_ROUTE);

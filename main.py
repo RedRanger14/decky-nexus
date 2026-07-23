@@ -1989,7 +1989,11 @@ class Plugin:
     # the normal per-game pipeline one file at a time, in collection order.
 
     async def get_collections(
-        self, game_domain: str, count: int = 8, search: str = ""
+        self,
+        game_domain: str,
+        count: int = 8,
+        search: str = "",
+        sort: str = "endorsements",
     ) -> dict:
         """Most-endorsed published collections for a game, optionally
         name-filtered (the search toggle on the browse page)."""
@@ -2011,7 +2015,7 @@ query TrendingCollections($gameDomain: String!, $count: Int%SEARCHPARAM%) {
       %SEARCH%
       %ADULT%
     }
-    sort: [{ endorsements: { direction: DESC } }]
+    sort: [{ %SORT%: { direction: DESC } }]
     count: $count
   ) {
     nodes {
@@ -2025,9 +2029,16 @@ query TrendingCollections($gameDomain: String!, $count: Int%SEARCHPARAM%) {
     }
   }
 }"""
+        sort_field = {
+            "endorsements": "endorsements",
+            "downloads": "totalDownloads",
+            "updatedAt": "updatedAt",
+            "createdAt": "createdAt",
+        }.get(sort, "endorsements")
         query = (
             query.replace("%SEARCHPARAM%", search_param)
             .replace("%SEARCH%", search_filter)
+            .replace("%SORT%", sort_field)
             .replace(
                 "%ADULT%",
                 "" if _show_adult() else "adultContent: [{ value: false }]",
@@ -2204,7 +2215,7 @@ query Link($slug: String!, $domainName: String!) {
             scratch = os.path.join(DOWNLOADS_DIR, f"collection-{slug}")
             _force_rmtree(scratch)
             os.makedirs(scratch)
-            err = _extract_archive(arc, scratch)
+            err = await _extract_archive(arc, scratch)
             try:
                 os.remove(arc)
             except OSError:
@@ -4238,7 +4249,7 @@ query Link($slug: String!, $domainName: String!) {
 
     # Dev-loop smoke test. Returns environment info and emits an event so the
     # backend -> frontend push channel gets exercised too.
-    async def ping(self) -> dict:
+    async def ping(self, emit_event: bool = False) -> dict:
         info = {
             "user": decky.DECKY_USER,
             "home": decky.DECKY_USER_HOME,
@@ -4247,7 +4258,8 @@ query Link($slug: String!, $domainName: String!) {
             "decky_version": decky.DECKY_VERSION,
         }
         decky.logger.info(f"ping from frontend: {info}")
-        await decky.emit("backend_event", "pong")
+        if emit_event:
+            await decky.emit("backend_event", "pong")
         return info
 
     # ---- Lifecycle ---------------------------------------------------------
