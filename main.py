@@ -2286,7 +2286,7 @@ query GetCollection($slug: String!, $domainName: String!) {
         name
         version
         sizeInBytes
-        mod { name }
+        mod { name game { domainName } }
       }
     }
     externalResources { name resourceType resourceUrl optional }
@@ -2314,6 +2314,16 @@ query GetCollection($slug: String!, $domainName: String!) {
                         "version": f.get("version") or "",
                         "sizeKb": int(int(f.get("sizeInBytes") or 0) / 1024),
                         "optional": bool(mf.get("optional")),
+                        # Collections pin files from OTHER domains too
+                        # (Bethini Pie lives under "site") - installs can
+                        # only serve this game's domain, the rest are
+                        # desktop utilities to skip. Verified live.
+                        "domain": (
+                            ((f.get("mod") or {}).get("game") or {}).get(
+                                "domainName"
+                            )
+                            or ""
+                        ),
                     }
                 )
             externals = [
@@ -4322,20 +4332,34 @@ query Link($slug: String!, $domainName: String!) {
         title: str,
         thumb_url: str = "",
         mod_count: int = 0,
+        mod_ids: list = None,
+        only_if_known: bool = False,
     ) -> dict:
-        """Remember a collection's display info when its install starts -
-        records only carry the slug; My Mods needs the title and banner."""
+        """Remember a collection's display info + member mod ids. Records
+        only carry the slug of the collection that INSTALLED them - the
+        id list lets My Mods count mods shared with other collections or
+        installed individually. only_if_known refreshes an existing entry
+        (viewing a collection must not register it)."""
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         if not slug:
             return {"ok": False, "error": "Missing collection slug"}
+        try:
+            ids = [int(i) for i in (mod_ids or [])][:1000]
+        except (TypeError, ValueError):
+            ids = []
         settings = _load_settings()
+        if only_if_known and slug not in settings.get("collections", {}).get(
+            game_domain, {}
+        ):
+            return {"ok": True, "skipped": True}
         settings.setdefault("collections", {}).setdefault(game_domain, {})[
             slug
         ] = {
             "title": title or slug,
             "thumb_url": thumb_url or "",
             "mod_count": int(mod_count or 0),
+            "mod_ids": ids,
             "at": int(time.time()),
         }
         _save_settings(settings)
