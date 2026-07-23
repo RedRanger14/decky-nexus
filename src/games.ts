@@ -33,6 +33,10 @@ export interface GameFramework {
   installSubdir?: string;
   /** Steam launch options needed after install; {install_path} is replaced */
   launchOptionsTemplate?: string;
+  /** Reset-to-vanilla: game-root FILES starting with any of these
+   * prefixes belong to the framework (copyRoot installs keep no
+   * manifest) and are removed on reset (e.g. ["skse64"]). */
+  cleanupPrefixes?: string[];
 }
 
 export interface SupportedGame {
@@ -170,6 +174,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       launchOptionsTemplate:
         "bash -c 'exec \"$" +
         "{@/SkyrimSELauncher.exe/skse64_loader.exe}\"' -- %command%",
+      cleanupPrefixes: ["skse64"],
     },
     recommendedModIds: [12604, 266], // SkyUI, USSEP - the canon starters
   },
@@ -197,6 +202,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       launchOptionsTemplate:
         "bash -c 'exec \"$" +
         "{@/Fallout4Launcher.exe/f4se_loader.exe}\"' -- %command%",
+      cleanupPrefixes: ["f4se"],
     },
     recommendedModIds: [4598, 21497], // verified: UFO4P, Mod Configuration Menu
     // Loose files don't load until archive invalidation is enabled.

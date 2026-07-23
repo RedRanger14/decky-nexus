@@ -1080,8 +1080,16 @@ def xml_parse(text: str) -> XmlNode:
 
 
 def xml_parse_file(path: str) -> XmlNode:
-    with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
-        return xml_parse(f.read())
+    """BOM-aware read: FOMOD tooling ships UTF-16 ModuleConfigs in the
+    wild (the 'FOMOD Creation Tool' writes UTF-16 LE) - reading those as
+    UTF-8 tokenizes NUL-riddled garbage into an empty wizard."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = raw.decode("utf-16", errors="replace")
+    else:
+        text = raw.decode("utf-8-sig", errors="replace")
+    return xml_parse(text)
 
 
 def xml_serialize(node: XmlNode, indent: int = 0) -> str:
@@ -4147,6 +4155,159 @@ query Link($slug: String!, $domainName: String!) {
             f"{'enabled' if enabled else 'disabled'}"
         )
         return {"ok": True}
+
+    async def reset_game_modding(
+        self,
+        game_domain: str,
+        install_dir: str,
+        mods_subdir: str,
+        install_mode: str = "folder",
+        app_id: int = 0,
+        plugins_subpath: str = "",
+        plugins_style: str = "starred",
+        framework_file_prefixes: list = None,
+    ) -> dict:
+        """One-button return to vanilla: uninstall every tracked mod (all
+        record modes), remove framework loader files by prefix (copyRoot
+        installs keep no manifest), delete the plugins file (the game
+        regenerates it), clear this game's plugin state, and clear the
+        launch command (dlo's replayed profile here; non-dlo devices get
+        use_steam_client back and the frontend clears Steam's field).
+        Files installed outside this plugin are not touched."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        settings = _load_settings()
+        install_path, mods_path, disabled_path = _game_paths(
+            install_dir, mods_subdir
+        )
+        if not os.path.isdir(install_path):
+            return {"ok": False, "error": "Game install folder not found"}
+        records = dict(settings.get("installed", {}).get(game_domain, {}))
+        removed = 0
+        errors = []
+        for key, rec in sorted(records.items()):
+            try:
+                mode = rec.get("mode") or "folder"
+                if mode == "files":
+                    if _remove_files_record(
+                        game_domain, key, install_path, settings
+                    ):
+                        removed += 1
+                elif mode == "dataDir":
+                    if _remove_data_dir_record(
+                        game_domain, key, mods_path, app_id,
+                        plugins_subpath, settings,
+                    ):
+                        removed += 1
+                else:
+                    target = rec.get("target")
+                    folder = rec.get("folder") or key
+                    base = (
+                        os.path.join(install_path, *target.split("/"))
+                        if target
+                        else mods_path
+                    )
+                    for cand in (
+                        os.path.join(base, folder),
+                        os.path.join(base + "-disabled", folder),
+                        os.path.join(disabled_path, folder),
+                    ):
+                        if os.path.isdir(cand):
+                            _force_rmtree(cand)
+                    settings.get("installed", {}).get(game_domain, {}).pop(
+                        key, None
+                    )
+                    removed += 1
+            except OSError as e:
+                errors.append(f"{key}: {e}")
+        framework_files = []
+        for prefix in framework_file_prefixes or []:
+            pl = str(prefix).lower()
+            if not pl or "/" in pl or "\\" in pl or pl.startswith("."):
+                continue
+            for name in sorted(os.listdir(install_path)):
+                p = os.path.join(install_path, name)
+                if name.lower().startswith(pl) and os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                        framework_files.append(name)
+                    except OSError as e:
+                        errors.append(f"{name}: {e}")
+        if install_mode == "dataDir" and plugins_subpath and app_id:
+            p = _plugins_txt_path(app_id, plugins_subpath)
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+            except OSError as e:
+                errors.append(f"plugins.txt: {e}")
+        for section in ("installed", "collections", "framework_setup",
+                        "collection_attention"):
+            settings.get(section, {}).pop(game_domain, None)
+        _save_settings(settings)
+        cleared_dlo = False
+        if app_id and _dlo_present():
+            ok, _prev = _dlo_set_original(_dlo_settings_path(), app_id, "")
+            cleared_dlo = ok
+        decky.logger.info(
+            f"reset {game_domain!r}: {removed} mods removed, framework "
+            f"files {framework_files}, dlo cleared={cleared_dlo}, "
+            f"{len(errors)} errors"
+        )
+        return {
+            "ok": True,
+            "removed": removed,
+            "framework_files": framework_files,
+            "cleared_dlo": cleared_dlo,
+            "use_steam_client": bool(app_id) and not cleared_dlo,
+            "errors": errors,
+        }
+
+    async def set_collection_attention(
+        self, game_domain: str, slug: str, items: list
+    ) -> dict:
+        """Persist which of a collection's mods still need manual choices
+        (FOMOD wizards / option folders) so the collection page can show
+        and resolve them on any later visit. An empty list clears."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not slug:
+            return {"ok": False, "error": "Missing collection slug"}
+        settings = _load_settings()
+        section = settings.setdefault("collection_attention", {}).setdefault(
+            game_domain, {}
+        )
+        clean = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            clean.append(
+                {
+                    "file_id": int(item.get("file_id") or 0),
+                    "mod_id": int(item.get("mod_id") or 0),
+                    "mod_name": str(item.get("mod_name") or ""),
+                    "file_name": str(item.get("file_name") or ""),
+                    "version": str(item.get("version") or ""),
+                    "reason": str(item.get("reason") or "choices"),
+                    "options": [str(o) for o in (item.get("options") or [])],
+                }
+            )
+        if clean:
+            section[slug] = clean
+        else:
+            section.pop(slug, None)
+        _save_settings(settings)
+        return {"ok": True, "count": len(clean)}
+
+    async def get_collection_attention(
+        self, game_domain: str, slug: str
+    ) -> dict:
+        items = (
+            _load_settings()
+            .get("collection_attention", {})
+            .get(game_domain, {})
+            .get(slug, [])
+        )
+        return {"ok": True, "items": items}
 
     async def register_collection(
         self,
