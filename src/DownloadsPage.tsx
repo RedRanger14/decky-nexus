@@ -14,7 +14,9 @@ import {
   getCollectionRun,
   getCompletedDownloads,
   getDownloads,
+  getRunSkippedCount,
   setDetailOrigin,
+  setSelectedCollection,
   setSelectedMod,
   subscribeCollectionRun,
   subscribeDownloads,
@@ -72,10 +74,34 @@ function Row({
   );
 }
 
-/** Row click-through: open the mod's detail page in its game context. */
-async function openDownloadTarget(modId: number, gameAppId?: number) {
+/** Row click-through: open the mod's detail page in its game context.
+ * Collection summary entries open the collection page instead. */
+async function openDownloadTarget(
+  modId: number,
+  gameAppId?: number,
+  collectionSlug?: string,
+  name?: string
+) {
   const game = getSupportedGame(gameAppId);
-  if (!game || modId <= 0) return;
+  if (!game) return;
+  if (collectionSlug) {
+    // Synthesized summary is enough - the page fetches the detail.
+    setSelectedCollection({
+      game,
+      collection: {
+        name: (name ?? collectionSlug).split(" · ")[0],
+        slug: collectionSlug,
+        summary: "",
+        endorsements: 0,
+        author: "",
+        modCount: 0,
+        totalSize: 0,
+      },
+    });
+    Navigation.Navigate("/nexus-mods/collection");
+    return;
+  }
+  if (modId <= 0) return;
   const result = await getModDetails(game.nexusDomain, modId);
   if (result.ok && result.mod) {
     setSelectedMod({ game, mod: result.mod });
@@ -132,8 +158,14 @@ export function DownloadsPage() {
             style={{ marginBottom: "14px" }}
           >
             <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px" }}>
-              Collection: {run.finished}/{run.total}{" "}
+              {run.name ?? "Collection"}: {run.finished}/{run.total}{" "}
               {run.running ? "installing…" : "finished"}
+              {getRunSkippedCount(run) > 0 && (
+                <span style={{ color: "#4aa9ff" }}>
+                  {" "}
+                  · {getRunSkippedCount(run)} need choices → open to finish
+                </span>
+              )}
             </div>
             <div
               style={{
@@ -168,7 +200,9 @@ export function DownloadsPage() {
           {active.map((d) => (
             <Row
               key={d.modId}
-              onActivate={() => openDownloadTarget(d.modId, d.gameAppId)}
+              onActivate={() =>
+                openDownloadTarget(d.modId, d.gameAppId, d.collectionSlug, d.name)
+              }
               name={d.name}
               pct={d.phase === "extracting" ? 100 : d.percent}
               status={
@@ -211,7 +245,9 @@ export function DownloadsPage() {
           {completed.map((d, i) => (
             <Row
               key={`${d.modId}-${i}`}
-              onActivate={() => openDownloadTarget(d.modId, d.gameAppId)}
+              onActivate={() =>
+                openDownloadTarget(d.modId, d.gameAppId, d.collectionSlug, d.name)
+              }
               name={d.name}
               status={d.phase === "done" ? "Done ✓" : "Failed ⚠"}
               dim

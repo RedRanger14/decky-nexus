@@ -51,6 +51,7 @@ import {
   installFramework,
   registerNxmHandler,
   markLaunchOptionsSet,
+  resetGameModding,
   setFrameworkLaunchOptions,
   clearFrameworkLaunchOptions,
   setAllModsEnabled,
@@ -303,6 +304,84 @@ function LaunchOptionsModal({
         I've set them manually — mark done
       </ButtonItem>
     </ModalRoot>
+  );
+}
+
+/** "Modding went wrong - start over": uninstall every tracked mod, remove
+ * the framework loader, clear the launch command and the plugin's state
+ * for this game. Deliberately behind a destructive confirm modal. */
+function ResetGameRow({
+  game,
+  onDone,
+}: {
+  game: SupportedGame;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const doReset = async () => {
+    setBusy(true);
+    try {
+      const result = await resetGameModding(
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        game.installMode ?? "folder",
+        game.appId,
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred",
+        game.framework?.cleanupPrefixes ?? []
+      );
+      if (result.ok && result.use_steam_client) {
+        setLaunchOptions(game.appId, "");
+      }
+      toaster.toast(
+        result.ok
+          ? {
+              title: `${game.displayName} reset to vanilla`,
+              body:
+                `${result.removed ?? 0} mods removed` +
+                ((result.errors?.length ?? 0) > 0
+                  ? ` · ${result.errors!.length} items need a look`
+                  : " · ready for a clean start"),
+            }
+          : { title: "Reset failed", body: result.error ?? "" }
+      );
+    } catch (e) {
+      toaster.toast({ title: "Reset failed", body: String(e) });
+    } finally {
+      setBusy(false);
+      onDone();
+    }
+  };
+
+  return (
+    <PanelSectionRow>
+      <ButtonItem
+        layout="below"
+        disabled={busy}
+        description="Removes every mod this plugin installed, the mod loader, and the launch command"
+        onClick={() =>
+          showModal(
+            <ConfirmModal
+              strTitle={`Reset ${game.displayName} to vanilla?`}
+              strDescription={
+                `Every mod installed by this plugin is uninstalled, ` +
+                `${game.framework?.name ?? "the mod loader"} is removed, ` +
+                `and the launch command is cleared. Saves are not touched. ` +
+                `Files added outside this plugin stay - use Steam's ` +
+                `"Verify integrity" afterwards if the game still misbehaves.`
+              }
+              strOKButtonText="Reset to vanilla"
+              bDestructiveWarning={true}
+              onOK={doReset}
+            />
+          )
+        }
+      >
+        {busy ? "Resetting…" : "⟲ Reset game modding"}
+      </ButtonItem>
+    </PanelSectionRow>
   );
 }
 
@@ -656,6 +735,7 @@ function CurrentGameSection() {
                 : `Launch ${game.displayName}`}
             </ButtonItem>
           </PanelSectionRow>
+          <ResetGameRow game={game} onDone={refreshStatus} />
         </>
       ) : (
         <>
@@ -1065,7 +1145,11 @@ function InstalledModsSection() {
 
   if ((mods === undefined || mods.length === 0) && !showFrameworkRow) return null;
 
-  const anyEnabled = (mods ?? []).some((m) => m.enabled);
+  // Only mods with a toggle count: the framework renders its own row and
+  // always-active mods can't be flipped - with none toggleable, a lone
+  // enabled SKSE made this read "Enable all" out of nowhere.
+  const toggleableMods = (mods ?? []).filter((m) => m.togglable !== false);
+  const anyEnabled = toggleableMods.some((m) => m.enabled);
 
   const onToggle = async (mod: InstalledMod, enabled: boolean) => {
     setBusyFolder(mod.folder);
@@ -1211,15 +1295,17 @@ function InstalledModsSection() {
           </ButtonItem>
         </PanelSectionRow>
       )}
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          disabled={busyAll}
-          onClick={() => onToggleAll(!anyEnabled)}
-        >
-          {anyEnabled ? "Disable all (play vanilla)" : "Enable all"}
-        </ButtonItem>
-      </PanelSectionRow>
+      {toggleableMods.length > 0 && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={busyAll}
+            onClick={() => onToggleAll(!anyEnabled)}
+          >
+            {anyEnabled ? "Disable all (play vanilla)" : "Enable all"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       <PanelSectionRow>
         <ButtonItem
           layout="below"

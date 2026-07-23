@@ -7,23 +7,29 @@ import {
   Navigation,
   QuickAccessTab,
   ScrollPanelGroup,
+  showModal,
 } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 
 import {
+  AttentionItem,
   CollectionDetail,
   CollectionFile,
   NexusMod,
   getCollection,
+  getCollectionAttention,
   getCollectionManifest,
   getInstalledMods,
   getModDetails,
   installFomodAuto,
   registerCollection,
+  setCollectionAttention,
 } from "./api";
+import { PayloadChoiceModal } from "./ChoiceModal";
+import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 import { modeParams } from "./games";
-import { installPinned } from "./install";
+import { finishFomod, installPinned } from "./install";
 import {
   CollectionRowState,
   beginCollectionRun,
@@ -54,6 +60,10 @@ export function CollectionPage() {
   const [installedIds, setInstalledIds] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [modInfo, setModInfo] = useState<Record<number, NexusMod | null>>({});
+  // Mods a previous run left needing manual choices - persisted so any
+  // later visit can show and resolve them.
+  const [attention, setAttention] = useState<AttentionItem[]>([]);
+  const [finishingFileId, setFinishingFileId] = useState<number | undefined>();
   // Batch state lives in a module store so navigating away and back
   // shows live progress instead of a stale page.
   const [, force] = useState(0);
@@ -67,12 +77,8 @@ export function CollectionPage() {
     : {};
   const installing = Boolean(runIsOurs && run!.running);
 
-  useEffect(() => {
+  const refreshInstalled = () => {
     if (!sel) return;
-    getCollection(sel.collection.slug, sel.game.nexusDomain).then((r) => {
-      if (r.ok && r.collection) setDetail(r.collection);
-      else setError(r.error ?? "Could not load collection");
-    });
     getInstalledMods(
       sel.game.nexusDomain,
       sel.game.installDirName,
@@ -88,6 +94,29 @@ export function CollectionPage() {
         )
       )
     );
+  };
+
+  const persistAttention = (items: AttentionItem[]) => {
+    setAttention(items);
+    if (sel) {
+      setCollectionAttention(
+        sel.game.nexusDomain,
+        sel.collection.slug,
+        items
+      ).catch(() => {});
+    }
+  };
+
+  useEffect(() => {
+    if (!sel) return;
+    getCollection(sel.collection.slug, sel.game.nexusDomain).then((r) => {
+      if (r.ok && r.collection) setDetail(r.collection);
+      else setError(r.error ?? "Could not load collection");
+    });
+    getCollectionAttention(sel.game.nexusDomain, sel.collection.slug).then(
+      (r) => setAttention(r.items ?? [])
+    );
+    refreshInstalled();
   }, []);
 
   if (!sel) {
@@ -110,13 +139,18 @@ export function CollectionPage() {
   // "Resume" only makes sense for a run THIS page started - already
   // owning some of a collection's mods individually is not a resume.
   const partialFromRun = runIsOurs && !run!.running && run!.finished > 0;
+  const attentionIds = new Set(attention.map((a) => a.file_id));
 
   const installAll = async (includeOptional = false) => {
     if (!detail || installing) return;
     const queue = includeOptional
       ? [...remaining, ...optionalRemaining]
       : remaining;
-    beginCollectionRun(collection.slug, queue.length);
+    beginCollectionRun(collection.slug, queue.length, {
+      gameAppId: game.appId,
+      name: collection.name,
+      thumbnailUrl: collection.thumbnailUrl,
+    });
     // My Mods groups these installs under the collection - remember its
     // display info (records only carry the slug).
     registerCollection(
@@ -126,6 +160,7 @@ export function CollectionPage() {
       collection.thumbnailUrl ?? "",
       detail.files.length
     ).catch(() => {});
+    const freshAttention: AttentionItem[] = [];
     try {
       // The curator's FOMOD selections travel in the collection manifest -
       // fetch once so wizard mods install hands-off with their choices.
@@ -156,21 +191,29 @@ export function CollectionPage() {
           );
           if (result.needs_fomod && result.fomod_token) {
             const choices = curatorChoices[String(f.fileId)];
-            // Curator choices when recorded; wizard defaults otherwise -
-            // either way the collection keeps installing hands-off.
-            result = await installFomodAuto(
-              result.fomod_token,
-              choices ?? {}
-            );
+            if (choices !== undefined) {
+              // The curator recorded selections - install hands-off.
+              result = await installFomodAuto(result.fomod_token, choices);
+            }
+            // No curator choices: fall through with needs_fomod set -
+            // the mod parks under "needs choices" for Finish setup
+            // instead of silently taking wizard defaults.
           }
           if (result.ok) {
             setCollectionRow(f.fileId, "done");
-          } else if (result.needs_choice) {
+          } else if (result.needs_choice || result.needs_fomod) {
+            // Manual decisions pending - remembered (persisted) so the
+            // "Finish setup" button can resolve them all in one pass.
             dropDownload(f.modId);
             setCollectionRow(f.fileId, "skipped");
-            toaster.toast({
-              title: `${f.modName}: needs manual choices`,
-              body: "Open its mod page to pick options",
+            freshAttention.push({
+              file_id: f.fileId,
+              mod_id: f.modId,
+              mod_name: f.modName,
+              file_name: f.fileName,
+              version: f.version,
+              reason: result.needs_fomod ? "fomod" : "choices",
+              options: result.options ?? [],
             });
           } else if (result.unsupported_tool) {
             // Desktop tools (xEdit, patchers) aren't failures - the
@@ -200,16 +243,128 @@ export function CollectionPage() {
           });
         }
       }
+      // Carry forward older pending choices that this run didn't touch;
+      // everything re-attempted is superseded by freshAttention.
+      persistAttention([
+        ...attention.filter(
+          (a) => !queue.some((f) => f.fileId === a.file_id)
+        ),
+        ...freshAttention,
+      ]);
+      refreshInstalled();
       toaster.toast({
         title: `${collection.name}`,
         body:
-          failures === 0
+          failures === 0 && freshAttention.length === 0
             ? "Collection installed - restart the game to load it"
-            : `Finished with ${failures} failure(s) - see the list`,
+            : `Done: ${failures} failure(s), ${freshAttention.length} ` +
+              "waiting on your choices (Finish setup)",
       });
     } finally {
       endCollectionRun();
     }
+  };
+
+  /** Modal helpers that resolve as promises so Finish setup can walk
+   * every pending mod sequentially. closeModal resolves undefined a tick
+   * later than onPick - the pick wins when both fire. */
+  const pickChoice = (name: string, options: string[]) =>
+    new Promise<string | undefined>((resolve) => {
+      const modal = showModal(
+        <PayloadChoiceModal
+          modName={name}
+          options={options}
+          onPick={(o) => resolve(o)}
+          closeModal={() => {
+            modal.Close();
+            setTimeout(() => resolve(undefined), 0);
+          }}
+        />
+      );
+    });
+
+  const runWizard = (wizard: FomodWizardData) =>
+    new Promise<string[] | undefined>((resolve) => {
+      const modal = showModal(
+        <FomodWizardModal
+          wizard={wizard}
+          onInstall={(ids) => resolve(ids)}
+          closeModal={() => {
+            modal.Close();
+            setTimeout(() => resolve(undefined), 0);
+          }}
+        />
+      );
+    });
+
+  /** Resolve every pending manual decision in one guided pass: each mod
+   * re-installs to its decision point, shows its modal, and finishes. */
+  const finishSetup = async () => {
+    if (!detail || installing || finishingFileId !== undefined) return;
+    let pendingList = [...attention];
+    for (const item of [...attention]) {
+      setFinishingFileId(item.file_id);
+      try {
+        let choice = "";
+        if (item.reason === "choices" && item.options.length > 0) {
+          const picked = await pickChoice(item.mod_name, item.options);
+          if (picked === undefined) continue; // backed out - stays pending
+          choice = picked;
+        }
+        let result = await installPinned(
+          game,
+          item.mod_id,
+          item.file_id,
+          item.file_name,
+          item.mod_name,
+          item.version,
+          collection.slug,
+          choice
+        );
+        if (result.needs_fomod && result.fomod_token && result.wizard) {
+          const ids = await runWizard(result.wizard as FomodWizardData);
+          if (ids === undefined) {
+            dropDownload(item.mod_id);
+            continue;
+          }
+          result = await finishFomod(result.fomod_token, ids);
+        } else if (result.needs_choice && result.options?.length) {
+          const picked = await pickChoice(item.mod_name, result.options);
+          if (picked === undefined) {
+            dropDownload(item.mod_id);
+            continue;
+          }
+          result = await installPinned(
+            game,
+            item.mod_id,
+            item.file_id,
+            item.file_name,
+            item.mod_name,
+            item.version,
+            collection.slug,
+            picked
+          );
+        }
+        if (result.ok) {
+          pendingList = pendingList.filter(
+            (a) => a.file_id !== item.file_id
+          );
+          persistAttention(pendingList);
+        } else {
+          updateDownload(item.mod_id, "error", 0);
+          toaster.toast({
+            title: `${item.mod_name} failed`,
+            body: result.error ?? "",
+          });
+        }
+      } catch (e) {
+        updateDownload(item.mod_id, "error", 0);
+        toaster.toast({ title: `${item.mod_name} failed`, body: String(e) });
+      } finally {
+        setFinishingFileId(undefined);
+      }
+    }
+    refreshInstalled();
   };
 
   const toggleExpand = (f: CollectionFile) => {
@@ -232,6 +387,7 @@ export function CollectionPage() {
   const stateBadge = (f: CollectionFile): string => {
     if (installedIds.has(f.modId) || rowState[f.fileId] === "done")
       return "✓ ";
+    if (attentionIds.has(f.fileId)) return "⚙ ";
     const st = rowState[f.fileId];
     if (st === "installing") return "";
     if (st === "failed") return "⚠ ";
@@ -313,6 +469,21 @@ export function CollectionPage() {
               ? `⬇ Install remaining (${remaining.length} of ${required.length})`
               : `⬇ Install collection (${remaining.length} mods)`}
           </DialogButton>
+          {attention.length > 0 && !installing && (
+            <DialogButton
+              disabled={finishingFileId !== undefined}
+              onClick={finishSetup}
+              style={{
+                flexGrow: 1,
+                minWidth: "200px",
+                background: "rgba(74,169,255,0.22)",
+              }}
+            >
+              {finishingFileId !== undefined
+                ? "Finishing…"
+                : `⚙ Finish setup (${attention.length})`}
+            </DialogButton>
+          )}
           {optionalRemaining.length > 0 && (
             <DialogButton
               disabled={!detail || installing}
@@ -390,9 +561,12 @@ export function CollectionPage() {
               const open = expanded.has(f.fileId);
               const info = modInfo[f.modId];
               const pct =
-                rowState[f.fileId] === "installing"
+                rowState[f.fileId] === "installing" ||
+                finishingFileId === f.fileId
                   ? getDownloadPercent(f.modId) ?? 0
                   : undefined;
+              const needsChoices =
+                attentionIds.has(f.fileId) && !installedIds.has(f.modId);
               return (
                 <Focusable
                   key={f.fileId}
@@ -404,8 +578,13 @@ export function CollectionPage() {
                     background:
                       pct !== undefined
                         ? `linear-gradient(90deg, rgba(218,142,53,0.45) ${pct}%, rgba(255,255,255,0.05) ${pct}%)`
+                        : needsChoices
+                        ? "rgba(74,169,255,0.10)"
                         : "rgba(255,255,255,0.05)",
                     color: pct !== undefined ? "#fff" : undefined,
+                    borderLeft: needsChoices
+                      ? "3px solid #4aa9ff"
+                      : "3px solid transparent",
                     transition: "background 0.3s linear",
                     borderRadius: "4px",
                     fontSize: "13px",
@@ -425,6 +604,12 @@ export function CollectionPage() {
                       {stateBadge(f)}
                       {f.modName}
                       {f.version ? ` · v${f.version}` : ""}
+                      {needsChoices && (
+                        <span style={{ color: "#4aa9ff" }}>
+                          {" "}
+                          · needs choices
+                        </span>
+                      )}
                     </span>
                     <span
                       style={{ opacity: 0.6, flexShrink: 0, marginLeft: "10px" }}

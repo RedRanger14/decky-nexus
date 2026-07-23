@@ -27,7 +27,8 @@ export async function installPinned(
   fileName: string,
   modName: string,
   version = "",
-  collectionSlug = ""
+  collectionSlug = "",
+  payloadChoice = ""
 ): Promise<InstallResult> {
   nameDownload(modId, modName, game.appId);
   return installModWith(
@@ -39,7 +40,8 @@ export async function installPinned(
     version,
     "collection",
     "",
-    collectionSlug
+    collectionSlug,
+    payloadChoice
   );
 }
 
@@ -52,7 +54,8 @@ function installModWith(
   version: string,
   source: string,
   pageVersion = "",
-  collectionSlug = ""
+  collectionSlug = "",
+  payloadChoice = ""
 ): Promise<InstallResult> {
   return installMod(
     game.nexusDomain,
@@ -66,7 +69,7 @@ function installModWith(
     "",
     "",
     ...modeParams(game),
-    "",
+    payloadChoice,
     game.ue4ss?.modsSubdir ?? "",
     game.ue4ss?.logicModsSubdir ?? "",
     game.launcherXmlSubpath ?? "",

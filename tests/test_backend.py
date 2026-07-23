@@ -424,6 +424,123 @@ class TestRootFilesInstall(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.game, "tbb.dll")))
 
 
+class TestResetGameModding(unittest.TestCase):
+    """One-button vanilla reset: records of every mode uninstall, the
+    framework loader goes, and the game's plugin state clears."""
+
+    DOMAIN = "resetgame"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, "ResetGame")
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(self.data)
+        # a dataDir mod, a root-files mod, and framework loader files
+        with open(os.path.join(self.data, "CoolMod.esp"), "w") as f:
+            f.write("x")
+        with open(os.path.join(self.install, "d3dx9_42.dll"), "w") as f:
+            f.write("x")
+        with open(os.path.join(self.install, "skse64_loader.exe"), "w") as f:
+            f.write("x")
+        settings = main._load_settings()
+        settings["installed"] = {
+            self.DOMAIN: {
+                "CoolMod": {
+                    "mode": "dataDir",
+                    "files": ["CoolMod.esp"],
+                    "plugins": ["CoolMod.esp"],
+                },
+                "Preloader": {
+                    "mode": "files",
+                    "target": ".",
+                    "files": ["d3dx9_42.dll"],
+                },
+            }
+        }
+        settings["framework_setup"] = {
+            self.DOMAIN: {"launch_options_set": True, "enabled": True}
+        }
+        settings["collections"] = {self.DOMAIN: {"some-collection": {}}}
+        main._save_settings(settings)
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def test_reset_removes_everything_tracked(self):
+        result = run(
+            main.Plugin().reset_game_modding(
+                self.DOMAIN, "ResetGame", "Data", "dataDir", 0, "",
+                "starred", ["skse64"],
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 2)
+        self.assertEqual(result["framework_files"], ["skse64_loader.exe"])
+        self.assertFalse(
+            os.path.exists(os.path.join(self.data, "CoolMod.esp"))
+        )
+        self.assertFalse(
+            os.path.exists(os.path.join(self.install, "d3dx9_42.dll"))
+        )
+        settings = main._load_settings()
+        for section in ("installed", "framework_setup", "collections"):
+            self.assertNotIn(self.DOMAIN, settings.get(section, {}))
+        # the game exe area is otherwise untouched
+        self.assertTrue(os.path.isdir(self.data))
+
+    def test_reset_rejects_bad_domain(self):
+        result = run(
+            main.Plugin().reset_game_modding("Bad!", "ResetGame", "Data")
+        )
+        self.assertFalse(result["ok"])
+
+
+class TestCollectionAttention(unittest.TestCase):
+    """Pending manual choices persist per collection so any later visit
+    can resolve them (the Finish-setup flow)."""
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.plugin = main.Plugin()
+
+    def test_set_get_clear_roundtrip(self):
+        items = [
+            {
+                "file_id": 11,
+                "mod_id": 22,
+                "mod_name": "Choosy Mod",
+                "file_name": "choosy.zip",
+                "version": "1.0",
+                "reason": "choices",
+                "options": ["A", "B"],
+            }
+        ]
+        result = run(
+            self.plugin.set_collection_attention("skyrimspecialedition",
+                                                 "test-coll", items)
+        )
+        self.assertTrue(result["ok"])
+        got = run(
+            self.plugin.get_collection_attention("skyrimspecialedition",
+                                                 "test-coll")
+        )
+        self.assertEqual(got["items"][0]["mod_name"], "Choosy Mod")
+        self.assertEqual(got["items"][0]["options"], ["A", "B"])
+        # empty list clears
+        run(
+            self.plugin.set_collection_attention("skyrimspecialedition",
+                                                 "test-coll", [])
+        )
+        got = run(
+            self.plugin.get_collection_attention("skyrimspecialedition",
+                                                 "test-coll")
+        )
+        self.assertEqual(got["items"], [])
+
+
 class TestHelpers(unittest.TestCase):
     def test_safe_name_strips_unsafe_characters(self):
         self.assertEqual(main._safe_name("Iron/clad:铁甲"), "Ironclad")
@@ -815,6 +932,18 @@ class TestFomod(unittest.TestCase):
         self.data = os.path.join(TEST_ROOT, "fomod-data")
         shutil.rmtree(self.data, ignore_errors=True)
         os.makedirs(self.data)
+
+    def test_utf16_moduleconfig_parses(self):
+        # The 'FOMOD Creation Tool' writes UTF-16 LE with a BOM (seen in
+        # the wild: SSE FPS Stabilizer). Read as UTF-8 this tokenized
+        # NUL garbage into an empty wizard and the install fell through
+        # to "no payload".
+        cfg = os.path.join(self.scratch, "fomod", "ModuleConfig.xml")
+        with open(cfg, "wb") as f:
+            f.write(b"\xff\xfe" + self.CONFIG.encode("utf-16-le"))
+        wizard, _ctx = main._parse_fomod(self.scratch, self.data)
+        self.assertEqual(wizard["moduleName"], "Test Armor Pack")
+        self.assertEqual(len(wizard["steps"]), 2)
 
     def test_wizard_parses_steps_groups_and_types(self):
         wizard, ctx = main._parse_fomod(self.scratch, self.data)

@@ -94,6 +94,9 @@ export interface ActiveDownload {
   percent: number;
   /** Which game this install belongs to (for row click-through). */
   gameAppId?: number;
+  /** Set on collection-run summary entries: clicking opens the
+   * collection page instead of a mod page. */
+  collectionSlug?: string;
 }
 
 const downloads = new Map<number, ActiveDownload>();
@@ -220,6 +223,10 @@ export interface CollectionRun {
   total: number;
   finished: number;
   rows: Record<number, CollectionRowState>;
+  /** Display metadata so Downloads entries can open the collection. */
+  gameAppId?: number;
+  name?: string;
+  thumbnailUrl?: string;
 }
 
 let collectionRun: CollectionRun | undefined;
@@ -240,9 +247,26 @@ export function subscribeCollectionRun(listener: () => void): () => void {
   };
 }
 
-export function beginCollectionRun(slug: string, total: number): void {
-  collectionRun = { slug, running: true, total, finished: 0, rows: {} };
+export function beginCollectionRun(
+  slug: string,
+  total: number,
+  meta?: { gameAppId?: number; name?: string; thumbnailUrl?: string }
+): void {
+  collectionRun = {
+    slug,
+    running: true,
+    total,
+    finished: 0,
+    rows: {},
+    ...meta,
+  };
   notifyRun();
+}
+
+/** Rows the finished run left needing manual choices. */
+export function getRunSkippedCount(run?: CollectionRun): number {
+  if (!run) return 0;
+  return Object.values(run.rows).filter((s) => s === "skipped").length;
 }
 
 export function setCollectionRow(
@@ -262,11 +286,17 @@ export function endCollectionRun(): void {
   collectionRun.running = false;
   // Surface the finished run in Completed and clear the banner shortly -
   // a 32/32 banner that never leaves reads as "stuck".
+  const skipped = getRunSkippedCount(collectionRun);
   completed.unshift({
     modId: -Math.abs(collectionRun.total * 1000 + collectionRun.finished),
-    name: `Collection · ${collectionRun.finished}/${collectionRun.total} processed`,
+    name:
+      `${collectionRun.name ?? "Collection"} · ` +
+      `${collectionRun.finished}/${collectionRun.total} processed` +
+      (skipped ? ` · ${skipped} need choices` : ""),
     phase: "done",
     percent: 100,
+    gameAppId: collectionRun.gameAppId,
+    collectionSlug: collectionRun.slug,
   });
   if (completed.length > 30) completed.pop();
   notifyRun();

@@ -224,6 +224,48 @@ export const getCollectionManifest = callable<
   { ok: boolean; choices?: Record<string, unknown>; error?: string }
 >("get_collection_manifest");
 
+export const resetGameModding = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    install_mode: "folder" | "dataDir",
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    framework_file_prefixes: string[]
+  ],
+  {
+    ok: boolean;
+    removed?: number;
+    framework_files?: string[];
+    cleared_dlo?: boolean;
+    use_steam_client?: boolean;
+    errors?: string[];
+    error?: string;
+  }
+>("reset_game_modding");
+
+export interface AttentionItem {
+  file_id: number;
+  mod_id: number;
+  mod_name: string;
+  file_name: string;
+  version: string;
+  reason: string;
+  options: string[];
+}
+
+export const setCollectionAttention = callable<
+  [game_domain: string, slug: string, items: AttentionItem[]],
+  { ok: boolean; count?: number; error?: string }
+>("set_collection_attention");
+
+export const getCollectionAttention = callable<
+  [game_domain: string, slug: string],
+  { ok: boolean; items?: AttentionItem[] }
+>("get_collection_attention");
+
 export const registerCollection = callable<
   [
     game_domain: string,

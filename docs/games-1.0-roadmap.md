@@ -364,10 +364,12 @@ mods (two records claiming the same path - the per-file manifests make
 this cheap to compute), and known device quirks. Ties together the
 existing masters-checker and stash-disable backlog items.
 
-## Open investigation: SSE FPS Stabilizer archive layout
+## RESOLVED (v0.18.0): SSE FPS Stabilizer archive layout
 
-Its archive (top level: "00 Data", "Fomod") produced "no payload" during
-the essential-mods run - "00 Data" wasn't recognized by _payload_options
-and the fomod dir has no ModuleConfig (or it would have run the wizard).
-v0.17.0 logs the second level on no-payload failures; the next attempt
-will show exactly what's inside "00 Data" so the detector can learn it.
+The second-level logging pinned it: the archive HAS Fomod/ModuleConfig.xml
+but the file is UTF-16 LE with a BOM (the "FOMOD Creation Tool" writes
+UTF-16). xml_parse_file read it as UTF-8, tokenized NUL garbage into an
+empty wizard, and the install fell through to "no payload". Reproduced by
+downloading the archive on-device and running the plugin's own parser
+against it. Fix: BOM-aware decoding in xml_parse_file (utf-16 both
+endians + utf-8-sig), pinned by test_utf16_moduleconfig_parses.
