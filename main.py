@@ -4278,6 +4278,89 @@ query Link($slug: String!, $domainName: String!) {
             "errors": errors,
         }
 
+    async def uninstall_collection(
+        self,
+        game_domain: str,
+        install_dir: str,
+        mods_subdir: str,
+        install_mode: str = "folder",
+        app_id: int = 0,
+        plugins_subpath: str = "",
+        plugins_style: str = "starred",
+        slug: str = "",
+    ) -> dict:
+        """Remove every mod THIS collection installed (records carrying
+        its slug), plus its registry and attention entries. Mods shared
+        with other sources (individual installs, other collections) keep
+        their records and stay. slug '__earlier__' targets pre-v0.17
+        collection records that predate slugs."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not slug:
+            return {"ok": False, "error": "Missing collection slug"}
+        settings = _load_settings()
+        install_path, mods_path, disabled_path = _game_paths(
+            install_dir, mods_subdir
+        )
+        records = dict(settings.get("installed", {}).get(game_domain, {}))
+
+        def belongs(rec: dict) -> bool:
+            if slug == "__earlier__":
+                return rec.get("source") == "collection" and not rec.get(
+                    "collection_slug"
+                )
+            return rec.get("collection_slug") == slug
+
+        removed = 0
+        errors = []
+        for key, rec in sorted(records.items()):
+            if not belongs(rec):
+                continue
+            try:
+                mode = rec.get("mode") or "folder"
+                if mode == "files":
+                    if _remove_files_record(
+                        game_domain, key, install_path, settings
+                    ):
+                        removed += 1
+                elif mode == "dataDir":
+                    if _remove_data_dir_record(
+                        game_domain, key, mods_path, app_id,
+                        plugins_subpath, settings,
+                    ):
+                        removed += 1
+                else:
+                    target = rec.get("target")
+                    folder = rec.get("folder") or key
+                    base = (
+                        os.path.join(install_path, *target.split("/"))
+                        if target
+                        else mods_path
+                    )
+                    for cand in (
+                        os.path.join(base, folder),
+                        os.path.join(base + "-disabled", folder),
+                        os.path.join(disabled_path, folder),
+                    ):
+                        if os.path.isdir(cand):
+                            _force_rmtree(cand)
+                    settings.get("installed", {}).get(game_domain, {}).pop(
+                        key, None
+                    )
+                    removed += 1
+            except OSError as e:
+                errors.append(f"{key}: {e}")
+        settings.get("collections", {}).get(game_domain, {}).pop(slug, None)
+        settings.get("collection_attention", {}).get(game_domain, {}).pop(
+            slug, None
+        )
+        _save_settings(settings)
+        decky.logger.info(
+            f"uninstalled collection {slug!r} from {game_domain!r}: "
+            f"{removed} mods removed, {len(errors)} errors"
+        )
+        return {"ok": True, "removed": removed, "errors": errors}
+
     async def set_collection_attention(
         self, game_domain: str, slug: str, items: list
     ) -> dict:

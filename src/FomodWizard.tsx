@@ -2,7 +2,7 @@
 // backend-parsed wizard JSON. Flags from selected options gate later
 // steps' visibility (evaluated here); the backend re-derives flags
 // authoritatively when applying.
-import { DialogButton, Focusable, ModalRoot } from "@decky/ui";
+import { DialogButton, Focusable, GamepadButton, ModalRoot } from "@decky/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { NEXUS_ORANGE } from "./theme";
@@ -172,14 +172,29 @@ export function FomodWizardModal({
     onInstall(ids);
   };
 
+  // Power-user shortcuts: 39-step wizards exist (JK's Interiors) and
+  // scrolling to the Next button on every page is controller torture.
+  const goNext = () => (isLast ? finish() : setStepIdx(stepIdx + 1));
+  const goBack = () => setStepIdx(Math.max(0, stepIdx - 1));
+
   return (
     <ModalRoot closeModal={closeModal}>
+      <Focusable
+        onButtonDown={(evt: CustomEvent) => {
+          const button = (evt as any)?.detail?.button;
+          if (button === GamepadButton.BUMPER_RIGHT) goNext();
+          else if (button === GamepadButton.BUMPER_LEFT) goBack();
+        }}
+      >
       <h3 style={{ marginTop: 0, marginBottom: "2px" }}>
         {wizard.moduleName || "Mod options"}
       </h3>
       {step && (
         <div style={{ fontSize: "12.5px", opacity: 0.7, marginBottom: "8px" }}>
           {step.name} · step {stepIdx + 1} of {visibleSteps.length}
+          <span style={{ float: "right", opacity: 0.8 }}>
+            LB ← step · step → RB
+          </span>
         </div>
       )}
       <div
@@ -245,17 +260,15 @@ export function FomodWizardModal({
       <Focusable style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
         <DialogButton
           disabled={stepIdx === 0}
-          onClick={() => setStepIdx(Math.max(0, stepIdx - 1))}
+          onClick={goBack}
           style={{ flex: 1, minWidth: 0 }}
         >
           ← Back
         </DialogButton>
-        <DialogButton
-          onClick={() => (isLast ? finish() : setStepIdx(stepIdx + 1))}
-          style={{ flex: 1, minWidth: 0 }}
-        >
+        <DialogButton onClick={goNext} style={{ flex: 1, minWidth: 0 }}>
           {isLast ? "Install with these options" : "Next →"}
         </DialogButton>
+      </Focusable>
       </Focusable>
     </ModalRoot>
   );

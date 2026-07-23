@@ -373,3 +373,12 @@ empty wizard, and the install fell through to "no payload". Reproduced by
 downloading the archive on-device and running the plugin's own parser
 against it. Fix: BOM-aware decoding in xml_parse_file (utf-16 both
 endians + utf-8-sig), pinned by test_utf16_moduleconfig_parses.
+
+## Feature backlog: resumable FOMOD wizards (requested 2026-07-23)
+
+Long wizards (JK's Interiors Patch Collection: 39 steps) should support
+"do some now, come back later": persist the in-progress selections +
+step index per pending FOMOD (the attention entry is the natural home)
+and restore the wizard where the user left off instead of restarting.
+Low priority per Michael. The RB/LB step shortcuts (v0.21.0) cover the
+main pain meanwhile.

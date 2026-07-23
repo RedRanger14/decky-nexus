@@ -20,6 +20,7 @@ import {
   getInstalledMods,
   getModsByIds,
   setModEnabled,
+  uninstallCollection,
   uninstallMod,
 } from "./api";
 import { ALL_GAMES, SupportedGame, modeParams } from "./games";
@@ -282,6 +283,43 @@ export function ManagerPage() {
       setBusyKey(undefined);
       refresh();
     }
+  };
+
+  const removeCollection = (
+    game: SupportedGame,
+    slug: string,
+    title: string,
+    memberCount: number
+  ) => {
+    showModal(
+      <ConfirmModal
+        strTitle={`Uninstall ${title}?`}
+        strDescription={
+          `Removes the ${memberCount} mods this collection installed. ` +
+          `Mods you installed yourself (or via another collection) stay.`
+        }
+        strOKButtonText="Uninstall collection"
+        bDestructiveWarning={true}
+        onOK={async () => {
+          const result = await uninstallCollection(
+            game.nexusDomain,
+            game.installDirName,
+            game.modsSubdir,
+            ...modeParams(game),
+            slug
+          );
+          toaster.toast(
+            result.ok
+              ? {
+                  title: `${title} uninstalled`,
+                  body: `${result.removed ?? 0} mods removed`,
+                }
+              : { title: "Uninstall failed", body: result.error ?? "" }
+          );
+          refresh();
+        }}
+      />
+    );
   };
 
   const remove = (game: SupportedGame, mod: InstalledMod) => {
@@ -569,6 +607,27 @@ export function ManagerPage() {
                                   }
                                 />
                               )}
+                              <DialogButton
+                                disabled={collBusy}
+                                onClick={() =>
+                                  removeCollection(
+                                    game,
+                                    slug,
+                                    title,
+                                    members.length
+                                  )
+                                }
+                                style={{
+                                  minWidth: "0",
+                                  width: "auto",
+                                  padding: "6px 12px",
+                                  fontSize: "12px",
+                                  flexShrink: 0,
+                                  opacity: 0.85,
+                                }}
+                              >
+                                Uninstall
+                              </DialogButton>
                             </Focusable>
                             {open && (
                               <Focusable

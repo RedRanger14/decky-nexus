@@ -249,6 +249,20 @@ export const resetGameModding = callable<
   }
 >("reset_game_modding");
 
+export const uninstallCollection = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    install_mode: "folder" | "dataDir",
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    slug: string
+  ],
+  { ok: boolean; removed?: number; errors?: string[]; error?: string }
+>("uninstall_collection");
+
 export interface AttentionItem {
   file_id: number;
   mod_id: number;

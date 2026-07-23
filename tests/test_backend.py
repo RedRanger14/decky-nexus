@@ -497,6 +497,77 @@ class TestResetGameModding(unittest.TestCase):
         self.assertFalse(result["ok"])
 
 
+class TestUninstallCollection(unittest.TestCase):
+    """Uninstalling a collection removes ONLY records carrying its slug -
+    shared/loose mods stay - plus its registry and attention entries."""
+
+    DOMAIN = "collgame"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, "CollGame")
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(self.data)
+        for name in ("FromColl.esp", "Loose.esp"):
+            with open(os.path.join(self.data, name), "w") as f:
+                f.write("x")
+        settings = main._load_settings()
+        settings["installed"] = {
+            self.DOMAIN: {
+                "FromColl": {
+                    "mode": "dataDir",
+                    "files": ["FromColl.esp"],
+                    "plugins": [],
+                    "source": "collection",
+                    "collection_slug": "my-coll",
+                },
+                "Loose": {
+                    "mode": "dataDir",
+                    "files": ["Loose.esp"],
+                    "plugins": [],
+                    "source": "",
+                    "collection_slug": "",
+                },
+            }
+        }
+        settings["collections"] = {
+            self.DOMAIN: {"my-coll": {"title": "My Coll"}}
+        }
+        settings["collection_attention"] = {
+            self.DOMAIN: {"my-coll": [{"file_id": 1}]}
+        }
+        main._save_settings(settings)
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def test_removes_only_collection_records(self):
+        result = run(
+            main.Plugin().uninstall_collection(
+                self.DOMAIN, "CollGame", "Data", "dataDir", 0, "",
+                "starred", "my-coll",
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 1)
+        self.assertFalse(
+            os.path.exists(os.path.join(self.data, "FromColl.esp"))
+        )
+        self.assertTrue(os.path.exists(os.path.join(self.data, "Loose.esp")))
+        settings = main._load_settings()
+        self.assertNotIn("FromColl", settings["installed"][self.DOMAIN])
+        self.assertIn("Loose", settings["installed"][self.DOMAIN])
+        self.assertNotIn(
+            "my-coll", settings.get("collections", {}).get(self.DOMAIN, {})
+        )
+        self.assertNotIn(
+            "my-coll",
+            settings.get("collection_attention", {}).get(self.DOMAIN, {}),
+        )
+
+
 class TestCollectionAttention(unittest.TestCase):
     """Pending manual choices persist per collection so any later visit
     can resolve them (the Finish-setup flow)."""
