@@ -96,3 +96,21 @@ actually looks like — for content mods (reskins, portraits, maps) images are
 effectively the product description. Our plugin's detail page already
 reserves the layout for a gallery; consumption is a one-day change once the
 field exists.
+
+---
+
+## Additional request: account content preferences (2026-07-23)
+
+The plugin filters adult content with a local toggle (off by default).
+The right behavior is adopting the user's **site** preference, but the
+v2 GraphQL schema exposes no `currentUser`/`viewer` query to apikey
+clients (verified by probe), and v1 `users/validate.json` doesn't
+include content preferences either.
+
+**Request**: expose the account's content-preference flags (adult
+content on/off, and ideally per-category preferences) to personal-
+apikey-authenticated clients — e.g. a `currentUser { contentPreferences }`
+field or an extension of `users/validate.json`.
+
+**Consumer**: decky-nexus syncs its filter default from the account, so
+the handheld experience matches what the user chose on the website.

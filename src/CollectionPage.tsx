@@ -28,9 +28,11 @@ import {
   beginCollectionRun,
   endCollectionRun,
   getCollectionRun,
+  getDownloadPercent,
   getSelectedCollection,
   setCollectionRow,
   subscribeCollectionRun,
+  subscribeDownloads,
 } from "./state";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
@@ -53,6 +55,8 @@ export function CollectionPage() {
   // shows live progress instead of a stale page.
   const [, force] = useState(0);
   useEffect(() => subscribeCollectionRun(() => force((n) => n + 1)), []);
+  // Live per-mod download percent drives the row fill while installing.
+  useEffect(() => subscribeDownloads(() => force((n) => n + 1)), []);
   const run = getCollectionRun();
   const runIsOurs = run?.slug === sel?.collection.slug;
   const rowState: Record<number, CollectionRowState> = runIsOurs
@@ -193,7 +197,7 @@ export function CollectionPage() {
     if (installedIds.has(f.modId) || rowState[f.fileId] === "done")
       return "✓ ";
     const st = rowState[f.fileId];
-    if (st === "installing") return "⏳ ";
+    if (st === "installing") return "";
     if (st === "failed") return "⚠ ";
     if (st === "skipped") return "⏭ ";
     return "";
@@ -329,13 +333,24 @@ export function CollectionPage() {
             {required.map((f) => {
               const open = expanded.has(f.fileId);
               const info = modInfo[f.modId];
+              const pct =
+                rowState[f.fileId] === "installing"
+                  ? getDownloadPercent(f.modId) ?? 0
+                  : undefined;
               return (
                 <Focusable
                   key={f.fileId}
                   onActivate={() => toggleExpand(f)}
                   style={{
                     padding: "6px 10px",
-                    background: "rgba(255,255,255,0.05)",
+                    // Downloading rows fill orange left-to-right with the
+                    // live percent - the row IS the progress bar.
+                    background:
+                      pct !== undefined
+                        ? `linear-gradient(90deg, rgba(218,142,53,0.45) ${pct}%, rgba(255,255,255,0.05) ${pct}%)`
+                        : "rgba(255,255,255,0.05)",
+                    color: pct !== undefined ? "#fff" : undefined,
+                    transition: "background 0.3s linear",
                     borderRadius: "4px",
                     fontSize: "13px",
                   }}

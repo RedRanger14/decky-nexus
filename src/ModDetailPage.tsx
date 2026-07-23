@@ -142,6 +142,7 @@ export function ModDetailPage() {
   const [endorseBusy, setEndorseBusy] = useState(false);
   const [imageFull, setImageFull] = useState(false);
   const [fwInstalled, setFwInstalled] = useState(false);
+  const [uploader, setUploader] = useState<NexusMod["uploader"]>();
 
   const refreshInstalled = (s: SelectedMod) => {
     getInstalledMods(
@@ -178,9 +179,10 @@ export function ModDetailPage() {
     getModRequirements(s.game.nexusDomain, s.mod.modId).then((r) =>
       setRequirements(r.ok ? r.requirements ?? [] : [])
     );
-    getModDetails(s.game.nexusDomain, s.mod.modId).then((r) =>
-      setDescription(r.ok ? stripMarkup(r.mod?.description ?? "") : "")
-    );
+    getModDetails(s.game.nexusDomain, s.mod.modId).then((r) => {
+      setDescription(r.ok ? stripMarkup(r.mod?.description ?? "") : "");
+      setUploader(r.ok ? (r.mod as NexusMod | undefined)?.uploader : undefined);
+    });
     setEndorseStatus(undefined);
     getEndorsement(s.game.nexusDomain, s.mod.modId).then((r) =>
       setEndorseStatus(r.ok ? r.status : undefined)
@@ -287,7 +289,7 @@ export function ModDetailPage() {
   const onInstall = async (file: ModFile, payloadChoice = "") => {
     setInstallingFileId(file.file_id);
     setProgress(undefined);
-    nameDownload(mod.modId, mod.name);
+    nameDownload(mod.modId, mod.name, game.appId);
     try {
       const result = await installMod(
         game.nexusDomain,
@@ -316,7 +318,7 @@ export function ModDetailPage() {
           <FomodWizardModal
             wizard={result.wizard as FomodWizardData}
             onInstall={async (ids) => {
-              nameDownload(mod.modId, mod.name);
+              nameDownload(mod.modId, mod.name, game.appId);
               const done = await finishFomod(result.fomod_token!, ids);
               if (done.ok) {
                 setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
@@ -563,6 +565,25 @@ export function ModDetailPage() {
                 }}
               >
                 {endorseStatus === "Endorsed" ? "👍 Endorsed ✓" : "👍 Endorse"}
+              </Focusable>
+            )}
+            {uploader?.donationsEnabled && uploader.memberId && (
+              <Focusable
+                onActivate={() =>
+                  Navigation.NavigateToExternalWeb(
+                    `https://www.nexusmods.com/users/${uploader.memberId}`
+                  )
+                }
+                style={{
+                  padding: "3px 12px",
+                  borderRadius: "999px",
+                  fontSize: "12px",
+                  whiteSpace: "nowrap",
+                  background: "rgba(255, 120, 150, 0.12)",
+                  border: "1px solid rgba(255, 120, 150, 0.45)",
+                }}
+              >
+                ❤ Support {uploader.name ?? mod.author}
               </Focusable>
             )}
           </Focusable>

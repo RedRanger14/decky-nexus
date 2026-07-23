@@ -15,6 +15,12 @@ export interface NexusMod {
   adultContent: boolean;
   /** Full description (bbcode/html soup) - present via getModDetails */
   description?: string;
+  /** Present via getModDetails: author profile + donation opt-in. */
+  uploader?: {
+    name?: string;
+    memberId?: number;
+    donationsEnabled?: boolean;
+  };
 }
 
 export interface ModsResult {
@@ -366,7 +372,13 @@ export interface CollectionDetail {
 }
 
 export const getCollections = callable<
-  [game_domain: string, count: number, search: string, sort: string],
+  [
+    game_domain: string,
+    count: number,
+    search: string,
+    sort: string,
+    offset: number
+  ],
   { ok: boolean; collections?: CollectionSummary[]; error?: string }
 >("get_collections");
 

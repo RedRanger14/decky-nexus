@@ -97,6 +97,13 @@ export function FomodWizardModal({
   // Each step starts at the top - carrying the previous step's scroll
   // position forces the user to scroll back up every time.
   useEffect(() => {
+    // The gamepad focus scrolling happens in the MODAL's container, not
+    // our inner div - walk every scrollable ancestor back to the top.
+    let el: HTMLElement | null = bodyRef.current;
+    while (el) {
+      if (el.scrollTop) el.scrollTop = 0;
+      el = el.parentElement;
+    }
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [stepIdx]);
 
