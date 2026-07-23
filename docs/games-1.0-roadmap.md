@@ -343,3 +343,12 @@ Subnautica 2 when its entry lands. Original assessment below.
   offline by default, save isolation. A later integration would bundle
   me3 + generate `.me3` profiles. Not 1.0 material; needs a product
   decision on the anti-cheat/offline UX.
+
+## Robustness backlog (found during Skyrim reset, 2026-07-23)
+
+- **Crash-safe install journal**: installs that die between file-copy and
+  record-write orphan their files forever (the Skyrim reset surfaced ~100
+  unrecorded plugins + ~2,600 loose meshes/textures from the pre-v0.14
+  crashed collection runs). Write the record incrementally (journal the
+  file list as it's copied, mark complete at the end) so an interrupted
+  install is visible and cleanable instead of invisible.

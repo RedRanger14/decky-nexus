@@ -114,3 +114,20 @@ field or an extension of `users/validate.json`.
 
 **Consumer**: decky-nexus syncs its filter default from the account, so
 the handheld experience matches what the user chose on the website.
+
+### Update 2026-07-23: this is now also an age-verification issue
+
+The plugin's local adult-content toggle has been **removed** (v0.15.1,
+hard-locked off). Rationale: UK OSA-class laws require age verification
+before adult content is shown; verification happens on the Nexus Mods
+platform (with real per-check costs); the API gives clients no way to
+know whether the account passed it. A client-side opt-in would let an
+unverified user bypass the site's age gate, so no opt-in can exist here
+until the API can answer "is this account verified + opted in?".
+
+**Revised request**: expose the account's *age-verified* content
+preferences (not just the raw preference flags) to authenticated API
+clients. A single boolean ("account may see adult content") is enough
+for parity. The v3 REST API (api.nexusmods.com/v3) already has
+account-scoped endpoints (donations wallet) behind user OAuth - that
+auth path may be the natural home for this.

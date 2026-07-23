@@ -242,7 +242,12 @@ def _collection_sort_field(sort: str) -> str:
 
 
 def _show_adult() -> bool:
-    return bool(_load_settings().get("show_adult"))
+    """Hard-locked to False: UK OSA-class laws require age verification
+    before adult content can be shown, verification happens on the Nexus
+    Mods platform, and the API exposes no way to read that status - so
+    the plugin must not offer its own opt-in. Re-enable only when the
+    API can report the account's verified content preferences."""
+    return False
 
 
 async def _gql_query_vars(query: str, variables: dict, api_key=None) -> dict:
@@ -3658,11 +3663,13 @@ query Link($slug: String!, $domainName: String!) {
         return {"ok": True, "show_adult": _show_adult()}
 
     async def set_show_adult(self, value: bool) -> dict:
-        settings = _load_settings()
-        settings["show_adult"] = bool(value)
-        _save_settings(settings)
-        decky.logger.info(f"show_adult set to {bool(value)}")
-        return {"ok": True}
+        # See _show_adult: locked off until the Nexus Mods API exposes
+        # the account's age-verified content preferences.
+        return {
+            "ok": False,
+            "error": "Adult content is unavailable pending age-verification "
+            "support in the Nexus Mods API",
+        }
 
     async def dismiss_update(
         self, game_domain: str, folder: str, version: str
