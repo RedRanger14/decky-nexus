@@ -26,10 +26,21 @@ export async function installPinned(
   fileId: number,
   fileName: string,
   modName: string,
-  version = ""
+  version = "",
+  collectionSlug = ""
 ): Promise<InstallResult> {
   nameDownload(modId, modName, game.appId);
-  return installModWith(game, modId, fileId, fileName, modName, version, "collection");
+  return installModWith(
+    game,
+    modId,
+    fileId,
+    fileName,
+    modName,
+    version,
+    "collection",
+    "",
+    collectionSlug
+  );
 }
 
 function installModWith(
@@ -40,7 +51,8 @@ function installModWith(
   modName: string,
   version: string,
   source: string,
-  pageVersion = ""
+  pageVersion = "",
+  collectionSlug = ""
 ): Promise<InstallResult> {
   return installMod(
     game.nexusDomain,
@@ -61,7 +73,8 @@ function installModWith(
     game.flatModExtensions ?? [],
     pageVersion,
     source,
-    game.witcherLayout ?? false
+    game.witcherLayout ?? false,
+    collectionSlug
   );
 }
 

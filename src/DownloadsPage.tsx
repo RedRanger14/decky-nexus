@@ -29,11 +29,14 @@ function Row({
   name,
   status,
   dim,
+  pct,
   onActivate,
 }: {
   name: string;
   status: string;
   dim?: boolean;
+  /** In-flight rows fill orange left-to-right - the row IS the bar. */
+  pct?: number;
   onActivate?: () => void;
 }) {
   const Tag: any = onActivate ? Focusable : "div";
@@ -44,7 +47,12 @@ function Row({
         display: "flex",
         justifyContent: "space-between",
         padding: "8px 12px",
-        background: "rgba(255,255,255,0.05)",
+        background:
+          pct !== undefined
+            ? `linear-gradient(90deg, rgba(218,142,53,0.45) ${pct}%, rgba(255,255,255,0.05) ${pct}%)`
+            : "rgba(255,255,255,0.05)",
+        color: pct !== undefined ? "#fff" : undefined,
+        transition: "background 0.3s linear",
         borderRadius: "4px",
         fontSize: "13.5px",
         opacity: dim ? 0.65 : 1,
@@ -162,6 +170,7 @@ export function DownloadsPage() {
               key={d.modId}
               onActivate={() => openDownloadTarget(d.modId, d.gameAppId)}
               name={d.name}
+              pct={d.phase === "extracting" ? 100 : d.percent}
               status={
                 d.phase === "downloading"
                   ? `${d.percent}%`

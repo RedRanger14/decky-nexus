@@ -79,6 +79,7 @@ import {
   setLaunchOptions,
 } from "./steam";
 import {
+  getAggregateDownloadPercent,
   getCollectionRun,
   getDownloads,
   setDetailOrigin,
@@ -1610,7 +1611,10 @@ function DownloadsButton() {
   }, []);
   const active = getDownloads().length;
   const run = getCollectionRun();
-  const busy = active > 0 || Boolean(run?.running);
+  // The button itself is the progress bar: orange fills left-to-right
+  // with the aggregate percent (all active downloads averaged; during a
+  // collection run, finished mods blend with the live one).
+  const pct = getAggregateDownloadPercent(run);
   const label = run?.running
     ? `Downloads · collection ${run.finished}/${run.total}`
     : active > 0
@@ -1619,13 +1623,22 @@ function DownloadsButton() {
   return (
     <PanelSectionRow>
       <DialogButton
-        style={{ width: "100%" }}
+        style={{
+          width: "100%",
+          ...(pct !== undefined
+            ? {
+                background: `linear-gradient(90deg, rgba(218,142,53,0.55) ${pct}%, rgba(255,255,255,0.08) ${pct}%)`,
+                color: "#fff",
+                transition: "background 0.3s linear",
+              }
+            : {}),
+        }}
         onClick={() => {
           Router.CloseSideMenus();
           Navigation.Navigate(DOWNLOADS_ROUTE);
         }}
       >
-        {busy ? `⏳ ${label}` : label}
+        {label}
       </DialogButton>
     </PanelSectionRow>
   );

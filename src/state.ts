@@ -154,6 +154,34 @@ export function updateDownload(
   notifyDownloads();
 }
 
+/** Remove an entry without recording an outcome - parked installs
+ * (needs_choice/wizard) re-register when the user picks options. */
+export function dropDownload(modId: number): void {
+  if (downloads.delete(modId)) notifyDownloads();
+}
+
+/** Aggregate percent across everything in flight, for the QAM button's
+ * fill: mid-collection this blends finished mods with the live one. */
+export function getAggregateDownloadPercent(
+  run?: CollectionRun
+): number | undefined {
+  const active = Array.from(downloads.values());
+  const avg =
+    active.length > 0
+      ? active.reduce(
+          (sum, d) => sum + (d.phase === "extracting" ? 100 : d.percent),
+          0
+        ) / active.length
+      : undefined;
+  if (run?.running && run.total > 0) {
+    return Math.round(
+      ((run.finished + (avg ?? 0) / 100) / run.total) * 100
+    );
+  }
+  if (avg === undefined) return undefined;
+  return Math.round(avg);
+}
+
 export function getCompletedDownloads(): ActiveDownload[] {
   return [...completed];
 }
