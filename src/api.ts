@@ -51,6 +51,9 @@ export interface InstallResult {
   ok: boolean;
   folder?: string;
   error?: string;
+  /** Archive is a desktop modding tool (xEdit, patchers) - not
+   * installable on-device; collections show it as skipped, not failed. */
+  unsupported_tool?: boolean;
   /** Option-style archive: the user must pick one of `options` and retry
    * with payload_choice set. */
   needs_choice?: boolean;
@@ -71,11 +74,23 @@ export interface InstalledMod {
   mod_id?: number;
   /** dataDir mode: false when the mod has no plugin file to toggle */
   togglable?: boolean;
+  /** "collection" when installed as part of a collection */
+  source?: string;
+  /** Which collection (registered via registerCollection) */
+  collection_slug?: string;
+}
+
+export interface InstalledCollectionInfo {
+  title: string;
+  thumb_url?: string;
+  mod_count?: number;
 }
 
 export interface InstalledResult {
   ok: boolean;
   mods?: InstalledMod[];
+  /** slug -> display info for collections seen on this game */
+  collections?: Record<string, InstalledCollectionInfo>;
   error?: string;
 }
 
@@ -156,7 +171,8 @@ export const installMod = callable<
     flat_extensions: string[],
     page_version: string,
     record_source: string,
-    witcher_layout: boolean
+    witcher_layout: boolean,
+    collection_slug: string
   ],
   InstallResult
 >("install_mod");
@@ -207,6 +223,17 @@ export const getCollectionManifest = callable<
   [slug: string, game_domain: string],
   { ok: boolean; choices?: Record<string, unknown>; error?: string }
 >("get_collection_manifest");
+
+export const registerCollection = callable<
+  [
+    game_domain: string,
+    slug: string,
+    title: string,
+    thumb_url: string,
+    mod_count: number
+  ],
+  { ok: boolean; error?: string }
+>("register_collection");
 
 export const getFrameworkSetup = callable<
   [game_domain: string],

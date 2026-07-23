@@ -316,6 +316,114 @@ class TestSmapiLoadStatusEndToEnd(unittest.TestCase):
         self.assertFalse(result["ok"])
 
 
+class TestRootFilesInstall(unittest.TestCase):
+    """Root-payload archives (SSE Engine Fixes part 2's preloader) install
+    into the game root, honoring the shipped Vortex override instructions,
+    and uninstall removes exactly those files."""
+
+    DOMAIN = "skyrimspecialedition"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.tmp = tempfile.mkdtemp()
+        self.scratch = os.path.join(self.tmp, "scratch")
+        self.game = os.path.join(self.tmp, "game")
+        os.makedirs(self.scratch)
+        os.makedirs(self.game)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _put(self, rel, content="x"):
+        path = os.path.join(self.scratch, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def test_vortex_override_copy_parsing(self):
+        self._put(
+            "vortex_override_instructions.json",
+            json.dumps(
+                {
+                    "instructions": [
+                        {"type": "copy", "source": "a.dll", "destination": "a.dll"},
+                        {"type": "mkdir", "destination": "junk"},
+                        {"type": "copy", "source": "../evil", "destination": "e"},
+                    ]
+                }
+            ),
+        )
+        override = main._find_vortex_override(self.scratch)
+        self.assertIsNotNone(override)
+        copies = main._vortex_override_copies(override)
+        # mkdir ignored, path traversal rejected
+        self.assertEqual(copies, [("a.dll", "a.dll")])
+
+    def test_unparseable_override_yields_no_copies(self):
+        self._put("vortex_override_instructions.json", "{not json")
+        override = main._find_vortex_override(self.scratch)
+        self.assertEqual(main._vortex_override_copies(override), [])
+
+    def test_install_and_uninstall_roundtrip(self):
+        self._put("d3dx9_42.dll", "preloader")
+        self._put(
+            "vortex_override_instructions.json",
+            json.dumps(
+                {
+                    "instructions": [
+                        {
+                            "type": "copy",
+                            "source": "d3dx9_42.dll",
+                            "destination": "d3dx9_42.dll",
+                        }
+                    ]
+                }
+            ),
+        )
+        result = run(
+            main.Plugin()._install_root_files(
+                self.scratch, self.game, self.DOMAIN, 32444, 999,
+                "part2.7z", "SSE Engine Fixes part 2", "1.0", "",
+                "collection", "test-collection",
+            )
+        )
+        self.assertTrue(result["ok"])
+        installed = os.path.join(self.game, "d3dx9_42.dll")
+        self.assertTrue(os.path.isfile(installed))
+        rec = (
+            main._load_settings()["installed"][self.DOMAIN][result["folder"]]
+        )
+        self.assertEqual(rec["mode"], "files")
+        self.assertEqual(rec["target"], ".")
+        self.assertEqual(rec["files"], ["d3dx9_42.dll"])
+        self.assertEqual(rec["collection_slug"], "test-collection")
+        # uninstall removes exactly the recorded files + the record
+        settings = main._load_settings()
+        self.assertTrue(
+            main._remove_files_record(
+                self.DOMAIN, result["folder"], self.game, settings
+            )
+        )
+        self.assertFalse(os.path.exists(installed))
+        self.assertNotIn(
+            result["folder"], settings["installed"][self.DOMAIN]
+        )
+
+    def test_no_override_copies_everything_but_instructions(self):
+        self._put("winhttp.dll")
+        self._put("tbb.dll")
+        result = run(
+            main.Plugin()._install_root_files(
+                self.scratch, self.game, self.DOMAIN, 1, 2,
+                "x.zip", "Preloader", "1.0", "", "", "",
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(os.path.isfile(os.path.join(self.game, "winhttp.dll")))
+        self.assertTrue(os.path.isfile(os.path.join(self.game, "tbb.dll")))
+
+
 class TestHelpers(unittest.TestCase):
     def test_safe_name_strips_unsafe_characters(self):
         self.assertEqual(main._safe_name("Iron/clad:铁甲"), "Ironclad")

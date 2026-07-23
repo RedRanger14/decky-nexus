@@ -20,12 +20,14 @@ import {
   getInstalledMods,
   getModDetails,
   installFomodAuto,
+  registerCollection,
 } from "./api";
 import { modeParams } from "./games";
 import { installPinned } from "./install";
 import {
   CollectionRowState,
   beginCollectionRun,
+  dropDownload,
   endCollectionRun,
   getCollectionRun,
   getDownloadPercent,
@@ -33,6 +35,7 @@ import {
   setCollectionRow,
   subscribeCollectionRun,
   subscribeDownloads,
+  updateDownload,
 } from "./state";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
 
@@ -114,6 +117,15 @@ export function CollectionPage() {
       ? [...remaining, ...optionalRemaining]
       : remaining;
     beginCollectionRun(collection.slug, queue.length);
+    // My Mods groups these installs under the collection - remember its
+    // display info (records only carry the slug).
+    registerCollection(
+      game.nexusDomain,
+      collection.slug,
+      collection.name,
+      collection.thumbnailUrl ?? "",
+      detail.files.length
+    ).catch(() => {});
     try {
       // The curator's FOMOD selections travel in the collection manifest -
       // fetch once so wizard mods install hands-off with their choices.
@@ -129,38 +141,62 @@ export function CollectionPage() {
       }
       let failures = 0;
       for (const f of queue) {
-        setCollectionRow(f.fileId, "installing");
-        let result = await installPinned(
-          game,
-          f.modId,
-          f.fileId,
-          f.fileName,
-          f.modName,
-          f.version
-        );
-        if (result.needs_fomod && result.fomod_token) {
-          const choices = curatorChoices[String(f.fileId)];
-          // Curator choices when recorded; wizard defaults otherwise -
-          // either way the collection keeps installing hands-off.
-          result = await installFomodAuto(
-            result.fomod_token,
-            choices ?? {}
+        // One mod must never kill the batch: a thrown transport error
+        // used to abandon the whole remaining queue (87 of 99 left).
+        try {
+          setCollectionRow(f.fileId, "installing");
+          let result = await installPinned(
+            game,
+            f.modId,
+            f.fileId,
+            f.fileName,
+            f.modName,
+            f.version,
+            collection.slug
           );
-        }
-        if (result.ok) {
-          setCollectionRow(f.fileId, "done");
-        } else if (result.needs_choice) {
-          setCollectionRow(f.fileId, "skipped");
-          toaster.toast({
-            title: `${f.modName}: needs manual choices`,
-            body: "Open its mod page to pick options",
-          });
-        } else {
+          if (result.needs_fomod && result.fomod_token) {
+            const choices = curatorChoices[String(f.fileId)];
+            // Curator choices when recorded; wizard defaults otherwise -
+            // either way the collection keeps installing hands-off.
+            result = await installFomodAuto(
+              result.fomod_token,
+              choices ?? {}
+            );
+          }
+          if (result.ok) {
+            setCollectionRow(f.fileId, "done");
+          } else if (result.needs_choice) {
+            dropDownload(f.modId);
+            setCollectionRow(f.fileId, "skipped");
+            toaster.toast({
+              title: `${f.modName}: needs manual choices`,
+              body: "Open its mod page to pick options",
+            });
+          } else if (result.unsupported_tool) {
+            // Desktop tools (xEdit, patchers) aren't failures - the
+            // game never loads them; they just can't live here.
+            dropDownload(f.modId);
+            setCollectionRow(f.fileId, "skipped");
+            toaster.toast({
+              title: `${f.modName}: PC tool - skipped`,
+              body: "Utilities like this run on a desktop, not in-game",
+            });
+          } else {
+            failures += 1;
+            setCollectionRow(f.fileId, "failed");
+            updateDownload(f.modId, "error", 0);
+            toaster.toast({
+              title: `${f.modName} failed`,
+              body: result.error ?? "",
+            });
+          }
+        } catch (e) {
           failures += 1;
           setCollectionRow(f.fileId, "failed");
+          updateDownload(f.modId, "error", 0);
           toaster.toast({
             title: `${f.modName} failed`,
-            body: result.error ?? "",
+            body: String(e),
           });
         }
       }
@@ -295,6 +331,26 @@ export function CollectionPage() {
             Back
           </DialogButton>
         </Focusable>
+
+        {/* Partial without a run of ours = the user already owns some of
+            these mods (individual installs, another collection) - say so,
+            or the shrunken count reads as stale cache. */}
+        {detail &&
+          !installing &&
+          !partialFromRun &&
+          remaining.length > 0 &&
+          remaining.length < required.length && (
+            <div
+              style={{
+                fontSize: "12.5px",
+                opacity: 0.7,
+                margin: "-6px 0 12px",
+              }}
+            >
+              {required.length - remaining.length} of this collection's mods
+              are already installed - only the missing ones will download.
+            </div>
+          )}
 
         {error && (
           <div style={{ color: "#ff8a8a", padding: "8px 0" }}>{error}</div>

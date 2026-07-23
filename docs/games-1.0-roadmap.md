@@ -352,3 +352,22 @@ Subnautica 2 when its entry lands. Original assessment below.
   crashed collection runs). Write the record incrementally (journal the
   file list as it's copied, mark complete at the end) so an interrupted
   install is visible and cleanable instead of invisible.
+
+## Feature backlog: My Mods "Health check" (requested 2026-07-23)
+
+A diagnostics section on the My Mods screen that surfaces conflicts,
+errors and warnings per game: missing masters (esp requires an esm that
+isn't installed/enabled), framework missing or version-outdated while
+mods need it, launch command pointing at a missing loader (detectable
+via get_launch_options_state), stale records, file conflicts between
+mods (two records claiming the same path - the per-file manifests make
+this cheap to compute), and known device quirks. Ties together the
+existing masters-checker and stash-disable backlog items.
+
+## Open investigation: SSE FPS Stabilizer archive layout
+
+Its archive (top level: "00 Data", "Fomod") produced "no payload" during
+the essential-mods run - "00 Data" wasn't recognized by _payload_options
+and the fomod dir has no ModuleConfig (or it would have run the wizard).
+v0.17.0 logs the second level on no-payload failures; the next attempt
+will show exactly what's inside "00 Data" so the detector can learn it.

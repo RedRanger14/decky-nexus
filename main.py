@@ -816,6 +816,40 @@ def _payload_options(scratch: str, max_depth: int = 3) -> list:
     return options
 
 
+def _find_vortex_override(scratch: str):
+    """Path of a top-level vortex_override_instructions.json, if the
+    archive ships one (root-payload mods like SSE Engine Fixes part 2 use
+    it to say where their files belong)."""
+    try:
+        for name in os.listdir(scratch):
+            if name.lower() == "vortex_override_instructions.json":
+                return os.path.join(scratch, name)
+    except OSError:
+        pass
+    return None
+
+
+def _vortex_override_copies(override_path: str) -> list:
+    """(source, destination) pairs from Vortex override instructions.
+    Only 'copy' instructions are honored; anything unparseable yields []
+    so the caller falls back to copy-everything-to-root."""
+    try:
+        with open(override_path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    instructions = data if isinstance(data, list) else data.get("instructions")
+    out = []
+    for ins in instructions or []:
+        if not isinstance(ins, dict) or ins.get("type") != "copy":
+            continue
+        src = str(ins.get("source") or "")
+        dst = str(ins.get("destination") or src)
+        if src and _safe_rel_path(src) and _safe_rel_path(dst):
+            out.append((src, dst))
+    return out
+
+
 def _remove_data_dir_record(
     game_domain: str, record_key: str, data_path: str,
     app_id: int, plugins_subpath: str, settings: dict,
@@ -849,6 +883,42 @@ def _remove_data_dir_record(
     plugins = rec.get("plugins") or []
     if plugins and plugins_subpath:
         _remove_plugins(_plugins_txt_path(app_id, plugins_subpath), plugins)
+    records.pop(record_key, None)
+    return True
+
+
+def _remove_files_record(
+    game_domain: str, record_key: str, install_path: str, settings: dict
+) -> bool:
+    """Delete a files-mode record's files (paths relative to the game
+    root or the record's target dir), prune empty dirs, drop the record.
+    Returns True if such a record existed."""
+    records = settings.get("installed", {}).get(game_domain, {})
+    rec = records.get(record_key)
+    if not rec or rec.get("mode") != "files":
+        return False
+    target = rec.get("target") or "."
+    base = (
+        install_path
+        if target in (".", "")
+        else os.path.join(install_path, *target.split("/"))
+    )
+    for rel in rec.get("files") or []:
+        if not _safe_rel_path(rel):
+            continue
+        path = os.path.join(base, *rel.split("/"))
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            pass
+        parent = os.path.dirname(path)
+        while len(parent) > len(base):
+            try:
+                os.rmdir(parent)
+            except OSError:
+                break
+            parent = os.path.dirname(parent)
     records.pop(record_key, None)
     return True
 
@@ -2788,6 +2858,7 @@ query Link($slug: String!, $domainName: String!) {
         page_version: str = "",
         record_source: str = "",
         witcher_layout: bool = False,
+        collection_slug: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -2817,11 +2888,78 @@ query Link($slug: String!, $domainName: String!) {
                 page_version,
                 record_source,
                 witcher_layout,
+                collection_slug,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
             await _emit_progress(mod_id, "error", 0, str(e))
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def _install_root_files(
+        self, scratch: str, install_path: str, game_domain: str,
+        mod_id: int, file_id: int, file_name: str, mod_name: str,
+        mod_version: str, page_version: str, record_source: str,
+        collection_slug: str,
+    ) -> dict:
+        """Install an archive into the GAME ROOT following its Vortex
+        override instructions (root-payload mods like SSE Engine Fixes
+        part 2: preloader dlls that live beside the game exe, not in
+        Data/). Falls back to copying everything when the instructions
+        don't parse. Records mode='files' target='.' so uninstall removes
+        exactly these files."""
+        override = _find_vortex_override(scratch)
+        copies = _vortex_override_copies(override) if override else []
+        if not copies:
+            copies = []
+            for root, _dirs, names in os.walk(scratch):
+                for name in names:
+                    rel = os.path.relpath(os.path.join(root, name), scratch)
+                    rel = rel.replace(os.sep, "/")
+                    if rel.lower() == "vortex_override_instructions.json":
+                        continue
+                    if _safe_rel_path(rel):
+                        copies.append((rel, rel))
+        installed_rel = []
+        for src_rel, dst_rel in copies:
+            src = os.path.join(scratch, *src_rel.split("/"))
+            if not os.path.isfile(src):
+                continue
+            dst = os.path.join(install_path, *dst_rel.split("/"))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if os.path.isfile(dst):
+                os.remove(dst)
+            shutil.move(src, dst)
+            installed_rel.append(dst_rel)
+        _force_rmtree(scratch)
+        if not installed_rel:
+            await _emit_progress(mod_id, "error", 0, "no root files")
+            return {"ok": False, "error": "Nothing usable in this archive"}
+        settings = _load_settings()
+        installed = settings.setdefault("installed", {}).setdefault(
+            game_domain, {}
+        )
+        record_key = _safe_name(mod_name)
+        installed[record_key] = {
+            "mod_id": mod_id,
+            "file_id": file_id,
+            "name": mod_name,
+            "version": mod_version,
+            "file_name": file_name,
+            "installed_at": int(time.time()),
+            "page_version": page_version,
+            "source": record_source,
+            "collection_slug": collection_slug,
+            "mode": "files",
+            "target": ".",
+            "files": installed_rel,
+        }
+        _save_settings(settings)
+        decky.logger.info(
+            f"installed {mod_name!r} into game root "
+            f"({len(installed_rel)} files, vortex override: {bool(override)})"
+        )
+        await _emit_progress(mod_id, "done", 100)
+        return {"ok": True, "folder": record_key}
 
     async def _install_mod_inner(
         self,
@@ -2847,14 +2985,17 @@ query Link($slug: String!, $domainName: String!) {
         page_version: str = "",
         record_source: str = "",
         witcher_layout: bool = False,
+        collection_slug: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
         if not api_key:
+            await _emit_progress(mod_id, "error", 0, "not signed in")
             return {"ok": False, "error": "Not signed in"}
 
         install_path, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
         if not os.path.isdir(install_path):
+            await _emit_progress(mod_id, "error", 0, "game not found")
             return {"ok": False, "error": "Game install folder not found"}
 
         # 1) Ask for a download link (Premium-only endpoint; free users need
@@ -2982,6 +3123,7 @@ query Link($slug: String!, $domainName: String!) {
                             "plugins_style": plugins_style,
                             "page_version": page_version,
                             "record_source": record_source,
+                            "collection_slug": collection_slug,
                         }
                         try:
                             os.remove(archive_path)
@@ -3026,6 +3168,7 @@ query Link($slug: String!, $domainName: String!) {
                 payload_dirs = [p for p in payload_dirs if p]
             if not payload_dirs and payload_choice not in ("", "*"):
                 _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, "bad folder choice")
                 return {"ok": False, "error": "Chosen folder wasn't usable"}
             if not payload_dirs:
                 options = _payload_options(scratch)
@@ -3055,12 +3198,60 @@ query Link($slug: String!, $domainName: String!) {
                     }
             payload_dirs = [p for p in payload_dirs if p]
             if not payload_dirs:
+                # Root-payload archives (e.g. SSE Engine Fixes part 2's
+                # preloader): no Data payload, but the mod ships Vortex
+                # override instructions saying where files go - honor them
+                # and install into the game root as a files-mode record.
+                if _find_vortex_override(scratch):
+                    return await self._install_root_files(
+                        scratch, install_path, game_domain, mod_id, file_id,
+                        file_name, mod_name, mod_version, page_version,
+                        record_source, collection_slug,
+                    )
+                top_paths = [os.path.join(scratch, e) for e in entries]
+                # Bare loose files (a BOS _SWAP.ini, a config archive):
+                # nothing to unwrap - the archive root IS the Data payload.
+                if (
+                    entries
+                    and all(os.path.isfile(p) for p in top_paths)
+                    and not any(e.lower().endswith(".exe") for e in entries)
+                ):
+                    payload_dirs = [scratch]
+                else:
+                    exes = [
+                        n
+                        for root, _dirs, names in os.walk(scratch)
+                        for n in names
+                        if n.lower().endswith(".exe")
+                    ]
+                    if exes:
+                        # Desktop modding tools (xEdit, patchers): they
+                        # don't install into the game and can't run here.
+                        _force_rmtree(scratch)
+                        await _emit_progress(mod_id, "error", 0, "pc tool")
+                        return {
+                            "ok": False,
+                            "unsupported_tool": True,
+                            "error": f"{mod_name} looks like a PC modding "
+                            f"tool ({exes[0]}), not a mod the game loads - "
+                            "it needs a desktop setup, so it was skipped.",
+                        }
+            if not payload_dirs:
                 tops = ", ".join(sorted(entries)[:6])
+                # Log one level deeper - top-level names alone have not
+                # been enough to diagnose unrecognized layouts.
+                second = []
+                for e in sorted(entries)[:4]:
+                    p = os.path.join(scratch, e)
+                    if os.path.isdir(p):
+                        inner = ", ".join(sorted(os.listdir(p))[:5])
+                        second.append(f"{e}/[{inner}]")
                 decky.logger.info(
                     f"install {mod_name!r}: no payload; archive top level: "
-                    f"{tops}"
+                    f"{tops}; second level: {'; '.join(second) or '(files only)'}"
                 )
                 _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, "no payload")
                 return {
                     "ok": False,
                     "error": "This archive has no recognizable Data payload "
@@ -3120,6 +3311,7 @@ query Link($slug: String!, $domainName: String!) {
                 "installed_at": int(time.time()),
                 "page_version": page_version,
                 "source": record_source,
+                "collection_slug": collection_slug,
                 "mode": "dataDir",
                 "files": files_rel,
                 "plugins": plugins,
@@ -3168,6 +3360,7 @@ query Link($slug: String!, $domainName: String!) {
                 "installed_at": int(time.time()),
                 "page_version": page_version,
                 "source": record_source,
+                "collection_slug": collection_slug,
                 **route,
             }
             _save_settings(settings)
@@ -3201,6 +3394,7 @@ query Link($slug: String!, $domainName: String!) {
                 "installed_at": int(time.time()),
                 "page_version": page_version,
                 "source": record_source,
+                "collection_slug": collection_slug,
             }
             first_folder = None
             for d in mod_dirs:
@@ -3300,6 +3494,7 @@ query Link($slug: String!, $domainName: String!) {
                 "installed_at": int(time.time()),
                 "page_version": page_version,
                 "source": record_source,
+                "collection_slug": collection_slug,
                 "mode": "files",
                 "target": mods_subdir,
                 "files": moved,
@@ -3349,6 +3544,7 @@ query Link($slug: String!, $domainName: String!) {
                         "installed_at": int(time.time()),
                 "page_version": page_version,
                 "source": record_source,
+                "collection_slug": collection_slug,
                     }
                     if launcher_xml_subpath:
                         module_id = _submodule_id(dst)
@@ -3409,6 +3605,7 @@ query Link($slug: String!, $domainName: String!) {
             "installed_at": int(time.time()),
                 "page_version": page_version,
                 "source": record_source,
+                "collection_slug": collection_slug,
         }
         # Bannerlord-style launcher games: modules need selecting in the
         # launcher's XML config; the Id lives in the module's SubModule.xml.
@@ -3502,6 +3699,7 @@ query Link($slug: String!, $domainName: String!) {
                 "installed_at": int(time.time()),
                 "page_version": entry.get("page_version") or "",
                 "source": entry.get("record_source") or "",
+                "collection_slug": entry.get("collection_slug") or "",
                 "mode": "dataDir",
                 "files": files_rel,
                 "plugins": plugins,
@@ -3950,6 +4148,32 @@ query Link($slug: String!, $domainName: String!) {
         )
         return {"ok": True}
 
+    async def register_collection(
+        self,
+        game_domain: str,
+        slug: str,
+        title: str,
+        thumb_url: str = "",
+        mod_count: int = 0,
+    ) -> dict:
+        """Remember a collection's display info when its install starts -
+        records only carry the slug; My Mods needs the title and banner."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not slug:
+            return {"ok": False, "error": "Missing collection slug"}
+        settings = _load_settings()
+        settings.setdefault("collections", {}).setdefault(game_domain, {})[
+            slug
+        ] = {
+            "title": title or slug,
+            "thumb_url": thumb_url or "",
+            "mod_count": int(mod_count or 0),
+            "at": int(time.time()),
+        }
+        _save_settings(settings)
+        return {"ok": True}
+
     # ---- Installed mods / enable & disable ----------------------------------
 
     async def get_installed_mods(
@@ -3964,7 +4188,8 @@ query Link($slug: String!, $domainName: String!) {
         hidden_folders: list = None,
     ) -> dict:
         if install_mode == "dataDir":
-            records = _load_settings().get("installed", {}).get(game_domain, {})
+            settings = _load_settings()
+            records = settings.get("installed", {}).get(game_domain, {})
             active = set()
             if plugins_subpath:
                 active = _active_plugins(
@@ -3972,7 +4197,25 @@ query Link($slug: String!, $domainName: String!) {
                 )
             results = []
             for key, rec in records.items():
-                if rec.get("mode") != "dataDir":
+                mode = rec.get("mode")
+                if mode == "files":
+                    # Root-files installs (vortex-override payloads) have
+                    # no plugin to toggle - present but always active.
+                    results.append(
+                        {
+                            "folder": key,
+                            "enabled": True,
+                            "tracked": True,
+                            "name": rec.get("name") or key,
+                            "version": rec.get("version") or "",
+                            "mod_id": rec.get("mod_id"),
+                            "togglable": False,
+                            "source": rec.get("source") or "",
+                            "collection_slug": rec.get("collection_slug") or "",
+                        }
+                    )
+                    continue
+                if mode != "dataDir":
                     continue
                 plugins = rec.get("plugins") or []
                 enabled = (not plugins) or any(
@@ -3987,10 +4230,18 @@ query Link($slug: String!, $domainName: String!) {
                         "version": rec.get("version") or "",
                         "mod_id": rec.get("mod_id"),
                         "togglable": bool(plugins),
+                        "source": rec.get("source") or "",
+                        "collection_slug": rec.get("collection_slug") or "",
                     }
                 )
             results.sort(key=lambda m: (m["name"] or "").lower())
-            return {"ok": True, "mods": results}
+            return {
+                "ok": True,
+                "mods": results,
+                "collections": settings.get("collections", {}).get(
+                    game_domain, {}
+                ),
+            }
 
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
         records = _load_settings().get("installed", {}).get(game_domain, {})
@@ -4014,6 +4265,9 @@ query Link($slug: String!, $domainName: String!) {
                         "name": (rec or {}).get("name") or folder,
                         "version": (rec or {}).get("version") or "",
                         "mod_id": (rec or {}).get("mod_id"),
+                        "source": (rec or {}).get("source") or "",
+                        "collection_slug": (rec or {}).get("collection_slug")
+                        or "",
                     }
                 )
 
@@ -4037,6 +4291,8 @@ query Link($slug: String!, $domainName: String!) {
                         "version": rec.get("version") or "",
                         "mod_id": rec.get("mod_id"),
                         "togglable": False,
+                        "source": rec.get("source") or "",
+                        "collection_slug": rec.get("collection_slug") or "",
                     }
                 )
                 continue
@@ -4056,12 +4312,20 @@ query Link($slug: String!, $domainName: String!) {
                     "name": rec.get("name") or key,
                     "version": rec.get("version") or "",
                     "mod_id": rec.get("mod_id"),
+                    "source": rec.get("source") or "",
+                    "collection_slug": rec.get("collection_slug") or "",
                 }
             )
         # Stable alphabetical order regardless of enabled state - toggling a
         # mod must not make it jump around the list.
         results.sort(key=lambda m: (m["name"] or m["folder"]).lower())
-        return {"ok": True, "mods": results}
+        return {
+            "ok": True,
+            "mods": results,
+            "collections": _load_settings().get("collections", {}).get(
+                game_domain, {}
+            ),
+        }
 
     async def set_mod_enabled(
         self,
@@ -4226,7 +4490,15 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Invalid mod folder name"}
         if install_mode == "dataDir":
             settings = _load_settings()
-            _, data_path, _unused = _game_paths(install_dir, mods_subdir)
+            install_path, data_path, _unused = _game_paths(
+                install_dir, mods_subdir
+            )
+            # Root-files records (vortex-override installs like the Engine
+            # Fixes preloader) coexist with dataDir manifests here.
+            if _remove_files_record(game_domain, folder, install_path, settings):
+                _save_settings(settings)
+                decky.logger.info(f"uninstalled root-files mod {folder!r}")
+                return {"ok": True}
             if not _remove_data_dir_record(
                 game_domain, folder, data_path, app_id, plugins_subpath, settings
             ):
