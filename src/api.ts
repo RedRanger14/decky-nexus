@@ -84,6 +84,9 @@ export interface InstalledCollectionInfo {
   title: string;
   thumb_url?: string;
   mod_count?: number;
+  /** Member mod ids - membership beats record slugs (a shared mod
+   * installed by another collection still belongs here). */
+  mod_ids?: number[];
 }
 
 export interface InstalledResult {
@@ -272,9 +275,11 @@ export const registerCollection = callable<
     slug: string,
     title: string,
     thumb_url: string,
-    mod_count: number
+    mod_count: number,
+    mod_ids: number[],
+    only_if_known: boolean
   ],
-  { ok: boolean; error?: string }
+  { ok: boolean; skipped?: boolean; error?: string }
 >("register_collection");
 
 export const getFrameworkSetup = callable<
@@ -454,6 +459,9 @@ export interface CollectionFile {
   version: string;
   sizeKb: number;
   optional: boolean;
+  /** The mod's own game domain - collections pin cross-domain utilities
+   * (e.g. Bethini Pie under "site") that can't install into this game. */
+  domain?: string;
 }
 
 export interface CollectionDetail {

@@ -31,6 +31,7 @@ import { PayloadChoiceModal } from "./ChoiceModal";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 import { modeParams } from "./games";
 import { finishFomod, installPinned } from "./install";
+import { backAction } from "./navRules";
 import {
   CollectionRowState,
   beginCollectionRun,
@@ -113,8 +114,21 @@ export function CollectionPage() {
   useEffect(() => {
     if (!sel) return;
     getCollection(sel.collection.slug, sel.game.nexusDomain).then((r) => {
-      if (r.ok && r.collection) setDetail(r.collection);
-      else setError(r.error ?? "Could not load collection");
+      if (r.ok && r.collection) {
+        setDetail(r.collection);
+        // Refresh an ALREADY-registered collection's stored info (title,
+        // banner, member ids) - entries registered before mod_ids
+        // existed undercount in My Mods until this runs.
+        registerCollection(
+          sel.game.nexusDomain,
+          sel.collection.slug,
+          sel.collection.name || r.collection.name,
+          sel.collection.thumbnailUrl ?? "",
+          r.collection.files.length,
+          r.collection.files.map((f) => f.modId),
+          true
+        ).catch(() => {});
+      } else setError(r.error ?? "Could not load collection");
     });
     getCollectionAttention(sel.game.nexusDomain, sel.collection.slug).then(
       (r) => setAttention(r.items ?? [])
@@ -157,6 +171,11 @@ export function CollectionPage() {
   // "Resume" only makes sense for a run THIS page started - already
   // owning some of a collection's mods individually is not a resume.
   const partialFromRun = runIsOurs && !run!.running && run!.finished > 0;
+  // Actually-installed count (skipped tools are NOT installed - the old
+  // required-minus-remaining math counted them and overstated).
+  const installedRequiredCount = required.filter(
+    (f) => installedIds.has(f.modId) || rowState[f.fileId] === "done"
+  ).length;
 
   const installAll = async (includeOptional = false) => {
     if (!detail || installing) return;
@@ -175,7 +194,9 @@ export function CollectionPage() {
       collection.slug,
       collection.name,
       collection.thumbnailUrl ?? "",
-      detail.files.length
+      detail.files.length,
+      detail.files.map((f) => f.modId),
+      false
     ).catch(() => {});
     const freshAttention: AttentionItem[] = [];
     try {
@@ -196,6 +217,21 @@ export function CollectionPage() {
         // One mod must never kill the batch: a thrown transport error
         // used to abandon the whole remaining queue (87 of 99 left).
         try {
+          if (f.domain && f.domain !== game.nexusDomain) {
+            // Cross-domain pin (Bethini Pie lives under "site"): a
+            // desktop utility this game can never load - skip for good.
+            setCollectionRow(f.fileId, "skipped");
+            freshAttention.push({
+              file_id: f.fileId,
+              mod_id: f.modId,
+              mod_name: f.modName,
+              file_name: f.fileName,
+              version: f.version,
+              reason: "tool",
+              options: [],
+            });
+            continue;
+          }
           setCollectionRow(f.fileId, "installing");
           let result = await installPinned(
             game,
@@ -459,11 +495,15 @@ export function CollectionPage() {
   return (
     <Focusable
       onCancel={() => {
-        // QAM first so gamepad focus lands INSIDE it - then pop the page.
-        // The old order left focus on the page behind the menu, so B in
-        // the QAM re-triggered page handlers instead of closing it.
-        Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
-        setTimeout(() => Navigation.NavigateBack(), 50);
+        // This page is always PUSHED on top of another (store home,
+        // downloads) - B pops back there. Opening the QAM here trapped
+        // users in a B-loop (see navRules + tests/nav.test.mjs).
+        if (backAction("collection") === "pop") {
+          Navigation.NavigateBack();
+        } else {
+          Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
+          setTimeout(() => Navigation.NavigateBack(), 50);
+        }
       }}
       style={{ marginTop: "40px", height: "calc(100% - 40px)" }}
     >
@@ -571,7 +611,7 @@ export function CollectionPage() {
           !installing &&
           !partialFromRun &&
           remaining.length > 0 &&
-          remaining.length < required.length && (
+          installedRequiredCount > 0 && (
             <div
               style={{
                 fontSize: "12.5px",
@@ -579,8 +619,8 @@ export function CollectionPage() {
                 margin: "-6px 0 12px",
               }}
             >
-              {required.length - remaining.length} of this collection's mods
-              are already installed - only the missing ones will download.
+              {installedRequiredCount} of this collection's mods are already
+              installed - only the missing ones will download.
             </div>
           )}
         {toolSkips.length > 0 && !installing && (

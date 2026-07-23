@@ -158,7 +158,7 @@ function ModRow({
           padding: "6px 12px",
           fontSize: "12px",
           flexShrink: 0,
-          color: "#ff8a8a",
+          opacity: 0.85,
         }}
       >
         Uninstall
@@ -311,25 +311,44 @@ export function ManagerPage() {
   };
 
   // ---- split each game's mods into loose vs per-collection ----
-  const looseByGame = (groups ?? []).map(({ game, mods }) => ({
-    game,
-    mods: mods.filter((m) => collectionSlugOf(m) === undefined),
-  }));
-  const collectionsByGame = (groups ?? []).map(
-    ({ game, mods, collections }) => {
-      const bySlug = new Map<string, InstalledMod[]>();
-      for (const m of mods) {
-        const slug = collectionSlugOf(m);
-        if (!slug) continue;
-        if (!bySlug.has(slug)) bySlug.set(slug, []);
-        bySlug.get(slug)!.push(m);
-      }
-      return { game, bySlug, collections };
+  // Membership comes from the collection's registered mod-id list when
+  // available: a mod installed individually (or by another collection)
+  // still counts toward every collection that pins it. Record slugs are
+  // the fallback for entries registered before mod_ids existed.
+  interface CollectionEntry {
+    slug: string;
+    info?: InstalledCollectionInfo;
+    members: InstalledMod[];
+  }
+  const grouped = (groups ?? []).map(({ game, mods, collections }) => {
+    const claimed = new Set<string>();
+    const entries: CollectionEntry[] = [];
+    for (const [slug, info] of Object.entries(collections)) {
+      const idSet = new Set(info.mod_ids ?? []);
+      const members = mods.filter(
+        (m) =>
+          (m.mod_id !== undefined && idSet.has(m.mod_id)) ||
+          m.collection_slug === slug
+      );
+      if (members.length === 0) continue;
+      entries.push({ slug, info, members });
+      members.forEach((m) => claimed.add(m.folder));
     }
-  );
-  const looseTotal = looseByGame.reduce((n, g) => n + g.mods.length, 0);
-  const collectionsTotal = collectionsByGame.reduce(
-    (n, g) => n + g.bySlug.size,
+    const legacy = mods.filter(
+      (m) => collectionSlugOf(m) !== undefined && !claimed.has(m.folder)
+    );
+    if (legacy.length > 0) {
+      entries.push({ slug: LEGACY_SLUG, members: legacy });
+      legacy.forEach((m) => claimed.add(m.folder));
+    }
+    const loose = mods.filter(
+      (m) => !claimed.has(m.folder) && collectionSlugOf(m) === undefined
+    );
+    return { game, loose, entries };
+  });
+  const looseTotal = grouped.reduce((n, g) => n + g.loose.length, 0);
+  const collectionsTotal = grouped.reduce(
+    (n, g) => n + g.entries.length,
     0
   );
 
@@ -388,9 +407,9 @@ export function ManagerPage() {
                   No individually installed mods.
                 </div>
               )}
-              {looseByGame
-                .filter((g) => g.mods.length > 0)
-                .map(({ game, mods }) => (
+              {grouped
+                .filter((g) => g.loose.length > 0)
+                .map(({ game, loose: mods }) => (
                   <div key={game.appId} style={{ marginBottom: "14px" }}>
                     <div
                       style={{
@@ -436,9 +455,9 @@ export function ManagerPage() {
                   No collections installed yet - find them on the Store tab.
                 </div>
               )}
-              {collectionsByGame
-                .filter((g) => g.bySlug.size > 0)
-                .map(({ game, bySlug, collections }) => (
+              {grouped
+                .filter((g) => g.entries.length > 0)
+                .map(({ game, entries }) => (
                   <div key={game.appId} style={{ marginBottom: "14px" }}>
                     <div
                       style={{
@@ -457,9 +476,8 @@ export function ManagerPage() {
                         gap: "6px",
                       }}
                     >
-                      {Array.from(bySlug.entries()).map(([slug, members]) => {
+                      {entries.map(({ slug, info, members }) => {
                         const key = `${game.appId}:${slug}`;
-                        const info = collections[slug];
                         const title =
                           slug === LEGACY_SLUG
                             ? "Collection (installed before v0.17)"

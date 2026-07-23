@@ -22,7 +22,7 @@ import {
   routerHook,
   toaster,
 } from "@decky/api";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { FaEye, FaPuzzlePiece } from "react-icons/fa";
 
 import {
@@ -1779,10 +1779,26 @@ function VersionBadge() {
   );
 }
 
+/** The QAM restores its last scroll/focus position, so the panel could
+ * open scrolled to the bottom - walk the scroll ancestors back to the
+ * top on every mount (same trick as the FOMOD wizard's step reset). */
+function ScrollToTopOnMount() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let el: HTMLElement | null = ref.current;
+    while (el) {
+      if (el.scrollTop) el.scrollTop = 0;
+      el = el.parentElement;
+    }
+  }, []);
+  return <div ref={ref} />;
+}
+
 function Content() {
   const ctx = resolveGameContext();
   return (
     <>
+      <ScrollToTopOnMount />
       <VersionBadge />
       <PanelSection>
         <UpdatesButton scopedGame={ctx.game} />
