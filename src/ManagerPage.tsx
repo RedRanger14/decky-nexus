@@ -1,6 +1,6 @@
 // "My Mods": everything installed across every supported game - the
-// full-screen mod manager. Two views: loose Mods (default) and
-// Collections (expandable, showing the mods each one installed).
+// full-screen mod manager. Split view: loose mods on the left,
+// collections (expandable, with whole-collection toggles) on the right.
 // (Load-order editing and a health-check section are future additions.)
 import {
   ConfirmModal,
@@ -24,6 +24,7 @@ import {
 } from "./api";
 import { ALL_GAMES, SupportedGame, modeParams } from "./games";
 import { NEXUS_ORANGE } from "./theme";
+import { OrangeToggle } from "./Toggle";
 import { TabBar, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
@@ -59,6 +60,7 @@ function Thumb({
         src={url}
         alt=""
         loading="lazy"
+        decoding="async"
         style={{
           width: `${size.w}px`,
           height: `${size.h}px`,
@@ -81,7 +83,7 @@ function Thumb({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: `${Math.round(size.h * 0.5)}px`,
+        fontSize: `${Math.round(size.h * 0.45)}px`,
         opacity: 0.7,
       }}
     >
@@ -111,7 +113,7 @@ function ModRow({
         display: "flex",
         alignItems: "center",
         gap: "10px",
-        padding: "6px 10px",
+        padding: "8px 10px",
         background: "rgba(255,255,255,0.05)",
         borderRadius: "4px",
         opacity: mod.enabled ? 1 : 0.6,
@@ -119,7 +121,7 @@ function ModRow({
     >
       <Thumb
         url={thumb}
-        size={{ w: 46, h: 30 }}
+        size={{ w: 64, h: 40 }}
         fallback={(mod.name ?? mod.folder).charAt(0).toUpperCase()}
       />
       <div style={{ flexGrow: 1, minWidth: 0 }}>
@@ -141,19 +143,11 @@ function ModRow({
         </div>
       </div>
       {mod.togglable !== false && (
-        <DialogButton
+        <OrangeToggle
+          checked={mod.enabled}
           disabled={busy}
-          onClick={() => onToggle(game, mod)}
-          style={{
-            minWidth: "0",
-            width: "auto",
-            padding: "6px 14px",
-            fontSize: "12.5px",
-            flexShrink: 0,
-          }}
-        >
-          {busy ? "…" : mod.enabled ? "Disable" : "Enable"}
-        </DialogButton>
+          onChange={() => onToggle(game, mod)}
+        />
       )}
       <DialogButton
         disabled={busy}
@@ -161,8 +155,8 @@ function ModRow({
         style={{
           minWidth: "0",
           width: "auto",
-          padding: "6px 14px",
-          fontSize: "12.5px",
+          padding: "6px 12px",
+          fontSize: "12px",
           flexShrink: 0,
           color: "#ff8a8a",
         }}
@@ -177,7 +171,6 @@ export function ManagerPage() {
   const [groups, setGroups] = useState<GameMods[] | undefined>();
   const [busyKey, setBusyKey] = useState<string | undefined>();
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
-  const [view, setView] = useState<"mods" | "collections">("mods");
   const [openCollections, setOpenCollections] = useState<Set<string>>(
     new Set()
   );
@@ -198,8 +191,8 @@ export function ManagerPage() {
       }
     }
     setGroups(found);
-    // Thumbnails arrive lazily: one batch lookup per game, merged in as
-    // they land - rows render immediately with placeholders.
+    // Thumbnails arrive lazily: one batched lookup per game, merged in
+    // as they land - rows render immediately with placeholders.
     for (const { game, mods } of found) {
       const ids = Array.from(
         new Set(
@@ -255,6 +248,42 @@ export function ManagerPage() {
     }
   };
 
+  /** Whole-collection switch: flips every toggleable member. */
+  const toggleCollection = async (
+    game: SupportedGame,
+    slug: string,
+    members: InstalledMod[],
+    enable: boolean
+  ) => {
+    const key = `${game.appId}:coll:${slug}`;
+    setBusyKey(key);
+    try {
+      for (const mod of members) {
+        if (mod.togglable === false || mod.enabled === enable) continue;
+        await setModEnabled(
+          game.installDirName,
+          game.modsSubdir,
+          mod.folder,
+          enable,
+          game.installMode ?? "folder",
+          game.nexusDomain,
+          game.appId,
+          game.pluginsTxtSubpath ?? "",
+          game.pluginsTxtStyle ?? "starred"
+        );
+      }
+      toaster.toast({
+        title: enable ? "Collection enabled" : "Collection disabled",
+        body: `${members.filter((m) => m.togglable !== false).length} mods ${
+          enable ? "activated" : "deactivated"
+        }`,
+      });
+    } finally {
+      setBusyKey(undefined);
+      refresh();
+    }
+  };
+
   const remove = (game: SupportedGame, mod: InstalledMod) => {
     showModal(
       <ConfirmModal
@@ -304,25 +333,18 @@ export function ManagerPage() {
     0
   );
 
-  const subTab = (id: "mods" | "collections", label: string) => (
-    <DialogButton
-      onClick={() => setView(id)}
+  const columnHeader = (label: string) => (
+    <div
       style={{
-        minWidth: "0",
-        width: "auto",
-        padding: "6px 18px",
-        fontSize: "13px",
-        fontWeight: view === id ? 600 : 400,
-        borderBottom:
-          view === id
-            ? `2px solid ${NEXUS_ORANGE}`
-            : "2px solid transparent",
-        borderRadius: "4px 4px 0 0",
-        background: view === id ? "rgba(218,142,53,0.12)" : "transparent",
+        fontSize: "15px",
+        fontWeight: 700,
+        padding: "0 0 6px",
+        borderBottom: `2px solid ${NEXUS_ORANGE}55`,
+        marginBottom: "10px",
       }}
     >
       {label}
-    </DialogButton>
+    </div>
   );
 
   return (
@@ -343,20 +365,7 @@ export function ManagerPage() {
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <TabBar currentId="manager" />
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            margin: "6px 0 10px",
-          }}
-        >
-          <h2 style={{ margin: 0 }}>My Mods</h2>
-          <Focusable style={{ display: "flex", gap: "6px" }}>
-            {subTab("mods", `Mods (${looseTotal})`)}
-            {subTab("collections", `Collections (${collectionsTotal})`)}
-          </Focusable>
-        </div>
+        <h2 style={{ margin: "6px 0 12px" }}>My Mods</h2>
 
         {groups === undefined && (
           <div style={{ opacity: 0.8 }}>Reading your games…</div>
@@ -367,170 +376,219 @@ export function ManagerPage() {
           </div>
         )}
 
-        {view === "mods" &&
-          looseByGame
-            .filter((g) => g.mods.length > 0)
-            .map(({ game, mods }) => (
-              <div key={game.appId} style={{ marginBottom: "16px" }}>
-                <div
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: 700,
-                    margin: "6px 0",
-                    opacity: 0.9,
-                  }}
-                >
-                  {game.displayName}{" "}
-                  <span style={{ opacity: 0.55, fontWeight: 400 }}>
-                    · {mods.length} mod{mods.length === 1 ? "" : "s"}
-                  </span>
+        {groups !== undefined && groups.length > 0 && (
+          <div
+            style={{ display: "flex", gap: "20px", alignItems: "flex-start" }}
+          >
+            {/* ---- left: loose mods ---- */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {columnHeader(`Mods (${looseTotal})`)}
+              {looseTotal === 0 && (
+                <div style={{ opacity: 0.65, fontSize: "12.5px" }}>
+                  No individually installed mods.
                 </div>
-                <Focusable
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "4px",
-                  }}
-                >
-                  {mods.map((mod) => (
-                    <ModRow
-                      key={`${game.appId}:${mod.folder}`}
-                      game={game}
-                      mod={mod}
-                      thumb={thumbs[`${game.appId}:${mod.mod_id}`]}
-                      busy={busyKey === `${game.appId}:${mod.folder}`}
-                      onToggle={toggle}
-                      onRemove={remove}
-                    />
-                  ))}
-                </Focusable>
-              </div>
-            ))}
-        {view === "mods" && groups !== undefined && looseTotal === 0 && (
-          <div style={{ opacity: 0.7, fontSize: "13px" }}>
-            No individually installed mods - check the Collections view.
-          </div>
-        )}
+              )}
+              {looseByGame
+                .filter((g) => g.mods.length > 0)
+                .map(({ game, mods }) => (
+                  <div key={game.appId} style={{ marginBottom: "14px" }}>
+                    <div
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        margin: "4px 0 6px",
+                        opacity: 0.85,
+                      }}
+                    >
+                      {game.displayName}{" "}
+                      <span style={{ opacity: 0.55, fontWeight: 400 }}>
+                        · {mods.length}
+                      </span>
+                    </div>
+                    <Focusable
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "5px",
+                      }}
+                    >
+                      {mods.map((mod) => (
+                        <ModRow
+                          key={`${game.appId}:${mod.folder}`}
+                          game={game}
+                          mod={mod}
+                          thumb={thumbs[`${game.appId}:${mod.mod_id}`]}
+                          busy={busyKey === `${game.appId}:${mod.folder}`}
+                          onToggle={toggle}
+                          onRemove={remove}
+                        />
+                      ))}
+                    </Focusable>
+                  </div>
+                ))}
+            </div>
 
-        {view === "collections" &&
-          collectionsByGame
-            .filter((g) => g.bySlug.size > 0)
-            .map(({ game, bySlug, collections }) => (
-              <div key={game.appId} style={{ marginBottom: "16px" }}>
-                <div
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: 700,
-                    margin: "6px 0",
-                    opacity: 0.9,
-                  }}
-                >
-                  {game.displayName}
+            {/* ---- right: collections ---- */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {columnHeader(`Collections (${collectionsTotal})`)}
+              {collectionsTotal === 0 && (
+                <div style={{ opacity: 0.65, fontSize: "12.5px" }}>
+                  No collections installed yet - find them on the Store tab.
                 </div>
-                <Focusable
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "6px",
-                  }}
-                >
-                  {Array.from(bySlug.entries()).map(([slug, mods]) => {
-                    const key = `${game.appId}:${slug}`;
-                    const info = collections[slug];
-                    const title =
-                      slug === LEGACY_SLUG
-                        ? "Collection (installed before v0.17)"
-                        : info?.title ?? slug;
-                    const open = openCollections.has(key);
-                    return (
-                      <div key={key}>
-                        <Focusable
-                          onActivate={() =>
-                            setOpenCollections((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(key)) next.delete(key);
-                              else next.add(key);
-                              return next;
-                            })
-                          }
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "12px",
-                            padding: "8px 10px",
-                            background: "rgba(218,142,53,0.10)",
-                            border: `1px solid ${
-                              open ? NEXUS_ORANGE + "88" : "transparent"
-                            }`,
-                            borderRadius: "6px",
-                          }}
-                        >
-                          <Thumb
-                            url={info?.thumb_url}
-                            size={{ w: 72, h: 44 }}
-                            fallback="📦"
-                          />
-                          <div style={{ flexGrow: 1, minWidth: 0 }}>
-                            <div
+              )}
+              {collectionsByGame
+                .filter((g) => g.bySlug.size > 0)
+                .map(({ game, bySlug, collections }) => (
+                  <div key={game.appId} style={{ marginBottom: "14px" }}>
+                    <div
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        margin: "4px 0 6px",
+                        opacity: 0.85,
+                      }}
+                    >
+                      {game.displayName}
+                    </div>
+                    <Focusable
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "6px",
+                      }}
+                    >
+                      {Array.from(bySlug.entries()).map(([slug, members]) => {
+                        const key = `${game.appId}:${slug}`;
+                        const info = collections[slug];
+                        const title =
+                          slug === LEGACY_SLUG
+                            ? "Collection (installed before v0.17)"
+                            : info?.title ?? slug;
+                        const open = openCollections.has(key);
+                        const toggleable = members.filter(
+                          (m) => m.togglable !== false
+                        );
+                        const allOn =
+                          toggleable.length > 0 &&
+                          toggleable.every((m) => m.enabled);
+                        const collBusy =
+                          busyKey === `${game.appId}:coll:${slug}`;
+                        return (
+                          <div key={key}>
+                            <Focusable
                               style={{
-                                fontSize: "14px",
-                                fontWeight: 600,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "12px",
+                                padding: "8px 10px",
+                                background: "rgba(218,142,53,0.10)",
+                                border: `1px solid ${
+                                  open ? NEXUS_ORANGE + "88" : "transparent"
+                                }`,
+                                borderRadius: "6px",
                               }}
                             >
-                              {title}
-                            </div>
-                            <div style={{ fontSize: "12px", opacity: 0.65 }}>
-                              {mods.length} mod{mods.length === 1 ? "" : "s"}{" "}
-                              installed
-                              {info?.mod_count
-                                ? ` · ${info.mod_count} in the collection`
-                                : ""}
-                            </div>
-                          </div>
-                          <div style={{ fontSize: "16px", opacity: 0.7 }}>
-                            {open ? "▾" : "▸"}
-                          </div>
-                        </Focusable>
-                        {open && (
-                          <Focusable
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: "4px",
-                              margin: "4px 0 4px 16px",
-                            }}
-                          >
-                            {mods.map((mod) => (
-                              <ModRow
-                                key={`${game.appId}:${mod.folder}`}
-                                game={game}
-                                mod={mod}
-                                thumb={thumbs[`${game.appId}:${mod.mod_id}`]}
-                                busy={
-                                  busyKey === `${game.appId}:${mod.folder}`
+                              <Focusable
+                                onActivate={() =>
+                                  setOpenCollections((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(key)) next.delete(key);
+                                    else next.add(key);
+                                    return next;
+                                  })
                                 }
-                                onToggle={toggle}
-                                onRemove={remove}
-                              />
-                            ))}
-                          </Focusable>
-                        )}
-                      </div>
-                    );
-                  })}
-                </Focusable>
-              </div>
-            ))}
-        {view === "collections" &&
-          groups !== undefined &&
-          collectionsTotal === 0 && (
-            <div style={{ opacity: 0.7, fontSize: "13px" }}>
-              No collections installed yet - find them on the Store tab.
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "12px",
+                                  flexGrow: 1,
+                                  minWidth: 0,
+                                }}
+                              >
+                                <Thumb
+                                  url={info?.thumb_url}
+                                  size={{ w: 72, h: 44 }}
+                                  fallback="📦"
+                                />
+                                <div style={{ flexGrow: 1, minWidth: 0 }}>
+                                  <div
+                                    style={{
+                                      fontSize: "14px",
+                                      fontWeight: 600,
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    {title}
+                                  </div>
+                                  <div
+                                    style={{
+                                      fontSize: "12px",
+                                      opacity: 0.65,
+                                    }}
+                                  >
+                                    {members.length} mod
+                                    {members.length === 1 ? "" : "s"} installed
+                                    {info?.mod_count
+                                      ? ` · ${info.mod_count} in the collection`
+                                      : ""}
+                                    {collBusy ? " · switching…" : ""}
+                                  </div>
+                                </div>
+                                <div
+                                  style={{ fontSize: "16px", opacity: 0.7 }}
+                                >
+                                  {open ? "▾" : "▸"}
+                                </div>
+                              </Focusable>
+                              {toggleable.length > 0 && (
+                                <OrangeToggle
+                                  checked={allOn}
+                                  disabled={collBusy}
+                                  onChange={(next) =>
+                                    toggleCollection(game, slug, members, next)
+                                  }
+                                />
+                              )}
+                            </Focusable>
+                            {open && (
+                              <Focusable
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "5px",
+                                  margin: "5px 0 5px 16px",
+                                }}
+                              >
+                                {members.map((mod) => (
+                                  <ModRow
+                                    key={`${game.appId}:${mod.folder}`}
+                                    game={game}
+                                    mod={mod}
+                                    thumb={
+                                      thumbs[`${game.appId}:${mod.mod_id}`]
+                                    }
+                                    busy={
+                                      busyKey ===
+                                        `${game.appId}:${mod.folder}` ||
+                                      collBusy
+                                    }
+                                    onToggle={toggle}
+                                    onRemove={remove}
+                                  />
+                                ))}
+                              </Focusable>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </Focusable>
+                  </div>
+                ))}
             </div>
-          )}
+          </div>
+        )}
       </Scroller>
     </Focusable>
   );
