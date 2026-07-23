@@ -51,6 +51,8 @@ import {
   installFramework,
   registerNxmHandler,
   markLaunchOptionsSet,
+  setFrameworkLaunchOptions,
+  clearFrameworkLaunchOptions,
   setAllModsEnabled,
   setFrameworkEnabled,
   setApiKey,
@@ -205,6 +207,7 @@ function LaunchOptionsModal({
   frameworkName,
   gameName,
   appId,
+  gameDomain,
   options,
   onDone,
   closeModal,
@@ -212,6 +215,7 @@ function LaunchOptionsModal({
   frameworkName: string;
   gameName: string;
   appId: number;
+  gameDomain: string;
   options: string;
   onDone?: () => void;
   closeModal?: () => void;
@@ -241,12 +245,24 @@ function LaunchOptionsModal({
       <ButtonItem
         layout="below"
         description="Replaces any existing launch options for this game"
-        onClick={() => {
-          const ok = setLaunchOptions(appId, options);
+        onClick={async () => {
+          // On devices running decky-launch-options, Steam's field only
+          // holds dlo's wrapper - the real command must go into dlo's
+          // profile (the backend detects this); otherwise set Steam's
+          // field directly via SteamClient.
+          const result = await setFrameworkLaunchOptions(
+            appId,
+            gameDomain,
+            options
+          );
+          const ok =
+            result.ok ||
+            (Boolean(result.use_steam_client) &&
+              setLaunchOptions(appId, options));
           toaster.toast(
             ok
               ? { title: "Launch options set", body: `${gameName} will start through ${frameworkName}` }
-              : { title: "Could not set launch options", body: "Use Copy instead and set them manually" }
+              : { title: "Could not set launch options", body: result.error ?? "Use Copy instead and set them manually" }
           );
           if (ok) {
             onDone?.();
@@ -338,6 +354,7 @@ function CurrentGameSection() {
         frameworkName={game.framework.name}
         gameName={game.displayName}
         appId={game.appId}
+        gameDomain={game.nexusDomain}
         options={game.framework.launchOptionsTemplate.replace(
           "{install_path}",
           status.install_path
@@ -345,6 +362,38 @@ function CurrentGameSection() {
         onDone={markDone}
       />
     );
+  };
+
+  const onClearLaunchOptions = async () => {
+    if (!game) return;
+    const result = await clearFrameworkLaunchOptions(
+      game.appId,
+      game.nexusDomain
+    );
+    // Non-dlo devices: the backend can't touch Steam's field safely while
+    // Steam runs - clear it from here via SteamClient instead.
+    const ok =
+      result.ok &&
+      (!result.use_steam_client || setLaunchOptions(game.appId, ""));
+    toaster.toast(
+      ok
+        ? {
+            title: "Launch command removed",
+            body: `${game.displayName} will start without ${
+              game.framework?.name ?? "the mod loader"
+            }`,
+          }
+        : {
+            title: "Could not clear launch command",
+            body:
+              result.error ??
+              `${game.displayName} page → Properties → Launch Options → clear`,
+          }
+    );
+    if (ok) {
+      setLaunchOptionsSet(false);
+      refreshStatus();
+    }
   };
 
   useEffect(() => {
@@ -389,6 +438,7 @@ function CurrentGameSection() {
               frameworkName={game.framework.name}
               gameName={game.displayName}
               appId={game.appId}
+              gameDomain={game.nexusDomain}
               options={game.framework.launchOptionsTemplate.replace(
                 "{install_path}",
                 result.install_path
@@ -527,14 +577,24 @@ function CurrentGameSection() {
               gone (uninstalled/removed): the game silently won't start.
               Say so instead of letting the user discover it. */}
           {launchOptionsSet && !status.framework_installed && (
-            <PanelSectionRow>
-              <Field label="⚠ Game won't start">
-                {game.displayName} is set to launch through{" "}
-                {game.framework.name}, which isn't installed. Install{" "}
-                {game.framework.name} below (or clear the game's launch
-                options to play without mods).
-              </Field>
-            </PanelSectionRow>
+            <>
+              <PanelSectionRow>
+                <Field label="⚠ Game won't start">
+                  {game.displayName} is set to launch through{" "}
+                  {game.framework.name}, which isn't installed. Install{" "}
+                  {game.framework.name} below, or:
+                </Field>
+              </PanelSectionRow>
+              <PanelSectionRow>
+                <ButtonItem
+                  layout="below"
+                  description="Removes the launch command so the game starts without mods"
+                  onClick={onClearLaunchOptions}
+                >
+                  Clear launch command
+                </ButtonItem>
+              </PanelSectionRow>
+            </>
           )}
 
           <PanelSectionRow>

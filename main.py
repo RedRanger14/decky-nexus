@@ -1,4 +1,5 @@
 import asyncio
+import glob
 import json
 import os
 import re
@@ -374,6 +375,99 @@ def _pick_main_file(file_list: list, avoid_keywords: list = ()):
 
 
 NXM_QUEUE_NAME = "nxm-queue.log"
+
+# ---- launch options (dlo-aware) ----------------------------------------------
+# The decky-launch-options plugin, when installed, rewrites every game's
+# Steam launch options to "~/.dlo/run %command%" and replays the real
+# command from its own settings file. Undoing a framework's launch command
+# on such a device means editing dlo's profile - clearing Steam's field
+# would leave the stale command in dlo's replay (this bricked the Skyrim
+# vanilla reset, 2026-07-23: dlo kept exec'ing a deleted skse64_loader.exe).
+# Steam's own localconfig.vdf can't be edited safely while Steam runs, so
+# non-dlo devices set/clear the field from the frontend via
+# SteamClient.Apps.SetAppLaunchOptions instead.
+
+
+def _dlo_settings_path() -> str:
+    return os.path.join(decky.DECKY_USER_HOME, ".dlo", "settings.json")
+
+
+def _dlo_present() -> bool:
+    return os.path.isfile(_dlo_settings_path())
+
+
+def _dlo_get_original(path: str, app_id: int):
+    """The app's originalLaunchOptions from dlo's settings, or None when
+    there is no readable settings file / profile."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    prof = (data.get("profiles") or {}).get(str(int(app_id)))
+    if not isinstance(prof, dict):
+        return None
+    return str(prof.get("originalLaunchOptions") or "")
+
+
+def _dlo_set_original(path: str, app_id: int, value: str):
+    """Set profiles[app_id].originalLaunchOptions in dlo's settings and
+    return (ok, previous_value). Creates the profile when missing - dlo
+    treats absent profiles as empty, so a fresh one is safe. Other
+    profiles and dlo's own file format (indent=4) are preserved."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return False, None
+    profiles = data.setdefault("profiles", {})
+    prof = profiles.setdefault(
+        str(int(app_id)), {"state": {}, "originalLaunchOptions": ""}
+    )
+    previous = str(prof.get("originalLaunchOptions") or "")
+    prof["originalLaunchOptions"] = str(value or "")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except OSError:
+        return False, previous
+    return True, previous
+
+
+_VDF_LAUNCH_OPTIONS_RE = re.compile(r'"LaunchOptions"\s+"((?:[^"\\]|\\.)*)"')
+
+
+def _parse_vdf_launch_options(text: str, app_id: int) -> list:
+    """Distinct LaunchOptions values near the app's id in a localconfig.vdf
+    body. Diagnostics-grade: VDF isn't fully parsed, values are picked from
+    a bounded window after each id occurrence."""
+    out = []
+    needle = f'"{int(app_id)}"'
+    idx = text.find(needle)
+    while idx != -1:
+        m = _VDF_LAUNCH_OPTIONS_RE.search(text, idx, idx + 4000)
+        if m and m.group(1) not in out:
+            out.append(m.group(1))
+        idx = text.find(needle, idx + 1)
+    return out
+
+
+def _read_steam_launch_options(app_id: int) -> list:
+    """Read-only peek at every Steam account's localconfig.vdf."""
+    out = []
+    for cfg in glob.glob(
+        os.path.join(STEAM_USERDATA, "*", "config", "localconfig.vdf")
+    ):
+        try:
+            with open(cfg, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        for val in _parse_vdf_launch_options(text, app_id):
+            if val not in out:
+                out.append(val)
+    return out
+
 
 # ---- dataDir install mode (Skyrim-class games) -------------------------------
 # Mods merge into the game's Data/ dir instead of per-mod folders: installs
@@ -3759,6 +3853,87 @@ query Link($slug: String!, $domainName: String!) {
         }
         _save_settings(settings)
         return {"ok": True}
+
+    async def get_launch_options_state(self, app_id: int) -> dict:
+        """What launches this app: dlo's replayed command (when the
+        decky-launch-options plugin is installed) + a read-only peek at
+        Steam's own field for diagnostics."""
+        dlo = _dlo_present()
+        return {
+            "ok": True,
+            "dlo_present": dlo,
+            "dlo_options": (
+                _dlo_get_original(_dlo_settings_path(), app_id) if dlo else None
+            ),
+            "steam_options": _read_steam_launch_options(app_id),
+        }
+
+    async def set_framework_launch_options(
+        self, app_id: int, game_domain: str, options: str
+    ) -> dict:
+        """dlo devices: write the framework's launch command into dlo's
+        profile (Steam's field already holds dlo's wrapper) and mark the
+        setup step done. Non-dlo devices get use_steam_client back and the
+        frontend sets Steam's field via SteamClient."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not _dlo_present():
+            return {"ok": False, "use_steam_client": True}
+        ok, previous = _dlo_set_original(
+            _dlo_settings_path(), app_id, options
+        )
+        if not ok:
+            return {
+                "ok": False,
+                "error": "Could not update the launch-options plugin's settings",
+            }
+        settings = _load_settings()
+        settings.setdefault("framework_setup", {})[game_domain] = {
+            "launch_options_set": True,
+            "enabled": True,
+            "at": int(time.time()),
+        }
+        _save_settings(settings)
+        decky.logger.info(
+            f"launch options set via dlo for {game_domain!r} (app {app_id})"
+        )
+        return {"ok": True, "previous": previous}
+
+    async def clear_framework_launch_options(
+        self, app_id: int, game_domain: str
+    ) -> dict:
+        """Undo the framework's launch command so the game boots vanilla.
+        On dlo devices this clears dlo's replayed profile (clearing Steam's
+        field alone would leave the stale command in the replay); otherwise
+        use_steam_client tells the frontend to clear Steam's field. Always
+        unmarks the setup step."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        cleared_dlo = False
+        previous = None
+        if _dlo_present():
+            ok, previous = _dlo_set_original(_dlo_settings_path(), app_id, "")
+            if not ok:
+                return {
+                    "ok": False,
+                    "error": "Could not update the launch-options plugin's settings",
+                }
+            cleared_dlo = True
+        settings = _load_settings()
+        state = settings.setdefault("framework_setup", {}).setdefault(
+            game_domain, {}
+        )
+        state["launch_options_set"] = False
+        _save_settings(settings)
+        decky.logger.info(
+            f"launch options cleared for {game_domain!r} (app {app_id}, "
+            f"dlo={cleared_dlo}, was {previous!r})"
+        )
+        return {
+            "ok": True,
+            "cleared_dlo": cleared_dlo,
+            "use_steam_client": not cleared_dlo,
+        }
 
     async def set_framework_enabled(self, game_domain: str, enabled: bool) -> dict:
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):

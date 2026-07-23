@@ -1094,6 +1094,173 @@ class TestFrameworkSetupState(unittest.TestCase):
         self.assertFalse(result["ok"])
 
 
+class TestDloLaunchOptions(unittest.TestCase):
+    """Undoing a framework's launch command on a decky-launch-options
+    device means editing dlo's profile - clearing Steam's field leaves the
+    stale command in dlo's replay (bricked the Skyrim reset, 2026-07-23)."""
+
+    SKSE_SWAP = (
+        "bash -c 'exec \"${@/SkyrimSELauncher.exe/skse64_loader.exe}\"'"
+        " -- %command%"
+    )
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.tmp = tempfile.mkdtemp()
+        self.dlo_path = os.path.join(self.tmp, "settings.json")
+        with open(self.dlo_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "profiles": {
+                        "489830": {
+                            "state": {},
+                            "originalLaunchOptions": self.SKSE_SWAP,
+                        },
+                        "22370": {"state": {}, "originalLaunchOptions": ""},
+                    },
+                    "launchOptions": [],
+                },
+                f,
+                indent=4,
+            )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_get_original(self):
+        self.assertEqual(
+            main._dlo_get_original(self.dlo_path, 489830), self.SKSE_SWAP
+        )
+        self.assertIsNone(main._dlo_get_original(self.dlo_path, 999999))
+        self.assertIsNone(main._dlo_get_original("/nonexistent", 489830))
+
+    def test_clear_returns_previous_and_preserves_others(self):
+        ok, previous = main._dlo_set_original(self.dlo_path, 489830, "")
+        self.assertTrue(ok)
+        self.assertEqual(previous, self.SKSE_SWAP)
+        with open(self.dlo_path, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(
+            data["profiles"]["489830"]["originalLaunchOptions"], ""
+        )
+        # sibling profiles and dlo's other keys untouched
+        self.assertIn("22370", data["profiles"])
+        self.assertIn("launchOptions", data)
+
+    def test_set_creates_missing_profile(self):
+        ok, previous = main._dlo_set_original(
+            self.dlo_path, 377160, "loader.exe %command%"
+        )
+        self.assertTrue(ok)
+        self.assertEqual(previous, "")
+        self.assertEqual(
+            main._dlo_get_original(self.dlo_path, 377160),
+            "loader.exe %command%",
+        )
+
+    def test_missing_file_fails_gracefully(self):
+        ok, previous = main._dlo_set_original("/nonexistent/x.json", 1, "")
+        self.assertFalse(ok)
+        self.assertIsNone(previous)
+
+    def test_parse_vdf_launch_options(self):
+        vdf = (
+            '"apps"\n{\n'
+            '\t"489830"\n\t{\n'
+            '\t\t"LastPlayed"\t\t"123"\n'
+            '\t\t"LaunchOptions"\t\t"~/.dlo/run %command%"\n'
+            "\t}\n"
+            '\t"413150"\n\t{\n'
+            '\t\t"LaunchOptions"\t\t"\\"path/StardewModdingAPI\\" %command%"\n'
+            "\t}\n}\n"
+        )
+        self.assertEqual(
+            main._parse_vdf_launch_options(vdf, 489830),
+            ["~/.dlo/run %command%"],
+        )
+        self.assertEqual(
+            main._parse_vdf_launch_options(vdf, 413150),
+            ['\\"path/StardewModdingAPI\\" %command%'],
+        )
+        self.assertEqual(main._parse_vdf_launch_options(vdf, 999), [])
+
+    def test_clear_callable_clears_dlo_and_unmarks_step(self):
+        plugin = main.Plugin()
+        run(plugin.mark_launch_options_set("skyrimspecialedition"))
+        orig = main._dlo_settings_path
+        main._dlo_settings_path = lambda: self.dlo_path
+        try:
+            result = run(
+                plugin.clear_framework_launch_options(
+                    489830, "skyrimspecialedition"
+                )
+            )
+        finally:
+            main._dlo_settings_path = orig
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["cleared_dlo"])
+        self.assertFalse(result["use_steam_client"])
+        self.assertEqual(main._dlo_get_original(self.dlo_path, 489830), "")
+        state = run(plugin.get_framework_setup("skyrimspecialedition"))
+        self.assertFalse(state["launch_options_set"])
+
+    def test_clear_callable_without_dlo_defers_to_steam_client(self):
+        plugin = main.Plugin()
+        run(plugin.mark_launch_options_set("skyrimspecialedition"))
+        orig = main._dlo_settings_path
+        main._dlo_settings_path = lambda: os.path.join(self.tmp, "absent.json")
+        try:
+            result = run(
+                plugin.clear_framework_launch_options(
+                    489830, "skyrimspecialedition"
+                )
+            )
+        finally:
+            main._dlo_settings_path = orig
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["cleared_dlo"])
+        self.assertTrue(result["use_steam_client"])
+        state = run(plugin.get_framework_setup("skyrimspecialedition"))
+        self.assertFalse(state["launch_options_set"])
+
+    def test_set_callable_writes_dlo_and_marks_step(self):
+        plugin = main.Plugin()
+        orig = main._dlo_settings_path
+        main._dlo_settings_path = lambda: self.dlo_path
+        try:
+            result = run(
+                plugin.set_framework_launch_options(
+                    489830, "skyrimspecialedition", "new_loader %command%"
+                )
+            )
+        finally:
+            main._dlo_settings_path = orig
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["previous"], self.SKSE_SWAP)
+        self.assertEqual(
+            main._dlo_get_original(self.dlo_path, 489830),
+            "new_loader %command%",
+        )
+        state = run(plugin.get_framework_setup("skyrimspecialedition"))
+        self.assertTrue(state["launch_options_set"])
+
+    def test_set_callable_without_dlo_defers_to_steam_client(self):
+        plugin = main.Plugin()
+        orig = main._dlo_settings_path
+        main._dlo_settings_path = lambda: os.path.join(self.tmp, "absent.json")
+        try:
+            result = run(
+                plugin.set_framework_launch_options(
+                    489830, "skyrimspecialedition", "x %command%"
+                )
+            )
+        finally:
+            main._dlo_settings_path = orig
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["use_steam_client"])
+
+
 class TestNxmParsing(unittest.TestCase):
     def test_parses_full_free_download_link(self):
         entry = main._parse_nxm_url(

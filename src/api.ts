@@ -218,6 +218,33 @@ export const markLaunchOptionsSet = callable<
   { ok: boolean; error?: string }
 >("mark_launch_options_set");
 
+export const getLaunchOptionsState = callable<
+  [app_id: number],
+  {
+    ok: boolean;
+    dlo_present?: boolean;
+    dlo_options?: string | null;
+    steam_options?: string[];
+  }
+>("get_launch_options_state");
+
+/** dlo devices only - returns use_steam_client when the frontend should
+ * fall back to SteamClient.Apps.SetAppLaunchOptions. */
+export const setFrameworkLaunchOptions = callable<
+  [app_id: number, game_domain: string, options: string],
+  { ok: boolean; use_steam_client?: boolean; previous?: string; error?: string }
+>("set_framework_launch_options");
+
+export const clearFrameworkLaunchOptions = callable<
+  [app_id: number, game_domain: string],
+  {
+    ok: boolean;
+    cleared_dlo?: boolean;
+    use_steam_client?: boolean;
+    error?: string;
+  }
+>("clear_framework_launch_options");
+
 export const setFrameworkEnabled = callable<
   [game_domain: string, enabled: boolean],
   { ok: boolean; error?: string }
