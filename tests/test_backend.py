@@ -181,6 +181,23 @@ class TestModsQueryBuilder(unittest.TestCase):
         self.assertIn("op: WILDCARD", q)
         self.assertIn('value: "123"', q)
 
+    def test_adult_content_is_hard_locked_off(self):
+        # UK OSA-class age-verification laws: the platform verifies age,
+        # the API can't report that status, so the plugin must never
+        # offer its own opt-in - even a hand-edited settings.json.
+        settings = main._load_settings()
+        settings["show_adult"] = True
+        main._save_settings(settings)
+        try:
+            self.assertFalse(main._show_adult())
+            result = run(main.Plugin().set_show_adult(True))
+            self.assertFalse(result["ok"])
+            self.assertIn("age-verification", result["error"])
+        finally:
+            settings = main._load_settings()
+            settings.pop("show_adult", None)
+            main._save_settings(settings)
+
     def test_v1_mod_mapping(self):
         mapped = main._map_v1_mod(
             {
