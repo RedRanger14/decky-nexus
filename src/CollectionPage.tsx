@@ -2,6 +2,7 @@
 // sequential install through the per-game pipeline (order preserved -
 // collections are ordered, and so is our plugin activation).
 import {
+  ConfirmModal,
   DialogButton,
   Focusable,
   Navigation,
@@ -10,7 +11,7 @@ import {
   showModal,
 } from "@decky/ui";
 import { toaster } from "@decky/api";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FaEye } from "react-icons/fa";
 
 import {
@@ -26,6 +27,7 @@ import {
   installFomodAuto,
   registerCollection,
   setCollectionAttention,
+  uninstallCollection,
 } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
@@ -65,8 +67,12 @@ export function CollectionPage() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [modInfo, setModInfo] = useState<Record<number, NexusMod | null>>({});
   // Mods a previous run left needing manual choices - persisted so any
-  // later visit can show and resolve them.
+  // later visit can show and resolve them. The ref mirrors the state for
+  // long-running async flows: installAll's final bookkeeping once used
+  // its own stale copy and RESURRECTED wizards the user had already
+  // resolved mid-run (the "kept having to install it" loop on video).
   const [attention, setAttention] = useState<AttentionItem[]>([]);
+  const attentionRef = useRef<AttentionItem[]>([]);
   const [finishingFileId, setFinishingFileId] = useState<number | undefined>();
   // Batch state lives in a module store so navigating away and back
   // shows live progress instead of a stale page.
@@ -101,6 +107,7 @@ export function CollectionPage() {
   };
 
   const persistAttention = (items: AttentionItem[]) => {
+    attentionRef.current = items;
     setAttention(items);
     if (sel) {
       setCollectionAttention(
@@ -131,7 +138,10 @@ export function CollectionPage() {
       } else setError(r.error ?? "Could not load collection");
     });
     getCollectionAttention(sel.game.nexusDomain, sel.collection.slug).then(
-      (r) => setAttention(r.items ?? [])
+      (r) => {
+        attentionRef.current = r.items ?? [];
+        setAttention(r.items ?? []);
+      }
     );
     refreshInstalled();
   }, []);
@@ -307,9 +317,11 @@ export function CollectionPage() {
         }
       }
       // Carry forward older pending choices that this run didn't touch;
-      // everything re-attempted is superseded by freshAttention.
+      // everything re-attempted is superseded by freshAttention. MUST
+      // read the live ref: the user may have resolved items via Finish
+      // setup while this batch was still running.
       persistAttention([
-        ...attention.filter(
+        ...attentionRef.current.filter(
           (a) => !queue.some((f) => f.fileId === a.file_id)
         ),
         ...freshAttention,
@@ -424,12 +436,12 @@ export function CollectionPage() {
   /** Resolve every pending manual decision in one guided pass. */
   const finishSetup = async () => {
     if (!detail || finishingFileId !== undefined) return;
-    let pendingList = [...attention];
     for (const item of [...actionable]) {
       const ok = await resolveAttentionItem(item);
       if (ok) {
-        pendingList = pendingList.filter((a) => a.file_id !== item.file_id);
-        persistAttention(pendingList);
+        persistAttention(
+          attentionRef.current.filter((a) => a.file_id !== item.file_id)
+        );
       }
     }
     refreshInstalled();
@@ -441,7 +453,9 @@ export function CollectionPage() {
     if (finishingFileId !== undefined) return;
     const ok = await resolveAttentionItem(item);
     if (ok) {
-      persistAttention(attention.filter((a) => a.file_id !== item.file_id));
+      persistAttention(
+        attentionRef.current.filter((a) => a.file_id !== item.file_id)
+      );
       refreshInstalled();
     }
   };
@@ -568,7 +582,7 @@ export function CollectionPage() {
               ? `⬇ Resume collection (${remaining.length} left)`
               : detail && remaining.length < required.length
               ? `⬇ Install remaining (${remaining.length} of ${required.length})`
-              : `⬇ Install collection (${remaining.length} mods)`}
+              : `⬇ Install required (${remaining.length})`}
           </DialogButton>
           {actionable.length > 0 && (
             <DialogButton
@@ -589,9 +603,16 @@ export function CollectionPage() {
             <DialogButton
               disabled={!detail || installing}
               onClick={() => installAll(true)}
-              style={{ flexGrow: 1, minWidth: "170px" }}
+              style={{
+                flexGrow: 1,
+                minWidth: "190px",
+                background: "rgba(255,255,255,0.85)",
+                color: "#111",
+              }}
             >
-              + optional ({remaining.length + optionalRemaining.length})
+              {remaining.length === 0
+                ? `Install optional (${optionalRemaining.length})`
+                : `Install All (inc ${optionalRemaining.length} optional)`}
             </DialogButton>
           )}
           <DialogButton
@@ -623,6 +644,60 @@ export function CollectionPage() {
               installed - only the missing ones will download.
             </div>
           )}
+        {installedRequiredCount > 0 && !installing && (
+          <Focusable
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              margin: "-4px 0 12px",
+            }}
+          >
+            <DialogButton
+              disabled={finishingFileId !== undefined}
+              onClick={() =>
+                showModal(
+                  <ConfirmModal
+                    strTitle={`Uninstall ${collection.name}?`}
+                    strDescription="Removes the mods this collection installed. Mods you installed yourself (or via another collection) stay."
+                    strOKButtonText="Uninstall collection"
+                    bDestructiveWarning={true}
+                    onOK={async () => {
+                      const result = await uninstallCollection(
+                        game.nexusDomain,
+                        game.installDirName,
+                        game.modsSubdir,
+                        ...modeParams(game),
+                        collection.slug
+                      );
+                      toaster.toast(
+                        result.ok
+                          ? {
+                              title: `${collection.name} uninstalled`,
+                              body: `${result.removed ?? 0} mods removed`,
+                            }
+                          : {
+                              title: "Uninstall failed",
+                              body: result.error ?? "",
+                            }
+                      );
+                      persistAttention([]);
+                      refreshInstalled();
+                    }}
+                  />
+                )
+              }
+              style={{
+                minWidth: "0",
+                width: "auto",
+                padding: "6px 14px",
+                fontSize: "12.5px",
+                opacity: 0.85,
+              }}
+            >
+              Uninstall collection
+            </DialogButton>
+          </Focusable>
+        )}
         {toolSkips.length > 0 && !installing && (
           <div
             style={{

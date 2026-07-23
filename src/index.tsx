@@ -64,6 +64,7 @@ import {
 import {
   ALL_GAMES,
   DEFAULT_GAME,
+  getLastActiveGame,
   getSupportedGame,
   modeParams,
   noteActiveGame,
@@ -138,6 +139,13 @@ function resolveGameContext(): GameContext {
   if (viewedId !== undefined) {
     return { unsupportedName: getAppDisplayName(viewedId) ?? "This game" };
   }
+  // Route glitch guard: some overlay states report no /library/app path
+  // even though the user is sitting on a game's page - the scope used to
+  // vanish until the QAM was reopened. Stick with the last resolved game
+  // until a genuinely different context (another game, a running app)
+  // takes over.
+  const last = getLastActiveGame();
+  if (last) return { game: last };
   return { neutral: true };
 }
 import { BrowsePage } from "./BrowsePage";
@@ -1217,7 +1225,9 @@ function InstalledModsSection() {
           />
         </PanelSectionRow>
       )}
-      {(mods ?? []).map((mod) => {
+      {/* Collections make this list enormous - cap the QAM at 8 rows and
+          hand the rest to the full-screen manager. */}
+      {(mods ?? []).slice(0, 8).map((mod) => {
         const load = mod.enabled ? loadStateFor(mod.folder) : undefined;
         const update = updates?.[mod.folder];
         const badge =
@@ -1283,6 +1293,19 @@ function InstalledModsSection() {
           </PanelSectionRow>
         );
       })}
+      {(mods?.length ?? 0) > 8 && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() => {
+              Router.CloseSideMenus();
+              Navigation.Navigate(MANAGER_ROUTE);
+            }}
+          >
+            All my mods ({mods!.length}) →
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       {failures.length > 0 && (
         <PanelSectionRow>
           <ButtonItem
