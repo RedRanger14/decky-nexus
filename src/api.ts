@@ -366,7 +366,7 @@ export interface CollectionDetail {
 }
 
 export const getCollections = callable<
-  [game_domain: string, count: number, search: string],
+  [game_domain: string, count: number, search: string, sort: string],
   { ok: boolean; collections?: CollectionSummary[]; error?: string }
 >("get_collections");
 

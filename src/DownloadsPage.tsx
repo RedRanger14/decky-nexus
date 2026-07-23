@@ -83,14 +83,17 @@ export function DownloadsPage() {
       onActivate={() => {}}
       onButtonDown={handleTabButtons("downloads")}
       onCancel={() => {
-        Navigation.NavigateBack();
+        // QAM first so gamepad focus lands INSIDE it - then pop the page.
+        // The old order left focus on the page behind the menu, so B in
+        // the QAM re-triggered page handlers instead of closing it.
         Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
+        setTimeout(() => Navigation.NavigateBack(), 50);
       }}
       style={{ marginTop: "40px", height: "calc(100% - 40px)" }}
     >
       <Scroller
         focusable={false}
-        style={{ height: "100%", overflowY: "auto", padding: "0 24px 80px" }}
+        style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <TabBar currentId="downloads" />
         <h2 style={{ margin: "12px 0 10px" }}>Downloads</h2>

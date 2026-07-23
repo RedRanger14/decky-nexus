@@ -246,7 +246,15 @@ function SectionHeading({ title }: { title: string }) {
 
 /** End-of-rail card that jumps into the sorted list view - an organic way
  * into the same place the sort dropdown goes. */
-function ViewAllCard({ onActivate }: { onActivate: () => void }) {
+function ViewAllCard({
+  onActivate,
+  label = "View all →",
+}: {
+  onActivate: () => void;
+  label?: string;
+}) {
+  // Mirrors ModTile's footprint (16:9 media + text rows) so the card
+  // lines up with tiles in every rail.
   return (
     <Focusable
       onActivate={onActivate}
@@ -259,12 +267,12 @@ function ViewAllCard({ onActivate }: { onActivate: () => void }) {
         borderRadius: "6px",
         background: "rgba(218, 142, 53, 0.12)",
         border: `1px solid ${NEXUS_ORANGE}55`,
-        minHeight: "160px",
+        aspectRatio: "205 / 165",
         fontWeight: 600,
         fontSize: "15px",
       }}
     >
-      View all →
+      {label}
     </Focusable>
   );
 }
@@ -339,7 +347,9 @@ export function BrowsePage() {
   const [newest, setNewest] = useState<NexusMod[]>([]);
   const [popular, setPopular] = useState<NexusMod[]>([]);
 
-  const isHome = sort === "featured" && search.trim() === "";
+  // The API rejects 1-char wildcard searches - treat them as no search.
+  const effectiveSearch = search.trim().length >= 2 ? search.trim() : "";
+  const isHome = sort === "featured" && effectiveSearch === "";
   const effectiveSort = sort === "featured" ? "endorsements" : sort;
 
   // Focus restore: switching home<->list unmounts the focused element and
@@ -384,6 +394,19 @@ export function BrowsePage() {
   const [searchCollections, setSearchCollections] = useState<
     CollectionSummary[]
   >([]);
+  // "All collections" browse mode: its own sort, mirrors the mods list.
+  const [collectionsMode, setCollectionsMode] = useState(false);
+  const [collectionsSort, setCollectionsSort] = useState("endorsements");
+  const [allCollections, setAllCollections] = useState<CollectionSummary[]>(
+    []
+  );
+  useEffect(() => {
+    if (!collectionsMode) return;
+    setAllCollections([]);
+    getCollections(game.nexusDomain, 30, "", collectionsSort).then((r) => {
+      if (r.ok) setAllCollections(r.collections ?? []);
+    });
+  }, [collectionsMode, collectionsSort, game.appId]);
 
   const fetchPage = async (offset: number, append: boolean) => {
     setLoading(true);
@@ -393,7 +416,7 @@ export function BrowsePage() {
         effectiveSort,
         PAGE_SIZE,
         offset,
-        search.trim()
+        effectiveSearch
       );
       if (result.ok) {
         setError(undefined);
@@ -427,7 +450,7 @@ export function BrowsePage() {
     setNewest([]);
     setPopular([]);
     setTotal(undefined);
-    getCollections(game.nexusDomain, 6, "").then((r) => {
+    getCollections(game.nexusDomain, 5, "", "endorsements").then((r) => {
       if (!cancelled && r.ok) setCollections(r.collections ?? []);
     });
     if (game.recommendedModIds?.length) {
@@ -450,12 +473,12 @@ export function BrowsePage() {
 
   // Collection search runs alongside the mod search (cheap: one query).
   useEffect(() => {
-    if (isHome || !search.trim()) {
+    if (isHome || !effectiveSearch) {
       setSearchCollections([]);
       return;
     }
     const timer = setTimeout(() => {
-      getCollections(game.nexusDomain, 20, search.trim()).then((r) => {
+      getCollections(game.nexusDomain, 20, effectiveSearch, "endorsements").then((r) => {
         if (r.ok) setSearchCollections(r.collections ?? []);
       });
     }, 500);
@@ -502,8 +525,12 @@ export function BrowsePage() {
     <Focusable
       onButtonDown={handleTabButtons("store")}
       onCancel={() => {
-        Navigation.NavigateBack();
+        if (collectionsMode) {
+          setCollectionsMode(false);
+          return;
+        }
         Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
+        setTimeout(() => Navigation.NavigateBack(), 50);
       }}
       style={{
         marginTop: "40px",
@@ -516,9 +543,10 @@ export function BrowsePage() {
         style={{
           height: "100%",
           overflowY: "auto",
-          // 80px bottom clears the SteamOS footer bar, which otherwise
-          // overlaps the last row (Load more / Restart game / bottom tiles).
-          padding: "0 24px 80px",
+          // Clears the SteamOS footer bar AND makes focus-driven scrolling
+          // stop short of it (scroll-padding), so the last row is usable.
+          padding: "0 24px 110px",
+          scrollPaddingBottom: "110px",
           position: "relative",
         }}
       >
@@ -608,7 +636,55 @@ export function BrowsePage() {
           </div>
         </Focusable>
 
-        {isHome ? (
+        {collectionsMode ? (
+          <div>
+            <Focusable
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                margin: "4px 0 10px",
+              }}
+            >
+              <h3 style={{ margin: 0 }}>
+                Collections{" "}
+                <span style={{ opacity: 0.6, fontWeight: 400, fontSize: "13px" }}>
+                  · {allCollections.length} shown
+                </span>
+              </h3>
+              <div style={{ width: "220px" }}>
+                <Dropdown
+                  rgOptions={[
+                    { data: "endorsements", label: "Most endorsed" },
+                    { data: "downloads", label: "Most downloaded" },
+                    { data: "updatedAt", label: "Recently updated" },
+                    { data: "createdAt", label: "Newest" },
+                  ]}
+                  selectedOption={collectionsSort}
+                  onChange={(opt) => setCollectionsSort(opt.data)}
+                  strDefaultLabel="Sort"
+                />
+              </div>
+            </Focusable>
+            <Focusable
+              autoFocus={true}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: "12px",
+              }}
+            >
+              {allCollections.map((c) => (
+                <CollectionCard key={c.slug} game={game} c={c} />
+              ))}
+            </Focusable>
+            {allCollections.length === 0 && (
+              <div style={{ opacity: 0.8, padding: "12px 0" }}>
+                Loading collections…
+              </div>
+            )}
+          </div>
+        ) : isHome ? (
           <div ref={contentRef}>
             {/* ---- Hero: curated recommendations, big and bold ---- */}
             {heroMods.length > 0 && (
@@ -643,6 +719,22 @@ export function BrowsePage() {
                   {collections.map((c) => (
                     <CollectionCard key={c.slug} game={game} c={c} />
                   ))}
+                  <Focusable
+                    onActivate={() => setCollectionsMode(true)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: "6px",
+                      background: "rgba(218, 142, 53, 0.12)",
+                      border: `1px solid ${NEXUS_ORANGE}55`,
+                      fontWeight: 600,
+                      fontSize: "13.5px",
+                      minHeight: "80px",
+                    }}
+                  >
+                    All collections →
+                  </Focusable>
                 </Focusable>
               </>
             )}

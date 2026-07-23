@@ -412,11 +412,12 @@ export function ModDetailPage() {
   const descLong = (description?.length ?? 0) > DESC_COLLAPSE_LENGTH;
 
   const goBack = () => {
-    Navigation.NavigateBack();
     if (getDetailOrigin() === "qam") {
-      // Opened from the installed-mods eye button: restore the panel the
-      // user was in rather than dumping them on the previous window.
+      // QAM first so focus lands in it, then pop the page behind.
       Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
+      setTimeout(() => Navigation.NavigateBack(), 50);
+    } else {
+      Navigation.NavigateBack();
     }
   };
 
@@ -466,9 +467,10 @@ export function ModDetailPage() {
         style={{
           height: "100%",
           overflowY: "auto",
-          // 80px bottom clears the SteamOS footer bar, which otherwise
-          // overlaps the last row (Load more / Restart game / bottom tiles).
-          padding: "0 24px 80px",
+          // Clears the SteamOS footer bar AND makes focus-driven scrolling
+          // stop short of it (scroll-padding), so the last row is usable.
+          padding: "0 24px 110px",
+          scrollPaddingBottom: "110px",
         }}
       >
       {/* ---- Header: hero image + facts ---- */}
