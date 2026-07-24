@@ -1267,6 +1267,38 @@ class TestWitcherRouting(unittest.TestCase):
         content = open(os.path.join(pc, "dx11filelist.txt")).read()
         self.assertNotIn("modStale.xml", content)
 
+    def test_vanilla_menu_xml_restored_on_uninstall(self):
+        # HD Reworked overwrites the game's own rendering.xml - uninstall
+        # must restore the vanilla file, never delete it or strip its
+        # filelist line.
+        pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))
+        os.makedirs(pc)
+        with open(os.path.join(pc, "rendering.xml"), "w") as f:
+            f.write("<vanilla/>")
+        with open(os.path.join(pc, "dx11filelist.txt"), "w") as f:
+            f.write("rendering.xml;" + chr(10))
+        # simulate the install's backup-then-overwrite
+        shutil.copy2(
+            os.path.join(pc, "rendering.xml"),
+            os.path.join(pc, "rendering.xml" + main.W3_VANILLA_BACKUP_SUFFIX),
+        )
+        with open(os.path.join(pc, "rendering.xml"), "w") as f:
+            f.write("<modded/>")
+        main._w3_remove_menu_xmls(
+            self.install, {"menuXmls": ["rendering.xml"]}
+        )
+        content = open(os.path.join(pc, "rendering.xml")).read()
+        self.assertEqual(content, "<vanilla/>")
+        self.assertFalse(
+            os.path.exists(
+                os.path.join(
+                    pc, "rendering.xml" + main.W3_VANILLA_BACKUP_SUFFIX
+                )
+            )
+        )
+        filelist = open(os.path.join(pc, "dx11filelist.txt")).read()
+        self.assertIn("rendering.xml;", filelist)
+
     def test_filelist_append_is_idempotent(self):
         pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))
         os.makedirs(pc)

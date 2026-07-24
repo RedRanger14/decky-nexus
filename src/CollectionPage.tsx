@@ -123,6 +123,14 @@ export function CollectionPage() {
     }
   };
 
+  // Re-check what's installed whenever a run STOPS (including runs that
+  // finished while this page was away): the mount-time snapshot went
+  // stale when the run banner cleared, and "Install remaining"
+  // re-queued already-installed mods - including a 10 GB re-download.
+  useEffect(() => {
+    if (!installing) refreshInstalled();
+  }, [installing]);
+
   useEffect(() => {
     if (!sel) return;
     getCollection(sel.collection.slug, sel.game.nexusDomain).then((r) => {
@@ -161,11 +169,14 @@ export function CollectionPage() {
   const { game, collection } = sel;
 
   const attentionIds = new Set(attention.map((a) => a.file_id));
-  // Actionable = the user can resolve them (choices/wizards); tools can
-  // never install here and only get a note.
-  const actionable = attention.filter((a) => a.reason !== "tool");
+  // Actionable = the user can resolve them (choices/wizards); tools and
+  // script conflicts can never install here and only get a note.
+  const actionable = attention.filter(
+    (a) => a.reason !== "tool" && a.reason !== "conflict"
+  );
   const actionableIds = new Set(actionable.map((a) => a.file_id));
   const toolSkips = attention.filter((a) => a.reason === "tool");
+  const conflictSkips = attention.filter((a) => a.reason === "conflict");
 
   const required = detail?.files.filter((f) => !f.optional) ?? [];
   const optional = detail?.files.filter((f) => f.optional) ?? [];
@@ -301,6 +312,25 @@ export function CollectionPage() {
             toaster.toast({
               title: `${f.modName}: PC tool - skipped`,
               body: "Utilities like this run on a desktop, not in-game",
+            });
+          } else if (result.script_conflict) {
+            // Unmergeable script conflict: parking it keeps the button
+            // honest ("everything installed" when only these remain)
+            // instead of offering an install that can only re-refuse.
+            dropDownload(f.modId);
+            setCollectionRow(f.fileId, "skipped");
+            freshAttention.push({
+              file_id: f.fileId,
+              mod_id: f.modId,
+              mod_name: f.modName,
+              file_name: f.fileName,
+              version: f.version,
+              reason: "conflict",
+              options: [],
+            });
+            toaster.toast({
+              title: `${f.modName}: script conflict - skipped`,
+              body: result.error ?? "",
             });
           } else {
             failures += 1;
@@ -539,7 +569,10 @@ export function CollectionPage() {
     if (installedIds.has(f.modId) || rowState[f.fileId] === "done")
       return "✓ ";
     if (actionableIds.has(f.fileId)) return "⚙ ";
-    if (attentionIds.has(f.fileId)) return "⏭ ";
+    if (attentionIds.has(f.fileId)) {
+      const reason = attention.find((a) => a.file_id === f.fileId)?.reason;
+      return reason === "conflict" ? "🔒 " : "⏭ ";
+    }
     const st = rowState[f.fileId];
     if (st === "installing") return "";
     if (st === "failed") return "⚠ ";
@@ -702,6 +735,22 @@ export function CollectionPage() {
             desktop, not in-game, and don't count as missing.
           </div>
         )}
+        {conflictSkips.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              opacity: 0.75,
+              color: "#ffc83c",
+              margin: "-6px 0 12px",
+            }}
+          >
+            🔒 {conflictSkips.length} mod
+            {conflictSkips.length === 1 ? "" : "s"} skipped: script conflicts
+            with installed mods ({conflictSkips.map((c) => c.mod_name).join(", ")}
+            ). Merging scripts needs Script Merger - not supported on this
+            device yet.
+          </div>
+        )}
 
         {error && (
           <div style={{ color: "#ff8a8a", padding: "8px 0" }}>{error}</div>
@@ -747,10 +796,13 @@ export function CollectionPage() {
                   : undefined;
               const needsChoices =
                 actionableIds.has(f.fileId) && !installedIds.has(f.modId);
+              const parkedReason = attentionIds.has(f.fileId)
+                ? attention.find((a) => a.file_id === f.fileId)?.reason
+                : undefined;
               const isToolSkip =
-                attentionIds.has(f.fileId) &&
-                !actionableIds.has(f.fileId) &&
-                !installedIds.has(f.modId);
+                parkedReason === "tool" && !installedIds.has(f.modId);
+              const isConflict =
+                parkedReason === "conflict" && !installedIds.has(f.modId);
               const attentionItem = needsChoices
                 ? attention.find((a) => a.file_id === f.fileId)
                 : undefined;
@@ -800,11 +852,19 @@ export function CollectionPage() {
                       {isToolSkip && (
                         <span style={{ opacity: 0.55 }}> · PC tool</span>
                       )}
+                      {isConflict && (
+                        <span style={{ color: "#ffc83c" }}>
+                          {" "}
+                          · script conflict
+                        </span>
+                      )}
                     </span>
                     <span
                       style={{ opacity: 0.6, flexShrink: 0, marginLeft: "10px" }}
                     >
-                      {fmtBytes(f.sizeKb * 1024)}
+                      {/* sizeInBytes overflows the API's 32-bit Int for
+                          >2GB files (HD Reworked read as "1 KB") */}
+                      {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "large"}
                     </span>
                   </div>
                   {open && (
@@ -933,7 +993,7 @@ export function CollectionPage() {
                   {f.modName}
                 </span>
                 <span style={{ flexShrink: 0, marginLeft: "10px" }}>
-                  {fmtBytes(f.sizeKb * 1024)}
+                  {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "large"}
                 </span>
               </div>
             ))}
