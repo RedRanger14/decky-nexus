@@ -382,3 +382,23 @@ step index per pending FOMOD (the attention entry is the natural home)
 and restore the wizard where the user left off instead of restarting.
 Low priority per Michael. The RB/LB step shortcuts (v0.21.0) cover the
 main pain meanwhile.
+
+## Witcher 3 device verification (2026-07-24, v0.23 testing)
+
+The v0.13 machinery held up on device: 35+ mods installed in one run of
+"TW3 Lightly Modded" - folder mods, multi-folder mods, dlc routing, and
+menu-XML registration all worked; the carry-weight single-mod journey
+worked first time. Findings:
+
+- FIXED (v0.24.0): menu XMLs inside a mod folder (Increased Draw
+  Distance: modX/bin/config/.../pc/) crashed - the caller moved folders
+  before XMLs. XMLs now move first; regression test added.
+- W3 Mod Manager / Script Merger install attempts now classify as PC
+  tools (exe detection in the witcher router) instead of raw failures.
+- **Script conflicts are the #1 remaining W3 gap**: 4 of the 5
+  collection failures were the conflict gate correctly refusing mods
+  that edit scripts owned by earlier installs (verified by re-running
+  the router against the real mods dir on device). Curated W3
+  collections ASSUME Script Merger. Next step when W3 returns to the
+  front burner: the Linux CLI merge spike (apocalyptech/w3scriptmerge)
+  or a minimal built-in three-way merge for non-overlapping hunks.
