@@ -1206,6 +1206,13 @@ def _w3_remove_menu_xmls(install_path: str, rec: dict) -> None:
 W3_VANILLA_SCRIPTS = "content/content0/scripts"
 W3_MERGED_MOD = "mod0000_DeckyMerged"
 
+# The game's own dlc/ folders. Mods legitimately PATCH these by shipping
+# dlc/bob-style overlays - those must MERGE into the official folder
+# (per-file record), never replace it: the old rmtree-and-move destroyed
+# Blood & Wine and every free DLC, and uninstall then deleted the
+# replacements (bricked a device install; Steam verify required).
+W3_OFFICIAL_DLC = {"bob", "ep1"} | {f"dlc{i}" for i in range(1, 17)}
+
 
 def _w3_merge3(base_lines: list, ours_lines: list, theirs_lines: list):
     """Three-way line merge. Returns the merged line list, or None when
@@ -3870,7 +3877,36 @@ query Link($slug: String!, $domainName: String!) {
             os.makedirs(dlc_root, exist_ok=True)
             for d in dlc_dirs:
                 folder = os.path.basename(d)
-                dst = os.path.join(dlc_root, folder)
+                dst = _adopt_case(os.path.join(dlc_root, folder))
+                if os.path.basename(dst).lower() in W3_OFFICIAL_DLC or (
+                    folder.lower() in W3_OFFICIAL_DLC
+                ):
+                    # Official DLC patch: merge files INTO the game's
+                    # folder with a per-file record - never replace it.
+                    rels = []
+                    for root, _dirs, names in os.walk(d):
+                        for name in names:
+                            rel = os.path.relpath(
+                                os.path.join(root, name), d
+                            ).replace(os.sep, "/")
+                            if not _safe_rel_path(rel):
+                                continue
+                            tgt = os.path.join(dst, *rel.split("/"))
+                            os.makedirs(os.path.dirname(tgt), exist_ok=True)
+                            if os.path.isfile(tgt):
+                                os.remove(tgt)
+                            shutil.move(os.path.join(root, name), tgt)
+                            rels.append(rel)
+                    rec_key = f"{_safe_name(mod_name)}_{folder}"
+                    installed[rec_key] = {
+                        **base_rec,
+                        "name": f"{mod_name} ({folder} patch)",
+                        "mode": "files",
+                        "target": f"dlc/{folder}",
+                        "files": rels,
+                    }
+                    first_folder = first_folder or rec_key
+                    continue
                 _force_rmtree(dst)
                 shutil.move(d, dst)
                 installed[folder] = {
@@ -4663,13 +4699,21 @@ query Link($slug: String!, $domainName: String!) {
                         if target
                         else mods_path
                     )
-                    for cand in (
-                        os.path.join(base, folder),
-                        os.path.join(base + "-disabled", folder),
-                        os.path.join(disabled_path, folder),
+                    if (
+                        target == "dlc"
+                        and folder.lower() in W3_OFFICIAL_DLC
                     ):
-                        if os.path.isdir(cand):
-                            _force_rmtree(cand)
+                        decky.logger.info(
+                            f"refusing to delete official DLC {folder!r}"
+                        )
+                    else:
+                        for cand in (
+                            os.path.join(base, folder),
+                            os.path.join(base + "-disabled", folder),
+                            os.path.join(disabled_path, folder),
+                        ):
+                            if os.path.isdir(cand):
+                                _force_rmtree(cand)
                     settings.get("installed", {}).get(game_domain, {}).pop(
                         key, None
                     )
@@ -4812,13 +4856,21 @@ query Link($slug: String!, $domainName: String!) {
                         if target
                         else mods_path
                     )
-                    for cand in (
-                        os.path.join(base, folder),
-                        os.path.join(base + "-disabled", folder),
-                        os.path.join(disabled_path, folder),
+                    if (
+                        target == "dlc"
+                        and folder.lower() in W3_OFFICIAL_DLC
                     ):
-                        if os.path.isdir(cand):
-                            _force_rmtree(cand)
+                        decky.logger.info(
+                            f"refusing to delete official DLC {folder!r}"
+                        )
+                    else:
+                        for cand in (
+                            os.path.join(base, folder),
+                            os.path.join(base + "-disabled", folder),
+                            os.path.join(disabled_path, folder),
+                        ):
+                            if os.path.isdir(cand):
+                                _force_rmtree(cand)
                     settings.get("installed", {}).get(game_domain, {}).pop(
                         key, None
                     )
@@ -5154,6 +5206,12 @@ query Link($slug: String!, $domainName: String!) {
             install_path = os.path.join(STEAM_COMMON, install_dir)
             base = os.path.join(install_path, *rec["target"].split("/"))
             real = rec.get("folder") or folder
+            if rec["target"] == "dlc" and real.lower() in W3_OFFICIAL_DLC:
+                return {
+                    "ok": False,
+                    "error": "This entry patches one of the game's own DLC "
+                    "folders - it can't be toggled by moving the folder.",
+                }
             src_base, dst_base = (
                 (base + "-disabled", base) if enabled else (base, base + "-disabled")
             )
@@ -5289,8 +5347,19 @@ query Link($slug: String!, $domainName: String!) {
                         pass
             else:
                 real = rec.get("folder") or folder
-                _force_rmtree(os.path.join(base, real))
-                _force_rmtree(os.path.join(base + "-disabled", real))
+                if (
+                    rec.get("target") == "dlc"
+                    and real.lower() in W3_OFFICIAL_DLC
+                ):
+                    # NEVER delete the game's own DLC (legacy records
+                    # from before official-dlc patches merged in).
+                    decky.logger.info(
+                        f"refusing to delete official DLC {real!r} "
+                        f"(record {folder!r} dropped)"
+                    )
+                else:
+                    _force_rmtree(os.path.join(base, real))
+                    _force_rmtree(os.path.join(base + "-disabled", real))
             _w3_remove_menu_xmls(install_path, rec)
             settings["installed"][game_domain].pop(folder, None)
             _save_settings(settings)

@@ -543,6 +543,35 @@ class TestUninstallCollection(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.install, ignore_errors=True)
 
+    def test_official_w3_dlc_is_never_deleted(self):
+        # Legacy record pointing at the game's own DLC folder (from
+        # before official-dlc patches merged in): the folder must survive
+        # every cleanup path - deleting it destroyed Blood & Wine on
+        # device (Steam verify required).
+        bob = os.path.join(self.install, "dlc", "bob", "content")
+        os.makedirs(bob)
+        settings = main._load_settings()
+        settings["installed"][self.DOMAIN]["SomePatch"] = {
+            "mode": "folder",
+            "target": "dlc",
+            "folder": "bob",
+            "source": "collection",
+            "collection_slug": "my-coll",
+        }
+        main._save_settings(settings)
+        result = run(
+            main.Plugin().uninstall_collection(
+                self.DOMAIN, "CollGame", "Data", "dataDir", 0, "",
+                "starred", "my-coll",
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(os.path.isdir(bob))
+        self.assertNotIn(
+            "SomePatch",
+            main._load_settings()["installed"].get(self.DOMAIN, {}),
+        )
+
     def test_removes_only_collection_records(self):
         result = run(
             main.Plugin().uninstall_collection(
