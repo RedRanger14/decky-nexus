@@ -169,10 +169,15 @@ export function CollectionPage() {
   const { game, collection } = sel;
 
   const attentionIds = new Set(attention.map((a) => a.file_id));
-  // Actionable = the user can resolve them (choices/wizards); tools,
-  // script conflicts, and unrecognized archives only get a note.
+  // Actionable = Finish setup can do something: choices/wizards get
+  // their modals, and script conflicts RETRY (the backend auto-merges
+  // non-overlapping edits now; genuine overlaps re-park). Tools and
+  // unrecognized archives only get a note.
   const actionable = attention.filter(
-    (a) => a.reason === "choices" || a.reason === "fomod"
+    (a) =>
+      a.reason === "choices" ||
+      a.reason === "fomod" ||
+      a.reason === "conflict"
   );
   const actionableIds = new Set(actionable.map((a) => a.file_id));
   const toolSkips = attention.filter((a) => a.reason === "tool");
@@ -790,10 +795,10 @@ export function CollectionPage() {
             }}
           >
             🔒 {conflictSkips.length} mod
-            {conflictSkips.length === 1 ? "" : "s"} skipped: script conflicts
-            with installed mods ({conflictSkips.map((c) => c.mod_name).join(", ")}
-            ). Merging scripts needs Script Merger - not supported on this
-            device yet.
+            {conflictSkips.length === 1 ? "" : "s"} with script conflicts (
+            {conflictSkips.map((c) => c.mod_name).join(", ")}). Finish setup
+            retries them with auto-merge - mods that change the SAME lines
+            as an installed mod stay skipped.
           </div>
         )}
 
@@ -914,9 +919,9 @@ export function CollectionPage() {
                     <span
                       style={{ opacity: 0.6, flexShrink: 0, marginLeft: "10px" }}
                     >
-                      {/* sizeInBytes overflows the API's 32-bit Int for
-                          >2GB files (HD Reworked read as "1 KB") */}
-                      {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "2.0GB+"}
+                      {/* sizeInBytes comes back NULL for some files
+                          (small and huge alike) - unknown, not big */}
+                      {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "—"}
                     </span>
                   </div>
                   {open && (
@@ -1045,7 +1050,7 @@ export function CollectionPage() {
                   {f.modName}
                 </span>
                 <span style={{ flexShrink: 0, marginLeft: "10px" }}>
-                  {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "2.0GB+"}
+                  {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "—"}
                 </span>
               </div>
             ))}

@@ -7,7 +7,6 @@ import {
   DialogButton,
   Focusable,
   Navigation,
-  QuickAccessTab,
   ScrollPanelGroup,
   showModal,
 } from "@decky/ui";
@@ -33,7 +32,7 @@ import {
   WHITE_BUTTON_CLASS,
 } from "./theme";
 import { OrangeToggle } from "./Toggle";
-import { TabBar, handleTabButtons } from "./Tabs";
+import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -452,11 +451,7 @@ export function ManagerPage() {
       // No autoFocus/onActivate here: the TabBar guarantees focusable
       // children, and a focusable root traps the gamepad focus.
       onButtonDown={handleTabButtons("manager")}
-      onCancel={() => {
-        // QAM first so gamepad focus lands INSIDE it - then pop the page.
-        Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
-        setTimeout(() => Navigation.NavigateBack(), 50);
-      }}
+      onCancel={exitTabsToQam}
       style={{ marginTop: "40px", height: "calc(100% - 40px)" }}
     >
       <Scroller

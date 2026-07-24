@@ -146,6 +146,7 @@ function resolveGameContext(): GameContext {
   if (last) return { game: last };
   return { neutral: true };
 }
+import { resetTabStack } from "./Tabs";
 import { BrowsePage } from "./BrowsePage";
 import { CollectionPage } from "./CollectionPage";
 import { DownloadsPage } from "./DownloadsPage";
@@ -596,6 +597,7 @@ function CurrentGameSection() {
         <PanelSectionRow>
           <OrangeActionButton
             onClick={() => {
+              resetTabStack();
               Navigation.Navigate(BROWSE_ROUTE);
               Navigation.CloseSideMenus();
             }}
@@ -722,7 +724,8 @@ function CurrentGameSection() {
             <Field label="Step 3" childrenLayout="below">
               <OrangeActionButton
                 onClick={() => {
-                  Navigation.Navigate(BROWSE_ROUTE);
+                  resetTabStack();
+              Navigation.Navigate(BROWSE_ROUTE);
                   Navigation.CloseSideMenus();
                 }}
               >
@@ -748,7 +751,8 @@ function CurrentGameSection() {
           <PanelSectionRow>
             <OrangeActionButton
               onClick={() => {
-                Navigation.Navigate(BROWSE_ROUTE);
+                resetTabStack();
+              Navigation.Navigate(BROWSE_ROUTE);
                 Navigation.CloseSideMenus();
               }}
             >
@@ -1297,6 +1301,7 @@ function InstalledModsSection() {
             layout="below"
             onClick={() => {
               Router.CloseSideMenus();
+              resetTabStack();
               Navigation.Navigate(MANAGER_ROUTE);
             }}
           >
@@ -1700,19 +1705,33 @@ function DownloadsButton() {
     : "Downloads";
   return (
     <PanelSectionRow>
+      {/* The inline fill gradient overrode Steam's hover/focus style,
+          making the button read as unclickable mid-download - the class
+          keeps the fill AND brightens with an inset ring on focus. */}
+      <style>{`
+        .nexus-dl-fill {
+          background: linear-gradient(90deg, rgba(218,142,53,0.55) var(--dl-pct), rgba(255,255,255,0.08) var(--dl-pct)) !important;
+          color: #fff !important;
+          transition: background 0.3s linear;
+        }
+        .nexus-dl-fill:hover,
+        .nexus-dl-fill.gpfocus,
+        .nexus-dl-fill.gpfocuswithin {
+          background: linear-gradient(90deg, rgba(230,164,90,0.8) var(--dl-pct), rgba(255,255,255,0.16) var(--dl-pct)) !important;
+          box-shadow: inset 0 0 0 2px #fff;
+        }
+      `}</style>
       <DialogButton
+        className={pct !== undefined ? "nexus-dl-fill" : undefined}
         style={{
           width: "100%",
           ...(pct !== undefined
-            ? {
-                background: `linear-gradient(90deg, rgba(218,142,53,0.55) ${pct}%, rgba(255,255,255,0.08) ${pct}%)`,
-                color: "#fff",
-                transition: "background 0.3s linear",
-              }
+            ? ({ "--dl-pct": `${pct}%` } as React.CSSProperties)
             : {}),
         }}
         onClick={() => {
           Router.CloseSideMenus();
+          resetTabStack();
           Navigation.Navigate(DOWNLOADS_ROUTE);
         }}
       >
@@ -1741,7 +1760,8 @@ function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
         style={{ width: "100%", marginBottom: "8px" }}
         onClick={() => {
           Router.CloseSideMenus();
-          Navigation.Navigate(UPDATES_ROUTE);
+          resetTabStack();
+              Navigation.Navigate(UPDATES_ROUTE);
         }}
       >
         {count ? `⬆ Updates · ${count} available` : "Updates"}

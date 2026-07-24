@@ -1198,6 +1198,228 @@ def _w3_remove_menu_xmls(install_path: str, rec: dict) -> None:
         _w3_filelist_remove(pc_dir, name)
 
 
+# Auto script-merge: the game ships its vanilla script sources at
+# content/content0/scripts - a real three-way merge base. Non-overlapping
+# edits from different mods merge into a highest-priority merged mod
+# (alphabetical load order: digits sort before letters), exactly Script
+# Merger's model. Overlapping edits still refuse.
+W3_VANILLA_SCRIPTS = "content/content0/scripts"
+W3_MERGED_MOD = "mod0000_DeckyMerged"
+
+
+def _w3_merge3(base_lines: list, ours_lines: list, theirs_lines: list):
+    """Three-way line merge. Returns the merged line list, or None when
+    the two sides change overlapping regions differently (a genuine
+    conflict). Identical changes collapse to one."""
+    import difflib
+
+    def regions(side_lines):
+        sm = difflib.SequenceMatcher(
+            None, base_lines, side_lines, autojunk=False
+        )
+        out = []
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag != "equal":
+                out.append((i1, i2, side_lines[j1:j2]))
+        return out
+
+    events = [(s, e, rep, "o") for s, e, rep in regions(ours_lines)]
+    events += [(s, e, rep, "t") for s, e, rep in regions(theirs_lines)]
+    events.sort(key=lambda x: (x[0], x[1], x[3]))
+    merged = []
+    pos = 0
+    i = 0
+    while i < len(events):
+        cluster = [events[i]]
+        cs, ce = events[i][0], events[i][1]
+        j = i + 1
+        while j < len(events) and events[j][0] < ce:
+            cluster.append(events[j])
+            ce = max(ce, events[j][1])
+            j += 1
+        sides = {c[3] for c in cluster}
+        if len(sides) == 2:
+            ours_part = [c[:3] for c in cluster if c[3] == "o"]
+            theirs_part = [c[:3] for c in cluster if c[3] == "t"]
+            if ours_part == theirs_part:
+                # both mods made the identical change
+                merged.extend(base_lines[pos:cs])
+                p = cs
+                for rs, re_, rep in ours_part:
+                    merged.extend(base_lines[p:rs])
+                    merged.extend(rep)
+                    p = re_
+                pos = ce
+                i = j
+                continue
+            return None
+        merged.extend(base_lines[pos:cs])
+        p = cs
+        for rs, re_, rep, _side in cluster:
+            merged.extend(base_lines[p:rs])
+            merged.extend(rep)
+            p = re_
+        pos = ce
+        i = j
+    merged.extend(base_lines[pos:])
+    return merged
+
+
+def _w3_read_lines(path: str):
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+            return f.read().splitlines(keepends=True)
+    except OSError:
+        return None
+
+
+def _w3_current_script(install_path: str, mods_path: str, rel: str,
+                       owner: str):
+    """The currently-winning version of a script: the merged copy when
+    one exists, else the owning mod's file."""
+    merged = os.path.join(
+        mods_path, W3_MERGED_MOD, "content", "scripts", *rel.split("/")
+    )
+    if os.path.isfile(merged):
+        return merged
+    return os.path.join(
+        mods_path, owner, "content", "scripts", *rel.split("/")
+    )
+
+
+def _w3_try_merge_conflicts(
+    game_domain: str, install_path: str, mods_path: str,
+    conflicts: list, settings: dict,
+) -> list:
+    """Attempt a three-way merge for every (rel, owner, incoming_path)
+    conflict. ALL must merge cleanly; on success the merged files land in
+    the merged mod and participants are tracked for unmerge. Returns the
+    list of merged rels, or None when any file can't merge."""
+    staged = []
+    for rel, owner, incoming in conflicts:
+        base = os.path.join(
+            install_path, *W3_VANILLA_SCRIPTS.split("/"), *rel.split("/")
+        )
+        base_lines = _w3_read_lines(_adopt_case(base))
+        ours_lines = _w3_read_lines(
+            _w3_current_script(install_path, mods_path, rel, owner)
+        )
+        theirs_lines = _w3_read_lines(incoming)
+        if base_lines is None or ours_lines is None or theirs_lines is None:
+            return None
+        merged = _w3_merge3(base_lines, ours_lines, theirs_lines)
+        if merged is None:
+            return None
+        staged.append((rel, owner, merged))
+    merges = settings.setdefault("w3_merges", {}).setdefault(game_domain, {})
+    for rel, owner, merged in staged:
+        dst = os.path.join(
+            mods_path, W3_MERGED_MOD, "content", "scripts", *rel.split("/")
+        )
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, "w", encoding="utf-8", newline="") as f:
+            f.write("".join(merged))
+        entry = merges.setdefault(rel, {"mods": [owner]})
+        if owner not in entry["mods"]:
+            entry["mods"].append(owner)
+    # a friendly record so My Mods explains the folder
+    installed = settings.setdefault("installed", {}).setdefault(
+        game_domain, {}
+    )
+    if W3_MERGED_MOD not in installed:
+        installed[W3_MERGED_MOD] = {
+            "name": "Auto-merged scripts (keep enabled)",
+            "version": "",
+            "installed_at": int(time.time()),
+            "source": "merge",
+            "mode": "folder",
+        }
+    return [rel for rel, _o, _m in staged]
+
+
+def _w3_register_merge_participant(
+    game_domain: str, settings: dict, rels: list, folder: str
+) -> None:
+    merges = settings.setdefault("w3_merges", {}).setdefault(game_domain, {})
+    for rel in rels:
+        entry = merges.setdefault(rel, {"mods": []})
+        if folder not in entry["mods"]:
+            entry["mods"].append(folder)
+
+
+def _w3_unmerge(
+    game_domain: str, install_path: str, mods_path: str, folder: str,
+    settings: dict,
+) -> None:
+    """A merge participant is being uninstalled: recompute each of its
+    merged scripts from the remaining participants (or drop the merged
+    copy when one participant is left - its own file wins again)."""
+    merges = settings.get("w3_merges", {}).get(game_domain, {})
+    for rel in list(merges.keys()):
+        entry = merges[rel]
+        if folder not in entry.get("mods", []):
+            continue
+        entry["mods"] = [m for m in entry["mods"] if m != folder]
+        dst = os.path.join(
+            mods_path, W3_MERGED_MOD, "content", "scripts", *rel.split("/")
+        )
+        remaining = [
+            m
+            for m in entry["mods"]
+            if os.path.isfile(
+                os.path.join(
+                    mods_path, m, "content", "scripts", *rel.split("/")
+                )
+            )
+        ]
+        if len(remaining) <= 1:
+            try:
+                if os.path.isfile(dst):
+                    os.remove(dst)
+            except OSError:
+                pass
+            merges.pop(rel, None)
+            continue
+        base_lines = _w3_read_lines(
+            _adopt_case(
+                os.path.join(
+                    install_path, *W3_VANILLA_SCRIPTS.split("/"),
+                    *rel.split("/"),
+                )
+            )
+        )
+        acc = base_lines
+        ok = base_lines is not None
+        if ok:
+            for m in remaining:
+                side = _w3_read_lines(
+                    os.path.join(
+                        mods_path, m, "content", "scripts", *rel.split("/")
+                    )
+                )
+                acc = _w3_merge3(base_lines, acc, side) if side else None
+                if acc is None:
+                    ok = False
+                    break
+        if ok:
+            with open(dst, "w", encoding="utf-8", newline="") as f:
+                f.write("".join(acc))
+            entry["mods"] = remaining
+        else:
+            # can't cleanly recompute - keep the old merged file rather
+            # than break the game; log for the health check to surface
+            decky.logger.info(
+                f"W3 unmerge of {folder!r}: could not recompute {rel!r}, "
+                "keeping the previous merged copy"
+            )
+    # empty merged mod folder cleans itself up
+    merged_root = os.path.join(mods_path, W3_MERGED_MOD)
+    if os.path.isdir(merged_root):
+        empty = not any(files for _r, _d, files in os.walk(merged_root))
+        if empty:
+            _force_rmtree(merged_root)
+
+
 def _w3_installed_scripts(mods_path: str) -> dict:
     """Installed script paths -> owning mod folder (for conflict checks)."""
     owners = {}
@@ -1327,22 +1549,25 @@ def _route_witcher_payload(
                 f"It contains: {tops}",
             )
 
-    # Script-conflict gate against everything already installed.
+    # Script-conflict gate against everything already installed. The
+    # caller attempts a three-way auto-merge before giving up.
     owners = _w3_installed_scripts(mods_path)
+    conflicts = []
     for d in mod_dirs:
         for rel in _w3_payload_scripts(d):
             owner = owners.get(rel)
             if owner and owner.lower() != os.path.basename(d).lower():
-                decky.logger.info(
-                    f"W3 {mod_name!r}: script conflict with {owner!r} "
-                    f"on scripts/{rel}"
+                conflicts.append(
+                    (
+                        rel,
+                        owner,
+                        os.path.join(
+                            d, "content", "scripts", *rel.split("/")
+                        ),
+                    )
                 )
-                return [], [], [], (
-                    "conflict",
-                    f"Script conflict: this mod and '{owner}' both edit "
-                    f"scripts/{rel}. Merging scripts needs Script Merger "
-                    "(Windows-only) - not supported on Steam Deck yet.",
-                )
+    if conflicts:
+        return mod_dirs, dlc_dirs, menu_xmls, ("conflicts", conflicts)
     return mod_dirs, dlc_dirs, menu_xmls, None
 
 
@@ -3490,6 +3715,39 @@ query Link($slug: String!, $domainName: String!) {
             mod_dirs, dlc_dirs, menu_xmls, w3_err = _route_witcher_payload(
                 scratch, install_path, mods_path, mod_name
             )
+            merged_rels = []
+            if w3_err and w3_err[0] == "conflicts":
+                conflicts = w3_err[1]
+                settings_now = _load_settings()
+                merged_rels = _w3_try_merge_conflicts(
+                    game_domain, install_path, mods_path, conflicts,
+                    settings_now,
+                )
+                if merged_rels is not None:
+                    for d in mod_dirs:
+                        _w3_register_merge_participant(
+                            game_domain, settings_now, merged_rels,
+                            os.path.basename(d),
+                        )
+                    _save_settings(settings_now)
+                    decky.logger.info(
+                        f"W3 {mod_name!r}: auto-merged "
+                        f"{len(merged_rels)} script(s) into {W3_MERGED_MOD}"
+                    )
+                    w3_err = None
+                else:
+                    merged_rels = []
+                    rel, owner, _src = conflicts[0]
+                    decky.logger.info(
+                        f"W3 {mod_name!r}: unmergeable script conflict "
+                        f"with {owner!r} on scripts/{rel}"
+                    )
+                    w3_err = (
+                        "conflict",
+                        f"Script conflict: this mod and '{owner}' change "
+                        f"the same part of scripts/{rel} - auto-merge "
+                        "couldn't combine them safely.",
+                    )
             if w3_err:
                 kind, message = w3_err
                 if kind == "binoverlay":
@@ -4426,7 +4684,7 @@ query Link($slug: String!, $domainName: String!) {
                         except OSError as e:
                             errors.append(f"{name}: {e}")
         for section in ("installed", "collections", "framework_setup",
-                        "collection_attention"):
+                        "collection_attention", "w3_merges"):
             settings.get(section, {}).pop(game_domain, None)
         _save_settings(settings)
         cleared_dlo = False
@@ -4517,6 +4775,10 @@ query Link($slug: String!, $domainName: String!) {
                         key, None
                     )
                     removed += 1
+                    _w3_unmerge(
+                        game_domain, install_path, mods_path, folder,
+                        settings,
+                    )
                 _w3_remove_menu_xmls(install_path, rec)
             except OSError as e:
                 errors.append(f"{key}: {e}")
@@ -4995,6 +5257,12 @@ query Link($slug: String!, $domainName: String!) {
         settings = _load_settings()
         dropped = settings.get("installed", {}).get(game_domain, {}).pop(
             folder, None
+        )
+        # A merge participant leaving: recompute its merged scripts from
+        # the remaining participants.
+        _w3_unmerge(
+            game_domain, os.path.join(STEAM_COMMON, install_dir),
+            mods_path, folder, settings,
         )
         _save_settings(settings)
         if dropped:

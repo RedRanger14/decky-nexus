@@ -1,7 +1,7 @@
 // The full-screen app's tab strip: Store / Downloads / Manager / Updates.
 // LB/RB cycle tabs from anywhere on a page (wire handleTabButtons into
 // each page root's onButtonDown); the strip itself is clickable too.
-import { Focusable, Navigation } from "@decky/ui";
+import { Focusable, Navigation, QuickAccessTab } from "@decky/ui";
 import { GamepadButton } from "@decky/ui";
 
 import { NEXUS_ORANGE } from "./theme";
@@ -19,11 +19,34 @@ export const TABS: TabDef[] = [
   { id: "updates", label: "Updates", route: "/nexus-mods/updates" },
 ];
 
+// Every tab switch PUSHES a page onto Steam's nav stack - exiting to the
+// QAM must pop them ALL, or B in the QAM "returns" to the stale pages
+// left underneath (the recurring B-in-QAM bug). Entry points from the
+// QAM reset the counter; switches increment it.
+let tabPushes = 0;
+
+export function resetTabStack(): void {
+  tabPushes = 0;
+}
+
 export function switchTab(currentId: string, direction: 1 | -1): void {
   const idx = TABS.findIndex((t) => t.id === currentId);
   if (idx < 0) return;
   const next = TABS[(idx + direction + TABS.length) % TABS.length];
+  tabPushes += 1;
   Navigation.Navigate(next.route);
+}
+
+/** The tabbed pages' exit: open the QAM (so gamepad focus lands inside
+ * it), then unwind the ENTIRE tab stack - the original page plus one
+ * push per tab switch. */
+export function exitTabsToQam(): void {
+  const pops = tabPushes + 1;
+  tabPushes = 0;
+  Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
+  setTimeout(() => {
+    for (let i = 0; i < pops; i++) Navigation.NavigateBack();
+  }, 50);
 }
 
 /** Attach to a page root's (and its scroller's) onButtonDown: LB/RB
@@ -64,7 +87,10 @@ export function TabBar({ currentId }: { currentId: string }) {
             // focus on the active tab at mount makes press one dispatch.
             autoFocus={active}
             onActivate={() => {
-              if (!active) Navigation.Navigate(tab.route);
+              if (!active) {
+                tabPushes += 1;
+                Navigation.Navigate(tab.route);
+              }
             }}
             style={{
               padding: "5px 16px",

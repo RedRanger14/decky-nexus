@@ -141,3 +141,12 @@ auth path may be the natural home for this.
 Reworked Project, ~10 GB, reads as empty -> the plugin shows "2.0GB+"
 as a stopgap). Request: expose the size as a 64-bit-safe type (String,
 Float, or a BigInt scalar) or add a sizeInKB field.
+
+### Correction (2026-07-24, same day): it's null, not overflow
+
+Field observation disproved the 32-bit theory: a 4.4 GB file reports its
+true sizeInBytes fine, while small mods (Clean HUD, ~KB-scale) and the
+10 GB HD Reworked both return null/0. So `sizeInBytes` is simply
+UNPOPULATED for some files regardless of size. Revised ask: reliably
+populate sizeInBytes on collectionRevision modFiles (or document when
+it's absent). The plugin shows an em-dash for unknown sizes meanwhile.

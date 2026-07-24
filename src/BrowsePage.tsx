@@ -3,7 +3,6 @@ import {
   Dropdown,
   Focusable,
   Navigation,
-  QuickAccessTab,
   Router,
   ScrollPanelGroup,
   TextField,
@@ -36,7 +35,7 @@ import {
 // props.
 const Scroller: any = ScrollPanelGroup;
 import { NEXUS_ORANGE } from "./theme";
-import { TabBar, handleTabButtons } from "./Tabs";
+import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
 const SORT_OPTIONS = [
   { data: "featured", label: "Featured" },
@@ -557,8 +556,7 @@ export function BrowsePage() {
           setSearch("");
           return;
         }
-        Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
-        setTimeout(() => Navigation.NavigateBack(), 50);
+        exitTabsToQam();
       }}
       style={{
         marginTop: "40px",
