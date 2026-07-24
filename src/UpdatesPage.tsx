@@ -4,8 +4,6 @@
 import {
   DialogButton,
   Focusable,
-  Navigation,
-  QuickAccessTab,
   ScrollPanelGroup,
 } from "@decky/ui";
 import { toaster } from "@decky/api";
@@ -15,7 +13,7 @@ import { dismissUpdate } from "./api";
 import { installLatest } from "./install";
 import { PendingUpdate, scanUpdates } from "./updates";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
-import { TabBar, handleTabButtons } from "./Tabs";
+import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -69,13 +67,7 @@ export function UpdatesPage() {
       // No autoFocus/onActivate here: the TabBar guarantees focusable
       // children, and a focusable root traps the gamepad focus.
       onButtonDown={handleTabButtons("updates")}
-      onCancel={() => {
-        // QAM first so gamepad focus lands INSIDE it - then pop the page.
-        // The old order left focus on the page behind the menu, so B in
-        // the QAM re-triggered page handlers instead of closing it.
-        Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
-        setTimeout(() => Navigation.NavigateBack(), 50);
-      }}
+      onCancel={exitTabsToQam}
       style={{ marginTop: "40px", height: "calc(100% - 40px)" }}
     >
       <Scroller

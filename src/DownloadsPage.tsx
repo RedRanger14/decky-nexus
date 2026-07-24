@@ -4,7 +4,6 @@ import {
   DialogButton,
   Focusable,
   Navigation,
-  QuickAccessTab,
   ScrollPanelGroup,
 } from "@decky/ui";
 import { useEffect, useState } from "react";
@@ -23,7 +22,7 @@ import {
 } from "./state";
 import { getModDetails } from "./api";
 import { getSupportedGame } from "./games";
-import { TabBar, handleTabButtons } from "./Tabs";
+import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -132,13 +131,7 @@ export function DownloadsPage() {
       // the ROOT itself the focus leaf - the stick couldn't move down
       // into the rows at all.
       onButtonDown={handleTabButtons("downloads")}
-      onCancel={() => {
-        // QAM first so gamepad focus lands INSIDE it - then pop the page.
-        // The old order left focus on the page behind the menu, so B in
-        // the QAM re-triggered page handlers instead of closing it.
-        Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
-        setTimeout(() => Navigation.NavigateBack(), 50);
-      }}
+      onCancel={exitTabsToQam}
       style={{ marginTop: "40px", height: "calc(100% - 40px)" }}
     >
       <Scroller

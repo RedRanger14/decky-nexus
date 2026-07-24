@@ -1184,9 +1184,10 @@ class TestWitcherRouting(unittest.TestCase):
             self.scratch, self.install, self.mods, "New Mod"
         )
         self.assertIsNotNone(err)
-        kind, message = err
-        self.assertEqual(kind, "conflict")
-        self.assertIn("modExisting", message)
+        kind, conflicts = err
+        self.assertEqual(kind, "conflicts")
+        self.assertEqual(conflicts[0][0], "game/hit.ws")
+        self.assertEqual(conflicts[0][1], "modExisting")
 
     def test_exe_archive_is_classified_as_tool(self):
         # Script Merger / W3 Mod Manager: desktop utilities, not mods.
@@ -1298,6 +1299,120 @@ class TestWitcherRouting(unittest.TestCase):
         )
         filelist = open(os.path.join(pc, "dx11filelist.txt")).read()
         self.assertIn("rendering.xml;", filelist)
+
+    def test_merge3_combines_distinct_regions(self):
+        base = ["a\n", "b\n", "c\n", "d\n", "e\n"]
+        ours = ["a\n", "B\n", "c\n", "d\n", "e\n"]     # changed line 2
+        theirs = ["a\n", "b\n", "c\n", "D\n", "e\n"]   # changed line 4
+        merged = main._w3_merge3(base, ours, theirs)
+        self.assertEqual(merged, ["a\n", "B\n", "c\n", "D\n", "e\n"])
+
+    def test_merge3_identical_changes_collapse(self):
+        base = ["a\n", "b\n", "c\n"]
+        ours = ["a\n", "X\n", "c\n"]
+        theirs = ["a\n", "X\n", "c\n"]
+        merged = main._w3_merge3(base, ours, theirs)
+        self.assertEqual(merged, ["a\n", "X\n", "c\n"])
+
+    def test_merge3_overlapping_changes_refuse(self):
+        base = ["a\n", "b\n", "c\n"]
+        ours = ["a\n", "OURS\n", "c\n"]
+        theirs = ["a\n", "THEIRS\n", "c\n"]
+        self.assertIsNone(main._w3_merge3(base, ours, theirs))
+
+    def test_merge3_additions_at_different_points(self):
+        base = ["a\n", "b\n", "c\n"]
+        ours = ["new_top\n", "a\n", "b\n", "c\n"]
+        theirs = ["a\n", "b\n", "c\n", "new_bottom\n"]
+        merged = main._w3_merge3(base, ours, theirs)
+        self.assertEqual(
+            merged, ["new_top\n", "a\n", "b\n", "c\n", "new_bottom\n"]
+        )
+
+    def test_merge_conflicts_end_to_end_and_unmerge(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        # vanilla base
+        base = os.path.join(
+            self.install, *main.W3_VANILLA_SCRIPTS.split("/"), "game",
+            "hit.ws",
+        )
+        os.makedirs(os.path.dirname(base))
+        with open(base, "w") as f:
+            f.write("a\nb\nc\nd\ne\n")
+        # installed owner changed line 2
+        owner = os.path.join(
+            self.mods, "modExisting", "content", "scripts", "game", "hit.ws"
+        )
+        os.makedirs(os.path.dirname(owner))
+        with open(owner, "w") as f:
+            f.write("a\nOWNER\nc\nd\ne\n")
+        # incoming mod changed line 4
+        incoming = os.path.join(self.scratch, "incoming_hit.ws")
+        with open(incoming, "w") as f:
+            f.write("a\nb\nc\nNEW\ne\n")
+        settings = main._load_settings()
+        rels = main._w3_try_merge_conflicts(
+            "witcher3", self.install, self.mods,
+            [("game/hit.ws", "modExisting", incoming)], settings,
+        )
+        self.assertEqual(rels, ["game/hit.ws"])
+        main._w3_register_merge_participant(
+            "witcher3", settings, rels, "modNew"
+        )
+        merged_path = os.path.join(
+            self.mods, main.W3_MERGED_MOD, "content", "scripts", "game",
+            "hit.ws",
+        )
+        self.assertEqual(
+            open(merged_path).read(), "a\nOWNER\nc\nNEW\ne\n"
+        )
+        self.assertEqual(
+            settings["w3_merges"]["witcher3"]["game/hit.ws"]["mods"],
+            ["modExisting", "modNew"],
+        )
+        # the new mod's own copy on disk (as the install would place it)
+        newcopy = os.path.join(
+            self.mods, "modNew", "content", "scripts", "game", "hit.ws"
+        )
+        os.makedirs(os.path.dirname(newcopy))
+        with open(newcopy, "w") as f:
+            f.write("a\nb\nc\nNEW\ne\n")
+        # uninstall the new mod: one participant left -> merged copy goes,
+        # the owner's own file wins again
+        main._w3_unmerge(
+            "witcher3", self.install, self.mods, "modNew", settings
+        )
+        self.assertFalse(os.path.exists(merged_path))
+        self.assertNotIn(
+            "game/hit.ws", settings["w3_merges"]["witcher3"]
+        )
+
+    def test_merge_conflicts_refuse_on_overlap(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        base = os.path.join(
+            self.install, *main.W3_VANILLA_SCRIPTS.split("/"), "game",
+            "hit.ws",
+        )
+        os.makedirs(os.path.dirname(base))
+        with open(base, "w") as f:
+            f.write("a\nb\nc\n")
+        owner = os.path.join(
+            self.mods, "modExisting", "content", "scripts", "game", "hit.ws"
+        )
+        os.makedirs(os.path.dirname(owner))
+        with open(owner, "w") as f:
+            f.write("a\nOWNER\nc\n")
+        incoming = os.path.join(self.scratch, "incoming_hit.ws")
+        with open(incoming, "w") as f:
+            f.write("a\nTHEIRS\nc\n")
+        settings = main._load_settings()
+        rels = main._w3_try_merge_conflicts(
+            "witcher3", self.install, self.mods,
+            [("game/hit.ws", "modExisting", incoming)], settings,
+        )
+        self.assertIsNone(rels)
 
     def test_filelist_append_is_idempotent(self):
         pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))
