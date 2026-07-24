@@ -1,3 +1,11 @@
+> **DECISION (2026-07-24): free-user support is NOT happening.**
+> Michael's call - the logistics of the business model make it a
+> non-starter. The plugin now states plainly that Premium is required
+> (sign-in form + a warning row for signed-in free accounts), and the
+> NXM-relay spike UI was removed from the QAM. The backend relay
+> callables and this design doc are kept only in case the decision is
+> ever revisited.
+
 # Free-user downloads — design doc
 
 **Status:** design for review, no code. **Author:** plugin project, 2026-07-16.

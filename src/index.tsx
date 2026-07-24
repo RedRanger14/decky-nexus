@@ -45,11 +45,9 @@ import {
   getInstalledMods,
   getModDetails,
   getModLoadStatus,
-  getNxmQueue,
   getSaveStatus,
   getSmapiLoadStatus,
   installFramework,
-  registerNxmHandler,
   markLaunchOptionsSet,
   resetGameModding,
   setFrameworkLaunchOptions,
@@ -743,7 +741,6 @@ function CurrentGameSection() {
                 : `Launch ${game.displayName}`}
             </ButtonItem>
           </PanelSectionRow>
-          <ResetGameRow game={game} onDone={refreshStatus} />
         </>
       ) : (
         <>
@@ -1346,6 +1343,8 @@ function InstalledModsSection() {
           Uninstall a mod…
         </ButtonItem>
       </PanelSectionRow>
+      {/* The nuclear option lives with the other bulk actions. */}
+      <ResetGameRow game={game} onDone={refresh} />
     </PanelSection>
   );
 }
@@ -1509,6 +1508,17 @@ function AccountSection() {
             {auth.name} ({auth.is_premium ? "Premium" : "Free"})
           </Field>
         </PanelSectionRow>
+        {/* Free accounts are not supported (decision 2026-07-24): mod
+            downloads use the Premium download API. Browsing still works,
+            so stay signed in but say why installs will fail. */}
+        {!auth.is_premium && (
+          <PanelSectionRow>
+            <Field label="⚠ Premium required">
+              Downloads need a Nexus Mods Premium account — free accounts
+              can browse, but installs won't work on this device.
+            </Field>
+          </PanelSectionRow>
+        )}
         <PanelSectionRow>
           <ButtonItem layout="below" disabled={busy} onClick={onSignOut}>
             Sign out
@@ -1528,7 +1538,7 @@ function AccountSection() {
       <PanelSectionRow>
         <TextField
           label="Personal API key"
-          description="nexusmods.com → account settings → API keys"
+          description="nexusmods.com → account settings → API keys. A Nexus Mods Premium account is required for downloads."
           bIsPassword={true}
           value={draft}
           onChange={(e) => setDraft(e?.target?.value ?? "")}
@@ -1640,51 +1650,9 @@ function DevSection() {
           Ping backend
         </ButtonItem>
       </PanelSectionRow>
-      {/* Phase 1 spike for the free-user flow (docs/free-user-design.md):
-          register the relay, click 'Mod Manager Download' on any mod page in
-          the Gaming Mode browser, then check whether the queue caught it. */}
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          description="Free-user spike: register the nxm:// relay handler"
-          onClick={async () => {
-            const result = await registerNxmHandler();
-            toaster.toast(
-              result.ok
-                ? {
-                    title: "NXM relay registered",
-                    body: `tools: ${Object.entries(result.tools ?? {})
-                      .map(([k, v]) => `${k}=${v ? "ok" : "missing"}`)
-                      .join(", ")}`,
-                  }
-                : { title: "Relay registration failed", body: result.error ?? "" }
-            );
-          }}
-        >
-          NXM relay: register
-        </ButtonItem>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          description="Shows nxm:// links the relay has caught"
-          onClick={async () => {
-            const result = await getNxmQueue(false);
-            if (!result.ok) {
-              toaster.toast({ title: "Queue read failed", body: result.error ?? "" });
-              return;
-            }
-            const text =
-              (result.raw?.length ?? 0) === 0
-                ? "(queue is empty - nothing dispatched yet)"
-                : `Raw:\n${(result.raw ?? []).join("\n")}\n\nParsed:\n` +
-                  JSON.stringify(result.entries, null, 2);
-            showModal(<LogModal title="NXM relay queue" text={text} />);
-          }}
-        >
-          NXM relay: check queue
-        </ButtonItem>
-      </PanelSectionRow>
+      {/* NXM relay spike rows removed 2026-07-24: free-user support is
+          off the table (business-model decision - docs/free-user-design.md).
+          Backend callables remain if that ever gets revisited. */}
       {error && (
         <PanelSectionRow>
           <Field label="Error">{error}</Field>
