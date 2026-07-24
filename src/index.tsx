@@ -336,7 +336,8 @@ function ResetGameRow({
         game.appId,
         game.pluginsTxtSubpath ?? "",
         game.pluginsTxtStyle ?? "starred",
-        game.framework?.cleanupPrefixes ?? []
+        game.framework?.cleanupPrefixes ?? [],
+        game.witcherLayout ?? false
       );
       if (result.ok && result.use_steam_client) {
         setLaunchOptions(game.appId, "");

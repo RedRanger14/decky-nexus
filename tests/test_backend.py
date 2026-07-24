@@ -1218,6 +1218,55 @@ class TestWitcherRouting(unittest.TestCase):
         # the xml path sits under the mod folder - the ordering hazard
         self.assertTrue(xmls[0].startswith(mods[0]))
 
+    def test_filelist_remove_strips_only_the_entry(self):
+        pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))
+        os.makedirs(pc)
+        with open(os.path.join(pc, "dx11filelist.txt"), "w") as f:
+            f.write("audio.xml;" + chr(10) + "modCool.xml;" + chr(10))
+        main._w3_filelist_remove(pc, "modCool.xml")
+        content = open(os.path.join(pc, "dx11filelist.txt")).read()
+        self.assertNotIn("modCool.xml", content)
+        self.assertIn("audio.xml;", content)
+
+    def test_remove_menu_xmls_deletes_files_and_filelist_lines(self):
+        pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))
+        os.makedirs(pc)
+        with open(os.path.join(pc, "modCool.xml"), "w") as f:
+            f.write("<x/>")
+        main._w3_filelist_append(pc, "modCool.xml")
+        main._w3_remove_menu_xmls(self.install, {"menuXmls": ["modCool.xml"]})
+        self.assertFalse(os.path.exists(os.path.join(pc, "modCool.xml")))
+        content = open(os.path.join(pc, "dx11filelist.txt")).read()
+        self.assertNotIn("modCool.xml", content)
+
+    def test_reset_witcher_sweeps_orphans_and_menu_xmls(self):
+        # Crashed installs strand unrecorded folders (bricked a boot on
+        # device) - the witcher reset sweeps the whole mods dir + menu
+        # registrations, records or not.
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        orphan = os.path.join(self.mods, "modOrphan", "content")
+        os.makedirs(orphan)
+        pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))
+        os.makedirs(pc)
+        with open(os.path.join(pc, "modStale.xml"), "w") as f:
+            f.write("<x/>")
+        with open(os.path.join(pc, "audio.xml"), "w") as f:
+            f.write("<x/>")
+        main._w3_filelist_append(pc, "modStale.xml")
+        result = run(
+            main.Plugin().reset_game_modding(
+                "witcher3", self.GAME, "mods", "folder", 0, "", "starred",
+                [], True,
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertFalse(os.path.isdir(self.mods))
+        self.assertFalse(os.path.exists(os.path.join(pc, "modStale.xml")))
+        self.assertTrue(os.path.exists(os.path.join(pc, "audio.xml")))
+        content = open(os.path.join(pc, "dx11filelist.txt")).read()
+        self.assertNotIn("modStale.xml", content)
+
     def test_filelist_append_is_idempotent(self):
         pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))
         os.makedirs(pc)

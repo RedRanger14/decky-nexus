@@ -236,7 +236,8 @@ export const resetGameModding = callable<
     app_id: number,
     plugins_subpath: string,
     plugins_style: "starred" | "listed",
-    framework_file_prefixes: string[]
+    framework_file_prefixes: string[],
+    witcher_layout: boolean
   ],
   {
     ok: boolean;

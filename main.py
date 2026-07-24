@@ -1140,6 +1140,40 @@ def _w3_filelist_append(pc_dir: str, xml_name: str) -> None:
                 f.write("\n".join(lines) + "\n")
 
 
+def _w3_filelist_remove(pc_dir: str, xml_name: str) -> None:
+    for fl in ("dx11filelist.txt", "dx12filelist.txt"):
+        path = _adopt_case(os.path.join(pc_dir, fl))
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+            lines = f.read().splitlines()
+        kept = [l for l in lines if l.strip() != f"{xml_name};"]
+        if kept != lines:
+            with open(path, "w", encoding="utf-8", newline="\r\n") as f:
+                f.write("\n".join(kept) + "\n")
+
+
+def _w3_remove_menu_xmls(install_path: str, rec: dict) -> None:
+    """Undo a record's menu-XML registration: delete the XMLs from the
+    user_config_matrix dir and strip their filelist lines. Leaving them
+    behind (pre-v0.25 uninstalls did) kept dead mod menus around and, in
+    the orphan case, contributed to boot failures."""
+    xmls = (rec or {}).get("menuXmls") or []
+    if not xmls:
+        return
+    pc_dir = os.path.join(install_path, *W3_MENU_DIR.split("/"))
+    for name in xmls:
+        if not _safe_rel_path(name) or "/" in name:
+            continue
+        try:
+            path = _adopt_case(os.path.join(pc_dir, name))
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            pass
+        _w3_filelist_remove(pc_dir, name)
+
+
 def _w3_installed_scripts(mods_path: str) -> dict:
     """Installed script paths -> owning mod folder (for conflict checks)."""
     owners = {}
@@ -4226,6 +4260,7 @@ query Link($slug: String!, $domainName: String!) {
         plugins_subpath: str = "",
         plugins_style: str = "starred",
         framework_file_prefixes: list = None,
+        witcher_layout: bool = False,
     ) -> dict:
         """One-button return to vanilla: uninstall every tracked mod (all
         record modes), remove framework loader files by prefix (copyRoot
@@ -4233,7 +4268,11 @@ query Link($slug: String!, $domainName: String!) {
         regenerates it), clear this game's plugin state, and clear the
         launch command (dlo's replayed profile here; non-dlo devices get
         use_steam_client back and the frontend clears Steam's field).
-        Files installed outside this plugin are not touched."""
+        Files installed outside this plugin are not touched - EXCEPT on
+        witcher-layout games, where the mods dir is 100% mod-owned and
+        crashed installs can strand unrecorded folders that break script
+        compilation (bricked a device boot): there the whole mods dir,
+        every mod*.xml menu file, and their filelist lines are swept."""
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         settings = _load_settings()
@@ -4300,6 +4339,21 @@ query Link($slug: String!, $domainName: String!) {
                     os.remove(p)
             except OSError as e:
                 errors.append(f"plugins.txt: {e}")
+        if witcher_layout:
+            # Orphan-proof sweep: vanilla TW3 has no mods dir, and all
+            # mod*.xml menu files are mod-installed.
+            _force_rmtree(mods_path)
+            pc_dir = os.path.join(install_path, *W3_MENU_DIR.split("/"))
+            if os.path.isdir(pc_dir):
+                for name in sorted(os.listdir(pc_dir)):
+                    if name.lower().startswith("mod") and name.lower().endswith(
+                        ".xml"
+                    ):
+                        try:
+                            os.remove(os.path.join(pc_dir, name))
+                        except OSError as e:
+                            errors.append(f"{name}: {e}")
+                        _w3_filelist_remove(pc_dir, name)
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention"):
             settings.get(section, {}).pop(game_domain, None)
@@ -4392,6 +4446,7 @@ query Link($slug: String!, $domainName: String!) {
                         key, None
                     )
                     removed += 1
+                _w3_remove_menu_xmls(install_path, rec)
             except OSError as e:
                 errors.append(f"{key}: {e}")
         settings.get("collections", {}).get(game_domain, {}).pop(slug, None)
@@ -4843,6 +4898,7 @@ query Link($slug: String!, $domainName: String!) {
                 real = rec.get("folder") or folder
                 _force_rmtree(os.path.join(base, real))
                 _force_rmtree(os.path.join(base + "-disabled", real))
+            _w3_remove_menu_xmls(install_path, rec)
             settings["installed"][game_domain].pop(folder, None)
             _save_settings(settings)
             decky.logger.info(
@@ -4863,6 +4919,10 @@ query Link($slug: String!, $domainName: String!) {
             folder, None
         )
         _save_settings(settings)
+        if dropped:
+            _w3_remove_menu_xmls(
+                os.path.join(STEAM_COMMON, install_dir), dropped
+            )
         if dropped and dropped.get("moduleId") and dropped.get("launcherXml"):
             _remove_module_entry(
                 _launcher_xml_path(app_id, dropped["launcherXml"]),
