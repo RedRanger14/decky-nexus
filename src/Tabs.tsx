@@ -30,10 +30,16 @@ export function switchTab(currentId: string, direction: 1 | -1): void {
 export function handleTabButtons(currentId: string) {
   return (evt: CustomEvent) => {
     const button = (evt as any)?.detail?.button;
-    if (button === GamepadButton.BUMPER_LEFT) {
-      switchTab(currentId, -1);
-    } else if (button === GamepadButton.BUMPER_RIGHT) {
-      switchTab(currentId, 1);
+    if (
+      button === GamepadButton.BUMPER_LEFT ||
+      button === GamepadButton.BUMPER_RIGHT
+    ) {
+      // Claim the event: Steam's default bumper behavior jumps focus up
+      // a section (to the tab strip), which ate the FIRST LB press and
+      // made tab-switching need two clicks.
+      (evt as any).preventDefault?.();
+      (evt as any).stopPropagation?.();
+      switchTab(currentId, button === GamepadButton.BUMPER_LEFT ? -1 : 1);
     }
   };
 }
