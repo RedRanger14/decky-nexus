@@ -127,14 +127,10 @@ export function DownloadsPage() {
 
   return (
     <Focusable
-      // Even when the page has no focusable rows, B must land here (not
-      // fall through to Steam's default close) - hence the focusable
-      // fallback + autofocus.
-      autoFocus={true}
-      noFocusRing={true}
-      // onActivate makes this a real focus target even with no focusable
-      // children, so B lands on onCancel instead of Steam's default.
-      onActivate={() => {}}
+      // The TabBar always provides focusable children, so B (onCancel)
+      // is always catchable. The old autoFocus + onActivate guard made
+      // the ROOT itself the focus leaf - the stick couldn't move down
+      // into the rows at all.
       onButtonDown={handleTabButtons("downloads")}
       onCancel={() => {
         // QAM first so gamepad focus lands INSIDE it - then pop the page.

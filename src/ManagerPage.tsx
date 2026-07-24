@@ -449,9 +449,8 @@ export function ManagerPage() {
 
   return (
     <Focusable
-      autoFocus={true}
-      noFocusRing={true}
-      onActivate={() => {}}
+      // No autoFocus/onActivate here: the TabBar guarantees focusable
+      // children, and a focusable root traps the gamepad focus.
       onButtonDown={handleTabButtons("manager")}
       onCancel={() => {
         // QAM first so gamepad focus lands INSIDE it - then pop the page.

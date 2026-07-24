@@ -66,14 +66,8 @@ export function UpdatesPage() {
 
   return (
     <Focusable
-      // Even when the page has no focusable rows, B must land here (not
-      // fall through to Steam's default close) - hence the focusable
-      // fallback + autofocus.
-      autoFocus={true}
-      noFocusRing={true}
-      // onActivate makes this a real focus target even with no focusable
-      // children, so B lands on onCancel instead of Steam's default.
-      onActivate={() => {}}
+      // No autoFocus/onActivate here: the TabBar guarantees focusable
+      // children, and a focusable root traps the gamepad focus.
       onButtonDown={handleTabButtons("updates")}
       onCancel={() => {
         // QAM first so gamepad focus lands INSIDE it - then pop the page.
