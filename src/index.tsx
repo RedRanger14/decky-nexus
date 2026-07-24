@@ -146,7 +146,6 @@ function resolveGameContext(): GameContext {
   if (last) return { game: last };
   return { neutral: true };
 }
-import { setTabDebugToast } from "./Tabs";
 import { BrowsePage } from "./BrowsePage";
 import { CollectionPage } from "./CollectionPage";
 import { DownloadsPage } from "./DownloadsPage";
@@ -1814,12 +1813,6 @@ function Content() {
 
 export default definePlugin(() => {
   console.log("Nexus Mods plugin initializing");
-
-  // TEMP (v0.28.2): tracer for the bumper first-press investigation -
-  // shows whether the tab handler ran at all on a given press.
-  setTabDebugToast((label) =>
-    toaster.toast({ title: `[debug] ${label}`, body: "temporary tracer" })
-  );
 
   routerHook.addRoute(BROWSE_ROUTE, BrowsePage, { exact: true });
   routerHook.addRoute(DETAIL_ROUTE, ModDetailPage, { exact: true });
