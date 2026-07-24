@@ -1252,9 +1252,16 @@ class TestWitcherRouting(unittest.TestCase):
         os.makedirs(pc)
         with open(os.path.join(pc, "modStale.xml"), "w") as f:
             f.write("<x/>")
+        # NOT mod-prefixed: the naturaltorchlight class that survived the
+        # old prefix sweep and crashed the game via its filelist line
+        with open(os.path.join(pc, "naturaltorchlight.xml"), "w") as f:
+            f.write("<x/>")
         with open(os.path.join(pc, "audio.xml"), "w") as f:
             f.write("<x/>")
         main._w3_filelist_append(pc, "modStale.xml")
+        main._w3_filelist_append(pc, "naturaltorchlight.xml")
+        # a dangling line with NO file behind it at all
+        main._w3_filelist_append(pc, "ghost.xml")
         result = run(
             main.Plugin().reset_game_modding(
                 "witcher3", self.GAME, "mods", "folder", 0, "", "starred",
@@ -1264,9 +1271,14 @@ class TestWitcherRouting(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(os.path.isdir(self.mods))
         self.assertFalse(os.path.exists(os.path.join(pc, "modStale.xml")))
+        self.assertFalse(
+            os.path.exists(os.path.join(pc, "naturaltorchlight.xml"))
+        )
         self.assertTrue(os.path.exists(os.path.join(pc, "audio.xml")))
         content = open(os.path.join(pc, "dx11filelist.txt")).read()
         self.assertNotIn("modStale.xml", content)
+        self.assertNotIn("naturaltorchlight.xml", content)
+        self.assertNotIn("ghost.xml", content)
 
     def test_vanilla_menu_xml_restored_on_uninstall(self):
         # HD Reworked overwrites the game's own rendering.xml - uninstall
