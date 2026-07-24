@@ -1215,8 +1215,36 @@ class TestWitcherRouting(unittest.TestCase):
         self.assertIsNotNone(err)
         kind, conflicts = err
         self.assertEqual(kind, "conflicts")
-        self.assertEqual(conflicts[0][0], "game/hit.ws")
-        self.assertEqual(conflicts[0][1], "modExisting")
+        rel, owner, incoming, owner_path = conflicts[0]
+        self.assertEqual(rel, "game/hit.ws")
+        self.assertEqual(owner, "modExisting")
+        # real, openable paths on a case-sensitive filesystem
+        self.assertTrue(os.path.isfile(incoming))
+        self.assertTrue(os.path.isfile(owner_path))
+
+    def test_conflict_paths_survive_mixed_case(self):
+        # Mods ship Game/Player/-style casing; the lowered rel is for
+        # comparison only - reading must use REAL paths (r4player.ws
+        # failed to merge on device because both sides were opened via
+        # the lowercased path).
+        conflict = os.path.join(
+            self.mods, "modExisting", "content", "scripts", "Game",
+            "Player", "R4Player.ws",
+        )
+        os.makedirs(os.path.dirname(conflict))
+        with open(conflict, "w") as f:
+            f.write("x")
+        self.put("modNew/content/scripts/game/player/r4player.ws")
+        mods, dlcs, xmls, err = main._route_witcher_payload(
+            self.scratch, self.install, self.mods, "New Mod"
+        )
+        self.assertIsNotNone(err)
+        kind, conflicts = err
+        self.assertEqual(kind, "conflicts")
+        rel, owner, incoming, owner_path = conflicts[0]
+        self.assertEqual(rel, "game/player/r4player.ws")
+        self.assertTrue(os.path.isfile(incoming))
+        self.assertTrue(os.path.isfile(owner_path))
 
     def test_exe_archive_is_classified_as_tool(self):
         # Script Merger / W3 Mod Manager: desktop utilities, not mods.
@@ -1365,7 +1393,7 @@ class TestWitcherRouting(unittest.TestCase):
         settings = main._load_settings()
         rels = main._w3_try_merge_conflicts(
             "witcher3", self.install, self.mods,
-            [("game/hit.ws", "modExisting", incoming)], settings,
+            [("game/hit.ws", "modExisting", incoming, owner)], settings,
         )
         self.assertEqual(rels, ["game/hit.ws"])
 
@@ -1423,7 +1451,7 @@ class TestWitcherRouting(unittest.TestCase):
         settings = main._load_settings()
         rels = main._w3_try_merge_conflicts(
             "witcher3", self.install, self.mods,
-            [("game/hit.ws", "modExisting", incoming)], settings,
+            [("game/hit.ws", "modExisting", incoming, owner)], settings,
         )
         self.assertEqual(rels, ["game/hit.ws"])
         main._w3_register_merge_participant(
@@ -1480,7 +1508,7 @@ class TestWitcherRouting(unittest.TestCase):
         settings = main._load_settings()
         rels = main._w3_try_merge_conflicts(
             "witcher3", self.install, self.mods,
-            [("game/hit.ws", "modExisting", incoming)], settings,
+            [("game/hit.ws", "modExisting", incoming, owner)], settings,
         )
         self.assertIsNone(rels)
 
