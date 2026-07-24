@@ -1184,7 +1184,39 @@ class TestWitcherRouting(unittest.TestCase):
             self.scratch, self.install, self.mods, "New Mod"
         )
         self.assertIsNotNone(err)
-        self.assertIn("modExisting", err)
+        kind, message = err
+        self.assertEqual(kind, "conflict")
+        self.assertIn("modExisting", message)
+
+    def test_exe_archive_is_classified_as_tool(self):
+        # Script Merger / W3 Mod Manager: desktop utilities, not mods.
+        self.put("WitcherScriptMerger/WitcherScriptMerger.exe")
+        mods, dlcs, xmls, err = main._route_witcher_payload(
+            self.scratch, self.install, self.mods, "Script Merger"
+        )
+        self.assertIsNotNone(err)
+        kind, message = err
+        self.assertEqual(kind, "tool")
+        self.assertIn("PC modding tool", message)
+
+    def test_menu_xml_inside_mod_folder_is_found(self):
+        # Increased Draw Distance layout: the XML lives INSIDE the mod
+        # folder - the caller must move XMLs before folders (the old
+        # order crashed with FileNotFoundError on device).
+        self.put("modIDD/content/blob.bundle")
+        self.put(
+            "modIDD/bin/config/r4game/user_config_matrix/pc/modIDDConfig.xml"
+        )
+        mods, dlcs, xmls, err = main._route_witcher_payload(
+            self.scratch, self.install, self.mods, "Increased Draw Distance"
+        )
+        self.assertIsNone(err)
+        self.assertEqual(len(mods), 1)
+        self.assertEqual(
+            [os.path.basename(x) for x in xmls], ["modIDDConfig.xml"]
+        )
+        # the xml path sits under the mod folder - the ordering hazard
+        self.assertTrue(xmls[0].startswith(mods[0]))
 
     def test_filelist_append_is_idempotent(self):
         pc = os.path.join(self.install, *main.W3_MENU_DIR.split("/"))

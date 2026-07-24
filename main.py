@@ -1228,7 +1228,7 @@ def _route_witcher_payload(
                     if p not in menu_xmls:
                         menu_xmls.append(p)
 
-    if not mod_dirs and not dlc_dirs:
+    if not mod_dirs and not dlc_dirs and not menu_xmls:
         # Loose content/ at root: wrap as a mod folder.
         if os.path.isdir(os.path.join(scratch, "content")):
             wrap = os.path.join(scratch, "mod" + _safe_name(mod_name))
@@ -1239,9 +1239,27 @@ def _route_witcher_payload(
             )
             mod_dirs.append(wrap)
         else:
+            tops = ", ".join(sorted(os.listdir(scratch))[:6])
+            decky.logger.info(
+                f"W3 {mod_name!r}: no layout; top level: {tops}"
+            )
+            # Desktop utilities (Script Merger, W3 Mod Manager) ship exes
+            # instead of mod folders - classify them so collections skip
+            # instead of failing.
+            for root, _dirs, names in os.walk(scratch):
+                for n in names:
+                    if n.lower().endswith(".exe"):
+                        return [], [], [], (
+                            "tool",
+                            f"{mod_name} looks like a PC modding tool "
+                            f"({n}), not a mod the game loads - it needs "
+                            "a desktop setup, so it was skipped.",
+                        )
             return [], [], menu_xmls, (
+                "layout",
                 "No Witcher 3 mod layout found in this archive (expected "
-                "mod*/dlc* folders or a content/ folder)"
+                "mod*/dlc* folders or a content/ folder). "
+                f"It contains: {tops}",
             )
 
     # Script-conflict gate against everything already installed.
@@ -1250,10 +1268,15 @@ def _route_witcher_payload(
         for rel in _w3_payload_scripts(d):
             owner = owners.get(rel)
             if owner and owner.lower() != os.path.basename(d).lower():
+                decky.logger.info(
+                    f"W3 {mod_name!r}: script conflict with {owner!r} "
+                    f"on scripts/{rel}"
+                )
                 return [], [], [], (
+                    "conflict",
                     f"Script conflict: this mod and '{owner}' both edit "
                     f"scripts/{rel}. Merging scripts needs Script Merger "
-                    "(Windows-only) - not supported on Steam Deck yet."
+                    "(Windows-only) - not supported on Steam Deck yet.",
                 )
     return mod_dirs, dlc_dirs, menu_xmls, None
 
@@ -3403,8 +3426,13 @@ query Link($slug: String!, $domainName: String!) {
                 scratch, install_path, mods_path, mod_name
             )
             if w3_err:
+                kind, message = w3_err
                 _force_rmtree(scratch)
-                return {"ok": False, "error": w3_err}
+                await _emit_progress(mod_id, "error", 0, kind)
+                result = {"ok": False, "error": message}
+                if kind == "tool":
+                    result["unsupported_tool"] = True
+                return result
             os.makedirs(mods_path, exist_ok=True)
             settings = _load_settings()  # re-read: parallel installs
             installed = settings.setdefault("installed", {}).setdefault(
@@ -3420,6 +3448,22 @@ query Link($slug: String!, $domainName: String!) {
                 "source": record_source,
                 "collection_slug": collection_slug,
             }
+            # Menu XMLs FIRST: they often live INSIDE a mod folder
+            # (modX/bin/config/.../pc/), and moving the folder first made
+            # the XML's scratch path vanish (crashed Increased Draw
+            # Distance on device).
+            pc_dir = os.path.join(install_path, *W3_MENU_DIR.split("/"))
+            xml_names = []
+            if menu_xmls:
+                os.makedirs(pc_dir, exist_ok=True)
+                for x in menu_xmls:
+                    name = os.path.basename(x)
+                    dstx = os.path.join(pc_dir, name)
+                    if os.path.isfile(dstx):
+                        os.remove(dstx)
+                    shutil.move(x, dstx)
+                    _w3_filelist_append(pc_dir, name)
+                    xml_names.append(name)
             first_folder = None
             for d in mod_dirs:
                 folder = os.path.basename(d)
@@ -3445,20 +3489,20 @@ query Link($slug: String!, $domainName: String!) {
                     "folder": folder,
                 }
                 first_folder = first_folder or folder
-            pc_dir = os.path.join(install_path, *W3_MENU_DIR.split("/"))
-            xml_names = []
-            if menu_xmls:
-                os.makedirs(pc_dir, exist_ok=True)
-                for x in menu_xmls:
-                    name = os.path.basename(x)
-                    dstx = os.path.join(pc_dir, name)
-                    if os.path.isfile(dstx):
-                        os.remove(dstx)
-                    shutil.move(x, dstx)
-                    _w3_filelist_append(pc_dir, name)
-                    xml_names.append(name)
-                if first_folder and first_folder in installed:
-                    installed[first_folder]["menuXmls"] = xml_names
+            if xml_names and first_folder and first_folder in installed:
+                installed[first_folder]["menuXmls"] = xml_names
+            elif xml_names and not first_folder:
+                # XML-only archive (pure menu/config mods): files-mode
+                # record so it lists and uninstalls like everything else.
+                installed[_safe_name(mod_name)] = {
+                    **base_rec,
+                    "name": mod_name,
+                    "mode": "files",
+                    "target": W3_MENU_DIR,
+                    "files": xml_names,
+                    "menuXmls": xml_names,
+                }
+                first_folder = _safe_name(mod_name)
             _save_settings(settings)
             _force_rmtree(scratch)
             try:
