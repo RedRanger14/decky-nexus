@@ -402,3 +402,29 @@ worked first time. Findings:
   collections ASSUME Script Merger. Next step when W3 returns to the
   front burner: the Linux CLI merge spike (apocalyptech/w3scriptmerge)
   or a minimal built-in three-way merge for non-overlapping hunks.
+
+## Witcher 3 script-mod ceiling (established 2026-07-24, device testing)
+
+Extensive on-device testing of large mixed W3 collections established a
+hard, honest scope limit:
+
+- **Mechanical install works**: folder/dlc/menu-XML placement, official-
+  DLC protection (merge-not-replace), PC-tool and bin-overlay handling,
+  filelist registration - all verified.
+- **Auto script-merge is OFF by default** (v0.32.4). A line-based 3-way
+  merge can produce a structurally-valid script (balanced braces/parens,
+  correct encoding) that still won't compile, and a bad merged mod
+  crashed the game BEFORE the compile stage. Not safe unattended. Engine
+  retained behind `w3_auto_merge` for a future health-check that can
+  validate before committing.
+- **Large script-heavy soup won't boot regardless**: with the one merged
+  file's mods removed, a 68-mod setup reached "compiling scripts" then
+  failed - other mods' script interdependencies + load-order needs. This
+  is the PC-Witcher Script-Merger reality; unattended install can't lift
+  it.
+
+1.0 W3 scope: single collections / modest script-mod counts install and
+boot cleanly (conflicts skip with a note). Very large multi-collection
+setups are explicitly out of scope - the health-check feature is where
+we'll diagnose "this combination won't compile" for the user rather than
+attempt it.
