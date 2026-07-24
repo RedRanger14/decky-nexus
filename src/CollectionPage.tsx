@@ -49,7 +49,12 @@ import {
   subscribeDownloads,
   updateDownload,
 } from "./state";
-import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
+import {
+  BLUE_BUTTON_CLASS,
+  PRIMARY_BUTTON_CLASS,
+  PRIMARY_BUTTON_CSS,
+  WHITE_BUTTON_CLASS,
+} from "./theme";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -373,14 +378,17 @@ export function CollectionPage() {
     });
 
   /** Resolve ONE pending manual decision: re-install to the decision
-   * point, show its modal, finish. Returns true when it installed. */
-  const resolveAttentionItem = async (item: AttentionItem) => {
+   * point, show its modal, finish. "backout" = the user closed the
+   * modal - the item stays pending AND the caller must stop prompting. */
+  const resolveAttentionItem = async (
+    item: AttentionItem
+  ): Promise<"installed" | "backout" | "failed"> => {
     setFinishingFileId(item.file_id);
     try {
       let choice = "";
       if (item.reason === "choices" && item.options.length > 0) {
         const picked = await pickChoice(item.mod_name, item.options);
-        if (picked === undefined) return false; // backed out - stays pending
+        if (picked === undefined) return "backout";
         choice = picked;
       }
       let result = await installPinned(
@@ -397,14 +405,14 @@ export function CollectionPage() {
         const ids = await runWizard(result.wizard as FomodWizardData);
         if (ids === undefined) {
           dropDownload(item.mod_id);
-          return false;
+          return "backout";
         }
         result = await finishFomod(result.fomod_token, ids);
       } else if (result.needs_choice && result.options?.length) {
         const picked = await pickChoice(item.mod_name, result.options);
         if (picked === undefined) {
           dropDownload(item.mod_id);
-          return false;
+          return "backout";
         }
         result = await installPinned(
           game,
@@ -417,28 +425,31 @@ export function CollectionPage() {
           picked
         );
       }
-      if (result.ok) return true;
+      if (result.ok) return "installed";
       updateDownload(item.mod_id, "error", 0);
       toaster.toast({
         title: `${item.mod_name} failed`,
         body: result.error ?? "",
       });
-      return false;
+      return "failed";
     } catch (e) {
       updateDownload(item.mod_id, "error", 0);
       toaster.toast({ title: `${item.mod_name} failed`, body: String(e) });
-      return false;
+      return "failed";
     } finally {
       setFinishingFileId(undefined);
     }
   };
 
-  /** Resolve every pending manual decision in one guided pass. */
+  /** Resolve every pending manual decision in one guided pass. Backing
+   * out of any modal ends the WHOLE pass - B means "not now", not
+   * "next question please". */
   const finishSetup = async () => {
     if (!detail || finishingFileId !== undefined) return;
     for (const item of [...actionable]) {
-      const ok = await resolveAttentionItem(item);
-      if (ok) {
+      const outcome = await resolveAttentionItem(item);
+      if (outcome === "backout") break;
+      if (outcome === "installed") {
         persistAttention(
           attentionRef.current.filter((a) => a.file_id !== item.file_id)
         );
@@ -451,8 +462,8 @@ export function CollectionPage() {
    * is still working through other mods. */
   const resolveSingle = async (item: AttentionItem) => {
     if (finishingFileId !== undefined) return;
-    const ok = await resolveAttentionItem(item);
-    if (ok) {
+    const outcome = await resolveAttentionItem(item);
+    if (outcome === "installed") {
       persistAttention(
         attentionRef.current.filter((a) => a.file_id !== item.file_id)
       );
@@ -475,6 +486,36 @@ export function CollectionPage() {
     setSelectedMod({ game, mod: info });
     setDetailOrigin("browse");
     Navigation.Navigate("/nexus-mods/mod");
+  };
+
+  const onUninstallCollection = () => {
+    showModal(
+      <ConfirmModal
+        strTitle={`Uninstall ${collection.name}?`}
+        strDescription="Removes the mods this collection installed. Mods you installed yourself (or via another collection) stay."
+        strOKButtonText="Uninstall collection"
+        bDestructiveWarning={true}
+        onOK={async () => {
+          const result = await uninstallCollection(
+            game.nexusDomain,
+            game.installDirName,
+            game.modsSubdir,
+            ...modeParams(game),
+            collection.slug
+          );
+          toaster.toast(
+            result.ok
+              ? {
+                  title: `${collection.name} uninstalled`,
+                  body: `${result.removed ?? 0} mods removed`,
+                }
+              : { title: "Uninstall failed", body: result.error ?? "" }
+          );
+          persistAttention([]);
+          refreshInstalled();
+        }}
+      />
+    );
   };
 
   const toggleExpand = (f: CollectionFile) => {
@@ -586,13 +627,10 @@ export function CollectionPage() {
           </DialogButton>
           {actionable.length > 0 && (
             <DialogButton
+              className={BLUE_BUTTON_CLASS}
               disabled={finishingFileId !== undefined}
               onClick={finishSetup}
-              style={{
-                flexGrow: 1,
-                minWidth: "200px",
-                background: "rgba(74,169,255,0.22)",
-              }}
+              style={{ flexGrow: 1, minWidth: "200px" }}
             >
               {finishingFileId !== undefined
                 ? "Finishing…"
@@ -601,14 +639,10 @@ export function CollectionPage() {
           )}
           {optionalRemaining.length > 0 && (
             <DialogButton
+              className={WHITE_BUTTON_CLASS}
               disabled={!detail || installing}
               onClick={() => installAll(true)}
-              style={{
-                flexGrow: 1,
-                minWidth: "190px",
-                background: "rgba(255,255,255,0.85)",
-                color: "#111",
-              }}
+              style={{ flexGrow: 1, minWidth: "190px" }}
             >
               {remaining.length === 0
                 ? `Install optional (${optionalRemaining.length})`
@@ -623,6 +657,15 @@ export function CollectionPage() {
           >
             Back
           </DialogButton>
+          {installedRequiredCount > 0 && !installing && (
+            <DialogButton
+              disabled={finishingFileId !== undefined}
+              onClick={onUninstallCollection}
+              style={{ flexGrow: 1, minWidth: "150px", opacity: 0.85 }}
+            >
+              Uninstall
+            </DialogButton>
+          )}
         </Focusable>
 
         {/* Partial without a run of ours = the user already owns some of
@@ -644,60 +687,6 @@ export function CollectionPage() {
               installed - only the missing ones will download.
             </div>
           )}
-        {installedRequiredCount > 0 && !installing && (
-          <Focusable
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              margin: "-4px 0 12px",
-            }}
-          >
-            <DialogButton
-              disabled={finishingFileId !== undefined}
-              onClick={() =>
-                showModal(
-                  <ConfirmModal
-                    strTitle={`Uninstall ${collection.name}?`}
-                    strDescription="Removes the mods this collection installed. Mods you installed yourself (or via another collection) stay."
-                    strOKButtonText="Uninstall collection"
-                    bDestructiveWarning={true}
-                    onOK={async () => {
-                      const result = await uninstallCollection(
-                        game.nexusDomain,
-                        game.installDirName,
-                        game.modsSubdir,
-                        ...modeParams(game),
-                        collection.slug
-                      );
-                      toaster.toast(
-                        result.ok
-                          ? {
-                              title: `${collection.name} uninstalled`,
-                              body: `${result.removed ?? 0} mods removed`,
-                            }
-                          : {
-                              title: "Uninstall failed",
-                              body: result.error ?? "",
-                            }
-                      );
-                      persistAttention([]);
-                      refreshInstalled();
-                    }}
-                  />
-                )
-              }
-              style={{
-                minWidth: "0",
-                width: "auto",
-                padding: "6px 14px",
-                fontSize: "12.5px",
-                opacity: 0.85,
-              }}
-            >
-              Uninstall collection
-            </DialogButton>
-          </Focusable>
-        )}
         {toolSkips.length > 0 && !installing && (
           <div
             style={{
@@ -891,6 +880,7 @@ export function CollectionPage() {
                             </DialogButton>
                             {attentionItem && (
                               <DialogButton
+                                className={BLUE_BUTTON_CLASS}
                                 disabled={finishingFileId !== undefined}
                                 onClick={() => resolveSingle(attentionItem)}
                                 style={{
@@ -898,7 +888,6 @@ export function CollectionPage() {
                                   width: "auto",
                                   padding: "8px 12px",
                                   fontSize: "12px",
-                                  background: "rgba(74,169,255,0.22)",
                                 }}
                               >
                                 Make choices
