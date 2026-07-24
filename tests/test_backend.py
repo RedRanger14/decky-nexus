@@ -1397,6 +1397,12 @@ class TestWitcherRouting(unittest.TestCase):
         )
         self.assertEqual(rels, ["game/hit.ws"])
 
+    def test_merge3_deadline_raises_and_try_merge_degrades(self):
+        # A blown budget must degrade to "unmergeable", never freeze the
+        # backend (r4player.ws is difflib's quadratic worst case).
+        with self.assertRaises(TimeoutError):
+            main._w3_merge3(["a"], ["b"], ["c"], deadline=0)
+
     def test_merge3_combines_distinct_regions(self):
         base = ["a\n", "b\n", "c\n", "d\n", "e\n"]
         ours = ["a\n", "B\n", "c\n", "d\n", "e\n"]     # changed line 2
