@@ -26,13 +26,6 @@ export function switchTab(currentId: string, direction: 1 | -1): void {
   Navigation.Navigate(next.route);
 }
 
-// TEMP (v0.28.2 debug): shows whether the handler actually ran on a
-// bumper press - remove once the first-press investigation closes.
-let debugToast: ((label: string) => void) | undefined;
-export function setTabDebugToast(fn: (label: string) => void): void {
-  debugToast = fn;
-}
-
 /** Attach to a page root's (and its scroller's) onButtonDown: LB/RB
  * cycle the tabs. No preventDefault/stopPropagation - claiming the
  * event made BOTH bumpers need two presses (v0.28.1 regression). */
@@ -40,10 +33,8 @@ export function handleTabButtons(currentId: string) {
   return (evt: CustomEvent) => {
     const button = (evt as any)?.detail?.button;
     if (button === GamepadButton.BUMPER_LEFT) {
-      debugToast?.("LB handled → switching");
       switchTab(currentId, -1);
     } else if (button === GamepadButton.BUMPER_RIGHT) {
-      debugToast?.("RB handled → switching");
       switchTab(currentId, 1);
     }
   };
@@ -67,6 +58,11 @@ export function TabBar({ currentId }: { currentId: string }) {
         return (
           <Focusable
             key={tab.id}
+            // Freshly-mounted pages have NO established gamepad focus,
+            // so the first bumper press was spent establishing it (the
+            // "highlights the tab then works" double-press). Landing
+            // focus on the active tab at mount makes press one dispatch.
+            autoFocus={active}
             onActivate={() => {
               if (!active) Navigation.Navigate(tab.route);
             }}
