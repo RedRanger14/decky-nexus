@@ -169,14 +169,15 @@ export function CollectionPage() {
   const { game, collection } = sel;
 
   const attentionIds = new Set(attention.map((a) => a.file_id));
-  // Actionable = the user can resolve them (choices/wizards); tools and
-  // script conflicts can never install here and only get a note.
+  // Actionable = the user can resolve them (choices/wizards); tools,
+  // script conflicts, and unrecognized archives only get a note.
   const actionable = attention.filter(
-    (a) => a.reason !== "tool" && a.reason !== "conflict"
+    (a) => a.reason === "choices" || a.reason === "fomod"
   );
   const actionableIds = new Set(actionable.map((a) => a.file_id));
   const toolSkips = attention.filter((a) => a.reason === "tool");
   const conflictSkips = attention.filter((a) => a.reason === "conflict");
+  const layoutSkips = attention.filter((a) => a.reason === "layout");
 
   const required = detail?.files.filter((f) => !f.optional) ?? [];
   const optional = detail?.files.filter((f) => f.optional) ?? [];
@@ -294,6 +295,24 @@ export function CollectionPage() {
               reason: result.needs_fomod ? "fomod" : "choices",
               options: result.options ?? [],
             });
+          } else if (result.unsupported_layout) {
+            // Retrying can't change an unrecognized archive layout -
+            // park it (the refusal log carries the shape for us to fix).
+            dropDownload(f.modId);
+            setCollectionRow(f.fileId, "skipped");
+            freshAttention.push({
+              file_id: f.fileId,
+              mod_id: f.modId,
+              mod_name: f.modName,
+              file_name: f.fileName,
+              version: f.version,
+              reason: "layout",
+              options: [],
+            });
+            toaster.toast({
+              title: `${f.modName}: not installable - skipped`,
+              body: result.error ?? "",
+            });
           } else if (result.unsupported_tool) {
             // Desktop tools (xEdit, patchers) aren't failures - the
             // game never loads them; they just can't live here. Persist
@@ -362,13 +381,24 @@ export function CollectionPage() {
         ...freshAttention,
       ]);
       refreshInstalled();
+      // Only actionable items belong in "waiting on your choices" -
+      // tools/conflicts/unrecognized archives are permanent skips and
+      // used to make this toast promise a Finish setup that never came.
+      const needsChoices = freshAttention.filter(
+        (a) => a.reason === "choices" || a.reason === "fomod"
+      ).length;
+      const skipped = freshAttention.length - needsChoices;
+      const bits = [];
+      if (failures > 0) bits.push(`${failures} failure(s)`);
+      if (needsChoices > 0)
+        bits.push(`${needsChoices} waiting on your choices (Finish setup)`);
+      if (skipped > 0) bits.push(`${skipped} skipped (see notes)`);
       toaster.toast({
         title: `${collection.name}`,
         body:
-          failures === 0 && freshAttention.length === 0
+          bits.length === 0
             ? "Collection installed - restart the game to load it"
-            : `Done: ${failures} failure(s), ${freshAttention.length} ` +
-              "waiting on your choices (Finish setup)",
+            : `Done: ${bits.join(", ")}`,
       });
     } finally {
       endCollectionRun();
@@ -735,6 +765,21 @@ export function CollectionPage() {
             desktop, not in-game, and don't count as missing.
           </div>
         )}
+        {layoutSkips.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              opacity: 0.7,
+              margin: "-6px 0 12px",
+            }}
+          >
+            ⏭ {layoutSkips.length} archive
+            {layoutSkips.length === 1 ? "" : "s"} skipped (
+            {layoutSkips.map((t) => t.mod_name).join(", ")}) - no
+            installable payload for this device (utilities, updater
+            scripts, or layouts we don't support yet).
+          </div>
+        )}
         {conflictSkips.length > 0 && !installing && (
           <div
             style={{
@@ -852,6 +897,13 @@ export function CollectionPage() {
                       {isToolSkip && (
                         <span style={{ opacity: 0.55 }}> · PC tool</span>
                       )}
+                      {parkedReason === "layout" &&
+                        !installedIds.has(f.modId) && (
+                          <span style={{ opacity: 0.55 }}>
+                            {" "}
+                            · not installable
+                          </span>
+                        )}
                       {isConflict && (
                         <span style={{ color: "#ffc83c" }}>
                           {" "}
@@ -864,7 +916,7 @@ export function CollectionPage() {
                     >
                       {/* sizeInBytes overflows the API's 32-bit Int for
                           >2GB files (HD Reworked read as "1 KB") */}
-                      {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "large"}
+                      {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "2.0GB+"}
                     </span>
                   </div>
                   {open && (
@@ -993,7 +1045,7 @@ export function CollectionPage() {
                   {f.modName}
                 </span>
                 <span style={{ flexShrink: 0, marginLeft: "10px" }}>
-                  {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "large"}
+                  {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "2.0GB+"}
                 </span>
               </div>
             ))}

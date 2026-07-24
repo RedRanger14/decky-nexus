@@ -57,6 +57,9 @@ export interface InstallResult {
   /** Witcher script conflict with an installed mod - not retryable
    * without script merging; collections park it, not fail it. */
   script_conflict?: boolean;
+  /** Archive layout we can't recognize - parked as skipped so it stops
+   * counting as remaining (retrying can't change the layout). */
+  unsupported_layout?: boolean;
   /** Option-style archive: the user must pick one of `options` and retry
    * with payload_choice set. */
   needs_choice?: boolean;
@@ -97,6 +100,8 @@ export interface InstalledResult {
   mods?: InstalledMod[];
   /** slug -> display info for collections seen on this game */
   collections?: Record<string, InstalledCollectionInfo>;
+  /** slug -> pending manual decisions (the Finish-setup queue) */
+  attention?: Record<string, AttentionItem[]>;
   error?: string;
 }
 

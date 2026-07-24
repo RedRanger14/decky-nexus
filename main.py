@@ -1313,6 +1313,13 @@ def _route_witcher_payload(
                             f"({n}), not a mod the game loads - it needs "
                             "a desktop setup, so it was skipped.",
                         )
+            # bin/ overlay mods (DX12 VRAM Relief: dlls + settings under
+            # bin/, no mod folder) install into the game root instead.
+            for e in os.listdir(scratch):
+                if e.lower() == "bin" and os.path.isdir(
+                    os.path.join(scratch, e)
+                ):
+                    return [], [], [], ("binoverlay", "")
             return [], [], menu_xmls, (
                 "layout",
                 "No Witcher 3 mod layout found in this archive (expected "
@@ -3485,6 +3492,18 @@ query Link($slug: String!, $domainName: String!) {
             )
             if w3_err:
                 kind, message = w3_err
+                if kind == "binoverlay":
+                    # bin/-only overlay: drop readme clutter, install the
+                    # bin tree into the game root as a files-mode record.
+                    for e in list(os.listdir(scratch)):
+                        if e.lower() != "bin":
+                            p = os.path.join(scratch, e)
+                            _force_rmtree(p) if os.path.isdir(p) else os.remove(p)
+                    return await self._install_root_files(
+                        scratch, install_path, game_domain, mod_id,
+                        file_id, file_name, mod_name, mod_version,
+                        page_version, record_source, collection_slug,
+                    )
                 _force_rmtree(scratch)
                 await _emit_progress(mod_id, "error", 0, kind)
                 result = {"ok": False, "error": message}
@@ -3494,6 +3513,8 @@ query Link($slug: String!, $domainName: String!) {
                     # Not retryable without script merging - the UI
                     # parks these instead of counting them as missing.
                     result["script_conflict"] = True
+                elif kind == "layout":
+                    result["unsupported_layout"] = True
                 return result
             os.makedirs(mods_path, exist_ok=True)
             settings = _load_settings()  # re-read: parallel installs
@@ -4664,6 +4685,9 @@ query Link($slug: String!, $domainName: String!) {
                 "collections": settings.get("collections", {}).get(
                     game_domain, {}
                 ),
+                "attention": settings.get("collection_attention", {}).get(
+                    game_domain, {}
+                ),
             }
 
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
@@ -4742,10 +4766,14 @@ query Link($slug: String!, $domainName: String!) {
         # Stable alphabetical order regardless of enabled state - toggling a
         # mod must not make it jump around the list.
         results.sort(key=lambda m: (m["name"] or m["folder"]).lower())
+        settings_now = _load_settings()
         return {
             "ok": True,
             "mods": results,
-            "collections": _load_settings().get("collections", {}).get(
+            "collections": settings_now.get("collections", {}).get(
+                game_domain, {}
+            ),
+            "attention": settings_now.get("collection_attention", {}).get(
                 game_domain, {}
             ),
         }

@@ -131,3 +131,13 @@ clients. A single boolean ("account may see adult content") is enough
 for parity. The v3 REST API (api.nexusmods.com/v3) already has
 account-scoped endpoints (donations wallet) behind user OAuth - that
 auth path may be the natural home for this.
+
+---
+
+## Additional request: 64-bit file sizes in v2 GraphQL (2026-07-24)
+
+`collectionRevision.modFiles.file.sizeInBytes` is a GraphQL Int
+(32-bit): files over 2 GB return nothing usable (The Witcher 3 HD
+Reworked Project, ~10 GB, reads as empty -> the plugin shows "2.0GB+"
+as a stopgap). Request: expose the size as a 64-bit-safe type (String,
+Float, or a BigInt scalar) or add a sizeInKB field.
