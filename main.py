@@ -1272,6 +1272,15 @@ def _w3_merge3(base_lines: list, ours_lines: list, theirs_lines: list):
     return merged
 
 
+def _adopt_case_path(base: str, rel: str) -> str:
+    """Adopt on-disk casing for EVERY component of rel under base -
+    _adopt_case alone only fixes the last segment."""
+    cur = base
+    for part in rel.split("/"):
+        cur = _adopt_case(os.path.join(cur, part))
+    return cur
+
+
 def _w3_read_lines(path: str):
     """Read a script EOL-normalized: mod files mix CRLF/LF freely, and
     keeping endings made every line 'differ' from the vanilla base -
@@ -1290,35 +1299,34 @@ def _w3_write_script(path: str, lines: list) -> None:
 
 
 def _w3_current_script(install_path: str, mods_path: str, rel: str,
-                       owner: str):
+                       owner_path: str):
     """The currently-winning version of a script: the merged copy when
-    one exists, else the owning mod's file."""
+    one exists, else the owning mod's real file path."""
     merged = os.path.join(
         mods_path, W3_MERGED_MOD, "content", "scripts", *rel.split("/")
     )
     if os.path.isfile(merged):
         return merged
-    return os.path.join(
-        mods_path, owner, "content", "scripts", *rel.split("/")
-    )
+    return owner_path
 
 
 def _w3_try_merge_conflicts(
     game_domain: str, install_path: str, mods_path: str,
     conflicts: list, settings: dict,
 ) -> list:
-    """Attempt a three-way merge for every (rel, owner, incoming_path)
-    conflict. ALL must merge cleanly; on success the merged files land in
-    the merged mod and participants are tracked for unmerge. Returns the
-    list of merged rels, or None when any file can't merge."""
+    """Attempt a three-way merge for every conflict tuple
+    (rel, owner_folder, incoming_path, owner_path). ALL must merge
+    cleanly; on success the merged files land in the merged mod and
+    participants are tracked for unmerge. Returns the list of merged
+    rels, or None when any file can't merge."""
     staged = []
-    for rel, owner, incoming in conflicts:
-        base = os.path.join(
-            install_path, *W3_VANILLA_SCRIPTS.split("/"), *rel.split("/")
+    for rel, owner, incoming, owner_path in conflicts:
+        base = _adopt_case_path(
+            os.path.join(install_path, *W3_VANILLA_SCRIPTS.split("/")), rel
         )
-        base_lines = _w3_read_lines(_adopt_case(base))
+        base_lines = _w3_read_lines(base)
         ours_lines = _w3_read_lines(
-            _w3_current_script(install_path, mods_path, rel, owner)
+            _w3_current_script(install_path, mods_path, rel, owner_path)
         )
         theirs_lines = _w3_read_lines(incoming)
         if base_lines is None or ours_lines is None or theirs_lines is None:
@@ -1392,8 +1400,8 @@ def _w3_unmerge(
             m
             for m in entry["mods"]
             if os.path.isfile(
-                os.path.join(
-                    mods_path, m, "content", "scripts", *rel.split("/")
+                _adopt_case_path(
+                    os.path.join(mods_path, m, "content", "scripts"), rel
                 )
             )
         ]
@@ -1406,11 +1414,9 @@ def _w3_unmerge(
             merges.pop(rel, None)
             continue
         base_lines = _w3_read_lines(
-            _adopt_case(
-                os.path.join(
-                    install_path, *W3_VANILLA_SCRIPTS.split("/"),
-                    *rel.split("/"),
-                )
+            _adopt_case_path(
+                os.path.join(install_path, *W3_VANILLA_SCRIPTS.split("/")),
+                rel,
             )
         )
         acc = base_lines
@@ -1418,8 +1424,9 @@ def _w3_unmerge(
         if ok:
             for m in remaining:
                 side = _w3_read_lines(
-                    os.path.join(
-                        mods_path, m, "content", "scripts", *rel.split("/")
+                    _adopt_case_path(
+                        os.path.join(mods_path, m, "content", "scripts"),
+                        rel,
                     )
                 )
                 acc = _w3_merge3(base_lines, acc, side) if side else None
@@ -1477,12 +1484,20 @@ def _w3_installed_scripts(mods_path: str) -> dict:
         for root, _dirs, names in os.walk(scripts):
             for n in names:
                 if n.lower().endswith(".ws"):
-                    rel = os.path.relpath(os.path.join(root, n), scripts)
-                    owners[rel.replace(os.sep, "/").lower()] = folder
+                    path = os.path.join(root, n)
+                    rel = os.path.relpath(path, scripts)
+                    # lowered rel for Wine-style comparison, REAL path
+                    # for reading - Linux is case-sensitive and mods
+                    # ship Game/Player/-style casing freely.
+                    owners[rel.replace(os.sep, "/").lower()] = (
+                        folder,
+                        path,
+                    )
     return owners
 
 
 def _w3_payload_scripts(folder_path: str) -> list:
+    """(lowered_rel, real_path) for every .ws in the payload."""
     scripts = os.path.join(folder_path, "content", "scripts")
     out = []
     if not os.path.isdir(scripts):
@@ -1490,8 +1505,9 @@ def _w3_payload_scripts(folder_path: str) -> list:
     for root, _dirs, names in os.walk(scripts):
         for n in names:
             if n.lower().endswith(".ws"):
-                rel = os.path.relpath(os.path.join(root, n), scripts)
-                out.append(rel.replace(os.sep, "/").lower())
+                path = os.path.join(root, n)
+                rel = os.path.relpath(path, scripts)
+                out.append((rel.replace(os.sep, "/").lower(), path))
     return out
 
 
@@ -1599,17 +1615,12 @@ def _route_witcher_payload(
     owners = _w3_installed_scripts(mods_path)
     conflicts = []
     for d in mod_dirs:
-        for rel in _w3_payload_scripts(d):
-            owner = owners.get(rel)
-            if owner and owner.lower() != os.path.basename(d).lower():
+        for rel, incoming_path in _w3_payload_scripts(d):
+            owned = owners.get(rel)
+            if owned and owned[0].lower() != os.path.basename(d).lower():
+                owner_folder, owner_path = owned
                 conflicts.append(
-                    (
-                        rel,
-                        owner,
-                        os.path.join(
-                            d, "content", "scripts", *rel.split("/")
-                        ),
-                    )
+                    (rel, owner_folder, incoming_path, owner_path)
                 )
     if conflicts:
         return mod_dirs, dlc_dirs, menu_xmls, ("conflicts", conflicts)
@@ -3782,7 +3793,7 @@ query Link($slug: String!, $domainName: String!) {
                     w3_err = None
                 else:
                     merged_rels = []
-                    rel, owner, _src = conflicts[0]
+                    rel, owner, _src, _osrc = conflicts[0]
                     decky.logger.info(
                         f"W3 {mod_name!r}: unmergeable script conflict "
                         f"with {owner!r} on scripts/{rel}"
