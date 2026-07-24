@@ -23,10 +23,12 @@ import { SupportedGame, getActiveGame } from "./games";
 import {
   markBrowseReturn,
   saveBrowseState,
+  markCollectionsReturn,
   setDetailOrigin,
   setSelectedCollection,
   setSelectedMod,
   takeBrowseRestore,
+  takeCollectionsReturn,
 } from "./state";
 
 // Steam's scroll panel: right-stick scrolling for free. The published types
@@ -51,13 +53,18 @@ const ROW_SIZE = 8;
 function CollectionCard({
   game,
   c,
+  fromList,
 }: {
   game: SupportedGame;
   c: CollectionSummary;
+  /** Opened from the all-collections list: B on the collection page
+   * must return THERE, not to the store home. */
+  fromList?: boolean;
 }) {
   return (
     <Focusable
       onActivate={() => {
+        if (fromList) markCollectionsReturn();
         setSelectedCollection({ game, collection: c });
         setDetailOrigin("browse");
         Navigation.Navigate("/nexus-mods/collection");
@@ -395,7 +402,11 @@ export function BrowsePage() {
     CollectionSummary[]
   >([]);
   // "All collections" browse mode: its own sort, mirrors the mods list.
-  const [collectionsMode, setCollectionsMode] = useState(false);
+  // Returning from a collection opened out of this list re-enters it
+  // (the page unmounts while the collection is open).
+  const [collectionsMode, setCollectionsMode] = useState(() =>
+    takeCollectionsReturn()
+  );
   const [collectionsSort, setCollectionsSort] = useState("endorsements");
   const [allCollections, setAllCollections] = useState<CollectionSummary[]>(
     []
@@ -696,7 +707,7 @@ export function BrowsePage() {
               }}
             >
               {allCollections.map((c) => (
-                <CollectionCard key={c.slug} game={game} c={c} />
+                <CollectionCard key={c.slug} game={game} c={c} fromList />
               ))}
             </Focusable>
             {allCollections.length === 0 && (

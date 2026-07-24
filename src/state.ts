@@ -64,6 +64,22 @@ export function takeBrowseRestore(appId: number): BrowseCache | undefined {
   return take && browseCache?.appId === appId ? browseCache : undefined;
 }
 
+// ---- Collections-list hand-back ----------------------------------------------
+// Opening a collection FROM the all-collections list must return there on
+// B, not to the store home (the browse page unmounts and forgets its mode).
+let returnToCollections = false;
+
+export function markCollectionsReturn(): void {
+  returnToCollections = true;
+}
+
+/** One-shot: whether the next browse mount should reopen collections mode. */
+export function takeCollectionsReturn(): boolean {
+  const take = returnToCollections;
+  returnToCollections = false;
+  return take;
+}
+
 // ---- Collection hand-off -------------------------------------------------------
 
 import { CollectionSummary } from "./api";

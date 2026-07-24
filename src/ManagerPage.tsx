@@ -15,6 +15,7 @@ import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 
 import {
+  AttentionItem,
   InstalledCollectionInfo,
   InstalledMod,
   getInstalledMods,
@@ -24,7 +25,9 @@ import {
   uninstallMod,
 } from "./api";
 import { ALL_GAMES, SupportedGame, modeParams } from "./games";
+import { setSelectedCollection } from "./state";
 import {
+  BLUE_BUTTON_CLASS,
   NEXUS_ORANGE,
   PRIMARY_BUTTON_CSS,
   WHITE_BUTTON_CLASS,
@@ -38,6 +41,7 @@ interface GameMods {
   game: SupportedGame;
   mods: InstalledMod[];
   collections: Record<string, InstalledCollectionInfo>;
+  attention: Record<string, AttentionItem[]>;
 }
 
 /** Mods installed as part of a collection group under it; the rest are
@@ -192,7 +196,12 @@ export function ManagerPage() {
       );
       const mods = r.mods ?? [];
       if (mods.length > 0) {
-        found.push({ game, mods, collections: r.collections ?? {} });
+        found.push({
+          game,
+          mods,
+          collections: r.collections ?? {},
+          attention: r.attention ?? {},
+        });
       }
     }
     setGroups(found);
@@ -289,6 +298,29 @@ export function ManagerPage() {
     }
   };
 
+  /** "Finish installing" jumps to the collection page, where the
+   * Finish-setup flow walks the pending wizards/choices. */
+  const openCollectionPage = (
+    game: SupportedGame,
+    slug: string,
+    info?: InstalledCollectionInfo
+  ) => {
+    setSelectedCollection({
+      game,
+      collection: {
+        name: info?.title ?? slug,
+        slug,
+        summary: "",
+        endorsements: 0,
+        author: "",
+        modCount: info?.mod_count ?? 0,
+        totalSize: 0,
+        thumbnailUrl: info?.thumb_url,
+      },
+    });
+    Navigation.Navigate("/nexus-mods/collection");
+  };
+
   const removeCollection = (
     game: SupportedGame,
     slug: string,
@@ -361,8 +393,11 @@ export function ManagerPage() {
     slug: string;
     info?: InstalledCollectionInfo;
     members: InstalledMod[];
+    /** Wizard/option decisions still waiting - "Finish installing". */
+    pendingChoices?: number;
   }
-  const grouped = (groups ?? []).map(({ game, mods, collections }) => {
+  const grouped = (groups ?? []).map(
+    ({ game, mods, collections, attention }) => {
     const claimed = new Set<string>();
     const entries: CollectionEntry[] = [];
     for (const [slug, info] of Object.entries(collections)) {
@@ -373,7 +408,10 @@ export function ManagerPage() {
           m.collection_slug === slug
       );
       if (members.length === 0) continue;
-      entries.push({ slug, info, members });
+      const pendingChoices = (attention[slug] ?? []).filter(
+        (a) => a.reason === "choices" || a.reason === "fomod"
+      ).length;
+      entries.push({ slug, info, members, pendingChoices });
       members.forEach((m) => claimed.add(m.folder));
     }
     const legacy = mods.filter(
@@ -387,7 +425,8 @@ export function ManagerPage() {
       (m) => !claimed.has(m.folder) && collectionSlugOf(m) === undefined
     );
     return { game, loose, entries };
-  });
+    }
+  );
   const looseTotal = grouped.reduce((n, g) => n + g.loose.length, 0);
   const collectionsTotal = grouped.reduce(
     (n, g) => n + g.entries.length,
@@ -439,11 +478,13 @@ export function ManagerPage() {
         )}
 
         {groups !== undefined && groups.length > 0 && (
-          <div
+          // Focusable columns: plain divs broke gamepad traversal - the
+          // stick couldn't move down from the tab strip into the rows.
+          <Focusable
             style={{ display: "flex", gap: "20px", alignItems: "flex-start" }}
           >
             {/* ---- left: loose mods ---- */}
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <Focusable style={{ flex: 1, minWidth: 0 }}>
               {columnHeader(`Mods (${looseTotal})`)}
               {looseTotal === 0 && (
                 <div style={{ opacity: 0.65, fontSize: "12.5px" }}>
@@ -488,10 +529,10 @@ export function ManagerPage() {
                     </Focusable>
                   </div>
                 ))}
-            </div>
+            </Focusable>
 
             {/* ---- right: collections ---- */}
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <Focusable style={{ flex: 1, minWidth: 0 }}>
               {columnHeader(`Collections (${collectionsTotal})`)}
               {collectionsTotal === 0 && (
                 <div style={{ opacity: 0.65, fontSize: "12.5px" }}>
@@ -519,7 +560,7 @@ export function ManagerPage() {
                         gap: "6px",
                       }}
                     >
-                      {entries.map(({ slug, info, members }) => {
+                      {entries.map(({ slug, info, members, pendingChoices }) => {
                         const key = `${game.appId}:${slug}`;
                         const title =
                           slug === LEGACY_SLUG
@@ -603,6 +644,24 @@ export function ManagerPage() {
                                   {open ? "▾" : "▸"}
                                 </div>
                               </Focusable>
+                              {(pendingChoices ?? 0) > 0 &&
+                                slug !== LEGACY_SLUG && (
+                                  <DialogButton
+                                    className={BLUE_BUTTON_CLASS}
+                                    onClick={() =>
+                                      openCollectionPage(game, slug, info)
+                                    }
+                                    style={{
+                                      minWidth: "0",
+                                      width: "auto",
+                                      padding: "6px 12px",
+                                      fontSize: "12px",
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    ⚙ Finish installing ({pendingChoices})
+                                  </DialogButton>
+                                )}
                               {toggleable.length > 0 && (
                                 <OrangeToggle
                                   checked={allOn}
@@ -668,8 +727,8 @@ export function ManagerPage() {
                     </Focusable>
                   </div>
                 ))}
-            </div>
-          </div>
+            </Focusable>
+          </Focusable>
         )}
       </Scroller>
     </Focusable>
