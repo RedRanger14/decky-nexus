@@ -79,6 +79,12 @@ export function CollectionPage() {
   const [attention, setAttention] = useState<AttentionItem[]>([]);
   const attentionRef = useRef<AttentionItem[]>([]);
   const [finishingFileId, setFinishingFileId] = useState<number | undefined>();
+  // Records installed BY this collection (its slug) - drives Uninstall.
+  const [ownedCount, setOwnedCount] = useState(0);
+  // Uninstalling unmounts the focused button; without a stand-in the
+  // gamepad focus dies and the next press falls through to Steam's
+  // back-chain (reported as "closed the page and went back to the game").
+  const [justUninstalled, setJustUninstalled] = useState(false);
   // Batch state lives in a module store so navigating away and back
   // shows live progress instead of a stale page.
   const [, force] = useState(0);
@@ -100,15 +106,23 @@ export function CollectionPage() {
       sel.game.modsSubdir,
       ...modeParams(sel.game),
       sel.game.protectedModFolders ?? []
-    ).then((r) =>
+    ).then((r) => {
       setInstalledIds(
         new Set(
           (r.mods ?? [])
             .map((m) => m.mod_id)
             .filter((id): id is number => id !== undefined)
         )
-      )
-    );
+      );
+      // Only records CARRYING this slug can be uninstalled by this
+      // collection - shared/individual installs stay, so the button
+      // must hide when none are left (it looked broken otherwise).
+      setOwnedCount(
+        (r.mods ?? []).filter(
+          (m) => m.collection_slug === sel.collection.slug
+        ).length
+      );
+    });
   };
 
   const persistAttention = (items: AttentionItem[]) => {
@@ -576,6 +590,7 @@ export function CollectionPage() {
                 }
               : { title: "Uninstall failed", body: result.error ?? "" }
           );
+          if (result.ok) setJustUninstalled(true);
           persistAttention([]);
           refreshInstalled();
         }}
@@ -725,16 +740,23 @@ export function CollectionPage() {
           >
             Back
           </DialogButton>
-          {installedRequiredCount > 0 && !installing && (
+          {ownedCount > 0 && !installing ? (
             <DialogButton
               className={WHITE_BUTTON_CLASS}
               disabled={finishingFileId !== undefined}
               onClick={onUninstallCollection}
               style={{ flexGrow: 1, minWidth: "150px" }}
             >
-              Uninstall
+              Uninstall ({ownedCount})
             </DialogButton>
-          )}
+          ) : justUninstalled && !installing ? (
+            <DialogButton
+              onClick={() => {}}
+              style={{ flexGrow: 1, minWidth: "150px", opacity: 0.7 }}
+            >
+              Uninstalled ✓
+            </DialogButton>
+          ) : null}
         </Focusable>
 
         {/* Partial without a run of ours = the user already owns some of

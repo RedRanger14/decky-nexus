@@ -1437,6 +1437,27 @@ def _w3_unmerge(
             _force_rmtree(merged_root)
 
 
+def _w3_prune_filelists(pc_dir: str) -> None:
+    """Drop filelist lines whose XML no longer exists - a filelist entry
+    pointing at a missing file crashes the game at the menu."""
+    for fl in ("dx11filelist.txt", "dx12filelist.txt"):
+        path = _adopt_case(os.path.join(pc_dir, fl))
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+            lines = f.read().splitlines()
+        kept = []
+        for line in lines:
+            name = line.strip().rstrip(";")
+            if not name or os.path.isfile(
+                _adopt_case(os.path.join(pc_dir, name))
+            ):
+                kept.append(line)
+        if kept != lines:
+            with open(path, "w", encoding="utf-8", newline="\r\n") as f:
+                f.write("\n".join(kept) + "\n")
+
+
 def _w3_installed_scripts(mods_path: str) -> dict:
     """Installed script paths -> owning mod folder (for conflict checks)."""
     owners = {}
@@ -4676,20 +4697,18 @@ query Link($slug: String!, $domainName: String!) {
             except OSError as e:
                 errors.append(f"plugins.txt: {e}")
         if witcher_layout:
-            # Orphan-proof sweep: vanilla TW3 has no mods dir, and all
-            # mod*.xml menu files are mod-installed.
+            # Orphan-proof sweep: vanilla TW3 has no mods dir, and its
+            # menu-XML set is a fixed whitelist - EVERY other xml is
+            # mod-installed (they are NOT all mod-prefixed: the
+            # naturaltorchlight/FastTravelPack class survived the old
+            # prefix-based sweep and their dangling filelist lines
+            # crashed the game at the menu).
             _force_rmtree(mods_path)
             pc_dir = os.path.join(install_path, *W3_MENU_DIR.split("/"))
             if os.path.isdir(pc_dir):
                 for name in sorted(os.listdir(pc_dir)):
                     low = name.lower()
-                    if low.startswith("mod") and low.endswith(".xml"):
-                        try:
-                            os.remove(os.path.join(pc_dir, name))
-                        except OSError as e:
-                            errors.append(f"{name}: {e}")
-                        _w3_filelist_remove(pc_dir, name)
-                    elif low.endswith(W3_VANILLA_BACKUP_SUFFIX):
+                    if low.endswith(W3_VANILLA_BACKUP_SUFFIX):
                         # Mod overwrote a vanilla menu XML - restore it.
                         base = os.path.join(
                             pc_dir, name[: -len(W3_VANILLA_BACKUP_SUFFIX)]
@@ -4700,6 +4719,18 @@ query Link($slug: String!, $domainName: String!) {
                             os.rename(os.path.join(pc_dir, name), base)
                         except OSError as e:
                             errors.append(f"{name}: {e}")
+                    elif (
+                        low.endswith(".xml")
+                        and low not in W3_VANILLA_MENU_XMLS
+                    ):
+                        try:
+                            os.remove(os.path.join(pc_dir, name))
+                        except OSError as e:
+                            errors.append(f"{name}: {e}")
+                        _w3_filelist_remove(pc_dir, name)
+                # belt-and-braces: no filelist line may point at a
+                # missing file
+                _w3_prune_filelists(pc_dir)
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges"):
             settings.get(section, {}).pop(game_domain, None)
@@ -4804,6 +4835,11 @@ query Link($slug: String!, $domainName: String!) {
             slug, None
         )
         _save_settings(settings)
+        # Witcher-class games: never leave a filelist line pointing at a
+        # deleted menu XML (crashes the game at the menu).
+        pc_dir = os.path.join(install_path, *W3_MENU_DIR.split("/"))
+        if os.path.isdir(pc_dir):
+            _w3_prune_filelists(pc_dir)
         decky.logger.info(
             f"uninstalled collection {slug!r} from {game_domain!r}: "
             f"{removed} mods removed, {len(errors)} errors"
@@ -5283,9 +5319,11 @@ query Link($slug: String!, $domainName: String!) {
         )
         _save_settings(settings)
         if dropped:
-            _w3_remove_menu_xmls(
-                os.path.join(STEAM_COMMON, install_dir), dropped
-            )
+            install_root = os.path.join(STEAM_COMMON, install_dir)
+            _w3_remove_menu_xmls(install_root, dropped)
+            pc_dir = os.path.join(install_root, *W3_MENU_DIR.split("/"))
+            if os.path.isdir(pc_dir):
+                _w3_prune_filelists(pc_dir)
         if dropped and dropped.get("moduleId") and dropped.get("launcherXml"):
             _remove_module_entry(
                 _launcher_xml_path(app_id, dropped["launcherXml"]),
