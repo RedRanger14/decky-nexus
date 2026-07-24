@@ -54,6 +54,9 @@ export interface InstallResult {
   /** Archive is a desktop modding tool (xEdit, patchers) - not
    * installable on-device; collections show it as skipped, not failed. */
   unsupported_tool?: boolean;
+  /** Witcher script conflict with an installed mod - not retryable
+   * without script merging; collections park it, not fail it. */
+  script_conflict?: boolean;
   /** Option-style archive: the user must pick one of `options` and retry
    * with payload_choice set. */
   needs_choice?: boolean;

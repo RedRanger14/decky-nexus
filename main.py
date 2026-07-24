@@ -1125,6 +1125,18 @@ def xml_write_file(path: str, node: XmlNode) -> None:
 
 W3_MENU_DIR = "bin/config/r4game/user_config_matrix/pc"
 
+# The game's own menu XMLs. Mods may legitimately OVERWRITE these (HD
+# Reworked ships its own rendering.xml) - back the vanilla file up on
+# overwrite and restore it on uninstall; never delete them or strip
+# their filelist lines.
+W3_VANILLA_MENU_XMLS = {
+    "audio.xml", "display.xml", "gameplay.xml", "gamma.xml",
+    "graphics.xml", "graphicsdx11.xml", "hdr.xml", "hidden.xml",
+    "hud.xml", "input.xml", "localization.xml", "postprocess.xml",
+    "rendering.xml",
+}
+W3_VANILLA_BACKUP_SUFFIX = ".decky-vanilla"
+
 
 def _w3_filelist_append(pc_dir: str, xml_name: str) -> None:
     for fl in ("dx11filelist.txt", "dx12filelist.txt"):
@@ -1157,7 +1169,9 @@ def _w3_remove_menu_xmls(install_path: str, rec: dict) -> None:
     """Undo a record's menu-XML registration: delete the XMLs from the
     user_config_matrix dir and strip their filelist lines. Leaving them
     behind (pre-v0.25 uninstalls did) kept dead mod menus around and, in
-    the orphan case, contributed to boot failures."""
+    the orphan case, contributed to boot failures. Vanilla-named XMLs
+    (a mod overwrote the game's own file) are restored from the backup
+    the install took, never deleted, and their filelist lines stay."""
     xmls = (rec or {}).get("menuXmls") or []
     if not xmls:
         return
@@ -1165,8 +1179,18 @@ def _w3_remove_menu_xmls(install_path: str, rec: dict) -> None:
     for name in xmls:
         if not _safe_rel_path(name) or "/" in name:
             continue
+        path = _adopt_case(os.path.join(pc_dir, name))
+        if name.lower() in W3_VANILLA_MENU_XMLS:
+            backup = path + W3_VANILLA_BACKUP_SUFFIX
+            try:
+                if os.path.isfile(backup):
+                    if os.path.isfile(path):
+                        os.remove(path)
+                    os.rename(backup, path)
+            except OSError:
+                pass
+            continue
         try:
-            path = _adopt_case(os.path.join(pc_dir, name))
             if os.path.isfile(path):
                 os.remove(path)
         except OSError:
@@ -3466,6 +3490,10 @@ query Link($slug: String!, $domainName: String!) {
                 result = {"ok": False, "error": message}
                 if kind == "tool":
                     result["unsupported_tool"] = True
+                elif kind == "conflict":
+                    # Not retryable without script merging - the UI
+                    # parks these instead of counting them as missing.
+                    result["script_conflict"] = True
                 return result
             os.makedirs(mods_path, exist_ok=True)
             settings = _load_settings()  # re-read: parallel installs
@@ -3492,8 +3520,20 @@ query Link($slug: String!, $domainName: String!) {
                 os.makedirs(pc_dir, exist_ok=True)
                 for x in menu_xmls:
                     name = os.path.basename(x)
-                    dstx = os.path.join(pc_dir, name)
+                    dstx = _adopt_case(os.path.join(pc_dir, name))
                     if os.path.isfile(dstx):
+                        # Overwriting one of the game's own menu XMLs
+                        # (HD Reworked ships rendering.xml): keep the
+                        # vanilla copy so uninstall can restore it.
+                        if (
+                            name.lower() in W3_VANILLA_MENU_XMLS
+                            and not os.path.isfile(
+                                dstx + W3_VANILLA_BACKUP_SUFFIX
+                            )
+                        ):
+                            shutil.copy2(
+                                dstx, dstx + W3_VANILLA_BACKUP_SUFFIX
+                            )
                         os.remove(dstx)
                     shutil.move(x, dstx)
                     _w3_filelist_append(pc_dir, name)
@@ -4346,14 +4386,24 @@ query Link($slug: String!, $domainName: String!) {
             pc_dir = os.path.join(install_path, *W3_MENU_DIR.split("/"))
             if os.path.isdir(pc_dir):
                 for name in sorted(os.listdir(pc_dir)):
-                    if name.lower().startswith("mod") and name.lower().endswith(
-                        ".xml"
-                    ):
+                    low = name.lower()
+                    if low.startswith("mod") and low.endswith(".xml"):
                         try:
                             os.remove(os.path.join(pc_dir, name))
                         except OSError as e:
                             errors.append(f"{name}: {e}")
                         _w3_filelist_remove(pc_dir, name)
+                    elif low.endswith(W3_VANILLA_BACKUP_SUFFIX):
+                        # Mod overwrote a vanilla menu XML - restore it.
+                        base = os.path.join(
+                            pc_dir, name[: -len(W3_VANILLA_BACKUP_SUFFIX)]
+                        )
+                        try:
+                            if os.path.isfile(base):
+                                os.remove(base)
+                            os.rename(os.path.join(pc_dir, name), base)
+                        except OSError as e:
+                            errors.append(f"{name}: {e}")
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention"):
             settings.get(section, {}).pop(game_domain, None)
