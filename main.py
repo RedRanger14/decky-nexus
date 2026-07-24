@@ -1289,19 +1289,29 @@ def _adopt_case_path(base: str, rel: str) -> str:
 
 
 def _w3_read_lines(path: str):
-    """Read a script EOL-normalized: mod files mix CRLF/LF freely, and
-    keeping endings made every line 'differ' from the vanilla base -
-    which turned every conflict into a false 'unmergeable'."""
+    """Read a script EOL-normalized AND encoding-aware: mods ship .ws
+    files as UTF-16 too (Immersive Realtime Cutscenes) - decoding those
+    as UTF-8 merged NUL-riddled garbage into the game (boot-time compile
+    error on device). BOM decides; residual NULs mean we misread -
+    treat as unreadable rather than merge garbage."""
     try:
-        with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
-            return f.read().splitlines()
+        with open(path, "rb") as f:
+            raw = f.read()
     except OSError:
         return None
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = raw.decode("utf-16", errors="replace")
+    else:
+        text = raw.decode("utf-8-sig", errors="replace")
+    if "\x00" in text:
+        return None
+    return text.splitlines()
 
 
 def _w3_write_script(path: str, lines: list) -> None:
+    # UTF-8 with BOM + CRLF: the script compiler's happiest diet.
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
         f.write("\r\n".join(lines) + "\r\n")
 
 
