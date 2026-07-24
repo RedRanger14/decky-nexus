@@ -1214,13 +1214,20 @@ W3_MERGED_MOD = "mod0000_DeckyMerged"
 W3_OFFICIAL_DLC = {"bob", "ep1"} | {f"dlc{i}" for i in range(1, 17)}
 
 
-def _w3_merge3(base_lines: list, ours_lines: list, theirs_lines: list):
+def _w3_merge3(
+    base_lines: list, ours_lines: list, theirs_lines: list,
+    deadline: float = None,
+):
     """Three-way line merge. Returns the merged line list, or None when
     the two sides change overlapping regions differently (a genuine
-    conflict). Identical changes collapse to one."""
+    conflict). Identical changes collapse to one. Raises TimeoutError
+    past the deadline - difflib is quadratic on files full of repeated
+    lines (r4player.ws froze the whole backend for minutes)."""
     import difflib
 
     def regions(side_lines):
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError("merge budget exceeded")
         sm = difflib.SequenceMatcher(
             None, base_lines, side_lines, autojunk=False
         )
@@ -1337,7 +1344,18 @@ def _w3_try_merge_conflicts(
                 f"theirs={theirs_lines is not None})"
             )
             return None
-        merged = _w3_merge3(base_lines, ours_lines, theirs_lines)
+        try:
+            merged = _w3_merge3(
+                base_lines, ours_lines, theirs_lines,
+                deadline=time.monotonic() + 25,
+            )
+        except TimeoutError:
+            decky.logger.info(
+                f"W3 merge {rel!r}: timed out "
+                f"(base {len(base_lines)} lines, ours "
+                f"{len(ours_lines)}, theirs {len(theirs_lines)})"
+            )
+            return None
         if merged is None:
             decky.logger.info(
                 f"W3 merge {rel!r}: overlapping edits "
@@ -1422,6 +1440,7 @@ def _w3_unmerge(
         acc = base_lines
         ok = base_lines is not None
         if ok:
+            deadline = time.monotonic() + 25
             for m in remaining:
                 side = _w3_read_lines(
                     _adopt_case_path(
@@ -1429,7 +1448,14 @@ def _w3_unmerge(
                         rel,
                     )
                 )
-                acc = _w3_merge3(base_lines, acc, side) if side else None
+                try:
+                    acc = (
+                        _w3_merge3(base_lines, acc, side, deadline=deadline)
+                        if side
+                        else None
+                    )
+                except TimeoutError:
+                    acc = None
                 if acc is None:
                     ok = False
                     break
@@ -3775,7 +3801,11 @@ query Link($slug: String!, $domainName: String!) {
             if w3_err and w3_err[0] == "conflicts":
                 conflicts = w3_err[1]
                 settings_now = _load_settings()
-                merged_rels = _w3_try_merge_conflicts(
+                # Worker thread: difflib on 10k-line scripts can take
+                # tens of seconds - running it on the event loop froze
+                # the ENTIRE backend (every callable hung).
+                merged_rels = await asyncio.to_thread(
+                    _w3_try_merge_conflicts,
                     game_domain, install_path, mods_path, conflicts,
                     settings_now,
                 )
