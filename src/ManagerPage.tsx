@@ -461,6 +461,7 @@ export function ManagerPage() {
     >
       <Scroller
         focusable={false}
+        onButtonDown={handleTabButtons("manager")}
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <TabBar currentId="manager" />
