@@ -24,7 +24,11 @@ import {
   uninstallMod,
 } from "./api";
 import { ALL_GAMES, SupportedGame, modeParams } from "./games";
-import { NEXUS_ORANGE } from "./theme";
+import {
+  NEXUS_ORANGE,
+  PRIMARY_BUTTON_CSS,
+  WHITE_BUTTON_CLASS,
+} from "./theme";
 import { OrangeToggle } from "./Toggle";
 import { TabBar, handleTabButtons } from "./Tabs";
 
@@ -422,6 +426,7 @@ export function ManagerPage() {
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <TabBar currentId="manager" />
+        <style>{PRIMARY_BUTTON_CSS}</style>
         <h2 style={{ margin: "6px 0 12px" }}>My Mods</h2>
 
         {groups === undefined && (
@@ -608,6 +613,7 @@ export function ManagerPage() {
                                 />
                               )}
                               <DialogButton
+                                className={WHITE_BUTTON_CLASS}
                                 disabled={collBusy}
                                 onClick={() =>
                                   removeCollection(
@@ -623,7 +629,6 @@ export function ManagerPage() {
                                   padding: "6px 12px",
                                   fontSize: "12px",
                                   flexShrink: 0,
-                                  opacity: 0.85,
                                 }}
                               >
                                 Uninstall

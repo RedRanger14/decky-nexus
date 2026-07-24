@@ -659,9 +659,10 @@ export function CollectionPage() {
           </DialogButton>
           {installedRequiredCount > 0 && !installing && (
             <DialogButton
+              className={WHITE_BUTTON_CLASS}
               disabled={finishingFileId !== undefined}
               onClick={onUninstallCollection}
-              style={{ flexGrow: 1, minWidth: "150px", opacity: 0.85 }}
+              style={{ flexGrow: 1, minWidth: "150px" }}
             >
               Uninstall
             </DialogButton>

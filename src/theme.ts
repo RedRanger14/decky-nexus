@@ -34,15 +34,22 @@ export const PRIMARY_BUTTON_CSS = `
   background: ${NEXUS_ORANGE_PRESSED} !important;
 }
 .${WHITE_BUTTON_CLASS_NAME} {
-  background: rgba(255, 255, 255, 0.85) !important;
+  background: rgba(255, 255, 255, 0.6) !important;
   color: #111 !important;
+  transition: background 0.12s ease, transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 .${WHITE_BUTTON_CLASS_NAME}:hover,
 .${WHITE_BUTTON_CLASS_NAME}.gpfocus,
 .${WHITE_BUTTON_CLASS_NAME}.gpfocuswithin {
+  /* Steam's own white-button focus: flip to full white, glow, and a
+     slight grow - the idle state stays dimmer so the pop is obvious. */
   background: #ffffff !important;
   color: #000 !important;
-  box-shadow: inset 0 0 0 2px ${NEXUS_ORANGE};
+  font-weight: 600;
+  transform: scale(1.02);
+  box-shadow: inset 0 0 0 2px ${NEXUS_ORANGE},
+    0 0 14px rgba(255, 255, 255, 0.55);
 }
 .${BLUE_BUTTON_CLASS_NAME} {
   background: rgba(74, 169, 255, 0.22) !important;
