@@ -184,14 +184,11 @@ export function CollectionPage() {
 
   const attentionIds = new Set(attention.map((a) => a.file_id));
   // Actionable = Finish setup can do something: choices/wizards get
-  // their modals, and script conflicts RETRY (the backend auto-merges
-  // non-overlapping edits now; genuine overlaps re-park). Tools and
-  // unrecognized archives only get a note.
+  // their modals. Script conflicts are NOT retryable by default now -
+  // the second mod is skipped to keep the game bootable (auto-merge
+  // proved able to break boot), so they're a note, not an action.
   const actionable = attention.filter(
-    (a) =>
-      a.reason === "choices" ||
-      a.reason === "fomod" ||
-      a.reason === "conflict"
+    (a) => a.reason === "choices" || a.reason === "fomod"
   );
   const actionableIds = new Set(actionable.map((a) => a.file_id));
   const toolSkips = attention.filter((a) => a.reason === "tool");
@@ -817,10 +814,11 @@ export function CollectionPage() {
             }}
           >
             🔒 {conflictSkips.length} mod
-            {conflictSkips.length === 1 ? "" : "s"} with script conflicts (
-            {conflictSkips.map((c) => c.mod_name).join(", ")}). Finish setup
-            retries them with auto-merge - mods that change the SAME lines
-            as an installed mod stay skipped.
+            {conflictSkips.length === 1 ? "" : "s"} skipped for script
+            conflicts ({conflictSkips.map((c) => c.mod_name).join(", ")}).
+            Each edits a game script another installed mod already changed;
+            the installed one was kept so the game still boots. Resolving
+            these needs Script Merger on PC.
           </div>
         )}
 
