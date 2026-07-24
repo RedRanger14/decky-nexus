@@ -1266,11 +1266,20 @@ def _w3_merge3(base_lines: list, ours_lines: list, theirs_lines: list):
 
 
 def _w3_read_lines(path: str):
+    """Read a script EOL-normalized: mod files mix CRLF/LF freely, and
+    keeping endings made every line 'differ' from the vanilla base -
+    which turned every conflict into a false 'unmergeable'."""
     try:
         with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
-            return f.read().splitlines(keepends=True)
+            return f.read().splitlines()
     except OSError:
         return None
+
+
+def _w3_write_script(path: str, lines: list) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write("\r\n".join(lines) + "\r\n")
 
 
 def _w3_current_script(install_path: str, mods_path: str, rel: str,
@@ -1306,9 +1315,20 @@ def _w3_try_merge_conflicts(
         )
         theirs_lines = _w3_read_lines(incoming)
         if base_lines is None or ours_lines is None or theirs_lines is None:
+            decky.logger.info(
+                f"W3 merge {rel!r}: missing side "
+                f"(base={base_lines is not None}, "
+                f"ours={ours_lines is not None}, "
+                f"theirs={theirs_lines is not None})"
+            )
             return None
         merged = _w3_merge3(base_lines, ours_lines, theirs_lines)
         if merged is None:
+            decky.logger.info(
+                f"W3 merge {rel!r}: overlapping edits "
+                f"(base {len(base_lines)} lines, ours "
+                f"{len(ours_lines)}, theirs {len(theirs_lines)})"
+            )
             return None
         staged.append((rel, owner, merged))
     merges = settings.setdefault("w3_merges", {}).setdefault(game_domain, {})
@@ -1316,9 +1336,7 @@ def _w3_try_merge_conflicts(
         dst = os.path.join(
             mods_path, W3_MERGED_MOD, "content", "scripts", *rel.split("/")
         )
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        with open(dst, "w", encoding="utf-8", newline="") as f:
-            f.write("".join(merged))
+        _w3_write_script(dst, merged)
         entry = merges.setdefault(rel, {"mods": [owner]})
         if owner not in entry["mods"]:
             entry["mods"].append(owner)
@@ -1402,8 +1420,7 @@ def _w3_unmerge(
                     ok = False
                     break
         if ok:
-            with open(dst, "w", encoding="utf-8", newline="") as f:
-                f.write("".join(acc))
+            _w3_write_script(dst, acc)
             entry["mods"] = remaining
         else:
             # can't cleanly recompute - keep the old merged file rather

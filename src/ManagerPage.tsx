@@ -12,19 +12,25 @@ import {
 } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
+import { FaEye } from "react-icons/fa";
 
 import {
   AttentionItem,
   InstalledCollectionInfo,
   InstalledMod,
   getInstalledMods,
+  getModDetails,
   getModsByIds,
   setModEnabled,
   uninstallCollection,
   uninstallMod,
 } from "./api";
 import { ALL_GAMES, SupportedGame, modeParams } from "./games";
-import { setSelectedCollection } from "./state";
+import {
+  setDetailOrigin,
+  setSelectedCollection,
+  setSelectedMod,
+} from "./state";
 import {
   BLUE_BUTTON_CLASS,
   NEXUS_ORANGE,
@@ -100,6 +106,22 @@ function Thumb({
   );
 }
 
+/** Eye button: jump to the mod's full detail page. */
+async function openModDetail(game: SupportedGame, mod: InstalledMod) {
+  if (!mod.mod_id) return;
+  const result = await getModDetails(game.nexusDomain, mod.mod_id);
+  if (result.ok && result.mod) {
+    setSelectedMod({ game, mod: result.mod });
+    setDetailOrigin("browse"); // B pops back here, not to the QAM
+    Navigation.Navigate("/nexus-mods/mod");
+  } else {
+    toaster.toast({
+      title: "Could not open mod",
+      body: result.error ?? mod.name ?? mod.folder,
+    });
+  }
+}
+
 function ModRow({
   game,
   mod,
@@ -150,6 +172,23 @@ function ModRow({
           {mod.togglable === false ? " · always active" : ""}
         </div>
       </div>
+      {mod.mod_id !== undefined && mod.mod_id > 0 && (
+        <DialogButton
+          disabled={busy}
+          onClick={() => openModDetail(game, mod)}
+          style={{
+            minWidth: "0",
+            width: "40px",
+            padding: "8px 0",
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <FaEye size={13} />
+        </DialogButton>
+      )}
       {mod.togglable !== false && (
         <OrangeToggle
           checked={mod.enabled}
@@ -639,6 +678,25 @@ export function ManagerPage() {
                                   {open ? "▾" : "▸"}
                                 </div>
                               </Focusable>
+                              {slug !== LEGACY_SLUG && (
+                                <DialogButton
+                                  disabled={collBusy}
+                                  onClick={() =>
+                                    openCollectionPage(game, slug, info)
+                                  }
+                                  style={{
+                                    minWidth: "0",
+                                    width: "40px",
+                                    padding: "8px 0",
+                                    flexShrink: 0,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                  }}
+                                >
+                                  <FaEye size={13} />
+                                </DialogButton>
+                              )}
                               {(pendingChoices ?? 0) > 0 &&
                                 slug !== LEGACY_SLUG && (
                                   <DialogButton

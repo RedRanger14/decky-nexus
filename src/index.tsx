@@ -82,6 +82,7 @@ import {
   getAggregateDownloadPercent,
   getCollectionRun,
   getDownloads,
+  setBrowseGame,
   setDetailOrigin,
   setSelectedMod,
   subscribeCollectionRun,
@@ -597,6 +598,7 @@ function CurrentGameSection() {
         <PanelSectionRow>
           <OrangeActionButton
             onClick={() => {
+              setBrowseGame(undefined);
               resetTabStack();
               Navigation.Navigate(BROWSE_ROUTE);
               Navigation.CloseSideMenus();
@@ -724,6 +726,7 @@ function CurrentGameSection() {
             <Field label="Step 3" childrenLayout="below">
               <OrangeActionButton
                 onClick={() => {
+                  setBrowseGame(game);
                   resetTabStack();
               Navigation.Navigate(BROWSE_ROUTE);
                   Navigation.CloseSideMenus();
@@ -751,8 +754,9 @@ function CurrentGameSection() {
           <PanelSectionRow>
             <OrangeActionButton
               onClick={() => {
+                setBrowseGame(game);
                 resetTabStack();
-              Navigation.Navigate(BROWSE_ROUTE);
+                Navigation.Navigate(BROWSE_ROUTE);
                 Navigation.CloseSideMenus();
               }}
             >

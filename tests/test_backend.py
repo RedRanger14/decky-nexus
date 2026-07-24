@@ -1300,6 +1300,34 @@ class TestWitcherRouting(unittest.TestCase):
         filelist = open(os.path.join(pc, "dx11filelist.txt")).read()
         self.assertIn("rendering.xml;", filelist)
 
+    def test_merge_survives_mixed_line_endings(self):
+        # Mod files mix CRLF/LF freely - EOL noise must not read as a
+        # conflict (it made EVERY real-world merge fail as unmergeable).
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        base = os.path.join(
+            self.install, *main.W3_VANILLA_SCRIPTS.split("/"), "game",
+            "hit.ws",
+        )
+        os.makedirs(os.path.dirname(base))
+        with open(base, "wb") as f:
+            f.write(b"a\r\nb\r\nc\r\nd\r\ne\r\n")  # vanilla: CRLF
+        owner = os.path.join(
+            self.mods, "modExisting", "content", "scripts", "game", "hit.ws"
+        )
+        os.makedirs(os.path.dirname(owner))
+        with open(owner, "wb") as f:
+            f.write(b"a\nOWNER\nc\nd\ne\n")  # mod author: LF
+        incoming = os.path.join(self.scratch, "incoming_hit.ws")
+        with open(incoming, "wb") as f:
+            f.write(b"a\r\nb\r\nc\r\nNEW\r\ne\r\n")
+        settings = main._load_settings()
+        rels = main._w3_try_merge_conflicts(
+            "witcher3", self.install, self.mods,
+            [("game/hit.ws", "modExisting", incoming)], settings,
+        )
+        self.assertEqual(rels, ["game/hit.ws"])
+
     def test_merge3_combines_distinct_regions(self):
         base = ["a\n", "b\n", "c\n", "d\n", "e\n"]
         ours = ["a\n", "B\n", "c\n", "d\n", "e\n"]     # changed line 2
@@ -1365,7 +1393,8 @@ class TestWitcherRouting(unittest.TestCase):
             "hit.ws",
         )
         self.assertEqual(
-            open(merged_path).read(), "a\nOWNER\nc\nNEW\ne\n"
+            open(merged_path).read().splitlines(),
+            ["a", "OWNER", "c", "NEW", "e"],
         )
         self.assertEqual(
             settings["w3_merges"]["witcher3"]["game/hit.ws"]["mods"],

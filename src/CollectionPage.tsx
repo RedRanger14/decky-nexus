@@ -1026,34 +1026,113 @@ export function CollectionPage() {
                 Optional ({optional.length}) — not installed automatically:
               </div>
             )}
-            {optional.map((f) => (
-              <div
-                key={f.fileId}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  padding: "5px 10px",
-                  background: "rgba(255,255,255,0.03)",
-                  borderRadius: "4px",
-                  fontSize: "12.5px",
-                  opacity: 0.75,
-                }}
-              >
-                <span
+            {optional.map((f) => {
+              const open = expanded.has(f.fileId);
+              const info = modInfo[f.modId];
+              return (
+                <Focusable
+                  key={f.fileId}
+                  onActivate={() => toggleExpand(f)}
                   style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    padding: "5px 10px",
+                    background: "rgba(255,255,255,0.03)",
+                    borderRadius: "4px",
+                    fontSize: "12.5px",
+                    opacity: 0.8,
                   }}
                 >
-                  {stateBadge(f)}
-                  {f.modName}
-                </span>
-                <span style={{ flexShrink: 0, marginLeft: "10px" }}>
-                  {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "—"}
-                </span>
-              </div>
-            ))}
+                  <div
+                    style={{ display: "flex", justifyContent: "space-between" }}
+                  >
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {open ? "▾ " : "▸ "}
+                      {stateBadge(f)}
+                      {f.modName}
+                    </span>
+                    <span style={{ flexShrink: 0, marginLeft: "10px" }}>
+                      {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "—"}
+                    </span>
+                  </div>
+                  {open && (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "10px",
+                        marginTop: "6px",
+                        paddingTop: "6px",
+                        borderTop: "1px solid rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      {info === undefined && (
+                        <span style={{ opacity: 0.6, fontSize: "12px" }}>
+                          Loading…
+                        </span>
+                      )}
+                      {info === null && (
+                        <span style={{ opacity: 0.6, fontSize: "12px" }}>
+                          Details unavailable.
+                        </span>
+                      )}
+                      {info && (
+                        <>
+                          {info.thumbnailUrl && (
+                            <img
+                              src={info.thumbnailUrl}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              style={{
+                                width: "96px",
+                                height: "54px",
+                                objectFit: "cover",
+                                borderRadius: "4px",
+                                flexShrink: 0,
+                              }}
+                            />
+                          )}
+                          <div
+                            style={{
+                              fontSize: "12px",
+                              opacity: 0.85,
+                              flexGrow: 1,
+                              minWidth: 0,
+                            }}
+                          >
+                            <div style={{ opacity: 0.7 }}>
+                              by {info.author} · {f.fileName}
+                            </div>
+                            {info.summary}
+                          </div>
+                          <Focusable
+                            style={{ flexShrink: 0, alignSelf: "center" }}
+                          >
+                            <DialogButton
+                              onClick={() => openModPage(f)}
+                              style={{
+                                minWidth: "0",
+                                width: "44px",
+                                padding: "8px 0",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <FaEye />
+                            </DialogButton>
+                          </Focusable>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </Focusable>
+              );
+            })}
           </Focusable>
         )}
         {!detail && !error && (
