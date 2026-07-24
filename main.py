@@ -3811,14 +3811,23 @@ query Link($slug: String!, $domainName: String!) {
             if w3_err and w3_err[0] == "conflicts":
                 conflicts = w3_err[1]
                 settings_now = _load_settings()
-                # Worker thread: difflib on 10k-line scripts can take
-                # tens of seconds - running it on the event loop froze
-                # the ENTIRE backend (every callable hung).
-                merged_rels = await asyncio.to_thread(
-                    _w3_try_merge_conflicts,
-                    game_domain, install_path, mods_path, conflicts,
-                    settings_now,
-                )
+                # Auto-merge is OFF by default (2026-07-24). A line-merge
+                # can produce a structurally-valid script that still won't
+                # compile - and a bad merged mod even crashed BEFORE the
+                # compile stage on device. Skipping the second mod with a
+                # clear note is the reliable default: the game always
+                # boots, the higher-priority mod wins, and merging is an
+                # explicit opt-in (settings 'w3_auto_merge') for when a
+                # future health-check can validate the result.
+                merged_rels = None
+                if settings_now.get("w3_auto_merge"):
+                    # Worker thread: difflib on 10k-line scripts froze the
+                    # whole event loop when run inline.
+                    merged_rels = await asyncio.to_thread(
+                        _w3_try_merge_conflicts,
+                        game_domain, install_path, mods_path, conflicts,
+                        settings_now,
+                    )
                 if merged_rels is not None:
                     for d in mod_dirs:
                         _w3_register_merge_participant(
@@ -3835,14 +3844,15 @@ query Link($slug: String!, $domainName: String!) {
                     merged_rels = []
                     rel, owner, _src, _osrc = conflicts[0]
                     decky.logger.info(
-                        f"W3 {mod_name!r}: unmergeable script conflict "
-                        f"with {owner!r} on scripts/{rel}"
+                        f"W3 {mod_name!r}: script conflict with {owner!r} "
+                        f"on scripts/{rel} (auto_merge="
+                        f"{bool(settings_now.get('w3_auto_merge'))})"
                     )
                     w3_err = (
                         "conflict",
-                        f"Script conflict: this mod and '{owner}' change "
-                        f"the same part of scripts/{rel} - auto-merge "
-                        "couldn't combine them safely.",
+                        f"Skipped: '{mod_name}' edits scripts/{rel}, which "
+                        f"'{owner}' already changed. Kept the installed one "
+                        "to keep the game bootable.",
                     )
             if w3_err:
                 kind, message = w3_err
