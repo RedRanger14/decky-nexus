@@ -20,6 +20,7 @@ import {
 } from "./api";
 import { SupportedGame, getActiveGame } from "./games";
 import {
+  getBrowseGame,
   markBrowseReturn,
   saveBrowseState,
   markCollectionsReturn,
@@ -319,9 +320,13 @@ function ModCarousel({
 }
 
 export function BrowsePage() {
-  const game = getActiveGame(
-    Router.MainRunningApp ? Number(Router.MainRunningApp.appid) : undefined
-  );
+  // Explicit scope from the QAM beats ambient resolution (which could
+  // go stale and surface another game's store).
+  const game =
+    getBrowseGame() ??
+    getActiveGame(
+      Router.MainRunningApp ? Number(Router.MainRunningApp.appid) : undefined
+    );
 
   // Coming back from a mod detail restores the previous search/results
   // instead of resetting to the home rails. (Lazy init: runs once.)

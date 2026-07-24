@@ -64,6 +64,20 @@ export function takeBrowseRestore(appId: number): BrowseCache | undefined {
   return take && browseCache?.appId === appId ? browseCache : undefined;
 }
 
+// ---- Browse scope hand-off -----------------------------------------------------
+// The QAM knows exactly which game it's scoped to - hand it to the store
+// explicitly. Ambient resolution (last-active fallback) could go stale
+// and show another game's mods/collections under the wrong scope.
+let browseGame: SupportedGame | undefined;
+
+export function setBrowseGame(game: SupportedGame | undefined): void {
+  browseGame = game;
+}
+
+export function getBrowseGame(): SupportedGame | undefined {
+  return browseGame;
+}
+
 // ---- Collections-list hand-back ----------------------------------------------
 // Opening a collection FROM the all-collections list must return there on
 // B, not to the store home (the browse page unmounts and forgets its mode).
