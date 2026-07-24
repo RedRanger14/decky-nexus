@@ -80,6 +80,7 @@ export function UpdatesPage() {
     >
       <Scroller
         focusable={false}
+        onButtonDown={handleTabButtons("updates")}
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <style>{PRIMARY_BUTTON_CSS}</style>

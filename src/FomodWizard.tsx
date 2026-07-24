@@ -182,17 +182,8 @@ export function FomodWizardModal({
       <Focusable
         onButtonDown={(evt: CustomEvent) => {
           const button = (evt as any)?.detail?.button;
-          if (
-            button === GamepadButton.BUMPER_RIGHT ||
-            button === GamepadButton.BUMPER_LEFT
-          ) {
-            // Claim the event so Steam's default section-jump doesn't
-            // eat the first press (same fix as the tab strip).
-            (evt as any).preventDefault?.();
-            (evt as any).stopPropagation?.();
-            if (button === GamepadButton.BUMPER_RIGHT) goNext();
-            else goBack();
-          }
+          if (button === GamepadButton.BUMPER_RIGHT) goNext();
+          else if (button === GamepadButton.BUMPER_LEFT) goBack();
         }}
       >
       <h3 style={{ marginTop: 0, marginBottom: "2px" }}>

@@ -568,6 +568,7 @@ export function BrowsePage() {
     >
       <Scroller
         focusable={false}
+        onButtonDown={handleTabButtons("store")}
         style={{
           height: "100%",
           overflowY: "auto",

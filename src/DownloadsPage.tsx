@@ -143,6 +143,9 @@ export function DownloadsPage() {
     >
       <Scroller
         focusable={false}
+        // The scroll panel sits between the rows and the page root and
+        // consumes bumper presses (section-jump) - handle tabs here too.
+        onButtonDown={handleTabButtons("downloads")}
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <TabBar currentId="downloads" />
