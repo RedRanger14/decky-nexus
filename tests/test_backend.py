@@ -1397,6 +1397,43 @@ class TestWitcherRouting(unittest.TestCase):
         )
         self.assertEqual(rels, ["game/hit.ws"])
 
+    def test_merge_handles_utf16_script_side(self):
+        # Immersive Realtime Cutscenes ships r4player.ws as UTF-16 -
+        # decoded as UTF-8 it merged NUL garbage into the game.
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        base = os.path.join(
+            self.install, *main.W3_VANILLA_SCRIPTS.split("/"), "game",
+            "hit.ws",
+        )
+        os.makedirs(os.path.dirname(base))
+        with open(base, "wb") as f:
+            f.write("a\r\nb\r\nc\r\nd\r\ne\r\n".encode("utf-8"))
+        owner = os.path.join(
+            self.mods, "modExisting", "content", "scripts", "game", "hit.ws"
+        )
+        os.makedirs(os.path.dirname(owner))
+        with open(owner, "wb") as f:
+            f.write(b"\xff\xfe" + "a\r\nOWNER\r\nc\r\nd\r\ne\r\n".encode("utf-16-le"))
+        incoming = os.path.join(self.scratch, "incoming_hit.ws")
+        with open(incoming, "wb") as f:
+            f.write("a\r\nb\r\nc\r\nNEW\r\ne\r\n".encode("utf-8"))
+        settings = main._load_settings()
+        rels = main._w3_try_merge_conflicts(
+            "witcher3", self.install, self.mods,
+            [("game/hit.ws", "modExisting", incoming, owner)], settings,
+        )
+        self.assertEqual(rels, ["game/hit.ws"])
+        merged = os.path.join(
+            self.mods, main.W3_MERGED_MOD, "content", "scripts", "game",
+            "hit.ws",
+        )
+        raw = open(merged, "rb").read()
+        self.assertNotIn(b"\x00", raw)
+        self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))  # UTF-8 BOM
+        self.assertIn(b"OWNER", raw)
+        self.assertIn(b"NEW", raw)
+
     def test_merge3_deadline_raises_and_try_merge_degrades(self):
         # A blown budget must degrade to "unmergeable", never freeze the
         # backend (r4player.ws is difflib's quadratic worst case).
@@ -1468,7 +1505,7 @@ class TestWitcherRouting(unittest.TestCase):
             "hit.ws",
         )
         self.assertEqual(
-            open(merged_path).read().splitlines(),
+            open(merged_path, encoding="utf-8-sig").read().splitlines(),
             ["a", "OWNER", "c", "NEW", "e"],
         )
         self.assertEqual(
