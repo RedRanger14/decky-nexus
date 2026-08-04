@@ -713,6 +713,30 @@ class TestCollectionAttention(unittest.TestCase):
 
 
 class TestHelpers(unittest.TestCase):
+    def test_force_rmtree_handles_plain_files(self):
+        # NVAC's FOMOD staging cleanup crashed on 'readme - nvac.txt' -
+        # _force_rmtree must delete files too, not just directories.
+        tmp = tempfile.mkdtemp()
+        f = os.path.join(tmp, "readme - nvac.txt")
+        with open(f, "w") as fh:
+            fh.write("x")
+        main._force_rmtree(f)
+        self.assertFalse(os.path.exists(f))
+        main._force_rmtree(os.path.join(tmp, "does-not-exist"))
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_nvse_plugin_archive_is_a_data_payload(self):
+        # The FNV NVSE-plugin convention: archives rooted at
+        # NVSE/Plugins/ (no Data/ wrapper) - an entire collection failed
+        # for want of the marker.
+        tmp = tempfile.mkdtemp()
+        p = os.path.join(tmp, "NVSE", "Plugins", "nvac.dll")
+        os.makedirs(os.path.dirname(p))
+        with open(p, "w") as fh:
+            fh.write("x")
+        self.assertIsNotNone(main._find_data_payload(tmp))
+        shutil.rmtree(tmp, ignore_errors=True)
+
     def test_safe_name_strips_unsafe_characters(self):
         self.assertEqual(main._safe_name("Iron/clad:铁甲"), "Ironclad")
         self.assertEqual(main._safe_name("...hidden"), "hidden")
