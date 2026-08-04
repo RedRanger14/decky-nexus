@@ -403,6 +403,10 @@ function CurrentGameSection() {
   const [launchOptionsSet, setLaunchOptionsSet] = useState(false);
   const [nativeBuild, setNativeBuild] = useState(false);
   const [firstRunNeeded, setFirstRunNeeded] = useState(false);
+  const [extraFwInstalled, setExtraFwInstalled] = useState<
+    Record<string, boolean>
+  >({});
+  const [extraFwBusy, setExtraFwBusy] = useState<string | undefined>();
 
   const refreshStatus = () => {
     if (game) {
@@ -411,6 +415,16 @@ function CurrentGameSection() {
         game.modsSubdir,
         game.framework?.detectFile ?? ""
       ).then(setStatus);
+      // Multi-framework games (CP77): each extra gets its own row +
+      // installed check via its detect file.
+      for (const fw of game.extraFrameworks ?? []) {
+        checkGameFile(game.installDirName, fw.detectFile).then((r) =>
+          setExtraFwInstalled((prev) => ({
+            ...prev,
+            [fw.name]: Boolean(r.ok && r.exists),
+          }))
+        );
+      }
       if (game.protonRequired) {
         checkGameFile(
           game.installDirName,
@@ -705,6 +719,50 @@ function CurrentGameSection() {
               </ButtonItem>
             )}
           </PanelSectionRow>
+          {/* Multi-framework games: one row per extra loader (CP77 mods
+              routinely need 3-4 at once). */}
+          {(game.extraFrameworks ?? []).map((fw) => (
+            <PanelSectionRow key={fw.name}>
+              {extraFwInstalled[fw.name] ? (
+                <Field label="">{fw.name} installed ✓</Field>
+              ) : (
+                <ButtonItem
+                  layout="below"
+                  disabled={extraFwBusy !== undefined || !status?.installed}
+                  description={`Script mods also need ${fw.name}`}
+                  onClick={async () => {
+                    setExtraFwBusy(fw.name);
+                    try {
+                      const result = await installFramework(
+                        game.nexusDomain,
+                        fw.nexusModId!,
+                        game.installDirName,
+                        fw.installKind ?? "copyRoot",
+                        fw.detectFile,
+                        fw.avoidFileKeywords ?? [],
+                        fw.installSubdir ?? ""
+                      );
+                      toaster.toast(
+                        result.ok
+                          ? { title: `${fw.name} installed`, body: "" }
+                          : {
+                              title: `${fw.name} install failed`,
+                              body: result.error ?? "",
+                            }
+                      );
+                    } finally {
+                      setExtraFwBusy(undefined);
+                      refreshStatus();
+                    }
+                  }}
+                >
+                  {extraFwBusy === fw.name
+                    ? `Installing ${fw.name}…`
+                    : `Install ${fw.name}`}
+                </ButtonItem>
+              )}
+            </PanelSectionRow>
+          ))}
           {game.framework.launchOptionsTemplate && (
             <PanelSectionRow>
               {launchOptionsSet ? (

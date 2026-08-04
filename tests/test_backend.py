@@ -424,6 +424,77 @@ class TestRootFilesInstall(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.game, "tbb.dll")))
 
 
+class TestCp77Routing(unittest.TestCase):
+    """CP77 archives: game-root payloads (bin/red4ext/r6/engine/archive),
+    bare .archive files, REDmod-format detection, tool detection. All
+    framework shapes verified against the real archives (2026-08-04)."""
+
+    def setUp(self):
+        self.scratch = os.path.join(TEST_ROOT, "cp77-scratch")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+
+    def put(self, rel):
+        p = os.path.join(self.scratch, *rel.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("x")
+
+    def rels(self, files):
+        return sorted(rel for rel, _src in files)
+
+    def test_framework_shaped_payload_routes_by_root(self):
+        # RED4ext's real shape: loader dll + red4ext tree
+        self.put("bin/x64/winmm.dll")
+        self.put("red4ext/RED4ext.dll")
+        files, err = main._route_cp77_payload(self.scratch, "RED4ext")
+        self.assertIsNone(err)
+        self.assertEqual(
+            self.rels(files), ["bin/x64/winmm.dll", "red4ext/RED4ext.dll"]
+        )
+
+    def test_wrapper_dir_unwraps(self):
+        self.put("SomeMod-1.0/r6/scripts/somemod/main.reds")
+        self.put("SomeMod-1.0/archive/pc/mod/somemod.archive")
+        files, err = main._route_cp77_payload(self.scratch, "Some Mod")
+        self.assertIsNone(err)
+        self.assertEqual(
+            self.rels(files),
+            [
+                "archive/pc/mod/somemod.archive",
+                "r6/scripts/somemod/main.reds",
+            ],
+        )
+
+    def test_bare_archive_files_go_flat(self):
+        self.put("cool_car.archive")
+        self.put("nested/cool_car.archive.xl")
+        files, err = main._route_cp77_payload(self.scratch, "Cool Car")
+        self.assertIsNone(err)
+        self.assertEqual(
+            self.rels(files),
+            [
+                "archive/pc/mod/cool_car.archive",
+                "archive/pc/mod/cool_car.archive.xl",
+            ],
+        )
+
+    def test_redmod_format_is_refused_with_guidance(self):
+        self.put("mods/CoolMod/info.json")
+        self.put("mods/CoolMod/archives/cool.archive")
+        files, err = main._route_cp77_payload(self.scratch, "Cool Mod")
+        self.assertIsNotNone(err)
+        kind, message = err
+        self.assertEqual(kind, "layout")
+        self.assertIn("REDmod", message)
+
+    def test_exe_archive_is_a_tool(self):
+        self.put("CyberCAT/CyberCAT.exe")
+        files, err = main._route_cp77_payload(self.scratch, "CyberCAT")
+        self.assertIsNotNone(err)
+        self.assertEqual(err[0], "tool")
+
+
 class TestResetGameModding(unittest.TestCase):
     """One-button vanilla reset: records of every mode uninstall, the
     framework loader goes, and the game's plugin state clears."""

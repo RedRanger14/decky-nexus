@@ -1663,6 +1663,110 @@ def _route_witcher_payload(
     return mod_dirs, dlc_dirs, menu_xmls, None
 
 
+# ---- Cyberpunk 2077 layout ---------------------------------------------------
+# Framework-tier mods ship game-root-relative payloads across several
+# known roots (all shapes verified by downloading the frameworks
+# themselves, 2026-08-04): CET = bin/x64/version.dll + plugins/, RED4ext
+# = bin/x64/winmm.dll + red4ext/, ArchiveXL/TweakXL = red4ext/plugins/
+# + r6/, redscript = engine/tools + r6/. Bare .archive files still go
+# flat into archive/pc/mod. REDmod-format (mods/<name>/info.json) needs
+# the free DLC + '-modded' + a deploy step - skipped with a clear
+# message for now.
+
+CP77_ROOTS = ("archive", "bin", "red4ext", "r6", "engine")
+CP77_ARCHIVE_DIR = "archive/pc/mod"
+
+
+def _route_cp77_payload(scratch: str, mod_name: str):
+    """Classify a CP77 archive. Returns (files, err) where files is a
+    list of (game-root-relative rel, source path) and err is None or a
+    (kind, message) tuple like the witcher router's."""
+
+    def known_roots(base):
+        try:
+            entries = os.listdir(base)
+        except OSError:
+            return []
+        return [
+            e
+            for e in entries
+            if e.lower() in CP77_ROOTS
+            and os.path.isdir(os.path.join(base, e))
+        ]
+
+    base = scratch
+    roots = known_roots(base)
+    if not roots:
+        # single wrapper dir unwrap (versioned folders etc.)
+        subs = [
+            os.path.join(scratch, e)
+            for e in os.listdir(scratch)
+            if os.path.isdir(os.path.join(scratch, e))
+        ]
+        if len(subs) == 1 and known_roots(subs[0]):
+            base = subs[0]
+            roots = known_roots(base)
+    if roots:
+        files = []
+        for r in roots:
+            rp = os.path.join(base, r)
+            for root_, _dirs, names in os.walk(rp):
+                for n in names:
+                    src = os.path.join(root_, n)
+                    rel = os.path.relpath(src, base).replace(os.sep, "/")
+                    if _safe_rel_path(rel):
+                        files.append((rel, src))
+        if files:
+            return files, None
+    # REDmod-format payload (mods/<name>/info.json) - must be checked
+    # BEFORE the bare-archive sweep: REDmods contain .archive files that
+    # would otherwise install flat into the wrong place.
+    for cand in (scratch, *[
+        os.path.join(scratch, e)
+        for e in os.listdir(scratch)
+        if os.path.isdir(os.path.join(scratch, e))
+    ]):
+        mods_dir = os.path.join(cand, "mods")
+        if os.path.isdir(mods_dir):
+            for sub in os.listdir(mods_dir):
+                if os.path.isfile(
+                    os.path.join(mods_dir, sub, "info.json")
+                ):
+                    return [], (
+                        "layout",
+                        f"{mod_name} is a REDmod-format mod - that needs "
+                        "the free REDmod DLC and a deploy step we don't "
+                        "support yet. Many mods offer a classic version "
+                        "as a separate file.",
+                    )
+    # bare archive files (the classic drop-in tier)
+    flat = []
+    for root_, _dirs, names in os.walk(scratch):
+        for n in names:
+            if n.lower().endswith((".archive", ".xl")):
+                flat.append(
+                    (f"{CP77_ARCHIVE_DIR}/{n}", os.path.join(root_, n))
+                )
+    if flat:
+        return flat, None
+    for root_, _dirs, names in os.walk(scratch):
+        for n in names:
+            if n.lower().endswith(".exe"):
+                return [], (
+                    "tool",
+                    f"{mod_name} looks like a PC modding tool ({n}), not "
+                    "a mod the game loads - it needs a desktop setup, so "
+                    "it was skipped.",
+                )
+    tops = ", ".join(sorted(os.listdir(scratch))[:6])
+    return [], (
+        "layout",
+        "No Cyberpunk mod layout found in this archive (expected "
+        "archive/bin/red4ext/r6/engine roots or .archive files). "
+        f"It contains: {tops}",
+    )
+
+
 # ---- Bannerlord module activation ------------------------------------------
 # Modules are folders under Modules/, but the launcher only loads ones
 # selected in LauncherData.xml (Documents/Mount and Blade II Bannerlord/
@@ -3288,6 +3392,7 @@ query Link($slug: String!, $domainName: String!) {
         record_source: str = "",
         witcher_layout: bool = False,
         collection_slug: str = "",
+        cp77_layout: bool = False,
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -3318,6 +3423,7 @@ query Link($slug: String!, $domainName: String!) {
                 record_source,
                 witcher_layout,
                 collection_slug,
+                cp77_layout,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -3415,6 +3521,7 @@ query Link($slug: String!, $domainName: String!) {
         record_source: str = "",
         witcher_layout: bool = False,
         collection_slug: str = "",
+        cp77_layout: bool = False,
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -4003,6 +4110,62 @@ query Link($slug: String!, $domainName: String!) {
             )
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": first_folder or _safe_name(mod_name)}
+
+        # Cyberpunk layout: game-root-relative payloads across the known
+        # roots (bin/red4ext/r6/engine/archive) or bare .archive files -
+        # everything lands as an exact-file record for clean uninstall.
+        if cp77_layout:
+            cp_files, cp_err = _route_cp77_payload(scratch, mod_name)
+            if cp_err:
+                kind, message = cp_err
+                decky.logger.info(f"CP77 {mod_name!r}: {kind}: {message}")
+                _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, kind)
+                result = {"ok": False, "error": message}
+                if kind == "tool":
+                    result["unsupported_tool"] = True
+                else:
+                    result["unsupported_layout"] = True
+                return result
+            installed_rel = []
+            for rel, src in cp_files:
+                dst = os.path.join(install_path, *rel.split("/"))
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                if os.path.isfile(dst):
+                    os.remove(dst)
+                shutil.move(src, dst)
+                installed_rel.append(rel)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            settings = _load_settings()
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            record_key = _safe_name(mod_name)
+            installed[record_key] = {
+                "mod_id": mod_id,
+                "file_id": file_id,
+                "name": mod_name,
+                "version": mod_version,
+                "file_name": file_name,
+                "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
+                "collection_slug": collection_slug,
+                "mode": "files",
+                "target": ".",
+                "files": installed_rel,
+            }
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed CP77 {mod_name!r}: {len(installed_rel)} "
+                "file(s) into game roots"
+            )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": record_key}
 
         # Flat-file games (Cyberpunk archive/pc/mod): the game loads files,
         # not folders - move matching files flat and keep a per-file record.
