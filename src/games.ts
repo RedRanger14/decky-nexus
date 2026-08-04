@@ -217,6 +217,49 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       },
     ],
   },
+  22380: {
+    appId: 22380,
+    displayName: "Fallout: New Vegas",
+    nexusDomain: "newvegas", // verified: game id 130, ~41k mods
+    installDirName: "Fallout New Vegas", // verified on device
+    modsSubdir: "Data",
+    installMode: "dataDir",
+    // FNV predates the starred format: a plugin listed in the file IS
+    // active (no '*' prefix).
+    pluginsTxtSubpath: "FalloutNV/Plugins.txt",
+    pluginsTxtStyle: "listed",
+    moddedSaveWarning: false,
+    processName: "FalloutNV.exe",
+    framework: {
+      name: "xNVSE",
+      detectFile: "nvse_loader.exe",
+      url: "github.com/xNVSE/NVSE",
+      nexusModId: 67883, // verified live: "New Vegas Script Extender (NVSE xNVSE)"
+      installKind: "copyRoot",
+      // Same recipe as SKSE/F4SE: swap the launcher for the loader.
+      launchOptionsTemplate:
+        "bash -c 'exec \"$" +
+        "{@/FalloutNVLauncher.exe/nvse_loader.exe}\"' -- %command%",
+      cleanupPrefixes: ["nvse"],
+    },
+    recommendedModIds: [53635], // verified live: NVAC (the domain's top mod)
+    // Loose files don't load until archive invalidation is enabled.
+    setupInis: [
+      {
+        prefsSubpath: "FalloutNV/Fallout.ini",
+        section: "Archive",
+        settings: {
+          bInvalidateOlderFiles: "1",
+          SInvalidationFile: "",
+        },
+      },
+    ],
+    firstRunNotice: {
+      message:
+        "Launch the game once first - it creates the config files mods need.",
+      goneWhenDocsFile: "My Games/FalloutNV/Fallout.ini",
+    },
+  },
   1030300: {
     appId: 1030300,
     displayName: "Hollow Knight: Silksong",

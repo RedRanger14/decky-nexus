@@ -440,8 +440,8 @@ games. Starter saves installed on device (mod 44704, Act One complete).
 
 ## Future-games watchlist (user adds, 2026-08-04)
 
-- **Assassin's Creed IV Black Flag Resynced** — upcoming remaster;
-  Nexus domain TBD once game + mod section exist. Research pass when it
-  ships.
-- **Moonlight Peaks** — upcoming cozy sim; likely folder-mode if it
-  gets BepInEx/UE-style modding. Watch for its Nexus domain.
+- **Assassin's Creed Black Flag Resynced** — OUT with a modding
+  community. Verified live: domain `assassinscreedblackflagresynced`,
+  gameId 9408. Needs a research pass (paths/framework).
+- **Moonlight Peaks** — OUT with a modding community. Verified live:
+  domain `moonlightpeaks`, gameId 9480. Needs a research pass.
