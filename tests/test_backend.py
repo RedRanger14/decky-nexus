@@ -2794,6 +2794,104 @@ class TestContentGate(unittest.TestCase):
         self.assertFalse(main._show_adult())
         self.assertNotIn("content_gate", main._load_settings())
 
+    def test_gate_adult_nodes_agrees_with_open_gate(self):
+        # The v0.37.0 regression: gate open, but a stale client-side pass
+        # still dropped every adult node ("search says 39, shows 6").
+        self._seed_gate(adult_pref=True, age_verified=True)
+        nodes = [{"name": "a", "adultContent": True}, {"name": "b"}]
+        self.assertEqual(len(main._gate_adult_nodes(nodes)), 2)
+
+    def test_gate_adult_nodes_filters_when_closed(self):
+        nodes = [{"name": "a", "adultContent": True}, {"name": "b"}]
+        self.assertEqual(
+            [m["name"] for m in main._gate_adult_nodes(nodes)], ["b"]
+        )
+        v1 = [{"name": "a", "contains_adult_content": True}, {"name": "b"}]
+        self.assertEqual(
+            [m["name"] for m in main._gate_adult_nodes(v1, "contains_adult_content")],
+            ["b"],
+        )
+
+
+class TestPrefixRuntime(unittest.TestCase):
+    """CP77's install script downgrades the prefix VC++ runtime to 14.28;
+    CET/RED4ext (built with VS 17.10+) then fail to load with error 998.
+    fix_prefix_runtime copies the newest Proton-bundled CRT over."""
+
+    APP_ID = 999001
+
+    @staticmethod
+    def _fake_pe(version):
+        """Minimal blob carrying a VS_FIXEDFILEINFO signature + version."""
+        major, minor, build, rev = version
+        ms = (major << 16) | minor
+        ls = (build << 16) | rev
+        return (
+            b"MZ" + b"\x00" * 62
+            + b"\xbd\x04\xef\xfe"          # VS_FIXEDFILEINFO signature
+            + b"\x00\x00\x01\x00"          # dwStrucVersion
+            + ms.to_bytes(4, "little")
+            + ls.to_bytes(4, "little")
+            + b"\x00" * 16
+        )
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.sys32 = main._prefix_system32(self.APP_ID)
+        os.makedirs(self.sys32, exist_ok=True)
+        self.proton = os.path.join(
+            main.STEAM_COMMON, "Proton 11.0", "files", "lib", "wine",
+            "x86_64-windows",
+        )
+        os.makedirs(self.proton, exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(os.path.dirname(os.path.dirname(self.sys32)), ignore_errors=True)
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, "Proton 11.0"), ignore_errors=True)
+
+    def _write(self, directory, name, version):
+        with open(os.path.join(directory, name), "wb") as f:
+            f.write(self._fake_pe(version))
+
+    def test_pe_version_parses_fixedfileinfo(self):
+        self._write(self.sys32, "probe.dll", (14, 28, 29334, 0))
+        self.assertEqual(
+            main._pe_file_version(os.path.join(self.sys32, "probe.dll")),
+            (14, 28, 29334, 0),
+        )
+
+    def test_upgrades_old_crt_and_backs_up(self):
+        for name in main.CRT_DLLS:
+            self._write(self.proton, name, (14, 42, 34433, 0))
+        self._write(self.sys32, "msvcp140.dll", (14, 28, 29334, 0))
+        self._write(self.sys32, "vcruntime140.dll", (14, 28, 29334, 0))
+        result = run(self.plugin.fix_prefix_runtime(self.APP_ID))
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["updated"])
+        self.assertEqual(result["version"], "14.42.34433.0")
+        self.assertEqual(
+            main._pe_file_version(os.path.join(self.sys32, "msvcp140.dll")),
+            (14, 42, 34433, 0),
+        )
+        self.assertTrue(
+            os.path.isfile(
+                os.path.join(self.sys32, "msvcp140.dll" + main.CRT_BACKUP_SUFFIX)
+            )
+        )
+
+    def test_current_crt_left_alone(self):
+        for name in main.CRT_DLLS:
+            self._write(self.proton, name, (14, 42, 34433, 0))
+        self._write(self.sys32, "msvcp140.dll", (14, 44, 35211, 0))
+        result = run(self.plugin.fix_prefix_runtime(self.APP_ID))
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["updated"])
+
+    def test_missing_prefix_reports_cleanly(self):
+        result = run(self.plugin.fix_prefix_runtime(424242))
+        self.assertFalse(result["ok"])
+        self.assertIn("launch the game once", result["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

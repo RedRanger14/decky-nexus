@@ -57,8 +57,13 @@ export interface SupportedGame {
   /** Required community mod loader, if the game has one */
   framework?: GameFramework;
   /** Additional frameworks beyond the primary (CP77 script mods need
-   * 3-4 at once) - rendered as extra install rows under Step 1. */
+   * 3-4 at once) - installed together by the one-button Step 1. */
   extraFrameworks?: GameFramework[];
+  /** Upgrade the Proton prefix's VC++ runtime during Step 1. CP77's own
+   * Steam install script downgrades the prefix CRT to 2019 (14.28);
+   * modern CET/RED4ext builds need 14.40+ or Wine fails their
+   * LoadLibrary with error 998. */
+  prefixRuntimeFix?: boolean;
   /** Cyberpunk's layout: game-root-relative payloads across known roots
    * (bin/red4ext/r6/engine/archive) with exact-file records; bare
    * .archive files go flat into archive/pc/mod. */
@@ -398,6 +403,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // go flat into archive/pc/mod. All framework shapes verified by
     // downloading each archive (2026-08-04).
     cp77Layout: true,
+    prefixRuntimeFix: true,
     moddedSaveWarning: false,
     processName: "Cyberpunk2077.exe",
     framework: {
