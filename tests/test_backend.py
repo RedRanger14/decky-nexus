@@ -2893,5 +2893,109 @@ class TestPrefixRuntime(unittest.TestCase):
         self.assertIn("launch the game once", result["error"])
 
 
+class TestPluginMasters(unittest.TestCase):
+    """The engine hard-fails at boot when an enabled plugin's master is
+    absent ('X.esm is missing required files') - seen live with a TTW
+    collection on a DLC-less FNV install. The checker parses TES4 MAST
+    subrecords; disable_plugins drops the plugins.txt lines."""
+
+    APP_ID = 999002
+    GAME = "MasterTest Game"
+
+    @staticmethod
+    def _fake_plugin(masters):
+        subs = b""
+        for m in masters:
+            name = m.encode("cp1252") + b"\x00"
+            subs += b"MAST" + len(name).to_bytes(2, "little") + name
+            subs += b"DATA" + (8).to_bytes(2, "little") + b"\x00" * 8
+        head = b"TES4" + len(subs).to_bytes(4, "little") + b"\x00" * 16
+        return head + subs
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.plugin = main.Plugin()
+        self.data = os.path.join(main.STEAM_COMMON, self.GAME, "Data")
+        os.makedirs(self.data, exist_ok=True)
+        self.plugins_txt = main._plugins_txt_path(self.APP_ID, "FalloutNV/Plugins.txt")
+        os.makedirs(os.path.dirname(self.plugins_txt), exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME), ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.plugins_txt), ignore_errors=True)
+
+    def _seed(self, name, masters):
+        with open(os.path.join(self.data, name), "wb") as f:
+            f.write(self._fake_plugin(masters))
+
+    def test_masters_parse_and_missing_detected(self):
+        self._seed("FalloutNV.esm", [])
+        self._seed("Good.esp", ["FalloutNV.esm"])
+        self._seed("Broken.esm", ["FalloutNV.esm", "DeadMoney.esm"])
+        main._write_plugins_txt(
+            self.plugins_txt, ["FalloutNV.esm", "Good.esp", "Broken.esm"]
+        )
+        result = run(
+            self.plugin.check_plugin_masters(
+                self.GAME, "Data", self.APP_ID, "FalloutNV/Plugins.txt", "listed"
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["broken"]), 1)
+        self.assertEqual(result["broken"][0]["plugin"], "Broken.esm")
+        self.assertEqual(result["broken"][0]["missing"], ["DeadMoney.esm"])
+
+    def test_master_case_is_insensitive(self):
+        self._seed("falloutnv.esm", [])
+        self._seed("Mod.esp", ["FalloutNV.ESM"])
+        main._write_plugins_txt(self.plugins_txt, ["Mod.esp"])
+        result = run(
+            self.plugin.check_plugin_masters(
+                self.GAME, "Data", self.APP_ID, "FalloutNV/Plugins.txt", "listed"
+            )
+        )
+        self.assertEqual(result["broken"], [])
+
+    def test_starred_style_only_checks_enabled(self):
+        self._seed("Broken.esp", ["Ghost.esm"])
+        main._write_plugins_txt(self.plugins_txt, ["Broken.esp"])  # unstarred
+        result = run(
+            self.plugin.check_plugin_masters(
+                self.GAME, "Data", self.APP_ID, "FalloutNV/Plugins.txt", "starred"
+            )
+        )
+        self.assertEqual(result["broken"], [])
+
+    def test_disable_plugins_drops_lines(self):
+        main._write_plugins_txt(
+            self.plugins_txt, ["FalloutNV.esm", "Broken.esm", "*Starred.esp"]
+        )
+        result = run(
+            self.plugin.disable_plugins(
+                self.APP_ID,
+                "FalloutNV/Plugins.txt",
+                "listed",
+                ["Broken.esm", "Starred.esp"],
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["disabled"], 2)
+        self.assertEqual(
+            main._read_plugins_txt(self.plugins_txt), ["FalloutNV.esm"]
+        )
+
+    def test_non_plugin_files_are_ignored(self):
+        with open(os.path.join(self.data, "readme.txt"), "w") as f:
+            f.write("not a plugin")
+        main._write_plugins_txt(self.plugins_txt, ["readme.txt"])
+        result = run(
+            self.plugin.check_plugin_masters(
+                self.GAME, "Data", self.APP_ID, "FalloutNV/Plugins.txt", "listed"
+            )
+        )
+        self.assertEqual(result["broken"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

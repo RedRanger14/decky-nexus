@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 
 import {
   clearCompletedDownloads,
+  getAggregateBps,
   getCollectionRun,
   getCompletedDownloads,
   getDownloads,
@@ -25,6 +26,72 @@ import { getSupportedGame } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
+
+export function formatBytes(n: number): string {
+  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`;
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(n >= 100 << 20 ? 0 : 1)} MB`;
+  if (n >= 1 << 10) return `${Math.round(n / (1 << 10))} KB`;
+  return `${n} B`;
+}
+
+function formatSpeed(bps: number): string {
+  return `${formatBytes(bps)}/s`;
+}
+
+/** Live download-speed sparkline: one sample per second, ~90s of history,
+ * scaled to the window's peak. Sits top-right of the page header. */
+function SpeedGraph({ samples }: { samples: number[] }) {
+  const W = 180;
+  const H = 44;
+  const peak = Math.max(...samples, 1);
+  const current = samples[samples.length - 1] ?? 0;
+  const points = samples
+    .map((v, i) => {
+      const x = (i / Math.max(samples.length - 1, 1)) * W;
+      const y = H - (v / peak) * (H - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        gap: "2px",
+        flexShrink: 0,
+      }}
+    >
+      <svg
+        width={W}
+        height={H}
+        style={{
+          background: "rgba(255,255,255,0.05)",
+          borderRadius: "4px",
+        }}
+      >
+        {samples.length > 1 && (
+          <>
+            <polyline
+              points={`0,${H} ${points} ${W},${H}`}
+              fill="rgba(218,142,53,0.25)"
+              stroke="none"
+            />
+            <polyline
+              points={points}
+              fill="none"
+              stroke="#da8e35"
+              strokeWidth="1.5"
+            />
+          </>
+        )}
+      </svg>
+      <span style={{ fontSize: "12px", opacity: 0.85 }}>
+        {current > 0 ? formatSpeed(current) : "idle"}
+      </span>
+    </div>
+  );
+}
 
 function Row({
   name,
@@ -111,12 +178,19 @@ async function openDownloadTarget(
 
 export function DownloadsPage() {
   const [, force] = useState(0);
+  // Speed history: sampled here (not in the global store) so the graph
+  // costs nothing while the page is closed. Zeroes record idle gaps.
+  const [speedSamples, setSpeedSamples] = useState<number[]>([]);
   useEffect(() => {
     const un1 = subscribeDownloads(() => force((n) => n + 1));
     const un2 = subscribeCollectionRun(() => force((n) => n + 1));
+    const timer = setInterval(() => {
+      setSpeedSamples((prev) => [...prev, getAggregateBps()].slice(-90));
+    }, 1000);
     return () => {
       un1();
       un2();
+      clearInterval(timer);
     };
   }, []);
 
@@ -142,7 +216,17 @@ export function DownloadsPage() {
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <TabBar currentId="downloads" />
-        <h2 style={{ margin: "12px 0 10px" }}>Downloads</h2>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            margin: "12px 0 10px",
+          }}
+        >
+          <h2 style={{ margin: 0 }}>Downloads</h2>
+          <SpeedGraph samples={speedSamples} />
+        </div>
 
         {run && (
           <Focusable
@@ -199,7 +283,14 @@ export function DownloadsPage() {
               pct={d.phase === "extracting" ? 100 : d.percent}
               status={
                 d.phase === "downloading"
-                  ? `${d.percent}%`
+                  ? [
+                      d.bytesDone !== undefined && d.bytesTotal
+                        ? `${formatBytes(d.bytesDone)} / ${formatBytes(d.bytesTotal)}`
+                        : `${d.percent}%`,
+                      d.bps ? formatSpeed(d.bps) : undefined,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")
                   : d.phase === "extracting"
                   ? "Installing…"
                   : "Starting…"

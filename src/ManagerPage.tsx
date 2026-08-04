@@ -7,6 +7,7 @@ import {
   DialogButton,
   Focusable,
   Navigation,
+  Router,
   ScrollPanelGroup,
   showModal,
 } from "@decky/ui";
@@ -25,8 +26,9 @@ import {
   uninstallCollection,
   uninstallMod,
 } from "./api";
-import { ALL_GAMES, SupportedGame, modeParams } from "./games";
+import { ALL_GAMES, SupportedGame, getActiveGame, modeParams } from "./games";
 import {
+  getBrowseGame,
   setDetailOrigin,
   setSelectedCollection,
   setSelectedMod,
@@ -215,6 +217,16 @@ function ModRow({
 }
 
 export function ManagerPage() {
+  // Same scope resolution as the Store tab: the game the user is browsing
+  // (or running) is the one whose mods they expect to see. Everything
+  // else hides behind an explicit "All games" toggle - seeing Skyrim
+  // collections while managing Fallout 4 reads as a bug.
+  const scopeGame =
+    getBrowseGame() ??
+    getActiveGame(
+      Router.MainRunningApp ? Number(Router.MainRunningApp.appid) : undefined
+    );
+  const [showAllGames, setShowAllGames] = useState(false);
   const [groups, setGroups] = useState<GameMods[] | undefined>();
   const [busyKey, setBusyKey] = useState<string | undefined>();
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
@@ -434,7 +446,7 @@ export function ManagerPage() {
     /** Wizard/option decisions still waiting - "Finish installing". */
     pendingChoices?: number;
   }
-  const grouped = (groups ?? []).map(
+  const allGrouped = (groups ?? []).map(
     ({ game, mods, collections, attention }) => {
     const claimed = new Set<string>();
     const entries: CollectionEntry[] = [];
@@ -465,6 +477,11 @@ export function ManagerPage() {
     return { game, loose, entries };
     }
   );
+  const scoped = scopeGame !== undefined && !showAllGames;
+  const grouped = scoped
+    ? allGrouped.filter((g) => g.game.appId === scopeGame!.appId)
+    : allGrouped;
+  const hiddenGames = allGrouped.length - grouped.length;
   const looseTotal = grouped.reduce((n, g) => n + g.loose.length, 0);
   const collectionsTotal = grouped.reduce(
     (n, g) => n + g.entries.length,
@@ -500,7 +517,35 @@ export function ManagerPage() {
       >
         <TabBar currentId="manager" />
         <style>{PRIMARY_BUTTON_CSS}</style>
-        <h2 style={{ margin: "6px 0 12px" }}>My Mods</h2>
+        <Focusable
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "14px",
+            margin: "6px 0 12px",
+          }}
+        >
+          <h2 style={{ margin: 0 }}>
+            My Mods
+            {scopeGame ? ` — ${scopeGame.displayName}` : ""}
+          </h2>
+          {scopeGame && (hiddenGames > 0 || showAllGames) && (
+            <DialogButton
+              onClick={() => setShowAllGames((v) => !v)}
+              style={{
+                minWidth: "0",
+                width: "auto",
+                padding: "6px 14px",
+                fontSize: "12.5px",
+                flexShrink: 0,
+              }}
+            >
+              {showAllGames
+                ? `Only ${scopeGame.displayName}`
+                : `All games (${hiddenGames} more)`}
+            </DialogButton>
+          )}
+        </Focusable>
 
         {groups === undefined && (
           <div style={{ opacity: 0.8 }}>Reading your games…</div>
@@ -510,8 +555,17 @@ export function ManagerPage() {
             Nothing installed yet - the Store tab is where it starts.
           </div>
         )}
+        {groups !== undefined &&
+          groups.length > 0 &&
+          grouped.length === 0 &&
+          scoped && (
+            <div style={{ opacity: 0.8 }}>
+              Nothing installed for {scopeGame!.displayName} yet - mods for
+              other games are behind "All games" above.
+            </div>
+          )}
 
-        {groups !== undefined && groups.length > 0 && (
+        {groups !== undefined && grouped.length > 0 && (
           // Focusable columns: plain divs broke gamepad traversal - the
           // stick couldn't move down from the tab strip into the rows.
           <Focusable

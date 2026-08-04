@@ -113,6 +113,11 @@ export interface InstallProgress {
   phase: "downloading" | "extracting" | "done" | "error";
   percent: number;
   message?: string;
+  /** Exact transfer accounting (downloading phase only). */
+  bytes_done?: number;
+  bytes_total?: number;
+  /** Smoothed download speed, bytes/second. */
+  bps?: number;
 }
 
 export interface AuthStatus {
@@ -611,6 +616,35 @@ export const checkGameFile = callable<
   [install_dir: string, rel_path: string],
   { ok: boolean; exists?: boolean; error?: string }
 >("check_game_file");
+
+// Enabled plugins whose master files are absent from the data folder -
+// the engine refuses to boot on these ("X.esm is missing required files").
+export const checkPluginMasters = callable<
+  [
+    install_dir: string,
+    mods_subdir: string,
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: string
+  ],
+  {
+    ok: boolean;
+    broken?: { plugin: string; missing: string[] }[];
+    error?: string;
+  }
+>("check_plugin_masters");
+
+// Deactivates plugins (plugins.txt lines removed; files stay) so the
+// game boots again after a missing-masters diagnosis.
+export const disablePlugins = callable<
+  [
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: string,
+    plugin_names: string[]
+  ],
+  { ok: boolean; disabled?: number; error?: string }
+>("disable_plugins");
 
 // Upgrades the game prefix's VC++ runtime from the newest installed
 // Proton's bundled copy (idempotent). CP77's install script downgrades

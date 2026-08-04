@@ -127,6 +127,11 @@ export interface ActiveDownload {
   /** Set on collection-run summary entries: clicking opens the
    * collection page instead of a mod page. */
   collectionSlug?: string;
+  /** Exact transfer accounting from the backend (downloading only). */
+  bytesDone?: number;
+  bytesTotal?: number;
+  /** Smoothed download speed, bytes/second. */
+  bps?: number;
 }
 
 const downloads = new Map<number, ActiveDownload>();
@@ -163,7 +168,10 @@ const completed: ActiveDownload[] = [];
 export function updateDownload(
   modId: number,
   phase: string,
-  percent: number
+  percent: number,
+  bytesDone?: number,
+  bytesTotal?: number,
+  bps?: number
 ): void {
   const existing = downloads.get(modId);
   if (phase === "done" || phase === "error") {
@@ -171,7 +179,7 @@ export function updateDownload(
     // them until cleared).
     if (existing) {
       downloads.delete(modId);
-      completed.unshift({ ...existing, phase, percent });
+      completed.unshift({ ...existing, phase, percent, bps: undefined });
       if (completed.length > 30) completed.pop();
       notifyDownloads();
     }
@@ -183,8 +191,21 @@ export function updateDownload(
     phase,
     percent,
     gameAppId: existing?.gameAppId,
+    bytesDone: bytesDone ?? existing?.bytesDone,
+    bytesTotal: bytesTotal ?? existing?.bytesTotal,
+    // Speed only means something mid-download.
+    bps: phase === "downloading" ? bps ?? existing?.bps : undefined,
   });
   notifyDownloads();
+}
+
+/** Sum of live download speeds (bytes/sec) - the graph's data source. */
+export function getAggregateBps(): number {
+  let sum = 0;
+  for (const d of downloads.values()) {
+    if (d.phase === "downloading" && d.bps) sum += d.bps;
+  }
+  return sum;
 }
 
 /** Remove an entry without recording an outcome - parked installs
