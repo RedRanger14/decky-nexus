@@ -428,3 +428,20 @@ boot cleanly (conflicts skip with a note). Very large multi-collection
 setups are explicitly out of scope - the health-check feature is where
 we'll diagnose "this combination won't compile" for the user rather than
 attempt it.
+
+## Fallout 4: VERIFIED on device (2026-08-04)
+
+Cleanest first-run of any game so far, per Michael: foundational mods
+(F4SE + setup inis) installed without error, several individual mods
+verified in-game (MCM config, extra character-creator options), and the
+"The Fallout Historical Arsenal" collection installed and worked first
+time with zero errors. dataDir machinery is solid across both Bethesda
+games. Starter saves installed on device (mod 44704, Act One complete).
+
+## Future-games watchlist (user adds, 2026-08-04)
+
+- **Assassin's Creed IV Black Flag Resynced** — upcoming remaster;
+  Nexus domain TBD once game + mod section exist. Research pass when it
+  ships.
+- **Moonlight Peaks** — upcoming cozy sim; likely folder-mode if it
+  gets BepInEx/UE-style modding. Watch for its Nexus domain.
