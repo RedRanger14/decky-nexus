@@ -718,6 +718,49 @@ def _write_plugins_txt(path: str, lines: list) -> None:
         f.write("\n".join(lines) + ("\n" if lines else ""))
 
 
+def _plugin_masters(path: str):
+    """MAST entries from a Bethesda plugin's TES4 header (FO3/FNV/SSE/FO4
+    share the 24-byte record header + 4cc/uint16 subrecord format). None
+    when the file isn't a plugin; [] when it has no masters."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+            if len(head) < 24 or head[:4] != b"TES4":
+                return None
+            data_size = int.from_bytes(head[4:8], "little")
+            data = f.read(min(data_size, 1 << 20))
+    except OSError:
+        return None
+    masters, off = [], 0
+    while off + 6 <= len(data):
+        sub = data[off : off + 4]
+        size = int.from_bytes(data[off + 4 : off + 6], "little")
+        if sub == b"MAST" and size > 0:
+            masters.append(
+                data[off + 6 : off + 6 + size]
+                .rstrip(b"\x00")
+                .decode("cp1252", "replace")
+            )
+        off += 6 + size
+    return masters
+
+
+def _enabled_plugins(path: str, style: str) -> list:
+    """Plugin names the game will actually LOAD. starred: only '*'-lines;
+    listed (FNV/FO3): every non-comment line."""
+    names = []
+    for line in _read_plugins_txt(path):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if style == "starred":
+            if line.startswith("*"):
+                names.append(line.lstrip("*").strip())
+        else:
+            names.append(line)
+    return names
+
+
 def _add_plugins(path: str, names: list, style: str = "starred") -> None:
     """Activate plugins. 'starred' (SSE/FO4): '*Name.esp' lines; 'listed'
     (FNV/FO3/Oldrim): a plugin's bare presence in the file activates it."""
@@ -2524,11 +2567,28 @@ def _save_layout(account_id: str, app_id: int):
     return remote, profiles, os.path.join(remote, "modded")
 
 
-async def _emit_progress(mod_id: int, phase: str, percent: int, message: str = ""):
-    await decky.emit(
-        "install_progress",
-        {"mod_id": mod_id, "phase": phase, "percent": percent, "message": message},
-    )
+async def _emit_progress(
+    mod_id: int,
+    phase: str,
+    percent: int,
+    message: str = "",
+    bytes_done=None,
+    bytes_total=None,
+    bps=None,
+):
+    payload = {
+        "mod_id": mod_id,
+        "phase": phase,
+        "percent": percent,
+        "message": message,
+    }
+    if bytes_done is not None:
+        payload["bytes_done"] = int(bytes_done)
+    if bytes_total is not None:
+        payload["bytes_total"] = int(bytes_total)
+    if bps is not None:
+        payload["bps"] = int(bps)
+    await decky.emit("install_progress", payload)
 
 
 async def _validate_key(api_key: str) -> dict:
@@ -3710,17 +3770,36 @@ query Link($slug: String!, $domainName: String!) {
                     total = int(resp.headers.get("Content-Length") or 0)
                     done = 0
                     last_pct = -1
+                    # Speed: EMA over inter-emit deltas, emitted at least
+                    # every half-second so big files still tick.
+                    last_t = time.monotonic()
+                    last_done = 0
+                    ema_bps = 0.0
                     with open(archive_path, "wb") as out:
                         async for chunk in resp.content.iter_chunked(1 << 20):
                             out.write(chunk)
                             done += len(chunk)
-                            if total:
-                                pct = int(done * 100 / total)
-                                if pct > last_pct:
-                                    last_pct = pct
-                                    await _emit_progress(
-                                        mod_id, "downloading", pct
-                                    )
+                            now = time.monotonic()
+                            pct = int(done * 100 / total) if total else 0
+                            if pct > last_pct or now - last_t >= 0.5:
+                                dt = max(now - last_t, 1e-3)
+                                inst = (done - last_done) / dt
+                                ema_bps = (
+                                    inst
+                                    if ema_bps == 0
+                                    else 0.6 * ema_bps + 0.4 * inst
+                                )
+                                last_pct = pct
+                                last_t = now
+                                last_done = done
+                                await _emit_progress(
+                                    mod_id,
+                                    "downloading",
+                                    pct,
+                                    bytes_done=done,
+                                    bytes_total=total or None,
+                                    bps=ema_bps,
+                                )
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             return {"ok": False, "error": f"Download failed: {type(e).__name__}"}
 
@@ -4841,6 +4920,79 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Invalid path"}
         path = _prefix_user_path(app_id, "Documents", *subpath.split("/"))
         return {"ok": True, "exists": os.path.exists(_adopt_case(path))}
+
+    async def check_plugin_masters(
+        self,
+        install_dir: str,
+        mods_subdir: str,
+        app_id: int,
+        plugins_subpath: str,
+        plugins_style: str = "starred",
+    ) -> dict:
+        """Which ENABLED plugins reference master files that aren't in the
+        data folder? The engine hard-fails at boot on a missing master
+        ('X.esm is missing required files') - the #1 "game won't start"
+        cause after a collection that assumes DLC or external
+        prerequisites (e.g. TTW). Returns [{plugin, missing:[...]}]."""
+        data_dir = os.path.join(STEAM_COMMON, install_dir, mods_subdir)
+        if not os.path.isdir(data_dir):
+            return {"ok": False, "error": "Game data folder not found"}
+        if not plugins_subpath:
+            return {"ok": True, "broken": []}
+        enabled = _enabled_plugins(
+            _plugins_txt_path(app_id, plugins_subpath), plugins_style
+        )
+
+        def scan():
+            real = {n.lower(): n for n in os.listdir(data_dir)}
+            broken = []
+            for name in enabled:
+                actual = real.get(name.lower())
+                if not actual:
+                    continue
+                masters = _plugin_masters(os.path.join(data_dir, actual))
+                if not masters:
+                    continue
+                missing = [m for m in masters if m.lower() not in real]
+                if missing:
+                    broken.append({"plugin": actual, "missing": missing})
+            return broken
+
+        broken = await asyncio.to_thread(scan)
+        if broken:
+            decky.logger.warning(
+                f"{install_dir}: {len(broken)} enabled plugin(s) have "
+                f"missing masters, e.g. {broken[0]}"
+            )
+        return {"ok": True, "broken": broken}
+
+    async def disable_plugins(
+        self,
+        app_id: int,
+        plugins_subpath: str,
+        plugins_style: str,
+        plugin_names: list,
+    ) -> dict:
+        """Deactivate plugins by dropping their plugins.txt lines (files
+        stay in the data folder). Used to make a game bootable again when
+        enabled plugins have missing masters."""
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        targets = {str(n).lower() for n in plugin_names or []}
+        if not targets:
+            return {"ok": True, "disabled": 0}
+        keep, removed = [], 0
+        for line in _read_plugins_txt(path):
+            bare = line.lstrip("*").strip().lower()
+            if bare in targets and not line.strip().startswith("#"):
+                removed += 1
+                continue
+            keep.append(line)
+        _write_plugins_txt(path, keep)
+        decky.logger.info(
+            f"disabled {removed} plugin(s) in {plugins_subpath} "
+            f"(missing-master cleanup)"
+        )
+        return {"ok": True, "disabled": removed}
 
     async def check_game_file(self, install_dir: str, rel_path: str) -> dict:
         """Does a file exist inside a game's install dir? Used to detect

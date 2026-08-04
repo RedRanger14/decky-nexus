@@ -48,6 +48,8 @@ import {
   getModLoadStatus,
   getSaveStatus,
   getSmapiLoadStatus,
+  checkPluginMasters,
+  disablePlugins,
   fixPrefixRuntime,
   installFramework,
   markLaunchOptionsSet,
@@ -1211,6 +1213,11 @@ function InstalledModsSection() {
   const [updates, setUpdates] = useState<Record<string, UpdateInfo> | undefined>();
   const [fwStatus, setFwStatus] = useState<GameStatus | undefined>();
   const [fwEnabled, setFwEnabled] = useState(true);
+  // Enabled plugins whose masters are absent (missing DLC, external
+  // prerequisites like TTW): the game refuses to boot until they're off.
+  const [brokenPlugins, setBrokenPlugins] = useState<
+    { plugin: string; missing: string[] }[]
+  >([]);
 
   const refresh = () => {
     if (game) {
@@ -1221,6 +1228,17 @@ function InstalledModsSection() {
         ...modeParams(game),
         game.protectedModFolders ?? []
       ).then((r) => setMods(r.ok ? r.mods : []));
+      if (game.installMode === "dataDir" && game.pluginsTxtSubpath) {
+        checkPluginMasters(
+          game.installDirName,
+          game.modsSubdir,
+          game.appId,
+          game.pluginsTxtSubpath,
+          game.pluginsTxtStyle ?? "starred"
+        ).then((r) => setBrokenPlugins(r.ok ? r.broken ?? [] : []));
+      } else {
+        setBrokenPlugins([]);
+      }
       if (game.logAdapter?.kind === "godot") {
         getModLoadStatus(game.logAdapter.userDirName).then((r) =>
           setLoadStates(
@@ -1366,6 +1384,39 @@ function InstalledModsSection() {
 
   return (
     <PanelSection title="Installed Mods">
+      {brokenPlugins.length > 0 && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            label={`⚠ ${game.displayName} won't start`}
+            description={`${brokenPlugins.length} enabled mod${
+              brokenPlugins.length > 1 ? "s" : ""
+            } need${brokenPlugins.length > 1 ? "" : "s"} files that aren't installed (e.g. ${
+              brokenPlugins[0].plugin
+            } needs ${brokenPlugins[0].missing[0]}). Usually missing Steam DLC or an external tool the collection assumes. This turns them off - files stay, re-enable any time.`}
+            onClick={async () => {
+              const result = await disablePlugins(
+                game.appId,
+                game.pluginsTxtSubpath ?? "",
+                game.pluginsTxtStyle ?? "starred",
+                brokenPlugins.map((b) => b.plugin)
+              );
+              toaster.toast(
+                result.ok
+                  ? {
+                      title: "Broken mods disabled",
+                      body: `${result.disabled ?? 0} turned off — ${game.displayName} should boot now`,
+                    }
+                  : { title: "Could not disable", body: result.error ?? "" }
+              );
+              refresh();
+            }}
+          >
+            Disable {brokenPlugins.length} broken mod
+            {brokenPlugins.length > 1 ? "s" : ""}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       {showFrameworkRow && game.framework && (
         <PanelSectionRow key={`framework:${fwEnabled}`}>
           <ToggleField
@@ -2032,7 +2083,15 @@ export default definePlugin(() => {
   // Feed the QAM Downloads section from anywhere in the UI.
   const progressListener = addEventListener<[p: InstallProgress]>(
     "install_progress",
-    (p) => updateDownload(p.mod_id, p.phase, p.percent)
+    (p) =>
+      updateDownload(
+        p.mod_id,
+        p.phase,
+        p.percent,
+        p.bytes_done,
+        p.bytes_total,
+        p.bps
+      )
   );
 
   // Verifies the backend -> frontend event channel via the Ping button.
