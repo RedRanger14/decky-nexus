@@ -251,12 +251,40 @@ def _collection_sort_field(sort: str) -> str:
 
 
 def _show_adult() -> bool:
-    """Hard-locked to False: UK OSA-class laws require age verification
-    before adult content can be shown, verification happens on the Nexus
-    Mods platform, and the API exposes no way to read that status - so
-    the plugin must not offer its own opt-in. Re-enable only when the
-    API can report the account's verified content preferences."""
-    return False
+    """Adult content follows the Nexus Mods ACCOUNT, never a local toggle:
+    UK OSA-class laws require age verification, and that happens on the
+    platform. The gate opens only when the account's site preference says
+    adult AND the account is age-verified (both read live via GraphQL by
+    refresh_content_gate and cached here). No plugin-side opt-in exists,
+    so an unverified user can never enable it from the device."""
+    gate = _load_settings().get("content_gate") or {}
+    return bool(gate.get("adult_pref")) and bool(gate.get("age_verified"))
+
+
+async def _refresh_content_gate(api_key: str) -> dict:
+    """Read the account's adult preference and age-verification status from
+    the v2 GraphQL API (both fields resolve the apikey's user) and cache
+    them in settings for the synchronous _show_adult() call sites."""
+    data = await _gql_query(
+        "{ preferences { adult adultBlurImages } ageVerificationInfo { verified } }",
+        api_key,
+    )
+    prefs = data.get("preferences") or {}
+    verification = data.get("ageVerificationInfo") or {}
+    gate = {
+        "adult_pref": bool(prefs.get("adult")),
+        "age_verified": bool(verification.get("verified")),
+        "blur_images": bool(prefs.get("adultBlurImages")),
+        "checked_at": int(time.time()),
+    }
+    settings = _load_settings()
+    settings["content_gate"] = gate
+    _save_settings(settings)
+    decky.logger.info(
+        "Content gate refreshed: adult_pref=%s age_verified=%s"
+        % (gate["adult_pref"], gate["age_verified"])
+    )
+    return gate
 
 
 async def _gql_query_vars(query: str, variables: dict, api_key=None) -> dict:
@@ -2500,6 +2528,7 @@ class Plugin:
         settings = _load_settings()
         if not api_key:
             settings.pop("api_key", None)
+            settings.pop("content_gate", None)
             _save_settings(settings)
             decky.logger.info("API key cleared")
             return {"ok": False, "cleared": True, "error": "No API key set"}
@@ -2511,6 +2540,12 @@ class Plugin:
                 f"API key saved for user {result.get('name')} "
                 f"(premium={result.get('is_premium')})"
             )
+            try:
+                await _refresh_content_gate(api_key)
+            except (RuntimeError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+                # Non-fatal: sign-in succeeded; the QAM refreshes the gate
+                # again on mount.
+                decky.logger.warning(f"Content gate refresh at sign-in failed: {e}")
         else:
             decky.logger.warning(f"API key rejected: {result.get('error')}")
         return result
@@ -4683,15 +4718,44 @@ query Link($slug: String!, $domainName: String!) {
         return {"ok": True, "exists": os.path.exists(path)}
 
     async def get_show_adult(self) -> dict:
-        return {"ok": True, "show_adult": _show_adult()}
+        gate = _load_settings().get("content_gate") or {}
+        return {
+            "ok": True,
+            "show_adult": _show_adult(),
+            "adult_pref": bool(gate.get("adult_pref")),
+            "age_verified": bool(gate.get("age_verified")),
+        }
 
     async def set_show_adult(self, value: bool) -> dict:
-        # See _show_adult: locked off until the Nexus Mods API exposes
-        # the account's age-verified content preferences.
+        # See _show_adult: the gate is account-driven (site preference +
+        # platform age verification) - there is deliberately no local
+        # override in either direction.
         return {
             "ok": False,
-            "error": "Adult content is unavailable pending age-verification "
-            "support in the Nexus Mods API",
+            "error": "Adult content follows your Nexus Mods account settings "
+            "and age verification - change it on nexusmods.com",
+        }
+
+    async def refresh_content_gate(self) -> dict:
+        """Re-read the account's adult preference + age-verification status.
+        Called by the QAM on mount and after sign-in. Errors leave the
+        cached gate untouched (fail closed only if nothing was cached)."""
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            settings = _load_settings()
+            if settings.pop("content_gate", None) is not None:
+                _save_settings(settings)
+            return {"ok": False, "error": "Not signed in"}
+        try:
+            gate = await _refresh_content_gate(api_key)
+        except (RuntimeError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+            decky.logger.warning(f"Content gate refresh failed: {e}")
+            return {"ok": False, "error": str(e)}
+        return {
+            "ok": True,
+            "show_adult": bool(gate["adult_pref"]) and bool(gate["age_verified"]),
+            "adult_pref": gate["adult_pref"],
+            "age_verified": gate["age_verified"],
         }
 
     async def dismiss_update(

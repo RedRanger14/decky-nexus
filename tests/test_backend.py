@@ -181,10 +181,11 @@ class TestModsQueryBuilder(unittest.TestCase):
         self.assertIn("op: WILDCARD", q)
         self.assertIn('value: "123"', q)
 
-    def test_adult_content_is_hard_locked_off(self):
-        # UK OSA-class age-verification laws: the platform verifies age,
-        # the API can't report that status, so the plugin must never
-        # offer its own opt-in - even a hand-edited settings.json.
+    def test_adult_content_ignores_legacy_local_toggle(self):
+        # UK OSA-class age-verification laws: the gate is account-driven
+        # (site preference + platform verification, see TestContentGate).
+        # The pre-0.37 local key must stay dead - even a hand-edited
+        # settings.json can't open the gate.
         settings = main._load_settings()
         settings["show_adult"] = True
         main._save_settings(settings)
@@ -192,7 +193,7 @@ class TestModsQueryBuilder(unittest.TestCase):
             self.assertFalse(main._show_adult())
             result = run(main.Plugin().set_show_adult(True))
             self.assertFalse(result["ok"])
-            self.assertIn("age-verification", result["error"])
+            self.assertIn("nexusmods.com", result["error"])
         finally:
             settings = main._load_settings()
             settings.pop("show_adult", None)
@@ -2697,6 +2698,101 @@ class TestDataDirFlows(unittest.TestCase):
         self.assertEqual(
             main._read_plugins_txt(self.plugins_txt), ["*Precious.esp"]
         )
+
+
+class TestContentGate(unittest.TestCase):
+    """Adult content is account-driven: site preference AND platform age
+    verification must both hold (UK OSA - verification happens on the
+    Nexus Mods platform, never on-device). No local override exists."""
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.plugin = main.Plugin()
+
+    def _seed_gate(self, adult_pref, age_verified, api_key="k"):
+        settings = main._load_settings()
+        if api_key:
+            settings["api_key"] = api_key
+        settings["content_gate"] = {
+            "adult_pref": adult_pref,
+            "age_verified": age_verified,
+            "blur_images": False,
+            "checked_at": 0,
+        }
+        main._save_settings(settings)
+
+    def test_defaults_closed_with_no_cached_gate(self):
+        self.assertFalse(main._show_adult())
+
+    def test_preference_alone_is_not_enough(self):
+        self._seed_gate(adult_pref=True, age_verified=False)
+        self.assertFalse(main._show_adult())
+
+    def test_verification_alone_is_not_enough(self):
+        self._seed_gate(adult_pref=False, age_verified=True)
+        self.assertFalse(main._show_adult())
+
+    def test_preference_plus_verification_opens_the_gate(self):
+        self._seed_gate(adult_pref=True, age_verified=True)
+        self.assertTrue(main._show_adult())
+
+    def test_get_show_adult_reports_components(self):
+        self._seed_gate(adult_pref=True, age_verified=False)
+        result = run(self.plugin.get_show_adult())
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["show_adult"])
+        self.assertTrue(result["adult_pref"])
+        self.assertFalse(result["age_verified"])
+
+    def test_set_show_adult_has_no_local_override(self):
+        result = run(self.plugin.set_show_adult(True))
+        self.assertFalse(result["ok"])
+        self.assertFalse(main._show_adult())
+
+    def test_refresh_parses_graphql_and_caches(self):
+        async def fake_gql(query, api_key=None):
+            self.assertIn("preferences", query)
+            self.assertIn("ageVerificationInfo", query)
+            return {
+                "preferences": {"adult": True, "adultBlurImages": False},
+                "ageVerificationInfo": {"verified": True},
+            }
+
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        original = main._gql_query
+        main._gql_query = fake_gql
+        try:
+            result = run(self.plugin.refresh_content_gate())
+        finally:
+            main._gql_query = original
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["show_adult"])
+        self.assertTrue(main._show_adult())
+
+    def test_refresh_failure_keeps_cached_gate(self):
+        self._seed_gate(adult_pref=True, age_verified=True)
+
+        async def broken_gql(query, api_key=None):
+            raise RuntimeError("API down")
+
+        original = main._gql_query
+        main._gql_query = broken_gql
+        try:
+            result = run(self.plugin.refresh_content_gate())
+        finally:
+            main._gql_query = original
+        self.assertFalse(result["ok"])
+        self.assertTrue(main._show_adult())
+
+    def test_signed_out_clears_the_gate(self):
+        self._seed_gate(adult_pref=True, age_verified=True, api_key=None)
+        result = run(self.plugin.refresh_content_gate())
+        self.assertFalse(result["ok"])
+        self.assertFalse(main._show_adult())
+        self.assertNotIn("content_gate", main._load_settings())
 
 
 if __name__ == "__main__":

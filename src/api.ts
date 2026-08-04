@@ -611,12 +611,25 @@ export const checkGameFile = callable<
 
 export const getShowAdult = callable<
   [],
-  { ok: boolean; show_adult?: boolean }
+  { ok: boolean; show_adult?: boolean; adult_pref?: boolean; age_verified?: boolean }
 >("get_show_adult");
 export const setShowAdult = callable<
   [value: boolean],
   { ok: boolean }
 >("set_show_adult");
+// Re-reads the account's adult preference + age-verification status from
+// the Nexus Mods API and caches it backend-side. Called on QAM mount and
+// after sign-in; the gate is account-driven with no local override.
+export const refreshContentGate = callable<
+  [],
+  {
+    ok: boolean;
+    show_adult?: boolean;
+    adult_pref?: boolean;
+    age_verified?: boolean;
+    error?: string;
+  }
+>("refresh_content_gate");
 
 export const setApiKey = callable<[api_key: string], AuthStatus>("set_api_key");
 export const getAuthStatus = callable<[], AuthStatus>("get_auth_status");
