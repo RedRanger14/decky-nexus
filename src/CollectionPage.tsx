@@ -1049,16 +1049,28 @@ export function CollectionPage() {
             {optional.map((f) => {
               const open = expanded.has(f.fileId);
               const info = modInfo[f.modId];
+              // Same fill treatment as required rows - optionals download
+              // through the identical pipeline.
+              const pct =
+                rowState[f.fileId] === "installing" ||
+                finishingFileId === f.fileId
+                  ? getDownloadPercent(f.modId) ?? 0
+                  : undefined;
               return (
                 <Focusable
                   key={f.fileId}
                   onActivate={() => toggleExpand(f)}
                   style={{
                     padding: "5px 10px",
-                    background: "rgba(255,255,255,0.03)",
+                    background:
+                      pct !== undefined
+                        ? `linear-gradient(90deg, rgba(218,142,53,0.45) ${pct}%, rgba(255,255,255,0.03) ${pct}%)`
+                        : "rgba(255,255,255,0.03)",
+                    color: pct !== undefined ? "#fff" : undefined,
+                    transition: "background 0.3s linear",
                     borderRadius: "4px",
                     fontSize: "12.5px",
-                    opacity: 0.8,
+                    opacity: pct !== undefined ? 1 : 0.8,
                   }}
                 >
                   <div
