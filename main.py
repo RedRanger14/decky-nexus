@@ -161,6 +161,19 @@ def _save_settings(settings: dict) -> None:
     os.chmod(SETTINGS_PATH, 0o600)
 
 
+def _safe_uri(uri: str) -> str:
+    """Nexus CDN links carry the RAW archive file name - spaces included
+    ('.../Animated Main Menu Replacer for TTW-83614-....rar?expires=...')
+    - and aiohttp rejects such URLs. Percent-encode the path; the signed
+    query is already encoded and stays untouched. safe='/%' keeps any
+    existing escapes intact (idempotent). Verified live: the encoded URL
+    passes the CDN's signature check."""
+    parts = urllib.parse.urlsplit(uri)
+    return urllib.parse.urlunsplit(
+        parts._replace(path=urllib.parse.quote(parts.path, safe="/%"))
+    )
+
+
 def _api_headers(api_key=None) -> dict:
     headers = dict(APP_HEADERS)
     if api_key:
@@ -3090,7 +3103,7 @@ query Link($slug: String!, $domainName: String!) {
                 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
                 arc = os.path.join(DOWNLOADS_DIR, f"collection-{slug}.arc")
                 async with session.get(
-                    uri.replace(" ", "%20"), ssl=SSL_CONTEXT
+                    _safe_uri(uri), ssl=SSL_CONTEXT
                 ) as resp:
                     if resp.status != 200:
                         return {
@@ -3761,7 +3774,7 @@ query Link($slug: String!, $domainName: String!) {
         try:
             timeout = aiohttp.ClientTimeout(total=1800, sock_connect=30)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(uri, ssl=SSL_CONTEXT) as resp:
+                async with session.get(_safe_uri(uri), ssl=SSL_CONTEXT) as resp:
                     if resp.status != 200:
                         return {
                             "ok": False,
@@ -4772,7 +4785,7 @@ query Link($slug: String!, $domainName: String!) {
                 archive_path = os.path.join(
                     DOWNLOADS_DIR, f"framework-{mod_id}.zip"
                 )
-                async with session.get(uri, ssl=SSL_CONTEXT) as resp:
+                async with session.get(_safe_uri(uri), ssl=SSL_CONTEXT) as resp:
                     if resp.status != 200:
                         return {
                             "ok": False,
