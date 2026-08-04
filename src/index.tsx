@@ -39,6 +39,7 @@ import {
   checkUpdates,
   copySavesToModded,
   getAuthStatus,
+  refreshContentGate,
   getDebugInfo,
   getFrameworkSetup,
   getGameStatus,
@@ -1541,9 +1542,22 @@ function AccountSection() {
   const [auth, setAuth] = useState<AuthStatus | undefined>();
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  // Adult content follows the account (site preference + platform age
+  // verification) — no local toggle. undefined = not yet checked.
+  const [gate, setGate] = useState<
+    { show: boolean; adultPref: boolean; ageVerified: boolean } | undefined
+  >();
 
   useEffect(() => {
     getAuthStatus().then(setAuth);
+    refreshContentGate().then((r) => {
+      if (r.ok)
+        setGate({
+          show: !!r.show_adult,
+          adultPref: !!r.adult_pref,
+          ageVerified: !!r.age_verified,
+        });
+    });
   }, []);
 
   const onSave = async () => {
@@ -1551,7 +1565,16 @@ function AccountSection() {
     try {
       const result = await setApiKey(draft);
       setAuth(result);
-      if (result.ok) setDraft("");
+      if (result.ok) {
+        setDraft("");
+        const r = await refreshContentGate();
+        if (r.ok)
+          setGate({
+            show: !!r.show_adult,
+            adultPref: !!r.adult_pref,
+            ageVerified: !!r.age_verified,
+          });
+      }
     } catch (e) {
       setAuth({ ok: false, error: String(e) });
     } finally {
@@ -1587,6 +1610,17 @@ function AccountSection() {
             </Field>
           </PanelSectionRow>
         )}
+        <PanelSectionRow>
+          <Field label="Adult content">
+            {gate === undefined
+              ? "checking…"
+              : gate.show
+                ? "On — follows your Nexus Mods account (age verified ✓)"
+                : gate.adultPref && !gate.ageVerified
+                  ? "Off — age verification needed on nexusmods.com"
+                  : "Off — enable it in your Nexus Mods account content settings"}
+          </Field>
+        </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" disabled={busy} onClick={onSignOut}>
             Sign out
