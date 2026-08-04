@@ -77,7 +77,8 @@ function installModWith(
     pageVersion,
     source,
     game.witcherLayout ?? false,
-    collectionSlug
+    collectionSlug,
+    game.cp77Layout ?? false
   );
 }
 

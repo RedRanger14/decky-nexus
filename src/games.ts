@@ -56,6 +56,13 @@ export interface SupportedGame {
   logAdapter?: LogAdapter;
   /** Required community mod loader, if the game has one */
   framework?: GameFramework;
+  /** Additional frameworks beyond the primary (CP77 script mods need
+   * 3-4 at once) - rendered as extra install rows under Step 1. */
+  extraFrameworks?: GameFramework[];
+  /** Cyberpunk's layout: game-root-relative payloads across known roots
+   * (bin/red4ext/r6/engine/archive) with exact-file records; bare
+   * .archive files go flat into archive/pc/mod. */
+  cp77Layout?: boolean;
   /** Mod folders bulk operations must never remove (framework components) */
   protectedModFolders?: string[];
   /** How mods install: per-mod folders (default) or merged into a shared
@@ -384,16 +391,56 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     displayName: "Cyberpunk 2077",
     nexusDomain: "cyberpunk2077", // verified: game id 3333
     installDirName: "Cyberpunk 2077",
-    // Archive tier: .archive (+ ArchiveXL .xl) files load flat from
-    // archive/pc/mod, alphabetical override, no framework needed.
-    // The CET/RED4ext script tier is a later addition.
     modsSubdir: "archive/pc/mod",
-    flatModExtensions: [".archive", ".xl"],
+    // Framework + archive tiers: payloads route by their game-root
+    // prefix (bin/red4ext/r6/engine/archive); bare .archive files still
+    // go flat into archive/pc/mod. All framework shapes verified by
+    // downloading each archive (2026-08-04).
+    cp77Layout: true,
     moddedSaveWarning: false,
     processName: "Cyberpunk2077.exe",
-    // No curated heroes yet: the domain's top mods are all frameworks
-    // (CET/redscript/RED4ext), which the archive tier can't install -
-    // trending fills the hero slots instead.
+    framework: {
+      name: "Cyber Engine Tweaks",
+      // CET hooks via its own version.dll; RED4ext via winmm.dll -
+      // Proton needs both preferred over Wine's builtins. redscript
+      // needs no override (the game invokes its compiler natively).
+      detectFile: "bin/x64/plugins/cyber_engine_tweaks.asi",
+      url: "wiki.redmodding.org/cyber-engine-tweaks",
+      nexusModId: 107, // verified live: 17.4M downloads
+      installKind: "copyRoot",
+      launchOptionsTemplate:
+        'WINEDLLOVERRIDES="version=n,b;winmm=n,b" %command%',
+    },
+    extraFrameworks: [
+      {
+        name: "RED4ext",
+        detectFile: "red4ext/RED4ext.dll",
+        url: "docs.red4ext.com",
+        nexusModId: 2380, // verified live
+        installKind: "copyRoot",
+      },
+      {
+        name: "ArchiveXL",
+        detectFile: "red4ext/plugins/ArchiveXL/ArchiveXL.dll",
+        url: "github.com/psiberx/cp2077-archive-xl",
+        nexusModId: 4198, // verified live
+        installKind: "copyRoot",
+      },
+      {
+        name: "TweakXL",
+        detectFile: "red4ext/plugins/TweakXL/TweakXL.dll",
+        url: "github.com/psiberx/cp2077-tweak-xl",
+        nexusModId: 4197, // verified live
+        installKind: "copyRoot",
+      },
+      {
+        name: "redscript",
+        detectFile: "engine/tools/scc.exe",
+        url: "github.com/jac3km4/redscript",
+        nexusModId: 1511, // verified live
+        installKind: "copyRoot",
+      },
+    ],
   },
 };
 
