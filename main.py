@@ -181,8 +181,16 @@ def _safe_name(name: str) -> str:
 
 def _force_rmtree(path: str) -> None:
     """rmtree that survives read-only dirs shipped inside mod archives
-    (seen in the wild: zip entries extracted without owner write)."""
+    (seen in the wild: zip entries extracted without owner write) AND
+    plain files (NVAC's 'readme - nvac.txt' crashed the FOMOD staging
+    cleanup, which assumed directories)."""
     if not os.path.lexists(path):
+        return
+    if not os.path.isdir(path) or os.path.islink(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
         return
     for root, _dirs, _files in os.walk(path):
         try:
@@ -479,6 +487,10 @@ PLUGIN_EXTENSIONS = (".esp", ".esm", ".esl")
 DATA_MARKER_DIRS = {
     "meshes", "textures", "scripts", "interface", "sound", "music",
     "seq", "skse", "strings", "shadersfx", "grass", "materials",
+    # Gamebryo/FNV additions (an entire NVSE-plugin collection failed
+    # for want of these, 2026-08-04): script-extender plugin trees,
+    # loose shaders, XML menus, and the Data/config ini convention.
+    "nvse", "fose", "f4se", "shaders", "menus", "config", "mcm",
 }
 
 

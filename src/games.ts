@@ -249,7 +249,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         "{@/FalloutNVLauncher.exe/nvse_loader.exe}\"' -- %command%",
       cleanupPrefixes: ["nvse"],
     },
-    recommendedModIds: [53635], // verified live: NVAC (the domain's top mod)
+    // verified live: NVAC (the domain's top mod) + YUP (51664, 5.3M dl)
+    recommendedModIds: [53635, 51664],
     // Loose files don't load until archive invalidation is enabled.
     setupInis: [
       {

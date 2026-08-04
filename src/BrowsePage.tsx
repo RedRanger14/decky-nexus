@@ -539,9 +539,20 @@ export function BrowsePage() {
   // Curated recommendations take the hero slots (the "start here" mods -
   // libraries and loaders); games without curation fall back to trending.
   const hasRecommended = recommended.length > 0;
-  const heroMods = hasRecommended ? recommended.slice(0, 2) : trending.slice(0, 2);
+  // Always TWO heroes: a single curated pick stretched across the whole
+  // hero band looks broken - blend trending in to fill the pair.
+  const heroMods = hasRecommended
+    ? [
+        ...recommended,
+        ...trending.filter(
+          (t) => !recommended.some((r) => r.modId === t.modId)
+        ),
+      ].slice(0, 2)
+    : trending.slice(0, 2);
   const heroTitle = hasRecommended ? "Recommended" : "Trending now";
-  const railTrending = hasRecommended ? trending : trending.slice(2);
+  const railTrending = hasRecommended
+    ? trending.filter((t) => !heroMods.some((h) => h.modId === t.modId))
+    : trending.slice(2);
   const railTitle = hasRecommended ? "Trending now" : "Also trending";
 
   return (
