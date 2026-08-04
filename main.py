@@ -82,6 +82,7 @@ MOD_FIELDS = """
       endorsements
       downloads
       thumbnailUrl
+      thumbnailBlurredUrl
       pictureUrl
       updatedAt
       adultContent
@@ -259,6 +260,17 @@ def _show_adult() -> bool:
     so an unverified user can never enable it from the device."""
     gate = _load_settings().get("content_gate") or {}
     return bool(gate.get("adult_pref")) and bool(gate.get("age_verified"))
+
+
+def _gate_adult_nodes(nodes, key: str = "adultContent") -> list:
+    """Client-side adult filtering that always AGREES with the gate. The
+    server-side query filter is primary; this pass exists so a response
+    that slips adult items through a gate-closed query still gets caught -
+    and so a gate-open query is never silently re-filtered (the v0.37.0
+    'search says 39, shows 6' regression)."""
+    if _show_adult():
+        return list(nodes)
+    return [m for m in nodes if not m.get(key)]
 
 
 async def _refresh_content_gate(api_key: str) -> dict:
@@ -543,6 +555,66 @@ def _prefix_user_path(app_id: int, *parts: str) -> str:
         decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "compatdata",
         str(int(app_id)), "pfx", "drive_c", "users", "steamuser", *parts,
     )
+
+
+# ---- Proton prefix VC++ runtime ------------------------------------------
+# Cyberpunk's Steam install script runs the game's OWN bundled vcredist
+# (2019, 14.28) inside the fresh Proton prefix, silently downgrading the
+# CRT below what current CET/RED4ext builds need (VS 17.10+, 14.40+).
+# Wine then fails their LoadLibrary with ERROR_NOACCESS ("Error: 998" /
+# "No access to memory location"). Valve ships the genuine MS runtime
+# (14.42+) inside every modern Proton - the fix is copying it over.
+
+CRT_DLLS = (
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll",
+    "msvcp140_codecvt_ids.dll",
+    "concrt140.dll",
+)
+CRT_BACKUP_SUFFIX = ".decky-nexus-bak"
+CRT_MIN_VERSION = (14, 40, 0, 0)
+
+
+def _pe_file_version(path: str):
+    """FileVersion of a PE as a 4-tuple, located via the VS_FIXEDFILEINFO
+    signature (0xFEEF04BD) - no resource-tree walking, works on MS and
+    Wine-built DLLs alike. None when unreadable or unversioned."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    sig = data.find(b"\xbd\x04\xef\xfe")
+    if sig < 0 or sig + 16 > len(data):
+        return None
+    ms = int.from_bytes(data[sig + 8 : sig + 12], "little")
+    ls = int.from_bytes(data[sig + 12 : sig + 16], "little")
+    return (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
+
+
+def _prefix_system32(app_id: int) -> str:
+    return os.path.join(
+        decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "compatdata",
+        str(int(app_id)), "pfx", "drive_c", "windows", "system32",
+    )
+
+
+def _newest_proton_crt_dir():
+    """(dir, version) of whichever installed Proton bundles the newest
+    msvcp140.dll in its files/lib/wine/x86_64-windows payload."""
+    best, best_ver = None, None
+    pattern = os.path.join(
+        STEAM_COMMON, "Proton*", "files", "lib", "wine", "x86_64-windows"
+    )
+    for cand in glob.glob(pattern):
+        ver = _pe_file_version(os.path.join(cand, "msvcp140.dll"))
+        if ver and (best_ver is None or ver > best_ver):
+            best, best_ver = cand, ver
+    return best, best_ver
 
 
 def _plugins_txt_path(app_id: int, subpath: str) -> str:
@@ -2620,8 +2692,7 @@ class Plugin:
             return {"ok": False, "error": f"Nexus Mods query error: {msg}"}
 
         page = body["data"]["mods"]
-        # Adult-content filtering happens here for now; make it a setting later.
-        mods = [m for m in page["nodes"] if not m.get("adultContent")]
+        mods = _gate_adult_nodes(page["nodes"])
         decky.logger.info(
             f"get_mods({game_domain!r}, sort={sort}): "
             f"{len(mods)}/{page['nodesCount']} mods returned"
@@ -3366,15 +3437,11 @@ query Link($slug: String!, $domainName: String!) {
         except asyncio.TimeoutError:
             return {"ok": False, "error": "Nexus Mods API timed out"}
 
-        show_adult = _show_adult()
         mods = [
             _map_v1_mod(m)
-            for m in body
-            if m.get("name")
-            and m.get("available", True)
-            and (show_adult or not m.get("contains_adult_content"))
-        ]
-        mods = [m for m in mods if not m["adultContent"]][: int(count)]
+            for m in _gate_adult_nodes(body, "contains_adult_content")
+            if m.get("name") and m.get("available", True)
+        ][: int(count)]
         return {"ok": True, "total": len(mods), "mods": mods}
 
     # ---- Mod files & install (REST v1) --------------------------------------
@@ -4511,6 +4578,73 @@ query Link($slug: String!, $domainName: String!) {
         author gets the download credit - and run its unattended installer
         against the game folder. Verified for SMAPI's installer, which
         supports --install --game-path for mod managers."""
+        return await self._install_framework_inner(
+            game_domain,
+            mod_id,
+            install_dir,
+            install_kind,
+            detect_file,
+            avoid_file_keywords,
+            install_subdir,
+        )
+
+    async def fix_prefix_runtime(self, app_id: int) -> dict:
+        """Bring the game prefix's VC++ runtime up to the newest one any
+        installed Proton bundles. Idempotent: reports updated=False when
+        the prefix is already current. See the CRT_DLLS block comment for
+        why Cyberpunk prefixes ship a too-old runtime."""
+        sys32 = _prefix_system32(app_id)
+        if not os.path.isdir(sys32):
+            return {
+                "ok": False,
+                "error": "No Proton prefix for this game yet - "
+                "launch the game once first",
+            }
+        have = _pe_file_version(os.path.join(sys32, "msvcp140.dll"))
+        src_dir, src_ver = _newest_proton_crt_dir()
+        if not src_dir:
+            return {"ok": False, "error": "No Proton runtime found on this device"}
+        if have and have >= src_ver:
+            return {
+                "ok": True,
+                "updated": False,
+                "version": ".".join(map(str, have)),
+            }
+        copied = 0
+        for name in CRT_DLLS:
+            src = os.path.join(src_dir, name)
+            if not os.path.isfile(src):
+                continue
+            dst = os.path.join(sys32, name)
+            backup = dst + CRT_BACKUP_SUFFIX
+            try:
+                if os.path.isfile(dst) and not os.path.isfile(backup):
+                    shutil.copy2(dst, backup)
+                shutil.copy2(src, dst)
+                os.chmod(dst, 0o644)
+                copied += 1
+            except OSError as e:
+                return {"ok": False, "error": f"Could not update {name}: {e}"}
+        decky.logger.info(
+            f"prefix {app_id}: VC++ runtime {have} -> {src_ver} ({copied} DLLs)"
+        )
+        return {
+            "ok": True,
+            "updated": True,
+            "version": ".".join(map(str, src_ver)),
+            "previous": ".".join(map(str, have)) if have else None,
+        }
+
+    async def _install_framework_inner(
+        self,
+        game_domain: str,
+        mod_id: int,
+        install_dir: str,
+        install_kind: str,
+        detect_file: str,
+        avoid_file_keywords: list,
+        install_subdir: str,
+    ) -> dict:
         try:
             api_key = _load_settings().get("api_key")
             if not api_key:
@@ -4724,6 +4858,7 @@ query Link($slug: String!, $domainName: String!) {
             "show_adult": _show_adult(),
             "adult_pref": bool(gate.get("adult_pref")),
             "age_verified": bool(gate.get("age_verified")),
+            "blur_adult": bool(gate.get("blur_images")),
         }
 
     async def set_show_adult(self, value: bool) -> dict:

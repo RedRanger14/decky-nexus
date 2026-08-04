@@ -48,6 +48,7 @@ import {
   getModLoadStatus,
   getSaveStatus,
   getSmapiLoadStatus,
+  fixPrefixRuntime,
   installFramework,
   markLaunchOptionsSet,
   resetGameModding,
@@ -407,7 +408,6 @@ function CurrentGameSection() {
   const [extraFwInstalled, setExtraFwInstalled] = useState<
     Record<string, boolean>
   >({});
-  const [extraFwBusy, setExtraFwBusy] = useState<string | undefined>();
 
   const refreshStatus = () => {
     if (game) {
@@ -563,6 +563,108 @@ function CurrentGameSection() {
     }
   };
 
+  // Multi-framework games (CP77): Step 1 is ONE button that installs the
+  // whole stack. Behind the scenes each framework downloads individually
+  // from Nexus Mods so every author still gets the download credit.
+  const allFrameworks = game?.framework
+    ? [game.framework, ...(game.extraFrameworks ?? [])]
+    : [];
+  const isMultiFw = (game?.extraFrameworks?.length ?? 0) > 0;
+  const missingFrameworks = allFrameworks.filter((fw, i) =>
+    i === 0 ? !status?.framework_installed : !extraFwInstalled[fw.name]
+  );
+  const [fwProgress, setFwProgress] = useState<string | undefined>();
+
+  const onInstallAllFrameworks = async () => {
+    if (!game?.framework) return;
+    const queue = missingFrameworks;
+    setFrameworkBusy(true);
+    let failed = 0;
+    let mainInstallPath: string | undefined;
+    try {
+      // The runtime fix goes first: without a 14.40+ CRT in the prefix,
+      // CET and RED4ext install fine but fail to LOAD (error 998).
+      if (game.prefixRuntimeFix) {
+        setFwProgress("Updating VC++ runtime…");
+        const rt = await fixPrefixRuntime(game.appId);
+        if (rt.ok && rt.updated) {
+          toaster.toast({
+            title: "VC++ runtime updated",
+            body: `${rt.previous ?? "old"} → ${rt.version} (needed by CET and RED4ext)`,
+          });
+        } else if (!rt.ok) {
+          toaster.toast({
+            title: "VC++ runtime check failed",
+            body: rt.error ?? "Frameworks may not load in-game",
+          });
+        }
+      }
+      for (let i = 0; i < queue.length; i++) {
+        const fw = queue[i];
+        const isMain = fw.name === game.framework.name;
+        setFwProgress(`Installing ${fw.name} (${i + 1}/${queue.length})…`);
+        const result = await installFramework(
+          game.nexusDomain,
+          fw.nexusModId!,
+          game.installDirName,
+          fw.installKind ?? (isMain ? "smapi" : "copyRoot"),
+          fw.detectFile,
+          fw.avoidFileKeywords ?? [],
+          fw.installSubdir ?? ""
+        );
+        if (!result.ok) {
+          failed++;
+          toaster.toast({
+            title: `${fw.name} install failed`,
+            body: result.error ?? "Unknown error",
+          });
+        } else if (isMain && result.install_path) {
+          mainInstallPath = result.install_path;
+        }
+      }
+      if (mainInstallPath && game.setupInis) {
+        for (const ini of game.setupInis) {
+          await applyDisplayFix(
+            game.appId,
+            ini.prefsSubpath,
+            ini.section,
+            ini.settings,
+            true
+          );
+        }
+      }
+      if (failed === 0) {
+        toaster.toast({
+          title: `Frameworks installed (${queue.length})`,
+          body: "Step 2: set the launch command",
+        });
+      }
+      if (
+        mainInstallPath &&
+        game.framework.launchOptionsTemplate &&
+        !launchOptionsSet
+      ) {
+        showModal(
+          <LaunchOptionsModal
+            frameworkName={game.framework.name}
+            gameName={game.displayName}
+            appId={game.appId}
+            gameDomain={game.nexusDomain}
+            options={game.framework.launchOptionsTemplate.replace(
+              "{install_path}",
+              mainInstallPath
+            )}
+            onDone={markDone}
+          />
+        );
+      }
+    } finally {
+      setFrameworkBusy(false);
+      setFwProgress(undefined);
+      refreshStatus();
+    }
+  };
+
   if (!game) {
     if (multipleNames) {
       // Several supported games running at once: say so instead of guessing.
@@ -703,67 +805,57 @@ function CurrentGameSection() {
             </>
           )}
 
-          <PanelSectionRow>
-            {status.framework_installed ? (
-              <Field label="Step 1">{game.framework.name} installed ✓</Field>
-            ) : (
-              <ButtonItem
-                label="Step 1"
-                layout="below"
-                disabled={frameworkBusy || !game.framework.nexusModId}
-                description={`Most ${game.displayName} mods require ${game.framework.name}. Downloads from Nexus Mods (author gets the credit).`}
-                onClick={onInstallFramework}
-              >
-                {frameworkBusy
-                  ? `Installing ${game.framework.name}…`
-                  : `Install ${game.framework.name}`}
-              </ButtonItem>
-            )}
-          </PanelSectionRow>
-          {/* Multi-framework games: one row per extra loader (CP77 mods
-              routinely need 3-4 at once). */}
-          {(game.extraFrameworks ?? []).map((fw) => (
-            <PanelSectionRow key={fw.name}>
-              {extraFwInstalled[fw.name] ? (
-                <Field label="">{fw.name} installed ✓</Field>
+          {isMultiFw ? (
+            /* Multi-framework games (CP77): one button installs the whole
+               stack; each framework still downloads individually from
+               Nexus Mods so every author gets the download credit. */
+            <PanelSectionRow>
+              {missingFrameworks.length === 0 ? (
+                <Field label="Step 1">
+                  All {allFrameworks.length} frameworks installed ✓ (
+                  {allFrameworks.map((f) => f.name).join(", ")})
+                </Field>
               ) : (
                 <ButtonItem
+                  label="Step 1"
                   layout="below"
-                  disabled={extraFwBusy !== undefined || !status?.installed}
-                  description={`Script mods also need ${fw.name}`}
-                  onClick={async () => {
-                    setExtraFwBusy(fw.name);
-                    try {
-                      const result = await installFramework(
-                        game.nexusDomain,
-                        fw.nexusModId!,
-                        game.installDirName,
-                        fw.installKind ?? "copyRoot",
-                        fw.detectFile,
-                        fw.avoidFileKeywords ?? [],
-                        fw.installSubdir ?? ""
-                      );
-                      toaster.toast(
-                        result.ok
-                          ? { title: `${fw.name} installed`, body: "" }
-                          : {
-                              title: `${fw.name} install failed`,
-                              body: result.error ?? "",
-                            }
-                      );
-                    } finally {
-                      setExtraFwBusy(undefined);
-                      refreshStatus();
-                    }
-                  }}
+                  disabled={frameworkBusy}
+                  description={`Installs everything ${game.displayName} mods need: ${missingFrameworks
+                    .map((f) => f.name)
+                    .join(", ")}. Each is downloaded from Nexus Mods so its author gets the download credit.${
+                    game.prefixRuntimeFix
+                      ? " Also updates the game's VC++ runtime (required on SteamOS)."
+                      : ""
+                  }`}
+                  onClick={onInstallAllFrameworks}
                 >
-                  {extraFwBusy === fw.name
-                    ? `Installing ${fw.name}…`
-                    : `Install ${fw.name}`}
+                  {frameworkBusy
+                    ? fwProgress ?? "Installing…"
+                    : missingFrameworks.length === allFrameworks.length
+                      ? `Install all frameworks (${allFrameworks.length})`
+                      : `Install remaining frameworks (${missingFrameworks.length})`}
                 </ButtonItem>
               )}
             </PanelSectionRow>
-          ))}
+          ) : (
+            <PanelSectionRow>
+              {status.framework_installed ? (
+                <Field label="Step 1">{game.framework.name} installed ✓</Field>
+              ) : (
+                <ButtonItem
+                  label="Step 1"
+                  layout="below"
+                  disabled={frameworkBusy || !game.framework.nexusModId}
+                  description={`Most ${game.displayName} mods require ${game.framework.name}. Downloads from Nexus Mods (author gets the credit).`}
+                  onClick={onInstallFramework}
+                >
+                  {frameworkBusy
+                    ? `Installing ${game.framework.name}…`
+                    : `Install ${game.framework.name}`}
+                </ButtonItem>
+              )}
+            </PanelSectionRow>
+          )}
           {game.framework.launchOptionsTemplate && (
             <PanelSectionRow>
               {launchOptionsSet ? (

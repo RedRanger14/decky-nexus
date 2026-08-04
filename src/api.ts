@@ -10,6 +10,9 @@ export interface NexusMod {
   endorsements: number;
   downloads: number;
   thumbnailUrl?: string;
+  /** Server-blurred thumbnail variant (v2 mods only) - used instead of
+   * CSS blur when the account has "blur adult images" on. */
+  thumbnailBlurredUrl?: string;
   pictureUrl?: string;
   updatedAt: string;
   adultContent: boolean;
@@ -609,9 +612,29 @@ export const checkGameFile = callable<
   { ok: boolean; exists?: boolean; error?: string }
 >("check_game_file");
 
+// Upgrades the game prefix's VC++ runtime from the newest installed
+// Proton's bundled copy (idempotent). CP77's install script downgrades
+// the prefix CRT below what CET/RED4ext need (error 998 at boot).
+export const fixPrefixRuntime = callable<
+  [app_id: number],
+  {
+    ok: boolean;
+    updated?: boolean;
+    version?: string;
+    previous?: string;
+    error?: string;
+  }
+>("fix_prefix_runtime");
+
 export const getShowAdult = callable<
   [],
-  { ok: boolean; show_adult?: boolean; adult_pref?: boolean; age_verified?: boolean }
+  {
+    ok: boolean;
+    show_adult?: boolean;
+    adult_pref?: boolean;
+    age_verified?: boolean;
+    blur_adult?: boolean;
+  }
 >("get_show_adult");
 export const setShowAdult = callable<
   [value: boolean],

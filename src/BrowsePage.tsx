@@ -14,11 +14,13 @@ import {
   ModsResult,
   NexusMod,
   getCollections,
+  getInstalledMods,
   getMods,
   getModsByIds,
+  getShowAdult,
   getTrendingMods,
 } from "./api";
-import { SupportedGame, getActiveGame } from "./games";
+import { SupportedGame, getActiveGame, modeParams } from "./games";
 import {
   getBrowseGame,
   markBrowseReturn,
@@ -128,8 +130,44 @@ function statsLine(mod: NexusMod): string {
   return `${mod.author} · 👍 ${mod.endorsements.toLocaleString()} · ⬇ ${mod.downloads.toLocaleString()}`;
 }
 
+/** "18+" chip for adult mods whose account preference blurs images. */
+function AdultBadge() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: "6px",
+        right: "6px",
+        padding: "2px 7px",
+        borderRadius: "4px",
+        background: "rgba(0,0,0,0.72)",
+        fontSize: "11px",
+        fontWeight: 700,
+        letterSpacing: "0.5px",
+      }}
+    >
+      18+
+    </div>
+  );
+}
+
 /** Big-and-bold hero card: full-bleed image, title on a gradient. */
-function HeroCard({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
+function HeroCard({
+  mod,
+  game,
+  blur,
+}: {
+  mod: NexusMod;
+  game: SupportedGame;
+  blur?: boolean;
+}) {
+  const blurred = !!blur && mod.adultContent;
+  // Prefer the server-blurred variant (proper obscuring, no client cost);
+  // CSS blur is the fallback for v1-sourced mods without one.
+  const heroSrc = blurred
+    ? mod.thumbnailBlurredUrl ?? mod.thumbnailUrl ?? mod.pictureUrl
+    : mod.thumbnailUrl ?? mod.pictureUrl;
+  const cssBlur = blurred && !mod.thumbnailBlurredUrl;
   return (
     <Focusable
       onActivate={() => openMod(game, mod)}
@@ -141,9 +179,9 @@ function HeroCard({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
         background: "#1a1d24",
       }}
     >
-      {(mod.thumbnailUrl ?? mod.pictureUrl) && (
+      {heroSrc && (
         <img
-          src={mod.thumbnailUrl ?? mod.pictureUrl}
+          src={heroSrc}
           alt={mod.name}
           loading="lazy"
           decoding="async"
@@ -153,9 +191,11 @@ function HeroCard({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
             width: "100%",
             height: "100%",
             objectFit: "cover",
+            ...(cssBlur ? { filter: "blur(22px)", transform: "scale(1.1)" } : {}),
           }}
         />
       )}
+      {blurred && <AdultBadge />}
       <div
         style={{
           position: "absolute",
@@ -183,7 +223,16 @@ function HeroCard({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
   );
 }
 
-function ModTile({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
+function ModTile({
+  mod,
+  game,
+  blur,
+}: {
+  mod: NexusMod;
+  game: SupportedGame;
+  blur?: boolean;
+}) {
+  const blurred = !!blur && mod.adultContent;
   return (
     <Focusable
       onActivate={() => openMod(game, mod)}
@@ -194,13 +243,26 @@ function ModTile({ mod, game }: { mod: NexusMod; game: SupportedGame }) {
       }}
     >
       {mod.thumbnailUrl ? (
-        <img
-          src={mod.thumbnailUrl}
-          alt={mod.name}
-          loading="lazy"
-          decoding="async"
-          style={{ width: "100%", aspectRatio: "16 / 9", objectFit: "cover", display: "block" }}
-        />
+        <div style={{ position: "relative", overflow: "hidden" }}>
+          <img
+            src={
+              blurred ? mod.thumbnailBlurredUrl ?? mod.thumbnailUrl : mod.thumbnailUrl
+            }
+            alt={mod.name}
+            loading="lazy"
+            decoding="async"
+            style={{
+              width: "100%",
+              aspectRatio: "16 / 9",
+              objectFit: "cover",
+              display: "block",
+              ...(blurred && !mod.thumbnailBlurredUrl
+                ? { filter: "blur(16px)", transform: "scale(1.1)" }
+                : {}),
+            }}
+          />
+          {blurred && <AdultBadge />}
+        </div>
       ) : (
         <div style={{ width: "100%", aspectRatio: "16 / 9", background: "#23262e" }} />
       )}
@@ -290,11 +352,13 @@ function ModCarousel({
   mods,
   game,
   onViewAll,
+  blur,
 }: {
   title: string;
   mods: NexusMod[];
   game: SupportedGame;
   onViewAll?: () => void;
+  blur?: boolean;
 }) {
   if (mods.length === 0) return null;
   return (
@@ -310,7 +374,7 @@ function ModCarousel({
       >
         {mods.map((mod) => (
           <div key={mod.modId} style={{ width: "205px", flexShrink: 0 }}>
-            <ModTile mod={mod} game={game} />
+            <ModTile mod={mod} game={game} blur={blur} />
           </div>
         ))}
         {onViewAll && <ViewAllCard onActivate={onViewAll} />}
@@ -357,6 +421,33 @@ export function BrowsePage() {
   const [trending, setTrending] = useState<NexusMod[]>([]);
   const [newest, setNewest] = useState<NexusMod[]>([]);
   const [popular, setPopular] = useState<NexusMod[]>([]);
+  // Account blur preference: adult thumbnails get blurred + 18+ badge.
+  const [blurAdult, setBlurAdult] = useState(false);
+  // Already-installed mods never take a hero slot - the user has them.
+  const [installedIds, setInstalledIds] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    getShowAdult().then((r) => {
+      if (r.ok) setBlurAdult(!!r.show_adult && !!r.blur_adult);
+    });
+  }, []);
+  useEffect(() => {
+    setInstalledIds(new Set());
+    getInstalledMods(
+      game.nexusDomain,
+      game.installDirName,
+      game.modsSubdir,
+      ...modeParams(game),
+      game.protectedModFolders ?? []
+    ).then((r) => {
+      setInstalledIds(
+        new Set(
+          (r.mods ?? [])
+            .map((m) => m.mod_id)
+            .filter((id): id is number => typeof id === "number")
+        )
+      );
+    });
+  }, [game.appId]);
 
   // The API rejects 1-char wildcard searches - treat them as no search.
   const effectiveSearch = search.trim().length >= 2 ? search.trim() : "";
@@ -538,22 +629,27 @@ export function BrowsePage() {
     lastPageFull && total !== undefined && nextOffset.current < total;
   // Curated recommendations take the hero slots (the "start here" mods -
   // libraries and loaders); games without curation fall back to trending.
-  const hasRecommended = recommended.length > 0;
   // Always TWO heroes: a single curated pick stretched across the whole
-  // hero band looks broken - blend trending in to fill the pair.
-  const heroMods = hasRecommended
-    ? [
-        ...recommended,
-        ...trending.filter(
-          (t) => !recommended.some((r) => r.modId === t.modId)
-        ),
-      ].slice(0, 2)
-    : trending.slice(0, 2);
-  const heroTitle = hasRecommended ? "Recommended" : "Trending now";
-  const railTrending = hasRecommended
-    ? trending.filter((t) => !heroMods.some((h) => h.modId === t.modId))
-    : trending.slice(2);
-  const railTitle = hasRecommended ? "Trending now" : "Also trending";
+  // hero band looks broken - blend trending in to fill the pair. Mods the
+  // user already has installed never take a slot (they'd be dead weight
+  // right after Step 1); if literally everything is installed, fall back
+  // to the unfiltered blend rather than showing an empty band.
+  const heroBlend = [
+    ...recommended,
+    ...trending.filter((t) => !recommended.some((r) => r.modId === t.modId)),
+  ];
+  const heroMods = [
+    ...heroBlend.filter((m) => !installedIds.has(m.modId)),
+    ...heroBlend.filter((m) => installedIds.has(m.modId)),
+  ].slice(0, 2);
+  const heroIsCurated = heroMods.some((h) =>
+    recommended.some((r) => r.modId === h.modId)
+  );
+  const heroTitle = heroIsCurated ? "Recommended" : "Trending now";
+  const railTrending = trending.filter(
+    (t) => !heroMods.some((h) => h.modId === t.modId)
+  );
+  const railTitle = heroIsCurated ? "Trending now" : "Also trending";
 
   return (
     // onCancel: B returns to the plugin's QAM panel instead of dumping the
@@ -759,7 +855,7 @@ export function BrowsePage() {
                   }}
                 >
                   {heroMods.map((mod) => (
-                    <HeroCard key={mod.modId} mod={mod} game={game} />
+                    <HeroCard key={mod.modId} mod={mod} game={game} blur={blurAdult} />
                   ))}
                 </Focusable>
               </>
@@ -806,6 +902,7 @@ export function BrowsePage() {
               title={railTitle}
               mods={railTrending}
               game={game}
+              blur={blurAdult}
               onViewAll={() => {
                 setSearch("");
                 setSort("trending");
@@ -815,6 +912,7 @@ export function BrowsePage() {
               title="New mods"
               mods={newest}
               game={game}
+              blur={blurAdult}
               onViewAll={() => {
                 setSearch("");
                 setSort("createdAt");
@@ -824,6 +922,7 @@ export function BrowsePage() {
               title="All-time favourites"
               mods={popular}
               game={game}
+              blur={blurAdult}
               onViewAll={() => {
                 setSearch("");
                 setSort("endorsements");
@@ -901,7 +1000,7 @@ export function BrowsePage() {
               }}
             >
               {mods.map((mod) => (
-                <ModTile key={mod.modId} mod={mod} game={game} />
+                <ModTile key={mod.modId} mod={mod} game={game} blur={blurAdult} />
               ))}
             </Focusable>
             )}
