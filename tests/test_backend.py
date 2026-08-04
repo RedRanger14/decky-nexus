@@ -2985,6 +2985,20 @@ class TestPluginMasters(unittest.TestCase):
             main._read_plugins_txt(self.plugins_txt), ["FalloutNV.esm"]
         )
 
+    def test_safe_uri_encodes_spaces_and_keeps_query(self):
+        # Live case: 'Animated Main Menu Replacer for TTW' - the CDN link
+        # carries the raw file name; aiohttp rejects the spaces.
+        raw = (
+            "https://cf-files.nexusmods.com/cdn/130/83614/"
+            "Animated Main Menu Replacer for TTW-83614-1-1698648778.rar"
+            "?expires=1785895952&md5=qViuJ9BSdYc2I5fvf-Hzvg&user_id=1"
+        )
+        fixed = main._safe_uri(raw)
+        self.assertIn("Animated%20Main%20Menu%20Replacer%20for%20TTW", fixed)
+        self.assertIn("?expires=1785895952&md5=qViuJ9BSdYc2I5fvf-Hzvg", fixed)
+        # Idempotent: already-encoded URLs pass through unchanged.
+        self.assertEqual(main._safe_uri(fixed), fixed)
+
     def test_non_plugin_files_are_ignored(self):
         with open(os.path.join(self.data, "readme.txt"), "w") as f:
             f.write("not a plugin")
