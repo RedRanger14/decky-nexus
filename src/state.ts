@@ -196,6 +196,7 @@ export function updateDownload(
     // Speed only means something mid-download.
     bps: phase === "downloading" ? bps ?? existing?.bps : undefined,
   });
+  recordSpeedSample();
   notifyDownloads();
 }
 
@@ -206,6 +207,26 @@ export function getAggregateBps(): number {
     if (d.phase === "downloading" && d.bps) sum += d.bps;
   }
   return sum;
+}
+
+// Speed history lives HERE, recorded on every progress event (throttled),
+// so even a mod that downloads in half a second lands a sample - a page
+// polling once a second showed tiny mods as "idle".
+const speedHistory: { t: number; bps: number }[] = [];
+let lastSpeedRecord = 0;
+
+export function recordSpeedSample(): void {
+  const now = Date.now();
+  if (now - lastSpeedRecord < 200) return;
+  lastSpeedRecord = now;
+  speedHistory.push({ t: now, bps: getAggregateBps() });
+  if (speedHistory.length > 600) {
+    speedHistory.splice(0, speedHistory.length - 600);
+  }
+}
+
+export function getSpeedHistory(): { t: number; bps: number }[] {
+  return speedHistory;
 }
 
 /** Remove an entry without recording an outcome - parked installs
@@ -278,6 +299,8 @@ export interface CollectionRun {
   gameAppId?: number;
   name?: string;
   thumbnailUrl?: string;
+  /** Epoch ms when the run began - drives the Downloads page ETA. */
+  startedAt?: number;
 }
 
 let collectionRun: CollectionRun | undefined;
@@ -309,6 +332,7 @@ export function beginCollectionRun(
     total,
     finished: 0,
     rows: {},
+    startedAt: Date.now(),
     ...meta,
   };
   notifyRun();

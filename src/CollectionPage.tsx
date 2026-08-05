@@ -32,7 +32,7 @@ import {
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 import { modeParams } from "./games";
-import { finishFomod, installPinned } from "./install";
+import { finishFomod, installPinned, prefetchPinned } from "./install";
 import { backAction } from "./navRules";
 import {
   CollectionRowState,
@@ -256,7 +256,47 @@ export function CollectionPage() {
         // Manifest is an enhancement - never let it stall the batch.
       }
       let failures = 0;
-      for (const f of queue) {
+      // ---- download-ahead pipeline -------------------------------------
+      // Installs are serial (they mutate game dirs and share plugins.txt),
+      // but the network needn't idle while each mod extracts: prefetch up
+      // to 4 files in parallel, never more than 8 ahead of the installer
+      // (bounds disk usage to a handful of archives). The installer's own
+      // download step then hits the backend's archive cache instantly.
+      const PREFETCH_PARALLEL = 4;
+      const PREFETCH_WINDOW = 8;
+      let installIndex = 0;
+      let nextPrefetch = 0;
+      const inflight = new Map<number, Promise<void>>();
+      const pump = () => {
+        while (
+          nextPrefetch < queue.length &&
+          nextPrefetch < installIndex + PREFETCH_WINDOW &&
+          inflight.size < PREFETCH_PARALLEL
+        ) {
+          const idx = nextPrefetch++;
+          const p = queue[idx];
+          // Cross-domain pins get skipped by the installer - don't waste
+          // bandwidth on them.
+          if (p.domain && p.domain !== game.nexusDomain) continue;
+          const promise = prefetchPinned(
+            game,
+            p.modId,
+            p.fileId,
+            p.fileName,
+            p.modName
+          ).finally(() => {
+            inflight.delete(idx);
+            pump();
+          });
+          inflight.set(idx, promise);
+        }
+      };
+      pump();
+
+      for (let qi = 0; qi < queue.length; qi++) {
+        const f = queue[qi];
+        installIndex = qi;
+        pump();
         // One mod must never kill the batch: a thrown transport error
         // used to abandon the whole remaining queue (87 of 99 left).
         try {
@@ -275,6 +315,10 @@ export function CollectionPage() {
             });
             continue;
           }
+          // Never race the prefetcher on this file's archive - let an
+          // in-flight download finish before installing it.
+          const pending = inflight.get(qi);
+          if (pending) await pending;
           setCollectionRow(f.fileId, "installing");
           let result = await installPinned(
             game,

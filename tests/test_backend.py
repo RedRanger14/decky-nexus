@@ -2985,6 +2985,29 @@ class TestPluginMasters(unittest.TestCase):
             main._read_plugins_txt(self.plugins_txt), ["FalloutNV.esm"]
         )
 
+    def test_archive_cache_path_is_id_based_with_sane_ext(self):
+        p = main._archive_cache_path(83614, 1000118408, "Animated Menu.rar")
+        self.assertTrue(p.endswith("83614-1000118408.rar"))
+        # Garbage extensions never make it into the local path.
+        p = main._archive_cache_path(1, 2, "weird.file.name.<>?")
+        self.assertTrue(p.endswith("1-2"))
+
+    def test_download_archive_short_circuits_on_cache(self):
+        # The aiohttp stub raises on ANY session use - this passing PROVES
+        # a prefetched archive skips the network entirely.
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        path = main._archive_cache_path(77, 88, "cached.zip")
+        with open(path, "wb") as f:
+            f.write(b"archive-bytes")
+        try:
+            err, got = run(
+                main._download_archive("skyrim", 77, 88, "cached.zip", "key")
+            )
+        finally:
+            os.remove(path)
+        self.assertEqual(err, "")
+        self.assertEqual(got, path)
+
     def test_safe_uri_encodes_spaces_and_keeps_query(self):
         # Live case: 'Animated Main Menu Replacer for TTW' - the CDN link
         # carries the raw file name; aiohttp rejects the spaces.
