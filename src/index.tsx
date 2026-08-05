@@ -52,6 +52,7 @@ import {
   disablePlugins,
   fixPrefixRuntime,
   installFramework,
+  seedGameIni,
   markLaunchOptionsSet,
   resetGameModding,
   setFrameworkLaunchOptions,
@@ -60,8 +61,6 @@ import {
   setFrameworkEnabled,
   setApiKey,
   setModEnabled,
-  uninstallAllMods,
-  uninstallMod,
 } from "./api";
 import {
   ALL_GAMES,
@@ -441,7 +440,7 @@ function CurrentGameSection() {
           (r) => setFirstRunNeeded(Boolean(r.ok && !r.exists))
         );
       }
-      if (game.framework) {
+      if (game.framework || game.launcherBypass) {
         getFrameworkSetup(game.nexusDomain).then((r) =>
           setLaunchOptionsSet(Boolean(r.launch_options_set))
         );
@@ -906,17 +905,80 @@ function CurrentGameSection() {
         </>
       ) : (
         <>
+          {/* Frameworkless games with a broken stock launcher (FO3): the
+              fix boots the game exe directly, seeds the Documents ini the
+              launcher never created, and applies the setup ini blocks
+              (no framework step exists to carry them). */}
+          {game.launcherBypass && status?.installed && (
+            <PanelSectionRow>
+              {launchOptionsSet ? (
+                <Field label="Step 1">Launch fix applied ✓</Field>
+              ) : (
+                <ButtonItem
+                  label="Step 1"
+                  layout="below"
+                  description={`${game.displayName}'s own launcher freezes on this device - this starts the game directly instead (and applies the config fixes mods need).`}
+                  onClick={async () => {
+                    if (game.launcherBypass!.seedIni) {
+                      await seedGameIni(
+                        game.installDirName,
+                        game.appId,
+                        game.launcherBypass!.seedIni.sourceRel,
+                        game.launcherBypass!.seedIni.prefsSubpath
+                      );
+                    }
+                    for (const ini of game.setupInis ?? []) {
+                      await applyDisplayFix(
+                        game.appId,
+                        ini.prefsSubpath,
+                        ini.section,
+                        ini.settings,
+                        true
+                      );
+                    }
+                    showModal(
+                      <LaunchOptionsModal
+                        frameworkName="Direct launch"
+                        gameName={game.displayName}
+                        appId={game.appId}
+                        gameDomain={game.nexusDomain}
+                        options={game.launcherBypass!.launchOptionsTemplate}
+                        onDone={markDone}
+                      />
+                    );
+                  }}
+                >
+                  Fix game launch
+                </ButtonItem>
+              )}
+            </PanelSectionRow>
+          )}
           <PanelSectionRow>
-            <OrangeActionButton
-              onClick={() => {
-                setBrowseGame(game);
-                resetTabStack();
-                Navigation.Navigate(BROWSE_ROUTE);
-                Navigation.CloseSideMenus();
-              }}
-            >
-              Open Mod Browser
-            </OrangeActionButton>
+            {game.launcherBypass && status?.installed ? (
+              <Field label="Step 2" childrenLayout="below">
+                <OrangeActionButton
+                  onClick={() => {
+                    setBrowseGame(game);
+                    resetTabStack();
+                    Navigation.Navigate(BROWSE_ROUTE);
+                    Navigation.CloseSideMenus();
+                  }}
+                >
+                  Open Mod Browser
+                </OrangeActionButton>
+              </Field>
+            ) : (
+              <OrangeActionButton
+                onClick={() => {
+                  setBrowseGame(game);
+                  resetTabStack();
+                  Navigation.Navigate(BROWSE_ROUTE);
+                  Navigation.CloseSideMenus();
+                }}
+              >
+                Open Mod Browser
+              </OrangeActionButton>
+            )}
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
@@ -932,121 +994,6 @@ function CurrentGameSection() {
         </>
       )}
     </PanelSection>
-  );
-}
-
-function UninstallPickerModal({
-  mods,
-  game,
-  closeModal,
-  onDone,
-}: {
-  mods: InstalledMod[];
-  game: SupportedGame;
-  closeModal?: () => void;
-  onDone: () => void;
-}) {
-  const protectedFolders = game.protectedModFolders ?? [];
-  // The picker stays open across uninstalls so several mods can be removed
-  // in one visit; it closes itself when nothing is left.
-  const [list, setList] = useState(mods);
-
-  useEffect(() => {
-    if (list.length === 0) closeModal?.();
-  }, [list]);
-
-  const confirmUninstall = (mod: InstalledMod) => {
-    showModal(
-      <ConfirmModal
-        strTitle={`Uninstall ${mod.name ?? mod.folder}?`}
-        strDescription={`This deletes the "${mod.folder}" folder from the game. You can reinstall it from Nexus Mods at any time.`}
-        strOKButtonText="Uninstall"
-        bDestructiveWarning={true}
-        onOK={async () => {
-          const result = await uninstallMod(
-            game.nexusDomain,
-            game.installDirName,
-            game.modsSubdir,
-            mod.folder,
-            ...modeParams(game)
-          );
-          toaster.toast(
-            result.ok
-              ? { title: "Mod uninstalled", body: mod.name ?? mod.folder }
-              : { title: "Uninstall failed", body: result.error ?? "" }
-          );
-          onDone();
-          if (result.ok) {
-            setList((prev) => prev.filter((m) => m.folder !== mod.folder));
-          }
-        }}
-      />
-    );
-  };
-
-  const confirmUninstallAll = () => {
-    showModal(
-      <ConfirmModal
-        strTitle="Uninstall ALL mods?"
-        strDescription={
-          `Removes every mod folder for this game` +
-          (protectedFolders.length
-            ? `, except framework components (${protectedFolders.join(", ")})`
-            : "") +
-          `. Mods can be reinstalled from Nexus Mods at any time.`
-        }
-        strOKButtonText="Uninstall all"
-        bDestructiveWarning={true}
-        onOK={async () => {
-          const result = await uninstallAllMods(
-            game.nexusDomain,
-            game.installDirName,
-            game.modsSubdir,
-            protectedFolders,
-            ...modeParams(game)
-          );
-          toaster.toast(
-            result.ok
-              ? {
-                  title: "All mods uninstalled",
-                  body: `${result.removed} removed${
-                    result.kept?.length ? `, kept: ${result.kept.join(", ")}` : ""
-                  }`,
-                }
-              : { title: "Uninstall all failed", body: result.error ?? "" }
-          );
-          onDone();
-          closeModal?.();
-        }}
-      />
-    );
-  };
-
-  return (
-    <ModalRoot closeModal={closeModal}>
-      <h3 style={{ marginTop: 0 }}>Uninstall a mod</h3>
-      {list.map((mod) => (
-        <ButtonItem
-          key={mod.folder}
-          layout="below"
-          description={mod.tracked ? `v${mod.version}` : "not installed by this plugin"}
-          onClick={() => confirmUninstall(mod)}
-        >
-          {mod.name ?? mod.folder}
-        </ButtonItem>
-      ))}
-      <ButtonItem
-        layout="below"
-        description={
-          protectedFolders.length
-            ? `Keeps framework components: ${protectedFolders.join(", ")}`
-            : undefined
-        }
-        onClick={confirmUninstallAll}
-      >
-        Uninstall all mods…
-      </ButtonItem>
-    </ModalRoot>
   );
 }
 
@@ -1503,20 +1450,6 @@ function InstalledModsSection() {
           </PanelSectionRow>
         );
       })}
-      {(mods?.length ?? 0) > 8 && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={() => {
-              Router.CloseSideMenus();
-              resetTabStack();
-              Navigation.Navigate(MANAGER_ROUTE);
-            }}
-          >
-            All my mods ({mods!.length}) →
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
       {failures.length > 0 && (
         <PanelSectionRow>
           <ButtonItem
@@ -1540,23 +1473,23 @@ function InstalledModsSection() {
           </ButtonItem>
         </PanelSectionRow>
       )}
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          disabled={busyAll}
-          onClick={() =>
-            showModal(
-              <UninstallPickerModal
-                mods={mods ?? []}
-                game={game}
-                onDone={refresh}
-              />
-            )
-          }
-        >
-          Uninstall a mod…
-        </ButtonItem>
-      </PanelSectionRow>
+      {/* Uninstalls moved to the full-screen My Mods page (v0.43.0):
+          the QAM picker outgrew collection-scale libraries. */}
+      {(mods?.length ?? 0) > 0 && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            description="Toggle, inspect and uninstall - the full manager"
+            onClick={() => {
+              Router.CloseSideMenus();
+              resetTabStack();
+              Navigation.Navigate(MANAGER_ROUTE);
+            }}
+          >
+            Manage my mods →
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       {/* The nuclear option lives with the other bulk actions. */}
       <ResetGameRow game={game} onDone={refresh} />
     </PanelSection>

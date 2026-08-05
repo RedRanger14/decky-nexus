@@ -86,6 +86,16 @@ export interface SupportedGame {
   pluginsTxtStyle?: "starred" | "listed";
   /** Curated "start here" mods featured as the browse page heroes */
   recommendedModIds?: number[];
+  /** Frameworkless games whose stock launcher hangs under Proton (FO3's
+   * 2008 launcher freezes at the Play screen and never finishes first-run
+   * setup): a one-tap Step swaps the launcher for the game exe and seeds
+   * the Documents ini the launcher would have created. Carries the
+   * setupInis application too - there's no framework step to do it. */
+  launcherBypass?: {
+    launchOptionsTemplate: string;
+    /** Game-dir default ini to copy into Documents when missing. */
+    seedIni?: { sourceRel: string; prefsSubpath: string };
+  };
   /** Games that ship a native Linux build that mod loaders can't hook:
    * when nativeMarker exists in the install dir, mods need the Windows
    * build - offer a one-tap switch to the given Proton tool. */
@@ -320,6 +330,18 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // verified live 2026-08-05: UF3P (85k endorsements) + Fellout (71k),
     // both FOSE-free data mods.
     recommendedModIds: [19122, 2672],
+    // The stock launcher froze at the Play screen on device (2026-08-05)
+    // BEFORE creating FALLOUT.INI - boot the game exe directly and seed
+    // the ini from the game's own defaults.
+    launcherBypass: {
+      launchOptionsTemplate:
+        "bash -c 'exec \"$" +
+        "{@/Fallout3Launcher.exe/Fallout3.exe}\"' -- %command%",
+      seedIni: {
+        sourceRel: "Fallout_default.ini",
+        prefsSubpath: "Fallout3/FALLOUT.INI",
+      },
+    },
     setupInis: [
       {
         // Loose files don't load until archive invalidation is enabled.
