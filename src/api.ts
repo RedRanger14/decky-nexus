@@ -629,6 +629,17 @@ export interface UserPrefs {
   min_free_gb: number;
 }
 
+export const getDiskUsage = callable<
+  [],
+  {
+    ok: boolean;
+    total_gb?: number;
+    free_gb?: number;
+    min_free_gb?: number;
+    error?: string;
+  }
+>("get_disk_usage");
+
 export const getUserPrefs = callable<
   [],
   { ok: boolean; prefs?: UserPrefs; error?: string }

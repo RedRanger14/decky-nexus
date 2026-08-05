@@ -88,8 +88,9 @@ outside, reports scroll away, no state). If we run one:
 3. Discord server once there are actual users (store launch), with the
    webhook + forum template.
 
-## Open questions for Michael
-- Repo home for 1.0: personal RedRanger14 vs a Nexus-Mods org repo?
-  (Affects issue-form URL and store metadata.)
-- Should "Report a problem" appear on error toasts/failed rows too, or
-  Settings-only at first?
+## Decisions (Michael, 2026-08-05)
+- **Repo home: personal (RedRanger14)** - it's linked to the work org,
+  which is fine; issue-form URLs and store metadata point there.
+- **"Report a problem" appears on error surfaces too**, not just
+  Settings: failed collection rows and error toasts get a path into the
+  same prefilled-diagnostics flow.

@@ -987,7 +987,29 @@ function CurrentGameSection() {
           )}
           {game.controllerNotice && status?.installed && (
             <PanelSectionRow>
-              <Field label="🎮 Controller">{game.controllerNotice}</Field>
+              <ButtonItem
+                label="🎮 Controller"
+                layout="below"
+                description={game.controllerNotice}
+                onClick={() => {
+                  // Straight to this game's controller-layout screen -
+                  // Community Layouts is one tab away from here.
+                  const steamClient = (window as any).SteamClient;
+                  if (steamClient?.URL?.ExecuteSteamURL) {
+                    steamClient.URL.ExecuteSteamURL(
+                      `steam://controllerconfig/${game.appId}`
+                    );
+                    Navigation.CloseSideMenus();
+                  } else {
+                    toaster.toast({
+                      title: "Open it manually",
+                      body: "Steam button → Controller Settings → Community Layouts",
+                    });
+                  }
+                }}
+              >
+                Open controller layouts
+              </ButtonItem>
             </PanelSectionRow>
           )}
           <PanelSectionRow>

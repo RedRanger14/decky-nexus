@@ -42,6 +42,7 @@ import {
   endCollectionRun,
   getCollectionRun,
   getDownloadPercent,
+  getDownloads,
   getSelectedCollection,
   setCollectionRow,
   setDetailOrigin,
@@ -108,12 +109,23 @@ export function CollectionPage() {
       ...modeParams(sel.game),
       sel.game.protectedModFolders ?? []
     ).then((r) => {
+      // Framework pins (REFramework, CET...) count as installed: Step 1
+      // owns them, and their archives don't fit the mod pipeline anyway.
+      const fwIds = [
+        sel.game.framework?.nexusModId,
+        ...(sel.game.framework?.aliasModIds ?? []),
+        ...(sel.game.extraFrameworks ?? []).flatMap((fw) => [
+          fw.nexusModId,
+          ...(fw.aliasModIds ?? []),
+        ]),
+      ].filter((x): x is number => typeof x === "number");
       setInstalledIds(
-        new Set(
-          (r.mods ?? [])
+        new Set([
+          ...(r.mods ?? [])
             .map((m) => m.mod_id)
-            .filter((id): id is number => id !== undefined)
-        )
+            .filter((id): id is number => id !== undefined),
+          ...fwIds,
+        ])
       );
       // Only records CARRYING this slug can be uninstalled by this
       // collection - shared/individual installs stay, so the button
@@ -905,10 +917,18 @@ export function CollectionPage() {
             {required.map((f) => {
               const open = expanded.has(f.fileId);
               const info = modInfo[f.modId];
+              // Fill from EITHER the install turn or a live prefetch -
+              // the pipeline downloads rows long before they install,
+              // and those rows went dark without this (v0.40 regression).
+              const liveDl = getDownloads().find(
+                (d) => d.modId === f.modId && d.phase === "downloading"
+              );
               const pct =
                 rowState[f.fileId] === "installing" ||
                 finishingFileId === f.fileId
                   ? getDownloadPercent(f.modId) ?? 0
+                  : liveDl && installing
+                  ? liveDl.percent
                   : undefined;
               const needsChoices =
                 actionableIds.has(f.fileId) && !installedIds.has(f.modId);
@@ -1097,10 +1117,15 @@ export function CollectionPage() {
               const info = modInfo[f.modId];
               // Same fill treatment as required rows - optionals download
               // through the identical pipeline.
+              const liveDl = getDownloads().find(
+                (d) => d.modId === f.modId && d.phase === "downloading"
+              );
               const pct =
                 rowState[f.fileId] === "installing" ||
                 finishingFileId === f.fileId
                   ? getDownloadPercent(f.modId) ?? 0
+                  : liveDl && installing
+                  ? liveDl.percent
                   : undefined;
               return (
                 <Focusable

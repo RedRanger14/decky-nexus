@@ -197,21 +197,26 @@ def _ensure_config_key(path: str, key: str, value: str) -> None:
 
 
 def _pakpatch_payload(scratch: str):
-    """(paks, natives_dirs) discovered in an extracted RE Engine archive.
-    paks are absolute .pak paths; natives_dirs are absolute paths of
-    'natives' roots (loose-file mods - Fluffy format)."""
-    paks, natives_dirs = [], []
+    """(paks, natives_dirs, reframework_dirs) discovered in an extracted
+    RE Engine archive. paks are absolute .pak paths; natives roots are
+    loose-file mods (Fluffy format); reframework roots hold script mods
+    (autorun lua / plugins) that REFramework loads from the game root."""
+    paks, natives_dirs, ref_dirs = [], [], []
     for root, dirs, names in os.walk(scratch):
         for d in list(dirs):
             if d.lower() == "natives":
                 natives_dirs.append(os.path.join(root, d))
                 dirs.remove(d)  # don't descend: the tree moves whole
+            elif d.lower() == "reframework":
+                ref_dirs.append(os.path.join(root, d))
+                dirs.remove(d)
         for name in names:
             if name.lower().endswith(".pak"):
                 paks.append(os.path.join(root, name))
     paks.sort()
     natives_dirs.sort()
-    return paks, natives_dirs
+    ref_dirs.sort()
+    return paks, natives_dirs, ref_dirs
 
 
 def _pakpatch_name(n: int) -> str:
@@ -4017,6 +4022,21 @@ query Link($slug: String!, $domainName: String!) {
     async def get_user_prefs(self) -> dict:
         return {"ok": True, "prefs": _user_prefs()}
 
+    async def get_disk_usage(self) -> dict:
+        """Free/total space on the downloads volume - drives the Downloads
+        page disk gauge (paired with the min_free_gb floor)."""
+        try:
+            os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+            usage = shutil.disk_usage(DOWNLOADS_DIR)
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        return {
+            "ok": True,
+            "total_gb": round(usage.total / (1 << 30), 1),
+            "free_gb": round(usage.free / (1 << 30), 1),
+            "min_free_gb": _user_prefs()["min_free_gb"],
+        }
+
     async def set_user_prefs(self, prefs: dict) -> dict:
         """Store Settings-tab values. Unknown keys are ignored; known
         ones clamp to their bounds (see USER_PREF_BOUNDS)."""
@@ -4685,22 +4705,28 @@ query Link($slug: String!, $domainName: String!) {
         # Fluffy format) merge into the game root and load via
         # REFramework's built-in LooseFileLoader (enabled in its config).
         if pakpatch_layout:
-            paks, natives_dirs = _pakpatch_payload(scratch)
-            if not paks and not natives_dirs:
+            paks, natives_dirs, ref_dirs = _pakpatch_payload(scratch)
+            if not paks and not natives_dirs and not ref_dirs:
                 _force_rmtree(scratch)
                 try:
                     os.remove(archive_path)
                 except OSError:
                     pass
                 await _emit_progress(mod_id, "error", 0, "no payload")
+                # unsupported_layout: retrying can't change the archive -
+                # collections park it with a note instead of failing
+                # forever (ReShade presets, desktop-tool payloads).
                 return {
                     "ok": False,
-                    "error": "No .pak or natives payload in this archive",
+                    "unsupported_layout": True,
+                    "error": "No installable payload (.pak, natives or "
+                    "reframework) - ReShade presets and desktop-tool "
+                    "archives can't be used on this device",
                 }
             # Multi-pak archives are almost always OPTION packs (one pak
             # per variant) - installing all 21 of 'Max Stack Sizes' was
             # wrong. Offer the choice; '*' merges everything.
-            if len(paks) > 1 and not natives_dirs:
+            if len(paks) > 1 and not natives_dirs and not ref_dirs:
                 if payload_choice == "*":
                     pass  # install all below
                 elif payload_choice:
@@ -4738,15 +4764,17 @@ query Link($slug: String!, $domainName: String!) {
                 next_n += 1
                 shutil.move(src, os.path.join(install_path, dst_name))
                 assigned.append(dst_name)
-            # Loose natives trees: merge into <root>/natives with per-file
-            # records, and switch on REFramework's loose loader.
+            # Loose trees merge into the game root with per-file records:
+            # natives/ (Fluffy-format assets - needs REFramework's loose
+            # loader switched on) and reframework/ (script mods).
             loose_rel = []
-            for nd in natives_dirs:
-                for root, _dirs, names in os.walk(nd):
+
+            def _merge_tree(src_root: str, root_name: str):
+                for root, _dirs, names in os.walk(src_root):
                     for name in names:
                         src_file = os.path.join(root, name)
                         rel = os.path.join(
-                            "natives", os.path.relpath(src_file, nd)
+                            root_name, os.path.relpath(src_file, src_root)
                         ).replace(os.sep, "/")
                         if not _safe_rel_path(rel):
                             continue
@@ -4758,7 +4786,12 @@ query Link($slug: String!, $domainName: String!) {
                         shutil.move(src_file, dst)
                         if rel not in loose_rel:
                             loose_rel.append(rel)
-            if loose_rel:
+
+            for nd in natives_dirs:
+                _merge_tree(nd, "natives")
+            for rd in ref_dirs:
+                _merge_tree(rd, "reframework")
+            if natives_dirs:
                 _ensure_config_key(
                     os.path.join(install_path, RE4_REF_CONFIG),
                     REF_LOOSE_KEY,
