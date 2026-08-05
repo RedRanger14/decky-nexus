@@ -3086,6 +3086,35 @@ class TestPakPatchChain(unittest.TestCase):
         self.assertTrue(main.RE4_PAK_RE.match("re_chunk_000.pak.patch_004.pak"))
         self.assertFalse(main.RE4_PAK_RE.match("re_chunk_000.pak"))
 
+    def test_payload_discovery_paks_and_natives(self):
+        scratch = os.path.join(self.root, "scratch")
+        for rel in (
+            "OptionA/moda.pak",
+            "OptionB/modb.pak",
+            "wrapper/natives/STM/tex.tex.724",
+        ):
+            path = os.path.join(scratch, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(b"x")
+        paks, natives = main._pakpatch_payload(scratch)
+        self.assertEqual([os.path.basename(p) for p in paks], ["moda.pak", "modb.pak"])
+        self.assertEqual(len(natives), 1)
+        self.assertTrue(natives[0].endswith("natives"))
+
+    def test_ensure_config_key(self):
+        cfg = os.path.join(self.root, "re4_fw_config.txt")
+        main._ensure_config_key(cfg, "LooseFileLoader_Enabled", "true")
+        self.assertIn("LooseFileLoader_Enabled=true", open(cfg).read())
+        # Existing other keys survive; the target key is replaced not duped.
+        with open(cfg, "w") as f:
+            f.write("FontSize=16\nLooseFileLoader_Enabled=false\n")
+        main._ensure_config_key(cfg, "LooseFileLoader_Enabled", "true")
+        content = open(cfg).read()
+        self.assertIn("FontSize=16", content)
+        self.assertEqual(content.count("LooseFileLoader_Enabled"), 1)
+        self.assertIn("LooseFileLoader_Enabled=true", content)
+
     def test_renumber_closes_gap_and_keeps_officials(self):
         # officials 000-001 (no record owns them), mods at 002/003/004
         for n in range(5):

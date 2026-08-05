@@ -169,6 +169,50 @@ def _save_settings(settings: dict) -> None:
 
 RE4_PAK_RE = re.compile(r"^re_chunk_000\.pak\.patch_(\d{3})\.pak$", re.I)
 
+# REFramework's per-game config (created next to its dinput8.dll). Its
+# built-in LooseFileLoader makes natives/ trees load without Fluffy -
+# verified against the shipped DLL's strings on device (2026-08-05).
+RE4_REF_CONFIG = "re4_fw_config.txt"
+REF_LOOSE_KEY = "LooseFileLoader_Enabled"
+
+
+def _ensure_config_key(path: str, key: str, value: str) -> None:
+    """Set key=value in a flat (sectionless) config file, creating the
+    file if needed and replacing an existing line for the key."""
+    lines = []
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    out, found = [], False
+    for line in lines:
+        if line.split("=", 1)[0].strip().lower() == key.lower():
+            out.append(f"{key}={value}")
+            found = True
+        else:
+            out.append(line)
+    if not found:
+        out.append(f"{key}={value}")
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(out) + "\n")
+
+
+def _pakpatch_payload(scratch: str):
+    """(paks, natives_dirs) discovered in an extracted RE Engine archive.
+    paks are absolute .pak paths; natives_dirs are absolute paths of
+    'natives' roots (loose-file mods - Fluffy format)."""
+    paks, natives_dirs = [], []
+    for root, dirs, names in os.walk(scratch):
+        for d in list(dirs):
+            if d.lower() == "natives":
+                natives_dirs.append(os.path.join(root, d))
+                dirs.remove(d)  # don't descend: the tree moves whole
+        for name in names:
+            if name.lower().endswith(".pak"):
+                paks.append(os.path.join(root, name))
+    paks.sort()
+    natives_dirs.sort()
+    return paks, natives_dirs
+
 
 def _pakpatch_name(n: int) -> str:
     return f"re_chunk_000.pak.patch_{n:03d}.pak"
@@ -4636,40 +4680,52 @@ query Link($slug: String!, $domainName: String!) {
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": first_folder or _safe_name(mod_name)}
 
-        # RE Engine pak-patch layout (RE4 remake): every .pak in the
-        # archive takes the next number in the patch chain. Loose-file
-        # mods (natives/) need a loader the plugin can't provide yet.
+        # RE Engine pak-patch layout (RE4 remake): .paks take the next
+        # numbers in the patch chain; loose-file mods (natives/ trees,
+        # Fluffy format) merge into the game root and load via
+        # REFramework's built-in LooseFileLoader (enabled in its config).
         if pakpatch_layout:
-            paks = []
-            has_natives = False
-            for root, dirs, names in os.walk(scratch):
-                for d in dirs:
-                    if d.lower() == "natives":
-                        has_natives = True
-                for name in names:
-                    if name.lower().endswith(".pak"):
-                        paks.append(os.path.join(root, name))
-            if not paks:
+            paks, natives_dirs = _pakpatch_payload(scratch)
+            if not paks and not natives_dirs:
                 _force_rmtree(scratch)
                 try:
                     os.remove(archive_path)
                 except OSError:
                     pass
-                if has_natives:
-                    msg = (
-                        "Loose-file mod (natives folder) - needs the Fluffy "
-                        "manager's loose-file loader; only .pak-format mods "
-                        "are supported for now"
-                    )
-                    await _emit_progress(mod_id, "error", 0, "loose-file mod")
-                    return {
-                        "ok": False,
-                        "unsupported_layout": True,
-                        "error": msg,
-                    }
-                await _emit_progress(mod_id, "error", 0, "no pak")
-                return {"ok": False, "error": "No .pak file in this archive"}
-            paks.sort()
+                await _emit_progress(mod_id, "error", 0, "no payload")
+                return {
+                    "ok": False,
+                    "error": "No .pak or natives payload in this archive",
+                }
+            # Multi-pak archives are almost always OPTION packs (one pak
+            # per variant) - installing all 21 of 'Max Stack Sizes' was
+            # wrong. Offer the choice; '*' merges everything.
+            if len(paks) > 1 and not natives_dirs:
+                if payload_choice == "*":
+                    pass  # install all below
+                elif payload_choice:
+                    chosen = [
+                        p
+                        for p in paks
+                        if os.path.relpath(p, scratch).replace(os.sep, "/")
+                        == payload_choice
+                    ]
+                    if not chosen:
+                        _force_rmtree(scratch)
+                        return {"ok": False, "error": "Chosen pak wasn't found"}
+                    paks = chosen
+                else:
+                    options = [
+                        os.path.relpath(p, scratch).replace(os.sep, "/")
+                        for p in paks
+                    ]
+                    _force_rmtree(scratch)
+                    try:
+                        os.remove(archive_path)
+                    except OSError:
+                        pass
+                    await _emit_progress(mod_id, "error", 0, "choose a pak")
+                    return {"ok": False, "needs_choice": True, "options": options}
             existing = []
             for name in os.listdir(install_path):
                 m = RE4_PAK_RE.match(name)
@@ -4682,6 +4738,32 @@ query Link($slug: String!, $domainName: String!) {
                 next_n += 1
                 shutil.move(src, os.path.join(install_path, dst_name))
                 assigned.append(dst_name)
+            # Loose natives trees: merge into <root>/natives with per-file
+            # records, and switch on REFramework's loose loader.
+            loose_rel = []
+            for nd in natives_dirs:
+                for root, _dirs, names in os.walk(nd):
+                    for name in names:
+                        src_file = os.path.join(root, name)
+                        rel = os.path.join(
+                            "natives", os.path.relpath(src_file, nd)
+                        ).replace(os.sep, "/")
+                        if not _safe_rel_path(rel):
+                            continue
+                        rel = _case_merge_rel(install_path, rel)
+                        dst = os.path.join(install_path, *rel.split("/"))
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        if os.path.isfile(dst):
+                            os.remove(dst)
+                        shutil.move(src_file, dst)
+                        if rel not in loose_rel:
+                            loose_rel.append(rel)
+            if loose_rel:
+                _ensure_config_key(
+                    os.path.join(install_path, RE4_REF_CONFIG),
+                    REF_LOOSE_KEY,
+                    "true",
+                )
             _force_rmtree(scratch)
             try:
                 os.remove(archive_path)
@@ -4700,15 +4782,15 @@ query Link($slug: String!, $domainName: String!) {
                 "file_name": file_name,
                 "mode": "files",
                 "target": ".",
-                "files": assigned,
+                "files": assigned + loose_rel,
                 "pakpatch": True,
                 "source": record_source or "browse",
                 "collection_slug": collection_slug,
             }
             _save_settings(settings)
             decky.logger.info(
-                f"installed RE4 {mod_name!r}: {len(assigned)} pak(s) as "
-                f"{assigned}"
+                f"installed RE4 {mod_name!r}: {len(assigned)} pak(s), "
+                f"{len(loose_rel)} loose file(s)"
             )
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
