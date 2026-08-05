@@ -192,7 +192,8 @@ export const installMod = callable<
     record_source: string,
     witcher_layout: boolean,
     collection_slug: string,
-    cp77_layout: boolean
+    cp77_layout: boolean,
+    pakpatch_layout: boolean
   ],
   InstallResult
 >("install_mod");

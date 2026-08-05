@@ -161,6 +161,76 @@ def _save_settings(settings: dict) -> None:
     os.chmod(SETTINGS_PATH, 0o600)
 
 
+# ---- RE Engine pak-patch chain (RE4 remake) --------------------------------
+# The engine loads re_chunk_000.pak.patch_XXX.pak SEQUENTIALLY from the
+# game root - a gap breaks everything past it. Mods take the next number
+# after whatever exists (official update paks included); uninstalls must
+# renumber the survivors to close the gap.
+
+RE4_PAK_RE = re.compile(r"^re_chunk_000\.pak\.patch_(\d{3})\.pak$", re.I)
+
+
+def _pakpatch_name(n: int) -> str:
+    return f"re_chunk_000.pak.patch_{n:03d}.pak"
+
+
+def _pakpatch_renumber(game_domain: str, install_path: str, settings: dict) -> int:
+    """Close gaps in the patch-pak chain after an uninstall: paks no
+    record owns (the game's own updates) keep their numbers; every
+    recorded mod pak is renamed onto consecutive numbers above them and
+    the records are updated in place. Returns how many were renamed."""
+    installed = settings.get("installed", {}).get(game_domain, {})
+    owned = set()
+    for rec in installed.values():
+        if rec.get("pakpatch"):
+            owned.update(n.lower() for n in rec.get("files") or [])
+    officials = []
+    mod_paks = []
+    try:
+        names = os.listdir(install_path)
+    except OSError:
+        return 0
+    for name in names:
+        m = RE4_PAK_RE.match(name)
+        if not m:
+            continue
+        if name.lower() in owned:
+            mod_paks.append((int(m.group(1)), name))
+        else:
+            officials.append(int(m.group(1)))
+    mod_paks.sort()
+    renames = []
+    next_n = max(officials, default=-1) + 1
+    for _num, name in mod_paks:
+        want = _pakpatch_name(next_n)
+        if name != want:
+            renames.append((name, want))
+        next_n += 1
+    # Two phases via temp names: a shift-down chain would otherwise
+    # collide with a not-yet-moved neighbour.
+    for i, (src, _dst) in enumerate(renames):
+        os.rename(
+            os.path.join(install_path, src),
+            os.path.join(install_path, f"{src}.renum{i}"),
+        )
+    for i, (src, dst) in enumerate(renames):
+        os.rename(
+            os.path.join(install_path, f"{src}.renum{i}"),
+            os.path.join(install_path, dst),
+        )
+    if renames:
+        mapping = {s.lower(): d for s, d in renames}
+        for rec in installed.values():
+            if rec.get("pakpatch"):
+                rec["files"] = [
+                    mapping.get(n.lower(), n) for n in rec.get("files") or []
+                ]
+        decky.logger.info(
+            f"pak-patch chain renumbered: {len(renames)} pak(s) shifted"
+        )
+    return len(renames)
+
+
 def _safe_uri(uri: str) -> str:
     """Nexus CDN links carry the RAW archive file name - spaces included
     ('.../Animated Main Menu Replacer for TTW-83614-....rar?expires=...')
@@ -3703,6 +3773,7 @@ query Link($slug: String!, $domainName: String!) {
         witcher_layout: bool = False,
         collection_slug: str = "",
         cp77_layout: bool = False,
+        pakpatch_layout: bool = False,
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -3734,6 +3805,7 @@ query Link($slug: String!, $domainName: String!) {
                 witcher_layout,
                 collection_slug,
                 cp77_layout,
+                pakpatch_layout,
             )
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
@@ -3856,6 +3928,7 @@ query Link($slug: String!, $domainName: String!) {
         witcher_layout: bool = False,
         collection_slug: str = "",
         cp77_layout: bool = False,
+        pakpatch_layout: bool = False,
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -4382,6 +4455,83 @@ query Link($slug: String!, $domainName: String!) {
             )
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": first_folder or _safe_name(mod_name)}
+
+        # RE Engine pak-patch layout (RE4 remake): every .pak in the
+        # archive takes the next number in the patch chain. Loose-file
+        # mods (natives/) need a loader the plugin can't provide yet.
+        if pakpatch_layout:
+            paks = []
+            has_natives = False
+            for root, dirs, names in os.walk(scratch):
+                for d in dirs:
+                    if d.lower() == "natives":
+                        has_natives = True
+                for name in names:
+                    if name.lower().endswith(".pak"):
+                        paks.append(os.path.join(root, name))
+            if not paks:
+                _force_rmtree(scratch)
+                try:
+                    os.remove(archive_path)
+                except OSError:
+                    pass
+                if has_natives:
+                    msg = (
+                        "Loose-file mod (natives folder) - needs the Fluffy "
+                        "manager's loose-file loader; only .pak-format mods "
+                        "are supported for now"
+                    )
+                    await _emit_progress(mod_id, "error", 0, "loose-file mod")
+                    return {
+                        "ok": False,
+                        "unsupported_layout": True,
+                        "error": msg,
+                    }
+                await _emit_progress(mod_id, "error", 0, "no pak")
+                return {"ok": False, "error": "No .pak file in this archive"}
+            paks.sort()
+            existing = []
+            for name in os.listdir(install_path):
+                m = RE4_PAK_RE.match(name)
+                if m:
+                    existing.append(int(m.group(1)))
+            next_n = max(existing, default=-1) + 1
+            assigned = []
+            for src in paks:
+                dst_name = _pakpatch_name(next_n)
+                next_n += 1
+                shutil.move(src, os.path.join(install_path, dst_name))
+                assigned.append(dst_name)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            record_key = _safe_name(mod_name)
+            settings = _load_settings()  # re-read: parallel installs
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            installed[record_key] = {
+                "mod_id": mod_id,
+                "file_id": file_id,
+                "name": mod_name,
+                "version": mod_version,
+                "file_name": file_name,
+                "mode": "files",
+                "target": ".",
+                "files": assigned,
+                "pakpatch": True,
+                "source": record_source or "browse",
+                "collection_slug": collection_slug,
+            }
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed RE4 {mod_name!r}: {len(assigned)} pak(s) as "
+                f"{assigned}"
+            )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": record_key}
 
         # Cyberpunk layout: game-root-relative payloads across the known
         # roots (bin/red4ext/r6/engine/archive) or bare .archive files -
@@ -6028,6 +6178,10 @@ query Link($slug: String!, $domainName: String!) {
                     _force_rmtree(os.path.join(base + "-disabled", real))
             _w3_remove_menu_xmls(install_path, rec)
             settings["installed"][game_domain].pop(folder, None)
+            if rec.get("pakpatch"):
+                # RE Engine: a gap in the patch chain breaks every pak
+                # past it - shift the surviving mod paks down.
+                _pakpatch_renumber(game_domain, install_path, settings)
             _save_settings(settings)
             decky.logger.info(
                 f"uninstalled {folder!r} from {rec.get('target')!r}"
