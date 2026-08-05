@@ -2893,6 +2893,62 @@ class TestPrefixRuntime(unittest.TestCase):
         self.assertIn("launch the game once", result["error"])
 
 
+class TestPayloadShapes(unittest.TestCase):
+    """Archive layouts seen in the wild during the TTW run (2026-08-05):
+    Data/Video movie replacers and MO2 exports (meta.ini payload root)."""
+
+    def setUp(self):
+        self.scratch = tempfile.mkdtemp(prefix="payload-", dir=TEST_ROOT)
+
+    def tearDown(self):
+        shutil.rmtree(self.scratch, ignore_errors=True)
+
+    def _mk(self, *rel_paths):
+        for rel in rel_paths:
+            path = os.path.join(self.scratch, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("x")
+
+    def test_video_dir_is_a_data_marker(self):
+        # 'Animated Main Menu Replacer for TTW': archive root = Video/*.bik
+        self._mk("Video/NVRMainMenu.bik")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_keywords_dir_is_a_data_marker(self):
+        # 'Long 15 - NCR Expansion': keywords/*.ini (kNVSE convention)
+        self._mk("keywords/keywords_long-15.ini")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_mo2_export_wrapper_meta_ini(self):
+        # 'Tweaks for TTW - Helmet Overlays Patch': wrapper/meta.ini +
+        # a config folder that maps onto Data/<folder>/.
+        self._mk(
+            "Tweaks Patch/meta.ini",
+            "Tweaks Patch/Helmet Overlay/TTW Tweaks - Power Helmets.txt",
+        )
+        payload = main._find_data_payload(self.scratch)
+        self.assertEqual(
+            payload, os.path.join(self.scratch, "Tweaks Patch")
+        )
+        # The MO2 metadata never lands in the game's Data dir.
+        self.assertFalse(
+            os.path.isfile(os.path.join(self.scratch, "Tweaks Patch", "meta.ini"))
+        )
+
+    def test_mo2_meta_ini_at_archive_root(self):
+        self._mk("meta.ini", "Some Config/values.txt")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_plain_wrapper_still_resolves(self):
+        # Regression guard: the existing wrapper->markers path unchanged.
+        self._mk("WrapperFolder/textures/thing.dds")
+        self.assertEqual(
+            main._find_data_payload(self.scratch),
+            os.path.join(self.scratch, "WrapperFolder"),
+        )
+
+
 class TestUserPrefs(unittest.TestCase):
     """Settings-tab values clamp server-side: a hand-edited settings.json
     can't produce a 50-way download stampede or a zero disk floor."""
