@@ -368,6 +368,18 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
           iNumHWThreads: "2",
         },
       },
+      {
+        // Steam Input drives FO3 via synthetic keyboard/mouse (the game
+        // lost native gamepad support with GFWL); Gamebryo drops that
+        // input when it thinks its window is backgrounded - gamescope
+        // focus wobbles make that constant without these.
+        prefsSubpath: "Fallout3/FALLOUT.INI",
+        section: "Controls",
+        settings: {
+          "bBackground Mouse": "1",
+          "bBackground Keyboard": "1",
+        },
+      },
     ],
     firstRunNotice: {
       message:
@@ -379,12 +391,15 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       goneWhenDocsFile: "My Games/Fallout3/RendererInfo.txt",
     },
     // Bethesda's GFWL-removal update (2021) took the native 360-pad
-    // support with it - no ini or Steam Input toggle brings it back.
+    // support with it - the game can ONLY be driven by keyboard/mouse,
+    // so Steam Input must be enabled to translate the controller.
     controllerNotice:
       "Fallout 3 lost its built-in controller support when Microsoft's "
-      + "GFWL was removed from it. To play on controller: Steam button → "
-      + "Controller Settings → Controller Layouts → Community Layouts → "
-      + "pick a popular Fallout 3 keyboard-and-mouse layout.",
+      + "GFWL was removed. It only accepts keyboard/mouse now, so BOTH "
+      + "steps matter: 1) in the layout screen, set 'Steam Input' to "
+      + "ENABLED for your controller (external pads like 8BitDo often "
+      + "default to off - this is why layouts seem to do nothing), then "
+      + "2) pick a popular community keyboard-and-mouse layout.",
   },
   1030300: {
     appId: 1030300,
