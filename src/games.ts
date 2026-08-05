@@ -396,6 +396,30 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
           "bBackground Keyboard": "1",
         },
       },
+      {
+        // Intro movies hang under Proton's DirectShow (wine quartz
+        // graph stalls decoding them - caught live in the boot log,
+        // worse with modded movie replacers). Skipping them boots
+        // straight to the menu.
+        prefsSubpath: "Fallout3/FALLOUT.INI",
+        section: "General",
+        settings: {
+          SIntroSequence: "",
+          SMainMenuMovieIntro: "",
+          SCreditsMenuMovie: "",
+        },
+      },
+      {
+        // Exclusive fullscreen never PRESENTS under gamescope: the game
+        // runs (menu music audible) behind a stuck Steam loading logo.
+        // Windowed mode displays - gamescope fullscreens it anyway.
+        // Same crash class as Skyrim SE/FO4's display doctor.
+        prefsSubpath: "Fallout3/FalloutPrefs.ini",
+        section: "Display",
+        settings: {
+          "bFull Screen": "0",
+        },
+      },
     ],
     firstRunNotice: {
       message:
