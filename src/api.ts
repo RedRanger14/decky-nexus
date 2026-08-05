@@ -676,6 +676,13 @@ export const disablePlugins = callable<
   { ok: boolean; disabled?: number; error?: string }
 >("disable_plugins");
 
+// Copies a game-dir default ini into the prefix Documents when missing
+// (FO3's launcher hangs under Proton before creating FALLOUT.INI).
+export const seedGameIni = callable<
+  [install_dir: string, app_id: number, source_rel: string, prefs_subpath: string],
+  { ok: boolean; seeded?: boolean; error?: string }
+>("seed_game_ini");
+
 // Upgrades the game prefix's VC++ runtime from the newest installed
 // Proton's bundled copy (idempotent). CP77's install script downgrades
 // the prefix CRT below what CET/RED4ext need (error 998 at boot).

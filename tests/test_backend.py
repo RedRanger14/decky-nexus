@@ -2893,6 +2893,59 @@ class TestPrefixRuntime(unittest.TestCase):
         self.assertIn("launch the game once", result["error"])
 
 
+class TestSeedGameIni(unittest.TestCase):
+    """FO3's launcher hangs under Proton before creating FALLOUT.INI -
+    seed it from the game's own Fallout_default.ini instead."""
+
+    GAME = "Seed Game"
+    APP_ID = 999003
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        os.makedirs(self.root, exist_ok=True)
+        self.dst = main._game_prefs_path(self.APP_ID, "SeedGame/GAME.INI")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.dst), ignore_errors=True)
+
+    def test_seeds_when_missing(self):
+        with open(os.path.join(self.root, "Default.ini"), "w") as f:
+            f.write("[General]\nsLanguage=ENGLISH\n")
+        result = run(
+            self.plugin.seed_game_ini(
+                self.GAME, self.APP_ID, "Default.ini", "SeedGame/GAME.INI"
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["seeded"])
+        self.assertIn("sLanguage", open(self.dst).read())
+
+    def test_existing_ini_untouched(self):
+        os.makedirs(os.path.dirname(self.dst), exist_ok=True)
+        with open(self.dst, "w") as f:
+            f.write("user content")
+        with open(os.path.join(self.root, "Default.ini"), "w") as f:
+            f.write("defaults")
+        result = run(
+            self.plugin.seed_game_ini(
+                self.GAME, self.APP_ID, "Default.ini", "SeedGame/GAME.INI"
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["seeded"])
+        self.assertEqual(open(self.dst).read(), "user content")
+
+    def test_missing_source_errors(self):
+        result = run(
+            self.plugin.seed_game_ini(
+                self.GAME, self.APP_ID, "Nope.ini", "SeedGame/GAME.INI"
+            )
+        )
+        self.assertFalse(result["ok"])
+
+
 class TestPayloadShapes(unittest.TestCase):
     """Archive layouts seen in the wild during the TTW run (2026-08-05):
     Data/Video movie replacers and MO2 exports (meta.ini payload root)."""

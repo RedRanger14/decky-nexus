@@ -5076,6 +5076,30 @@ query Link($slug: String!, $domainName: String!) {
             install_subdir,
         )
 
+    async def seed_game_ini(
+        self,
+        install_dir: str,
+        app_id: int,
+        source_rel: str,
+        prefs_subpath: str,
+    ) -> dict:
+        """Copy the game's default ini into the prefix Documents when the
+        real one is missing. FO3's launcher normally creates FALLOUT.INI
+        on first run - but that launcher hangs under Proton and never
+        gets that far, so the game exe has nothing to boot with."""
+        if not _safe_rel_path(source_rel) or not _safe_rel_path(prefs_subpath):
+            return {"ok": False, "error": "Invalid path"}
+        dst = _game_prefs_path(app_id, prefs_subpath)
+        if os.path.isfile(dst):
+            return {"ok": True, "seeded": False}
+        src = os.path.join(STEAM_COMMON, install_dir, *source_rel.split("/"))
+        if not os.path.isfile(src):
+            return {"ok": False, "error": f"{source_rel} not found in game dir"}
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
+        decky.logger.info(f"seeded {prefs_subpath} from {source_rel}")
+        return {"ok": True, "seeded": True}
+
     async def fix_prefix_runtime(self, app_id: int) -> dict:
         """Bring the game prefix's VC++ runtime up to the newest one any
         installed Proton bundles. Idempotent: reports updated=False when
