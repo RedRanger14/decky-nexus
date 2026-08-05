@@ -5395,6 +5395,7 @@ query Link($slug: String!, $domainName: String!) {
             pass
         if exerr:
             _force_rmtree(scratch)
+            await _emit_progress(mod_id, "error", 0, "extract failed")
             return {"ok": False, "error": f"Extraction failed: {exerr}"}
 
         exes = []
@@ -5412,6 +5413,7 @@ query Link($slug: String!, $domainName: String!) {
             exes = hinted or exes
         if not exes:
             _force_rmtree(scratch)
+            await _emit_progress(mod_id, "error", 0, "no exe")
             return {"ok": False, "error": "No tool exe in this archive"}
         exe_path = max(exes)[1]
         tool_dir = os.path.dirname(exe_path)
@@ -5456,6 +5458,7 @@ query Link($slug: String!, $domainName: String!) {
 
         if stage_err:
             _unstage()
+            await _emit_progress(mod_id, "error", 0, "staging blocked")
             return {"ok": False, "error": stage_err}
 
         before = {}
@@ -5498,18 +5501,29 @@ query Link($slug: String!, $domainName: String!) {
                 *cmd,
                 cwd=install_path,
                 env=run_env,
-                stdin=asyncio.subprocess.DEVNULL,
+                # Own session: on timeout the WHOLE tree dies (killing
+                # just the proton wrapper orphaned Patcher.exe on device).
+                start_new_session=True,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
             try:
+                # A stream of ENTERs answers the 'press any key to
+                # continue' prompts these console patchers open with.
                 output, _ = await asyncio.wait_for(
-                    proc.communicate(), timeout=max(30, int(timeout_sec))
+                    proc.communicate(input=b"\r\n" * 8),
+                    timeout=max(30, int(timeout_sec)),
                 )
                 rc = proc.returncode
             except asyncio.TimeoutError:
                 timed_out = True
-                proc.kill()
+                try:
+                    import signal
+
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    proc.kill()
                 await proc.wait()
         except OSError as e:
             _unstage()
