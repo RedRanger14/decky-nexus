@@ -999,12 +999,22 @@ function CurrentGameSection() {
               run inside the game's Proton prefix, one tap for all. */}
           {game.prefixTools && status?.installed && (
             <PanelSectionRow>
+              <style>{`
+                @keyframes nexusToolPulse {
+                  0%, 100% { filter: brightness(1); }
+                  50% { filter: brightness(1.5); }
+                }
+                .nexus-tool-running > div {
+                  animation: nexusToolPulse 1.4s ease-in-out infinite;
+                }
+              `}</style>
               {game.prefixTools.every((t) => toolsDone[t.nexusModId]) ? (
                 <Field label="Step 3">
                   Modding tools applied ✓ (
                   {game.prefixTools.map((t) => t.name).join(", ")})
                 </Field>
               ) : (
+                <div className={toolsBusy ? "nexus-tool-running" : undefined}>
                 <ButtonItem
                   label="Step 3"
                   layout="below"
@@ -1062,6 +1072,7 @@ function CurrentGameSection() {
                         .length
                     })`}
                 </ButtonItem>
+                </div>
               )}
             </PanelSectionRow>
           )}
