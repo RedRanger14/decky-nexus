@@ -3027,23 +3027,27 @@ class TestProtonPicker(unittest.TestCase):
         with open(os.path.join(dirpath, "proton"), "w") as f:
             f.write("#!stub")
 
-    def test_prefers_prefix_owner(self):
+    def test_unpinned_prefers_experimental(self):
+        # The prefix version file says "11.0-100" for BOTH standalone
+        # Proton 11.0 AND Experimental - trusting it picked the wrong
+        # build on device and wedged the prefix. Unpinned games run the
+        # SteamOS default: Experimental wins even when 11.0 is installed.
         with open(os.path.join(self.compat, "version"), "w") as f:
             f.write("11.0-100\n")
         self._mk_proton(self.proton11)
         self._mk_proton(self.experimental)
         proton, compat, _root, err = main._proton_binary_for(self.APP_ID)
         self.assertEqual(err, "")
-        self.assertIn("Proton 11.0", proton)
+        self.assertIn("Experimental", proton)
         self.assertEqual(compat, self.compat)
 
-    def test_falls_back_to_experimental(self):
+    def test_version_file_is_the_fallback(self):
         with open(os.path.join(self.compat, "version"), "w") as f:
-            f.write("9.0-4\n")  # that release isn't installed
-        self._mk_proton(self.experimental)
+            f.write("11.0-100\n")
+        self._mk_proton(self.proton11)  # no Experimental installed
         proton, _c, _r, err = main._proton_binary_for(self.APP_ID)
         self.assertEqual(err, "")
-        self.assertIn("Experimental", proton)
+        self.assertIn("Proton 11.0", proton)
 
     def test_no_proton_reports_cleanly(self):
         _p, _c, _r, err = main._proton_binary_for(self.APP_ID)

@@ -776,24 +776,47 @@ def _newest_proton_crt_dir():
 
 
 def _proton_binary_for(app_id: int):
-    """(proton_script, compatdata_dir, steam_root, err) - prefer the
-    Proton release that owns the game's prefix (compatdata/<id>/version),
-    fall back to Experimental, then any installed Proton."""
+    """(proton_script, compatdata_dir, steam_root, err) - the tool MUST
+    run under the same Proton build as the game: mixing builds in one
+    prefix wedges its wineserver (learned live - the version file says
+    '11.0-100' for BOTH standalone Proton 11.0 and Experimental, and
+    picking the wrong one left FO3 unable to boot). Steam's per-app
+    CompatToolMapping is the authority; unpinned = Experimental (the
+    SteamOS default)."""
     steam_root = os.path.join(decky.DECKY_USER_HOME, ".steam", "steam")
     compat = os.path.join(
         steam_root, "steamapps", "compatdata", str(int(app_id))
     )
+    candidates = []
+    try:
+        with open(
+            os.path.join(steam_root, "config", "config.vdf"),
+            "r", encoding="utf-8", errors="replace",
+        ) as f:
+            cfg = f.read()
+        m = re.search(
+            r'"%d"\s*\{\s*"name"\s*"([^"]*)"' % int(app_id), cfg
+        )
+        if m:
+            tool = m.group(1)
+            mv = re.match(r"proton_(\d+)", tool)
+            if tool == "proton_experimental":
+                candidates.append("Proton - Experimental")
+            elif mv:
+                candidates.append(f"Proton {mv.group(1)}.0")
+    except OSError:
+        pass
+    # Unpinned games run the SteamOS default: Experimental.
+    candidates.append("Proton - Experimental")
     version = ""
     try:
         with open(os.path.join(compat, "version"), "r", encoding="utf-8") as f:
             version = f.read().strip()
     except OSError:
         pass
-    candidates = []
     m = re.match(r"(\d+\.\d+)", version)
     if m:
         candidates.append(f"Proton {m.group(1)}")
-    candidates.append("Proton - Experimental")
     for name in candidates:
         p = os.path.join(STEAM_COMMON, name, "proton")
         if os.path.isfile(p):
