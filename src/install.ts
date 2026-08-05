@@ -98,7 +98,8 @@ function installModWith(
     source,
     game.witcherLayout ?? false,
     collectionSlug,
-    game.cp77Layout ?? false
+    game.cp77Layout ?? false,
+    game.pakPatchLayout ?? false
   );
 }
 

@@ -64,6 +64,10 @@ export interface SupportedGame {
    * modern CET/RED4ext builds need 14.40+ or Wine fails their
    * LoadLibrary with error 998. */
   prefixRuntimeFix?: boolean;
+  /** RE Engine pak-patch chain (RE4 remake): every .pak in an archive
+   * takes the next re_chunk_000.pak.patch_XXX.pak number in the game
+   * root; uninstalls renumber survivors to close the gap. */
+  pakPatchLayout?: boolean;
   /** Cyberpunk's layout: game-root-relative payloads across known roots
    * (bin/red4ext/r6/engine/archive) with exact-file records; bare
    * .archive files go flat into archive/pc/mod. */
@@ -271,6 +275,77 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       message:
         "Launch the game once first - it creates the config files mods need.",
       goneWhenDocsFile: "My Games/FalloutNV/Fallout.ini",
+    },
+  },
+  2050650: {
+    appId: 2050650,
+    displayName: "Resident Evil 4",
+    nexusDomain: "residentevil42023", // verified: game id 5195
+    // Capcom's dir name really has two spaces (verified on device).
+    installDirName: "RESIDENT EVIL 4  BIOHAZARD RE4",
+    // Pak-patch mods live in the game ROOT with engine-dictated names -
+    // there is no mods dir. This path never exists, so the folder
+    // scanner stays quiet; rows come from the per-file records instead.
+    modsSubdir: "._nexus_mods_unused",
+    pakPatchLayout: true,
+    moddedSaveWarning: false,
+    processName: "re4.exe",
+    framework: {
+      name: "REFramework",
+      detectFile: "dinput8.dll",
+      url: "github.com/praydog/REFramework",
+      nexusModId: 12, // verified live: 24k endorsements
+      installKind: "copyRoot",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
+      cleanupPrefixes: ["dinput8"],
+    },
+    // verified live 2026-08-05: top non-tool, non-adult content mods
+    recommendedModIds: [117, 1479],
+  },
+  22370: {
+    appId: 22370,
+    displayName: "Fallout 3",
+    nexusDomain: "fallout3", // verified: game id 120, ~17k mods
+    installDirName: "Fallout 3 goty", // verified on device (GOTY SKU)
+    modsSubdir: "Data",
+    installMode: "dataDir",
+    // FO3 matches FNV: a plugin listed in the file IS active (no '*').
+    pluginsTxtSubpath: "Fallout3/Plugins.txt",
+    pluginsTxtStyle: "listed",
+    moddedSaveWarning: false,
+    processName: "Fallout3.exe",
+    // NO framework yet: FOSE can't hook the current Steam exe (1.7.0.4)
+    // - the community fix (Anniversary Patcher) patches the exe inside
+    // the prefix, a future tier. Plain data mods work without it.
+    // verified live 2026-08-05: UF3P (85k endorsements) + Fellout (71k),
+    // both FOSE-free data mods.
+    recommendedModIds: [19122, 2672],
+    setupInis: [
+      {
+        // Loose files don't load until archive invalidation is enabled.
+        prefsSubpath: "Fallout3/FALLOUT.INI",
+        section: "Archive",
+        settings: {
+          bInvalidateOlderFiles: "1",
+          SInvalidationFile: "",
+        },
+      },
+      {
+        // FO3 on modern many-core CPUs freezes without the threading
+        // caps - the standard community fix, safe on all hardware.
+        prefsSubpath: "Fallout3/FALLOUT.INI",
+        section: "General",
+        settings: {
+          bUseThreadedAI: "1",
+          iNumHWThreads: "2",
+        },
+      },
+    ],
+    firstRunNotice: {
+      message:
+        "Launch the game once first - it creates the config files mods " +
+        "need. Note: mods requiring FOSE aren't supported yet.",
+      goneWhenDocsFile: "My Games/Fallout3/FALLOUT.INI",
     },
   },
   1030300: {

@@ -2893,6 +2893,101 @@ class TestPrefixRuntime(unittest.TestCase):
         self.assertIn("launch the game once", result["error"])
 
 
+class TestPakPatchChain(unittest.TestCase):
+    """RE Engine (RE4 remake) loads re_chunk_000.pak.patch_XXX.pak
+    sequentially from the game root - a gap breaks everything past it.
+    Installs allocate the next number; uninstalls renumber survivors."""
+
+    GAME = "PakPatch Game"
+    DOMAIN = "residentevil42023"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        os.makedirs(self.root, exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _touch(self, name):
+        with open(os.path.join(self.root, name), "wb") as f:
+            f.write(b"pak")
+
+    def _record(self, key, files):
+        settings = main._load_settings()
+        installed = settings.setdefault("installed", {}).setdefault(
+            self.DOMAIN, {}
+        )
+        installed[key] = {
+            "mod_id": 1,
+            "file_id": 1,
+            "name": key,
+            "mode": "files",
+            "target": ".",
+            "files": files,
+            "pakpatch": True,
+        }
+        main._save_settings(settings)
+
+    def test_name_format(self):
+        self.assertEqual(main._pakpatch_name(7), "re_chunk_000.pak.patch_007.pak")
+        self.assertTrue(main.RE4_PAK_RE.match("re_chunk_000.pak.patch_004.pak"))
+        self.assertFalse(main.RE4_PAK_RE.match("re_chunk_000.pak"))
+
+    def test_renumber_closes_gap_and_keeps_officials(self):
+        # officials 000-001 (no record owns them), mods at 002/003/004
+        for n in range(5):
+            self._touch(main._pakpatch_name(n))
+        self._record("ModA", [main._pakpatch_name(2)])
+        self._record("ModB", [main._pakpatch_name(3)])
+        self._record("ModC", [main._pakpatch_name(4)])
+        # uninstall ModB's pak (the middle of the chain)
+        os.remove(os.path.join(self.root, main._pakpatch_name(3)))
+        settings = main._load_settings()
+        settings["installed"][self.DOMAIN].pop("ModB")
+        main._pakpatch_renumber(self.DOMAIN, self.root, settings)
+        main._save_settings(settings)
+
+        names = sorted(
+            n for n in os.listdir(self.root) if main.RE4_PAK_RE.match(n)
+        )
+        self.assertEqual(
+            names, [main._pakpatch_name(n) for n in range(4)]
+        )  # 000,001 officials + 002 (A), 003 (C shifted down)
+        recs = main._load_settings()["installed"][self.DOMAIN]
+        self.assertEqual(recs["ModA"]["files"], [main._pakpatch_name(2)])
+        self.assertEqual(recs["ModC"]["files"], [main._pakpatch_name(3)])
+
+    def test_renumber_noop_when_chain_intact(self):
+        self._touch(main._pakpatch_name(0))
+        self._record("ModA", [main._pakpatch_name(0)])
+        settings = main._load_settings()
+        self.assertEqual(
+            main._pakpatch_renumber(self.DOMAIN, self.root, settings), 0
+        )
+
+    def test_uninstall_mod_renumbers(self):
+        for n in range(3):
+            self._touch(main._pakpatch_name(n))
+        # 000 official; A owns 001, B owns 002
+        self._record("ModA", [main._pakpatch_name(1)])
+        self._record("ModB", [main._pakpatch_name(2)])
+        result = run(
+            main.Plugin().uninstall_mod(
+                self.DOMAIN, self.GAME, "._nexus_mods_unused", "ModA"
+            )
+        )
+        self.assertTrue(result["ok"])
+        names = sorted(
+            n for n in os.listdir(self.root) if main.RE4_PAK_RE.match(n)
+        )
+        self.assertEqual(names, [main._pakpatch_name(0), main._pakpatch_name(1)])
+        recs = main._load_settings()["installed"][self.DOMAIN]
+        self.assertNotIn("ModA", recs)
+        self.assertEqual(recs["ModB"]["files"], [main._pakpatch_name(1)])
+
+
 class TestPluginMasters(unittest.TestCase):
     """The engine hard-fails at boot when an enabled plugin's master is
     absent ('X.esm is missing required files') - seen live with a TTW
