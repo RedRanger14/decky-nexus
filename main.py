@@ -775,6 +775,34 @@ def _newest_proton_crt_dir():
     return best, best_ver
 
 
+def _proton_binary_for(app_id: int):
+    """(proton_script, compatdata_dir, steam_root, err) - prefer the
+    Proton release that owns the game's prefix (compatdata/<id>/version),
+    fall back to Experimental, then any installed Proton."""
+    steam_root = os.path.join(decky.DECKY_USER_HOME, ".steam", "steam")
+    compat = os.path.join(
+        steam_root, "steamapps", "compatdata", str(int(app_id))
+    )
+    version = ""
+    try:
+        with open(os.path.join(compat, "version"), "r", encoding="utf-8") as f:
+            version = f.read().strip()
+    except OSError:
+        pass
+    candidates = []
+    m = re.match(r"(\d+\.\d+)", version)
+    if m:
+        candidates.append(f"Proton {m.group(1)}")
+    candidates.append("Proton - Experimental")
+    for name in candidates:
+        p = os.path.join(STEAM_COMMON, name, "proton")
+        if os.path.isfile(p):
+            return p, compat, steam_root, ""
+    for p in sorted(glob.glob(os.path.join(STEAM_COMMON, "Proton*", "proton"))):
+        return p, compat, steam_root, ""
+    return "", compat, steam_root, "No Proton installation found on this device"
+
+
 def _plugins_txt_path(app_id: int, subpath: str) -> str:
     """Plugins.txt for a Proton game lives inside its compat prefix. The
     game creates it through Wine's case-insensitive lookup, so the on-disk
@@ -5251,6 +5279,214 @@ query Link($slug: String!, $domainName: String!) {
         shutil.copy2(src, dst)
         decky.logger.info(f"seeded {prefs_subpath} from {source_rel}")
         return {"ok": True, "seeded": True}
+
+    async def run_prefix_tool(
+        self,
+        game_domain: str,
+        mod_id: int,
+        install_dir: str,
+        app_id: int,
+        exe_hint: str = "",
+        avoid_file_keywords: list = None,
+        verify_changed: list = None,
+        timeout_sec: int = 180,
+    ) -> dict:
+        """Download a Windows modding TOOL from Nexus Mods (author gets
+        the credit) and run it INSIDE the game's Proton prefix from the
+        game dir - the exe-patcher class (FO3's ESM Patcher, Anniversary
+        Patcher) the mod pipeline rightly refuses to 'install'. Success
+        is judged by whether the files the tool exists to modify actually
+        CHANGED (verify_changed): console patchers end on a 'press any
+        key' that never comes headless, so exit codes lie."""
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            return {"ok": False, "error": "Not signed in"}
+        install_path = os.path.join(STEAM_COMMON, install_dir)
+        if not os.path.isdir(install_path):
+            return {"ok": False, "error": "Game install folder not found"}
+        proton, compat, steam_root, perr = _proton_binary_for(app_id)
+        if perr:
+            return {"ok": False, "error": perr}
+        if not os.path.isdir(os.path.join(compat, "pfx")):
+            return {
+                "ok": False,
+                "error": "No Proton prefix yet - launch the game once first",
+            }
+
+        files = await self.get_mod_files(game_domain, mod_id)
+        if not files.get("ok"):
+            return files
+        main = _pick_main_file(
+            files.get("files") or [], avoid_file_keywords or []
+        )
+        if not main:
+            return {"ok": False, "error": "No downloadable file found"}
+        err, archive_path = await _download_archive(
+            game_domain, mod_id, main["file_id"],
+            main.get("file_name") or "", api_key,
+        )
+        if err:
+            return {"ok": False, "error": err}
+        scratch = os.path.join(DOWNLOADS_DIR, f"tool-{mod_id}")
+        _force_rmtree(scratch)
+        os.makedirs(scratch)
+        exerr = await _extract_archive(archive_path, scratch)
+        try:
+            os.remove(archive_path)
+        except OSError:
+            pass
+        if exerr:
+            _force_rmtree(scratch)
+            return {"ok": False, "error": f"Extraction failed: {exerr}"}
+
+        exes = []
+        for root, _dirs, names in os.walk(scratch):
+            for name in names:
+                if name.lower().endswith(".exe"):
+                    p = os.path.join(root, name)
+                    exes.append((os.path.getsize(p), p))
+        if exe_hint:
+            hinted = [
+                e
+                for e in exes
+                if exe_hint.lower() in os.path.basename(e[1]).lower()
+            ]
+            exes = hinted or exes
+        if not exes:
+            _force_rmtree(scratch)
+            return {"ok": False, "error": "No tool exe in this archive"}
+        exe_path = max(exes)[1]
+        tool_dir = os.path.dirname(exe_path)
+        exe_rel = os.path.relpath(exe_path, tool_dir).replace(os.sep, "/")
+
+        # Stage the tool's files beside the game exe (these patchers
+        # expect CWD = game dir). NEVER overwrite existing game files;
+        # everything staged is removed afterwards.
+        staged = []
+        stage_err = ""
+        for root, _dirs, names in os.walk(tool_dir):
+            for name in names:
+                src = os.path.join(root, name)
+                rel = os.path.relpath(src, tool_dir).replace(os.sep, "/")
+                if not _safe_rel_path(rel):
+                    continue
+                dst = os.path.join(install_path, *rel.split("/"))
+                if os.path.exists(dst):
+                    if src == exe_path:
+                        stage_err = (
+                            f"{name} already exists in the game folder - "
+                            "not overwriting it"
+                        )
+                    continue
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                try:
+                    os.chmod(dst, 0o755)
+                except OSError:
+                    pass
+                staged.append(dst)
+            if stage_err:
+                break
+        _force_rmtree(scratch)
+
+        def _unstage():
+            for p in staged:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
+        if stage_err:
+            _unstage()
+            return {"ok": False, "error": stage_err}
+
+        before = {}
+        for rel in verify_changed or []:
+            p = os.path.join(install_path, *rel.split("/"))
+            try:
+                st = os.stat(p)
+                before[rel] = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                before[rel] = None
+
+        # The backend runs as root; Proton must run as the deck user or
+        # it litters the prefix with root-owned files.
+        cmd = [
+            "runuser", "-u", "deck", "--", "env",
+            f"STEAM_COMPAT_CLIENT_INSTALL_PATH={steam_root}",
+            f"STEAM_COMPAT_DATA_PATH={compat}",
+            "python3", proton, "run",
+            os.path.join(install_path, *exe_rel.split("/")),
+        ]
+        decky.logger.info(
+            f"prefix tool {game_domain}/{mod_id}: running {exe_rel!r} "
+            f"via {os.path.basename(os.path.dirname(proton))!r}"
+        )
+        await _emit_progress(mod_id, "extracting", 100)
+        timed_out = False
+        output = b""
+        rc = -1
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=install_path,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                output, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=max(30, int(timeout_sec))
+                )
+                rc = proc.returncode
+            except asyncio.TimeoutError:
+                timed_out = True
+                proc.kill()
+                await proc.wait()
+        except OSError as e:
+            _unstage()
+            await _emit_progress(mod_id, "error", 0, str(e))
+            return {"ok": False, "error": f"Could not run the tool: {e}"}
+        finally:
+            _unstage()
+
+        changed = []
+        for rel, snap in before.items():
+            p = os.path.join(install_path, *rel.split("/"))
+            try:
+                st = os.stat(p)
+                now = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                now = None
+            if now != snap:
+                changed.append(rel)
+        ok = bool(changed) if verify_changed else (rc == 0 and not timed_out)
+        tail = output.decode(errors="replace")[-800:]
+        decky.logger.info(
+            f"prefix tool {game_domain}/{mod_id}: ok={ok} rc={rc} "
+            f"timed_out={timed_out} changed={changed} tail={tail[-200:]!r}"
+        )
+        if ok:
+            settings = _load_settings()
+            done = settings.setdefault("prefix_tools", {}).setdefault(
+                game_domain, {}
+            )
+            done[str(mod_id)] = {"at": int(time.time()), "changed": changed}
+            _save_settings(settings)
+            await _emit_progress(mod_id, "done", 100)
+        else:
+            await _emit_progress(mod_id, "error", 0, "tool failed")
+        return {
+            "ok": ok,
+            "changed": changed,
+            "timed_out": timed_out,
+            "rc": rc,
+            "output": tail,
+        }
+
+    async def get_prefix_tools_state(self, game_domain: str) -> dict:
+        done = _load_settings().get("prefix_tools", {}).get(game_domain, {})
+        return {"ok": True, "done": {int(k): True for k in done}}
 
     async def fix_prefix_runtime(self, app_id: int) -> dict:
         """Bring the game prefix's VC++ runtime up to the newest one any

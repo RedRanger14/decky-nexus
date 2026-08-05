@@ -2917,6 +2917,59 @@ class TestPrefixRuntime(unittest.TestCase):
         self.assertIn("launch the game once", result["error"])
 
 
+class TestProtonPicker(unittest.TestCase):
+    """run_prefix_tool must use the Proton release that OWNS the game's
+    prefix (compatdata/<id>/version), not whatever is newest."""
+
+    APP_ID = 999004
+
+    def setUp(self):
+        self.steam_root = os.path.join(
+            os.environ.get("DECKY_TEST_HOME", ""), ""
+        )
+        self.compat = os.path.join(
+            main.decky.DECKY_USER_HOME, ".steam", "steam", "steamapps",
+            "compatdata", str(self.APP_ID),
+        )
+        os.makedirs(self.compat, exist_ok=True)
+        self.proton11 = os.path.join(main.STEAM_COMMON, "Proton 11.0")
+        self.experimental = os.path.join(
+            main.STEAM_COMMON, "Proton - Experimental"
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.compat, ignore_errors=True)
+        shutil.rmtree(self.proton11, ignore_errors=True)
+        shutil.rmtree(self.experimental, ignore_errors=True)
+
+    def _mk_proton(self, dirpath):
+        os.makedirs(dirpath, exist_ok=True)
+        with open(os.path.join(dirpath, "proton"), "w") as f:
+            f.write("#!stub")
+
+    def test_prefers_prefix_owner(self):
+        with open(os.path.join(self.compat, "version"), "w") as f:
+            f.write("11.0-100\n")
+        self._mk_proton(self.proton11)
+        self._mk_proton(self.experimental)
+        proton, compat, _root, err = main._proton_binary_for(self.APP_ID)
+        self.assertEqual(err, "")
+        self.assertIn("Proton 11.0", proton)
+        self.assertEqual(compat, self.compat)
+
+    def test_falls_back_to_experimental(self):
+        with open(os.path.join(self.compat, "version"), "w") as f:
+            f.write("9.0-4\n")  # that release isn't installed
+        self._mk_proton(self.experimental)
+        proton, _c, _r, err = main._proton_binary_for(self.APP_ID)
+        self.assertEqual(err, "")
+        self.assertIn("Experimental", proton)
+
+    def test_no_proton_reports_cleanly(self):
+        _p, _c, _r, err = main._proton_binary_for(self.APP_ID)
+        self.assertIn("No Proton", err)
+
+
 class TestSeedGameIni(unittest.TestCase):
     """FO3's launcher hangs under Proton before creating FALLOUT.INI -
     seed it from the game's own Fallout_default.ini instead."""

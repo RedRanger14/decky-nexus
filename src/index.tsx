@@ -51,7 +51,9 @@ import {
   checkPluginMasters,
   disablePlugins,
   fixPrefixRuntime,
+  getPrefixToolsState,
   installFramework,
+  runPrefixTool,
   seedGameIni,
   markLaunchOptionsSet,
   resetGameModding,
@@ -411,6 +413,9 @@ function CurrentGameSection() {
   const [extraFwInstalled, setExtraFwInstalled] = useState<
     Record<string, boolean>
   >({});
+  // Prefix tools (FO3's exe patchers): applied-state + run progress.
+  const [toolsDone, setToolsDone] = useState<Record<number, boolean>>({});
+  const [toolsBusy, setToolsBusy] = useState<string | undefined>();
 
   const refreshStatus = () => {
     if (game) {
@@ -443,6 +448,11 @@ function CurrentGameSection() {
       if (game.framework || game.launcherBypass) {
         getFrameworkSetup(game.nexusDomain).then((r) =>
           setLaunchOptionsSet(Boolean(r.launch_options_set))
+        );
+      }
+      if (game.prefixTools) {
+        getPrefixToolsState(game.nexusDomain).then((r) =>
+          setToolsDone(r.done ?? {})
         );
       }
     }
@@ -985,6 +995,70 @@ function CurrentGameSection() {
               )}
             </PanelSectionRow>
           )}
+          {/* Step 3: prefix tools - exe patchers the scene depends on,
+              run inside the game's Proton prefix, one tap for all. */}
+          {game.prefixTools && status?.installed && (
+            <PanelSectionRow>
+              {game.prefixTools.every((t) => toolsDone[t.nexusModId]) ? (
+                <Field label="Step 3">
+                  Modding tools applied ✓ (
+                  {game.prefixTools.map((t) => t.name).join(", ")})
+                </Field>
+              ) : (
+                <ButtonItem
+                  label="Step 3"
+                  layout="below"
+                  disabled={toolsBusy !== undefined || firstRunNeeded}
+                  description={`Runs ${game.prefixTools
+                    .filter((t) => !toolsDone[t.nexusModId])
+                    .map((t) => t.name)
+                    .join(" and ")} inside the game's own environment. ${
+                    game.prefixTools[0].description
+                  }${firstRunNeeded ? " (Do Step 2 first.)" : ""}`}
+                  onClick={async () => {
+                    for (const tool of game.prefixTools!) {
+                      if (toolsDone[tool.nexusModId]) continue;
+                      setToolsBusy(`Running ${tool.name}…`);
+                      const r = await runPrefixTool(
+                        game.nexusDomain,
+                        tool.nexusModId,
+                        game.installDirName,
+                        game.appId,
+                        tool.exeHint ?? "",
+                        tool.avoidFileKeywords ?? [],
+                        tool.verifyChangedFiles,
+                        tool.timeoutSec ?? 180
+                      );
+                      toaster.toast(
+                        r.ok
+                          ? {
+                              title: `${tool.name} applied`,
+                              body: `Verified: ${(r.changed ?? []).join(", ")}`,
+                            }
+                          : {
+                              title: `${tool.name} failed`,
+                              body: r.error ?? r.output?.slice(-120) ?? "",
+                            }
+                      );
+                      if (r.ok) {
+                        setToolsDone((prev) => ({
+                          ...prev,
+                          [tool.nexusModId]: true,
+                        }));
+                      }
+                    }
+                    setToolsBusy(undefined);
+                  }}
+                >
+                  {toolsBusy ??
+                    `Apply modding tools (${
+                      game.prefixTools.filter((t) => !toolsDone[t.nexusModId])
+                        .length
+                    })`}
+                </ButtonItem>
+              )}
+            </PanelSectionRow>
+          )}
           {game.controllerNotice && status?.installed && (
             <PanelSectionRow>
               <ButtonItem
@@ -1014,7 +1088,10 @@ function CurrentGameSection() {
           )}
           <PanelSectionRow>
             {game.launcherBypass && status?.installed ? (
-              <Field label="Step 3" childrenLayout="below">
+              <Field
+                label={game.prefixTools ? "Step 4" : "Step 3"}
+                childrenLayout="below"
+              >
                 <OrangeActionButton
                   onClick={() => {
                     setBrowseGame(game);
@@ -1042,7 +1119,11 @@ function CurrentGameSection() {
           <PanelSectionRow>
             <ButtonItem
               label={
-                game.launcherBypass && status?.installed ? "Step 4" : undefined
+                game.launcherBypass && status?.installed
+                  ? game.prefixTools
+                    ? "Step 5"
+                    : "Step 4"
+                  : undefined
               }
               layout="below"
               description="Restarts are required for mods to take effect"
