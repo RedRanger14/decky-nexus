@@ -416,6 +416,26 @@ function CurrentGameSection() {
   // Prefix tools (FO3's exe patchers): applied-state + run progress.
   const [toolsDone, setToolsDone] = useState<Record<number, boolean>>({});
   const [toolsBusy, setToolsBusy] = useState<string | undefined>();
+  // Same visual language as the download rows: the button FILLS orange.
+  // No percentage exists for an exe patcher, so the fill tracks elapsed
+  // time against the tool's own budget - honest, and it always moves.
+  const [toolPct, setToolPct] = useState(0);
+  const toolClock = useRef<{ start: number; budgetMs: number } | undefined>(
+    undefined
+  );
+  useEffect(() => {
+    if (!toolsBusy) {
+      setToolPct(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      const c = toolClock.current;
+      if (!c) return;
+      const frac = (Date.now() - c.start) / c.budgetMs;
+      setToolPct(Math.min(97, Math.round(frac * 100)));
+    }, 400);
+    return () => clearInterval(timer);
+  }, [toolsBusy]);
 
   const refreshStatus = () => {
     if (game) {
@@ -1000,21 +1020,38 @@ function CurrentGameSection() {
           {game.prefixTools && status?.installed && (
             <PanelSectionRow>
               <style>{`
-                @keyframes nexusToolPulse {
-                  0%, 100% { filter: brightness(1); }
-                  50% { filter: brightness(1.5); }
-                }
-                .nexus-tool-running > div {
-                  animation: nexusToolPulse 1.4s ease-in-out infinite;
+                .nexus-tool-fill button,
+                .nexus-tool-fill .DialogButton {
+                  background: linear-gradient(90deg, rgba(218,142,53,0.55) var(--tool-pct), rgba(255,255,255,0.08) var(--tool-pct)) !important;
+                  color: #fff !important;
+                  transition: background 0.5s linear;
                 }
               `}</style>
-              {game.prefixTools.every((t) => toolsDone[t.nexusModId]) ? (
+              {game.prefixTools.some((t) => t.needsDesktopMode) &&
+              !game.prefixTools.every((t) => toolsDone[t.nexusModId]) ? (
+                <Field label="Step 3">
+                  ⚠ {game.displayName} needs{" "}
+                  {game.prefixTools.map((t) => t.name).join(" and ")} - these
+                  are Windows tools with their own windows, and launching them
+                  from Gaming Mode has frozen handhelds. Run them from Desktop
+                  Mode instead: download from Nexus Mods, unpack into the game
+                  folder next to the game exe, and run the patcher there.
+                  Everything else on this list works from here.
+                </Field>
+              ) : game.prefixTools.every((t) => toolsDone[t.nexusModId]) ? (
                 <Field label="Step 3">
                   Modding tools applied ✓ (
                   {game.prefixTools.map((t) => t.name).join(", ")})
                 </Field>
               ) : (
-                <div className={toolsBusy ? "nexus-tool-running" : undefined}>
+                <div
+                  className={toolsBusy ? "nexus-tool-fill" : undefined}
+                  style={
+                    toolsBusy
+                      ? ({ "--tool-pct": `${toolPct}%` } as React.CSSProperties)
+                      : undefined
+                  }
+                >
                 <ButtonItem
                   label="Step 3"
                   layout="below"
@@ -1030,6 +1067,11 @@ function CurrentGameSection() {
                   onClick={async () => {
                     for (const tool of game.prefixTools!) {
                       if (toolsDone[tool.nexusModId]) continue;
+                      toolClock.current = {
+                        start: Date.now(),
+                        budgetMs: (tool.timeoutSec ?? 180) * 1000,
+                      };
+                      setToolPct(0);
                       setToolsBusy(
                         `⚙ Running ${tool.name}… (up to ${Math.ceil(
                           (tool.timeoutSec ?? 180) / 60

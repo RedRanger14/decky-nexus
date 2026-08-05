@@ -130,6 +130,11 @@ export interface SupportedGame {
     name: string;
     nexusModId: number;
     description: string;
+    /** Set when the tool opens a window: running it under gamescope has
+     * frozen a device (Legion Go, 2026-08-05 - the compositor died with
+     * it). Such tools are shown as Desktop-Mode instructions instead of
+     * being launched from Gaming Mode. */
+    needsDesktopMode?: boolean;
     /** Substring picking the tool exe inside the archive */
     exeHint?: string;
     /** Skip download files whose name contains any of these */
@@ -437,6 +442,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       {
         name: "Fallout Anniversary Patcher",
         nexusModId: 24913, // verified live: MAIN v1.1
+        // Froze the Legion twice when launched under gamescope.
+        needsDesktopMode: true,
         description:
           "Patches the game exe: 4GB memory, crash fixes, and FOSE "
           + "support - the community's standard stability fix.",
@@ -448,6 +455,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       {
         name: "Unofficial Fallout 3 ESM Patcher",
         nexusModId: 25717, // verified live: paired EN/FR mains - avoid FR
+        needsDesktopMode: true,
         description:
           "Repairs errors inside the game's own master files - required "
           + "by the Updated Unofficial Fallout 3 Patch.",
