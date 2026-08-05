@@ -114,12 +114,18 @@ export interface SupportedGame {
   flatModExtensions?: string[];
   /** Shown at the top of the game panel until the given Documents-file
    * exists - for games that must run once before modding works (their
-   * launcher creates the activation config on first run). */
+   * launcher creates the activation config on first run). For
+   * launcherBypass games this renders as a "launch once" checklist Step
+   * instead of a banner. */
   firstRunNotice?: {
     message: string;
     /** Documents-relative file whose existence clears the notice */
     goneWhenDocsFile: string;
   };
+  /** Games whose built-in gamepad support is broken/removed (FO3 lost
+   * its when GFWL was excised): a persistent note telling the user how
+   * to play on controller. */
+  controllerNotice?: string;
   /** Launcher-selected modules (Bannerlord): activation lives in an XML
    * under Documents in the Proton prefix; module Ids come from each
    * module's SubModule.xml. */
@@ -365,10 +371,20 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     ],
     firstRunNotice: {
       message:
-        "Launch the game once first - it creates the config files mods " +
-        "need. Note: mods requiring FOSE aren't supported yet.",
-      goneWhenDocsFile: "My Games/Fallout3/FALLOUT.INI",
+        "Boot the game to the main menu once before installing mods - it "
+        + "finishes first-run setup and proves the launch fix works. Note: "
+        + "mods requiring FOSE aren't supported yet.",
+      // The game writes this on every real boot (FALLOUT.INI can't be
+      // the marker anymore - Step 1 seeds it).
+      goneWhenDocsFile: "My Games/Fallout3/RendererInfo.txt",
     },
+    // Bethesda's GFWL-removal update (2021) took the native 360-pad
+    // support with it - no ini or Steam Input toggle brings it back.
+    controllerNotice:
+      "Fallout 3 lost its built-in controller support when Microsoft's "
+      + "GFWL was removed from it. To play on controller: Steam button → "
+      + "Controller Settings → Controller Layouts → Community Layouts → "
+      + "pick a popular Fallout 3 keyboard-and-mouse layout.",
   },
   1030300: {
     appId: 1030300,

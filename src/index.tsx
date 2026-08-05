@@ -746,13 +746,18 @@ function CurrentGameSection() {
       {/* Framework games render a uniform numbered checklist: every step has
           a "Step N" heading; the content is a button while actionable and a
           plain ✓ line once done (one-time buttons disappear after use). */}
-      {firstRunNeeded && status?.installed && game.firstRunNotice && (
-        <PanelSectionRow>
-          <Field label="ℹ Before you mod">
-            {game.firstRunNotice.message}
-          </Field>
-        </PanelSectionRow>
-      )}
+      {/* launcherBypass games carry the first-run message as a checklist
+          Step instead of this banner. */}
+      {firstRunNeeded &&
+        status?.installed &&
+        game.firstRunNotice &&
+        !game.launcherBypass && (
+          <PanelSectionRow>
+            <Field label="ℹ Before you mod">
+              {game.firstRunNotice.message}
+            </Field>
+          </PanelSectionRow>
+        )}
       {game.protonRequired && status?.installed && nativeBuild && (
         <PanelSectionRow>
           <ButtonItem
@@ -953,9 +958,41 @@ function CurrentGameSection() {
               )}
             </PanelSectionRow>
           )}
+          {/* Step 2: prove the launch fix by booting to the main menu
+              once BEFORE mods go in - a clean baseline beats debugging
+              boot and mods at the same time. */}
+          {game.launcherBypass && status?.installed && game.firstRunNotice && (
+            <PanelSectionRow>
+              {firstRunNeeded ? (
+                <ButtonItem
+                  label="Step 2"
+                  layout="below"
+                  disabled={!launchOptionsSet}
+                  description={game.firstRunNotice.message}
+                  onClick={() => {
+                    restartGame(game.appId);
+                    // The marker file appears once the game reaches the
+                    // menu - re-check when the user comes back.
+                    setTimeout(refreshStatus, 15000);
+                  }}
+                >
+                  {gameIsRunning
+                    ? `Restart ${game.displayName} (vanilla)`
+                    : `Launch ${game.displayName} once (vanilla)`}
+                </ButtonItem>
+              ) : (
+                <Field label="Step 2">First vanilla boot done ✓</Field>
+              )}
+            </PanelSectionRow>
+          )}
+          {game.controllerNotice && status?.installed && (
+            <PanelSectionRow>
+              <Field label="🎮 Controller">{game.controllerNotice}</Field>
+            </PanelSectionRow>
+          )}
           <PanelSectionRow>
             {game.launcherBypass && status?.installed ? (
-              <Field label="Step 2" childrenLayout="below">
+              <Field label="Step 3" childrenLayout="below">
                 <OrangeActionButton
                   onClick={() => {
                     setBrowseGame(game);
@@ -982,6 +1019,9 @@ function CurrentGameSection() {
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
+              label={
+                game.launcherBypass && status?.installed ? "Step 4" : undefined
+              }
               layout="below"
               description="Restarts are required for mods to take effect"
               onClick={() => restartGame(game.appId)}
