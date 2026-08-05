@@ -122,6 +122,22 @@ export interface SupportedGame {
     /** Documents-relative file whose existence clears the notice */
     goneWhenDocsFile: string;
   };
+  /** Windows exe patchers this game's modding scene depends on (FO3's
+   * ESM Patcher, Anniversary Patcher): downloaded from Nexus Mods and
+   * run inside the game's Proton prefix by a one-tap checklist Step.
+   * Success is judged by the files each tool exists to modify. */
+  prefixTools?: Array<{
+    name: string;
+    nexusModId: number;
+    description: string;
+    /** Substring picking the tool exe inside the archive */
+    exeHint?: string;
+    /** Skip download files whose name contains any of these */
+    avoidFileKeywords?: string[];
+    /** Game-root-relative files whose change proves the tool worked */
+    verifyChangedFiles: string[];
+    timeoutSec?: number;
+  }>;
   /** Games whose built-in gamepad support is broken/removed (FO3 lost
    * its when GFWL was excised): a persistent note telling the user how
    * to play on controller. */
@@ -390,6 +406,40 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // the marker anymore - Step 1 seeds it).
       goneWhenDocsFile: "My Games/Fallout3/RendererInfo.txt",
     },
+    // Exe patchers the FO3 scene depends on, runnable in the prefix.
+    // Order matters: the Anniversary Patcher rewrites Fallout3.exe;
+    // the ESM Patcher then repairs the master files UF3P requires.
+    prefixTools: [
+      {
+        name: "Fallout Anniversary Patcher",
+        nexusModId: 24913, // verified live: MAIN v1.1
+        description:
+          "Patches the game exe: 4GB memory, crash fixes, and FOSE "
+          + "support - the community's standard stability fix.",
+        exeHint: "patcher",
+        avoidFileKeywords: ["ttw", "downgrader"],
+        verifyChangedFiles: ["Fallout3.exe"],
+        timeoutSec: 120,
+      },
+      {
+        name: "Unofficial Fallout 3 ESM Patcher",
+        nexusModId: 25717, // verified live: paired EN/FR mains - avoid FR
+        description:
+          "Repairs errors inside the game's own master files - required "
+          + "by the Updated Unofficial Fallout 3 Patch.",
+        exeHint: "patcher",
+        avoidFileKeywords: ["non officiel", "guide"],
+        verifyChangedFiles: [
+          "Data/Fallout3.esm",
+          "Data/Anchorage.esm",
+          "Data/ThePitt.esm",
+          "Data/BrokenSteel.esm",
+          "Data/PointLookout.esm",
+          "Data/Zeta.esm",
+        ],
+        timeoutSec: 300,
+      },
+    ],
     // Bethesda's GFWL-removal update (2021) took the native 360-pad
     // support with it - the game can ONLY be driven by keyboard/mouse,
     // so Steam Input must be enabled to translate the controller.

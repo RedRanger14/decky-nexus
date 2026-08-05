@@ -690,6 +690,35 @@ export const disablePlugins = callable<
   { ok: boolean; disabled?: number; error?: string }
 >("disable_plugins");
 
+// Downloads a Windows modding tool from Nexus Mods and runs it inside
+// the game's Proton prefix (exe patchers: FO3's ESM/Anniversary
+// patchers). Success = the files the tool exists to modify changed.
+export const runPrefixTool = callable<
+  [
+    game_domain: string,
+    mod_id: number,
+    install_dir: string,
+    app_id: number,
+    exe_hint: string,
+    avoid_file_keywords: string[],
+    verify_changed: string[],
+    timeout_sec: number
+  ],
+  {
+    ok: boolean;
+    changed?: string[];
+    timed_out?: boolean;
+    rc?: number;
+    output?: string;
+    error?: string;
+  }
+>("run_prefix_tool");
+
+export const getPrefixToolsState = callable<
+  [game_domain: string],
+  { ok: boolean; done?: Record<number, boolean> }
+>("get_prefix_tools_state");
+
 // Copies a game-dir default ini into the prefix Documents when missing
 // (FO3's launcher hangs under Proton before creating FALLOUT.INI).
 export const seedGameIni = callable<
