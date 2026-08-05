@@ -2,7 +2,12 @@
 // control is a slider (d-pad friendly), every risk is stated in plain
 // words next to the control that carries it. Values clamp server-side
 // too, so nothing here can wedge the backend.
-import { Focusable, ScrollPanelGroup, SliderField } from "@decky/ui";
+import {
+  DropdownItem,
+  Focusable,
+  ScrollPanelGroup,
+  SliderField,
+} from "@decky/ui";
 import { useEffect, useState } from "react";
 
 import { UserPrefs, getUserPrefs, setUserPrefs } from "./api";
@@ -16,7 +21,33 @@ const DEFAULTS: UserPrefs = {
   prefetch_window: 8,
   speed_cap_mbps: 0,
   min_free_gb: 5,
+  mod_language: "english",
 };
+
+// Tags verified live on the search index (2026-08-05). "english" is an
+// EXCLUSION mode: most mods are untagged originals, so requiring the
+// English tag would hide three quarters of the catalog.
+const LANGUAGE_OPTIONS: { value: string; label: string }[] = [
+  { value: "english", label: "English (hide translations)" },
+  { value: "all", label: "All languages" },
+  ...[
+    "French",
+    "German",
+    "Spanish",
+    "Italian",
+    "Russian",
+    "Polish",
+    "Portuguese",
+    "Mandarin",
+    "Japanese",
+    "Korean",
+    "Czech",
+    "Turkish",
+    "Ukrainian",
+    "Hungarian",
+    "Dutch",
+  ].map((l) => ({ value: l, label: `${l} (translations only)` })),
+];
 
 /** Section header: brand accent bar + title + one-line purpose. */
 function Section({
@@ -186,6 +217,22 @@ export function SettingsPage() {
                   The free-space floor below is your safety net.
                 </Caution>
               )}
+            </Section>
+
+            <Section title="Content" blurb="what the mod browser shows">
+              <DropdownItem
+                label="Mod language"
+                description="English hides mods tagged as translations. Picking a language shows ONLY mods tagged with it - handy for finding translations of your games."
+                menuLabel="Mod language"
+                rgOptions={LANGUAGE_OPTIONS.map((o) => ({
+                  data: o.value,
+                  label: o.label,
+                }))}
+                selectedOption={prefs.mod_language ?? "english"}
+                onChange={(opt: { data: string }) =>
+                  update({ mod_language: opt.data })
+                }
+              />
             </Section>
 
             <Section title="Bandwidth" blurb="be kind to the rest of your network">

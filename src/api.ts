@@ -627,6 +627,9 @@ export interface UserPrefs {
   speed_cap_mbps: number;
   /** Downloads pause when free disk falls below this many GB. */
   min_free_gb: number;
+  /** Browse language: 'english' hides tagged translations, 'all' shows
+   * everything, a specific tag (e.g. 'French') shows only those. */
+  mod_language: string;
 }
 
 export const getDiskUsage = callable<

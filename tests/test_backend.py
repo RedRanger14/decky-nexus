@@ -181,6 +181,30 @@ class TestModsQueryBuilder(unittest.TestCase):
         self.assertIn("op: WILDCARD", q)
         self.assertIn('value: "123"', q)
 
+    def test_language_english_excludes_tagged_translations(self):
+        # Most mods carry NO language tag - "english" must EXCLUDE the
+        # tagged translations, never REQUIRE the English tag (a strict
+        # filter hid three quarters of the catalog in live testing).
+        q = main._build_mods_query(with_search=False, language="english")
+        self.assertIn("languageName", q)
+        self.assertIn('{ value: "French", op: NOT_EQUALS }', q)
+        self.assertIn('{ value: "Mandarin", op: NOT_EQUALS }', q)
+        self.assertNotIn('{ value: "English"', q)
+
+    def test_language_specific_shows_only_that_tag(self):
+        q = main._build_mods_query(with_search=False, language="French")
+        self.assertIn('languageName: [{ value: "French" }]', q)
+
+    def test_language_all_adds_no_filter(self):
+        q = main._build_mods_query(with_search=False, language="all")
+        self.assertNotIn("languageName", q)
+
+    def test_mod_language_pref_validates(self):
+        self.assertEqual(main._valid_mod_language("French"), "French")
+        self.assertEqual(main._valid_mod_language("all"), "all")
+        self.assertEqual(main._valid_mod_language("Klingon"), "english")
+        self.assertEqual(main._valid_mod_language(None), "english")
+
     def test_adult_content_ignores_legacy_local_toggle(self):
         # UK OSA-class age-verification laws: the gate is account-driven
         # (site preference + platform verification, see TestContentGate).

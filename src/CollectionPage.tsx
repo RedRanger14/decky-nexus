@@ -81,6 +81,10 @@ export function CollectionPage() {
   const [attention, setAttention] = useState<AttentionItem[]>([]);
   const attentionRef = useRef<AttentionItem[]>([]);
   const [finishingFileId, setFinishingFileId] = useState<number | undefined>();
+  // Finish-setup progress: which item, how far - the button narrates it.
+  const [finishProgress, setFinishProgress] = useState<
+    { done: number; total: number; name: string } | undefined
+  >();
   // Records installed BY this collection (its slug) - drives Uninstall.
   const [ownedCount, setOwnedCount] = useState(0);
   // Uninstalling unmounts the focused button; without a stand-in the
@@ -580,14 +584,22 @@ export function CollectionPage() {
    * "next question please". */
   const finishSetup = async () => {
     if (!detail || finishingFileId !== undefined) return;
-    for (const item of [...actionable]) {
-      const outcome = await resolveAttentionItem(item);
-      if (outcome === "backout") break;
-      if (outcome === "installed") {
-        persistAttention(
-          attentionRef.current.filter((a) => a.file_id !== item.file_id)
-        );
+    const queue = [...actionable];
+    let done = 0;
+    try {
+      for (const item of queue) {
+        setFinishProgress({ done, total: queue.length, name: item.mod_name });
+        const outcome = await resolveAttentionItem(item);
+        if (outcome === "backout") break;
+        done++;
+        if (outcome === "installed") {
+          persistAttention(
+            attentionRef.current.filter((a) => a.file_id !== item.file_id)
+          );
+        }
       }
+    } finally {
+      setFinishProgress(undefined);
     }
     refreshInstalled();
   };
@@ -704,7 +716,12 @@ export function CollectionPage() {
         focusable={false}
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
-        <style>{PRIMARY_BUTTON_CSS}</style>
+        <style>{PRIMARY_BUTTON_CSS + `
+        @keyframes nexusFinishPulse {
+          0%, 100% { filter: brightness(1); }
+          50% { filter: brightness(1.45); }
+        }
+      `}</style>
         <Focusable style={{ display: "flex", gap: "18px", padding: "12px 0" }}>
           {collection.thumbnailUrl && (
             <img
@@ -768,10 +785,22 @@ export function CollectionPage() {
               className={BLUE_BUTTON_CLASS}
               disabled={finishingFileId !== undefined}
               onClick={finishSetup}
-              style={{ flexGrow: 1, minWidth: "200px" }}
+              style={{
+                flexGrow: 1,
+                minWidth: "200px",
+                animation:
+                  finishingFileId !== undefined
+                    ? "nexusFinishPulse 1.4s ease-in-out infinite"
+                    : undefined,
+              }}
             >
-              {finishingFileId !== undefined
-                ? "Finishing…"
+              {finishProgress
+                ? `⚙ Finishing ${finishProgress.name} (${Math.min(
+                    finishProgress.done + 1,
+                    finishProgress.total
+                  )}/${finishProgress.total})…`
+                : finishingFileId !== undefined
+                ? "⚙ Finishing…"
                 : `⚙ Finish setup (${actionable.length})`}
             </DialogButton>
           )}

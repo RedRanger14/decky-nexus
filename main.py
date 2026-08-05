@@ -90,18 +90,41 @@ MOD_FIELDS = """
 
 TRENDING_WINDOW_DAYS = 30
 
+# Language tags observed live on the v2 search index (2026-08-05). Most
+# mods carry NO tag (untagged = original/English uploads), so "english"
+# mode EXCLUDES the tagged translations rather than requiring the tag -
+# a strict English filter would hide three quarters of the catalog.
+MOD_LANGUAGES = (
+    "English", "French", "German", "Spanish", "Italian", "Russian",
+    "Polish", "Portuguese", "Mandarin", "Japanese", "Korean", "Czech",
+    "Turkish", "Ukrainian", "Hungarian", "Dutch",
+)
+
 
 def _build_mods_query(
-    with_search: bool, trending_since=None, include_adult: bool = False
+    with_search: bool,
+    trending_since=None,
+    include_adult: bool = False,
+    language: str = "",
 ) -> str:
     """Compose the browse query. WILDCARD does substring matching
     server-side; date filters take epoch seconds (verified - ISO datetimes
     break the backing Lucene query). 'Trending' = created within the window,
     sorted by downloads. Adult content is excluded unless the user opted
-    in (mirrors the site's default)."""
+    in (mirrors the site's default). language: 'english' excludes tagged
+    translations; a specific tag shows only those; ''/'all' = everything."""
     filters = ["gameDomainName: [{ value: $domain, op: EQUALS }]"]
     if not include_adult:
         filters.append("adultContent: [{ value: false }]")
+    if language == "english":
+        excl = " ".join(
+            '{ value: "%s", op: NOT_EQUALS }' % lang
+            for lang in MOD_LANGUAGES
+            if lang != "English"
+        )
+        filters.append(f"languageName: [{excl}]")
+    elif language and language != "all":
+        filters.append('languageName: [{ value: "%s" }]' % language)
     params = "$domain: String!, $count: Int!, $offset: Int!"
     if with_search:
         filters.append("name: [{ value: $search, op: WILDCARD }]")
@@ -2763,6 +2786,14 @@ USER_PREF_BOUNDS = {
 }
 
 
+def _valid_mod_language(value) -> str:
+    if value in ("english", "all"):
+        return value
+    if isinstance(value, str) and value in MOD_LANGUAGES:
+        return value
+    return "english"
+
+
 def _user_prefs() -> dict:
     stored = _load_settings().get("user_prefs") or {}
     prefs = {}
@@ -2772,6 +2803,7 @@ def _user_prefs() -> dict:
         except (TypeError, ValueError):
             value = default
         prefs[name] = max(lo, min(hi, value))
+    prefs["mod_language"] = _valid_mod_language(stored.get("mod_language"))
     return prefs
 
 
@@ -3124,7 +3156,10 @@ class Plugin:
             variables["search"] = search
         payload = {
             "query": _build_mods_query(
-                bool(search), trending_since, include_adult=_show_adult()
+                bool(search),
+                trending_since,
+                include_adult=_show_adult(),
+                language=_user_prefs()["mod_language"],
             ),
             "variables": variables,
         }
@@ -4048,6 +4083,8 @@ query Link($slug: String!, $domainName: String!) {
                     stored[name] = max(lo, min(hi, int(prefs[name])))
                 except (TypeError, ValueError):
                     pass
+        if "mod_language" in (prefs or {}):
+            stored["mod_language"] = _valid_mod_language(prefs["mod_language"])
         _save_settings(settings)
         merged = _user_prefs()
         decky.logger.info(f"user prefs updated: {merged}")
