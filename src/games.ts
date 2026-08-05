@@ -395,11 +395,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // so Steam Input must be enabled to translate the controller.
     controllerNotice:
       "Fallout 3 lost its built-in controller support when Microsoft's "
-      + "GFWL was removed. It only accepts keyboard/mouse now, so BOTH "
-      + "steps matter: 1) in the layout screen, set 'Steam Input' to "
-      + "ENABLED for your controller (external pads like 8BitDo often "
-      + "default to off - this is why layouts seem to do nothing), then "
-      + "2) pick a popular community keyboard-and-mouse layout.",
+      + "GFWL was removed - it only accepts keyboard/mouse now. In the "
+      + "layout screen: 1) set 'Steam Input' to ENABLED for your "
+      + "controller, 2) use TEMPLATES → 'Keyboard (WASD) and Mouse'. "
+      + "Avoid the community layouts: this game's popular ones are "
+      + "ancient legacy configs that show BLANK in today's Steam and "
+      + "don't apply.",
   },
   1030300: {
     appId: 1030300,
