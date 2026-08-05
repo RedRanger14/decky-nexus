@@ -981,21 +981,59 @@ def _stagger_plugin_mtimes(
     except OSError:
         return 0
     vanilla_lower = [v.lower() for v in vanilla]
+
+    def _topo(group: list) -> list:
+        """Stable dependency sort: mod plugins can master EACH OTHER
+        (Rebirth+ shipped an esm mastering another mod esm, and a patch
+        esp mastering another esp) - plugins.txt order alone produced
+        loads-before-master crashes on device. Cycles fall back to the
+        input order."""
+        idx = {n.lower(): i for i, n in enumerate(group)}
+        indeg = {n.lower(): 0 for n in group}
+        rev = {n.lower(): [] for n in group}
+        for n in group:
+            ms = _plugin_masters(os.path.join(data_path, n)) or []
+            for m in ms:
+                ml = m.lower()
+                if ml in idx and ml != n.lower():
+                    indeg[n.lower()] += 1
+                    rev[ml].append(n.lower())
+        ready = sorted(
+            [n for n in indeg if indeg[n] == 0], key=lambda x: idx[x]
+        )
+        out = []
+        while ready:
+            n = ready.pop(0)
+            out.append(n)
+            for d in rev[n]:
+                indeg[d] -= 1
+                if indeg[d] == 0:
+                    ready.append(d)
+                    ready.sort(key=lambda x: idx[x])
+        if len(out) != len(group):
+            return group
+        actual = {n.lower(): n for n in group}
+        return [actual[n] for n in out]
+
     esms = [
-        n for n in names
-        if n.lower().endswith(".esm") and n.lower() not in vanilla_lower
+        real[n.lower()] for n in names
+        if n.lower().endswith(".esm")
+        and n.lower() not in vanilla_lower
+        and n.lower() in real
     ]
-    esps = [n for n in names if not n.lower().endswith(".esm")]
-    ordered = vanilla + esms + esps
+    esps = [
+        real[n.lower()] for n in names
+        if not n.lower().endswith(".esm") and n.lower() in real
+    ]
+    ordered = [
+        real[v.lower()] for v in vanilla if v.lower() in real
+    ] + _topo(esms) + _topo(esps)
     base = time.time() - (len(ordered) + 10) * 60
     stamped = 0
-    for i, name in enumerate(ordered):
-        actual = real.get(name.lower())
-        if not actual:
-            continue
+    for i, actual_name in enumerate(ordered):
         t = base + i * 60
         try:
-            os.utime(os.path.join(data_path, actual), (t, t))
+            os.utime(os.path.join(data_path, actual_name), (t, t))
             stamped += 1
         except OSError:
             pass

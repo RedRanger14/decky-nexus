@@ -2971,6 +2971,31 @@ class TestPluginMtimeStagger(unittest.TestCase):
             os.path.getmtime(os.path.join(self.data, "Mod.esp")), 946684800
         )
 
+    def _seed_plugin(self, name, masters, mtime=946684800):
+        p = os.path.join(self.data, name)
+        with open(p, "wb") as f:
+            f.write(TestPluginMasters._fake_plugin(masters))
+        os.utime(p, (mtime, mtime))
+
+    def test_dependency_order_beats_list_order(self):
+        # Live case: a patch esp LISTED BEFORE the esp it masters, and a
+        # mod esm mastering another mod esm - plugins.txt order produced
+        # loads-before-master boot crashes.
+        self._seed_plugin("AWOP Patch.esp", ["Fairfax.esp"])
+        self._seed_plugin("Fairfax.esp", [])
+        self._seed_plugin("Ranger.esm", ["DCInteriors.esm"])
+        self._seed_plugin("DCInteriors.esm", [])
+        main._write_plugins_txt(
+            self.ptxt,
+            ["Ranger.esm", "DCInteriors.esm", "AWOP Patch.esp", "Fairfax.esp"],
+        )
+        main._stagger_plugin_mtimes(self.data, self.ptxt, "listed", "fallout3")
+        mt = lambda n: os.path.getmtime(os.path.join(self.data, n))
+        self.assertLess(mt("DCInteriors.esm"), mt("Ranger.esm"))
+        self.assertLess(mt("Fairfax.esp"), mt("AWOP Patch.esp"))
+        # esm block still precedes esp block
+        self.assertLess(mt("Ranger.esm"), mt("Fairfax.esp"))
+
 
 class TestProtonPicker(unittest.TestCase):
     """run_prefix_tool must use the Proton release that OWNS the game's
