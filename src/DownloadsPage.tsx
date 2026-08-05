@@ -24,7 +24,7 @@ import {
   subscribeCollectionRun,
   subscribeDownloads,
 } from "./state";
-import { getModDetails } from "./api";
+import { getDiskUsage, getModDetails } from "./api";
 import { getSupportedGame } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
@@ -181,6 +181,77 @@ async function openDownloadTarget(
     setDetailOrigin("browse"); // B returns here, not to the QAM
     Navigation.Navigate("/nexus-mods/mod");
   }
+}
+
+/** Disk gauge: used-space bar with the free-space floor marked. Pairs
+ * with the speed graph top-right; refreshed while the page is open. */
+function DiskGauge({
+  totalGb,
+  freeGb,
+  minFreeGb,
+}: {
+  totalGb: number;
+  freeGb: number;
+  minFreeGb: number;
+}) {
+  const W = 180;
+  const H = 44;
+  const usedFrac = totalGb > 0 ? (totalGb - freeGb) / totalGb : 0;
+  const floorFrac = totalGb > 0 ? 1 - minFreeGb / totalGb : 1;
+  const nearFloor = freeGb <= minFreeGb * 2;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        gap: "2px",
+        flexShrink: 0,
+      }}
+    >
+      <svg
+        width={W}
+        height={H}
+        style={{ background: "rgba(255,255,255,0.05)", borderRadius: "4px" }}
+      >
+        <rect
+          x={0}
+          y={H / 2 - 7}
+          width={W}
+          height={14}
+          rx={4}
+          fill="rgba(255,255,255,0.10)"
+        />
+        <rect
+          x={0}
+          y={H / 2 - 7}
+          width={Math.max(2, usedFrac * W)}
+          height={14}
+          rx={4}
+          fill={nearFloor ? "#e05c5c" : "rgba(218,142,53,0.85)"}
+        />
+        {/* the min-free floor: downloads stop past this line */}
+        <line
+          x1={floorFrac * W}
+          x2={floorFrac * W}
+          y1={H / 2 - 11}
+          y2={H / 2 + 11}
+          stroke="#e05c5c"
+          strokeWidth={1.5}
+          strokeDasharray="3,2"
+        />
+      </svg>
+      <span
+        style={{
+          fontSize: "12px",
+          opacity: 0.85,
+          color: nearFloor ? "#e05c5c" : undefined,
+        }}
+      >
+        {freeGb >= 100 ? Math.round(freeGb) : freeGb.toFixed(1)} GB free
+      </span>
+    </div>
+  );
 }
 
 /** The collection in flight IS the page's centerpiece: blurred cover art
@@ -352,9 +423,23 @@ function CollectionHero({
 
 export function DownloadsPage() {
   const [, force] = useState(0);
+  const [disk, setDisk] = useState<
+    { totalGb: number; freeGb: number; minFreeGb: number } | undefined
+  >();
   useEffect(() => {
     const un1 = subscribeDownloads(() => force((n) => n + 1));
     const un2 = subscribeCollectionRun(() => force((n) => n + 1));
+    const pollDisk = () =>
+      getDiskUsage().then((r) => {
+        if (r.ok)
+          setDisk({
+            totalGb: r.total_gb ?? 0,
+            freeGb: r.free_gb ?? 0,
+            minFreeGb: r.min_free_gb ?? 5,
+          });
+      });
+    pollDisk();
+    const diskTimer = setInterval(pollDisk, 3000);
     // 250ms tick: records idle samples (event-driven sampling only fires
     // while bytes flow) and keeps the graph/ETA visibly live.
     const timer = setInterval(() => {
@@ -365,6 +450,7 @@ export function DownloadsPage() {
       un1();
       un2();
       clearInterval(timer);
+      clearInterval(diskTimer);
     };
   }, []);
 
@@ -418,7 +504,16 @@ export function DownloadsPage() {
           }}
         >
           <h2 style={{ margin: 0 }}>Downloads</h2>
-          <SpeedGraph samples={speedSamples} current={getAggregateBps()} />
+          <div style={{ display: "flex", gap: "14px" }}>
+            {disk && (
+              <DiskGauge
+                totalGb={disk.totalGb}
+                freeGb={disk.freeGb}
+                minFreeGb={disk.minFreeGb}
+              />
+            )}
+            <SpeedGraph samples={speedSamples} current={getAggregateBps()} />
+          </div>
         </div>
 
         {run && (

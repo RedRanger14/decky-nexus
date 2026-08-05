@@ -3086,21 +3086,24 @@ class TestPakPatchChain(unittest.TestCase):
         self.assertTrue(main.RE4_PAK_RE.match("re_chunk_000.pak.patch_004.pak"))
         self.assertFalse(main.RE4_PAK_RE.match("re_chunk_000.pak"))
 
-    def test_payload_discovery_paks_and_natives(self):
+    def test_payload_discovery_paks_natives_reframework(self):
         scratch = os.path.join(self.root, "scratch")
         for rel in (
             "OptionA/moda.pak",
             "OptionB/modb.pak",
             "wrapper/natives/STM/tex.tex.724",
+            "wrapper2/reframework/autorun/health_bars.lua",
         ):
             path = os.path.join(scratch, *rel.split("/"))
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "wb") as f:
                 f.write(b"x")
-        paks, natives = main._pakpatch_payload(scratch)
+        paks, natives, refs = main._pakpatch_payload(scratch)
         self.assertEqual([os.path.basename(p) for p in paks], ["moda.pak", "modb.pak"])
         self.assertEqual(len(natives), 1)
         self.assertTrue(natives[0].endswith("natives"))
+        self.assertEqual(len(refs), 1)
+        self.assertTrue(refs[0].endswith("reframework"))
 
     def test_ensure_config_key(self):
         cfg = os.path.join(self.root, "re4_fw_config.txt")
