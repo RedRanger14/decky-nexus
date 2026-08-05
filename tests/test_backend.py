@@ -2893,6 +2893,48 @@ class TestPrefixRuntime(unittest.TestCase):
         self.assertIn("launch the game once", result["error"])
 
 
+class TestUserPrefs(unittest.TestCase):
+    """Settings-tab values clamp server-side: a hand-edited settings.json
+    can't produce a 50-way download stampede or a zero disk floor."""
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.plugin = main.Plugin()
+
+    def test_defaults(self):
+        prefs = main._user_prefs()
+        self.assertEqual(prefs["parallel_downloads"], 4)
+        self.assertEqual(prefs["prefetch_window"], 8)
+        self.assertEqual(prefs["speed_cap_mbps"], 0)
+        self.assertEqual(prefs["min_free_gb"], 5)
+
+    def test_set_clamps_to_bounds(self):
+        result = run(
+            self.plugin.set_user_prefs(
+                {"parallel_downloads": 99, "speed_cap_mbps": -5, "min_free_gb": 2}
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["prefs"]["parallel_downloads"], 8)
+        self.assertEqual(result["prefs"]["speed_cap_mbps"], 0)
+        self.assertEqual(result["prefs"]["min_free_gb"], 2)
+
+    def test_junk_values_ignored(self):
+        run(self.plugin.set_user_prefs({"prefetch_window": "junk", "bogus": 1}))
+        prefs = main._user_prefs()
+        self.assertEqual(prefs["prefetch_window"], 8)
+        self.assertNotIn("bogus", prefs)
+
+    def test_hand_edited_settings_clamped_on_read(self):
+        settings = main._load_settings()
+        settings["user_prefs"] = {"parallel_downloads": 500, "min_free_gb": 0}
+        main._save_settings(settings)
+        prefs = main._user_prefs()
+        self.assertEqual(prefs["parallel_downloads"], 8)
+        self.assertEqual(prefs["min_free_gb"], 1)
+
+
 class TestPakPatchChain(unittest.TestCase):
     """RE Engine (RE4 remake) loads re_chunk_000.pak.patch_XXX.pak
     sequentially from the game root - a gap breaks everything past it.

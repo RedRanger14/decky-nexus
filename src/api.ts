@@ -618,6 +618,27 @@ export const checkGameFile = callable<
   { ok: boolean; exists?: boolean; error?: string }
 >("check_game_file");
 
+export interface UserPrefs {
+  /** Concurrent collection downloads (1-8, default 4). */
+  parallel_downloads: number;
+  /** Archives buffered ahead of the serial installer (2-16, default 8). */
+  prefetch_window: number;
+  /** Total download cap in MB/s shared across streams; 0 = unlimited. */
+  speed_cap_mbps: number;
+  /** Downloads pause when free disk falls below this many GB. */
+  min_free_gb: number;
+}
+
+export const getUserPrefs = callable<
+  [],
+  { ok: boolean; prefs?: UserPrefs; error?: string }
+>("get_user_prefs");
+
+export const setUserPrefs = callable<
+  [prefs: Partial<UserPrefs>],
+  { ok: boolean; prefs?: UserPrefs; error?: string }
+>("set_user_prefs");
+
 // Downloads a mod file into the archive cache without installing - the
 // collection pipeline runs several concurrently ahead of the serial
 // installer so the network never idles during extract/install.
