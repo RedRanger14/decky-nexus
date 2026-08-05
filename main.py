@@ -614,6 +614,9 @@ DATA_MARKER_DIRS = {
     # for want of these, 2026-08-04): script-extender plugin trees,
     # loose shaders, XML menus, and the Data/config ini convention.
     "nvse", "fose", "f4se", "shaders", "menus", "config", "mcm",
+    # TTW-run stragglers (2026-08-05): .bik movie replacers live in
+    # Data/Video; kNVSE-era keyword configs in Data/keywords.
+    "video", "keywords",
 }
 
 
@@ -996,11 +999,31 @@ def _route_ue4ss_payload(
     return {"mode": "folder", "target": ue4ss_subdir, "folder": folder}
 
 
+def _mo2_payload(path: str):
+    """Mod Organizer 2 exports mark their payload root with a meta.ini:
+    the directory CONTAINING it maps 1:1 onto Data/ (seen live: 'Tweaks
+    for TTW - Helmet Overlays Patch' = wrapper/meta.ini + a config
+    folder). The metadata file itself is dropped so it never lands in
+    the game."""
+    try:
+        for name in os.listdir(path):
+            if name.lower() == "meta.ini":
+                try:
+                    os.remove(os.path.join(path, name))
+                except OSError:
+                    pass
+                return path
+    except OSError:
+        pass
+    return None
+
+
 def _find_data_payload(scratch: str):
     """Locate the directory whose contents belong in Data/. Handles flat
     archives, a wrapping folder (loose readme-type files beside it are
-    ignored), and an explicit Data/ folder (up to two levels). Returns None
-    for unrecognizable layouts (e.g. FOMOD-only)."""
+    ignored), an explicit Data/ folder (up to two levels), and MO2
+    exports (meta.ini marks the payload root). Returns None for
+    unrecognizable layouts (e.g. FOMOD-only)."""
     if _looks_like_data(scratch):
         return scratch
     entries = os.listdir(scratch)
@@ -1008,6 +1031,8 @@ def _find_data_payload(scratch: str):
     for d in dirs:
         if d.lower() == "data":
             return os.path.join(scratch, d)
+    if _mo2_payload(scratch):
+        return scratch
     if len(dirs) == 1:
         inner = os.path.join(scratch, dirs[0])
         if _looks_like_data(inner):
@@ -1018,6 +1043,8 @@ def _find_data_payload(scratch: str):
         for d in inner_dirs:
             if d.lower() == "data":
                 return os.path.join(inner, d)
+        if _mo2_payload(inner):
+            return inner
         if len(inner_dirs) == 1:
             deep = os.path.join(inner, inner_dirs[0])
             if _looks_like_data(deep):
