@@ -2674,6 +2674,70 @@ async def _emit_progress(
     await decky.emit("install_progress", payload)
 
 
+# ---- User preferences (Settings tab) ---------------------------------------
+# Clamped server-side so a hand-edited settings.json can't produce a
+# 50-way download stampede or a zero-byte disk floor.
+
+USER_PREF_BOUNDS = {
+    # name: (default, min, max)
+    "parallel_downloads": (4, 1, 8),
+    "prefetch_window": (8, 2, 16),
+    "speed_cap_mbps": (0, 0, 200),  # 0 = unlimited
+    "min_free_gb": (5, 1, 50),
+}
+
+
+def _user_prefs() -> dict:
+    stored = _load_settings().get("user_prefs") or {}
+    prefs = {}
+    for name, (default, lo, hi) in USER_PREF_BOUNDS.items():
+        try:
+            value = int(stored.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        prefs[name] = max(lo, min(hi, value))
+    return prefs
+
+
+# Global token bucket shared by every concurrent download - N parallel
+# streams split the cap instead of each taking it.
+_throttle_state = {"last": 0.0, "allowance": 0.0}
+_throttle_lock = None  # created lazily on the running loop
+
+
+async def _throttle(nbytes: int, cap_bytes: float) -> None:
+    if cap_bytes <= 0:
+        return
+    global _throttle_lock
+    if _throttle_lock is None:
+        _throttle_lock = asyncio.Lock()
+    async with _throttle_lock:
+        now = time.monotonic()
+        st = _throttle_state
+        if st["last"]:
+            st["allowance"] = min(
+                cap_bytes, st["allowance"] + (now - st["last"]) * cap_bytes
+            )
+        else:
+            st["allowance"] = cap_bytes
+        st["last"] = now
+        if nbytes > st["allowance"]:
+            wait = (nbytes - st["allowance"]) / cap_bytes
+            st["allowance"] = 0.0
+        else:
+            st["allowance"] -= nbytes
+            wait = 0.0
+    if wait > 0:
+        await asyncio.sleep(min(wait, 5.0))
+
+
+def _free_disk_gb(path: str) -> float:
+    try:
+        return shutil.disk_usage(path).free / (1 << 30)
+    except OSError:
+        return float("inf")
+
+
 def _archive_cache_path(mod_id: int, file_id: int, file_name: str) -> str:
     """Local archive path for a mod file. Built from ids so non-ASCII
     upstream filenames can't produce a broken local path; bsdtar detects
@@ -2764,7 +2828,18 @@ async def _download_archive(
     if not uri:
         return "Nexus Mods returned a malformed download link", ""
 
+    prefs = _user_prefs()
+    cap_bytes = prefs["speed_cap_mbps"] * (1 << 20)
+    min_free = prefs["min_free_gb"]
+    if _free_disk_gb(DOWNLOADS_DIR) < min_free:
+        return (
+            f"Low disk space (under {min_free} GB free) - free some space "
+            "or lower the minimum in Settings",
+            "",
+        )
+
     part_path = archive_path + ".part"
+    disk_low = False
     await _emit_progress(mod_id, "downloading", 0)
     for cdn_attempt in range(2):
       if cdn_attempt:
@@ -2788,10 +2863,18 @@ async def _download_archive(
                 last_t = time.monotonic()
                 last_done = 0
                 ema_bps = 0.0
+                chunk_count = 0
                 with open(part_path, "wb") as out:
                     async for chunk in resp.content.iter_chunked(1 << 20):
                         out.write(chunk)
                         done += len(chunk)
+                        await _throttle(len(chunk), cap_bytes)
+                        chunk_count += 1
+                        if chunk_count % 256 == 0 and (
+                            _free_disk_gb(DOWNLOADS_DIR) < min_free
+                        ):
+                            disk_low = True
+                            break
                         now = time.monotonic()
                         pct = int(done * 100 / total) if total else 0
                         if pct > last_pct or now - last_t >= 0.5:
@@ -2813,6 +2896,17 @@ async def _download_archive(
                                 bytes_total=total or None,
                                 bps=ema_bps,
                             )
+        if disk_low:
+            try:
+                os.remove(part_path)
+            except OSError:
+                pass
+            return (
+                f"Low disk space (under {min_free} GB free) - download "
+                "stopped safely; free space or lower the minimum in "
+                "Settings",
+                "",
+            )
         os.replace(part_path, archive_path)
         return "", archive_path
       except (aiohttp.ClientError, asyncio.TimeoutError) as e:
@@ -3848,6 +3942,25 @@ query Link($slug: String!, $domainName: String!) {
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
             await _emit_progress(mod_id, "error", 0, str(e))
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def get_user_prefs(self) -> dict:
+        return {"ok": True, "prefs": _user_prefs()}
+
+    async def set_user_prefs(self, prefs: dict) -> dict:
+        """Store Settings-tab values. Unknown keys are ignored; known
+        ones clamp to their bounds (see USER_PREF_BOUNDS)."""
+        settings = _load_settings()
+        stored = settings.setdefault("user_prefs", {})
+        for name, (default, lo, hi) in USER_PREF_BOUNDS.items():
+            if name in (prefs or {}):
+                try:
+                    stored[name] = max(lo, min(hi, int(prefs[name])))
+                except (TypeError, ValueError):
+                    pass
+        _save_settings(settings)
+        merged = _user_prefs()
+        decky.logger.info(f"user prefs updated: {merged}")
+        return {"ok": True, "prefs": merged}
 
     async def prefetch_mod_file(
         self,

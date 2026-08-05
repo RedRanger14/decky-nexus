@@ -17,6 +17,7 @@ export const TABS: TabDef[] = [
   { id: "downloads", label: "Downloads", route: "/nexus-mods/downloads" },
   { id: "manager", label: "My Mods", route: "/nexus-mods/manager" },
   { id: "updates", label: "Updates", route: "/nexus-mods/updates" },
+  { id: "settings", label: "Settings", route: "/nexus-mods/settings" },
 ];
 
 // Every tab switch PUSHES a page onto Steam's nav stack - exiting to the

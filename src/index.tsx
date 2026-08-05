@@ -157,6 +157,7 @@ import { CollectionPage } from "./CollectionPage";
 import { DownloadsPage } from "./DownloadsPage";
 import { ModDetailPage } from "./ModDetailPage";
 import { ManagerPage } from "./ManagerPage";
+import { SettingsPage } from "./SettingsPage";
 import { UpdatesPage } from "./UpdatesPage";
 import { scanUpdates } from "./updates";
 
@@ -184,6 +185,7 @@ const COLLECTION_ROUTE = "/nexus-mods/collection";
 const DOWNLOADS_ROUTE = "/nexus-mods/downloads";
 const UPDATES_ROUTE = "/nexus-mods/updates";
 const MANAGER_ROUTE = "/nexus-mods/manager";
+const SETTINGS_ROUTE = "/nexus-mods/settings";
 
 interface BackendInfo {
   user: string;
@@ -2064,6 +2066,21 @@ function Content() {
       ) : (
         <AllInstalledModsSection />
       )}
+      <PanelSection>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            description="Download pipeline, bandwidth and disk safety"
+            onClick={() => {
+              resetTabStack();
+              Navigation.Navigate(SETTINGS_ROUTE);
+              Navigation.CloseSideMenus();
+            }}
+          >
+            ⚙ Plugin Settings
+          </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
       <AccountSection />
       <DevSection />
     </>
@@ -2079,6 +2096,7 @@ export default definePlugin(() => {
   routerHook.addRoute(DOWNLOADS_ROUTE, DownloadsPage, { exact: true });
   routerHook.addRoute(UPDATES_ROUTE, UpdatesPage, { exact: true });
   routerHook.addRoute(MANAGER_ROUTE, ManagerPage, { exact: true });
+  routerHook.addRoute(SETTINGS_ROUTE, SettingsPage, { exact: true });
 
   // Feed the QAM Downloads section from anywhere in the UI.
   const progressListener = addEventListener<[p: InstallProgress]>(
@@ -2114,6 +2132,7 @@ export default definePlugin(() => {
       routerHook.removeRoute(DOWNLOADS_ROUTE);
       routerHook.removeRoute(UPDATES_ROUTE);
       routerHook.removeRoute(MANAGER_ROUTE);
+      routerHook.removeRoute(SETTINGS_ROUTE);
       removeEventListener("backend_event", listener);
       removeEventListener("install_progress", progressListener);
     },

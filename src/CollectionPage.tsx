@@ -21,6 +21,7 @@ import {
   NexusMod,
   getCollection,
   getCollectionAttention,
+  getUserPrefs,
   getCollectionManifest,
   getInstalledMods,
   getModDetails,
@@ -262,8 +263,9 @@ export function CollectionPage() {
       // to 4 files in parallel, never more than 8 ahead of the installer
       // (bounds disk usage to a handful of archives). The installer's own
       // download step then hits the backend's archive cache instantly.
-      const PREFETCH_PARALLEL = 4;
-      const PREFETCH_WINDOW = 8;
+      const prefs = await getUserPrefs().catch(() => undefined);
+      const PREFETCH_PARALLEL = prefs?.prefs?.parallel_downloads ?? 4;
+      const PREFETCH_WINDOW = prefs?.prefs?.prefetch_window ?? 8;
       let installIndex = 0;
       let nextPrefetch = 0;
       const inflight = new Map<number, Promise<void>>();
