@@ -394,13 +394,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // support with it - the game can ONLY be driven by keyboard/mouse,
     // so Steam Input must be enabled to translate the controller.
     controllerNotice:
-      "Fallout 3 lost its built-in controller support when Microsoft's "
-      + "GFWL was removed - it only accepts keyboard/mouse now. In the "
-      + "layout screen: 1) set 'Steam Input' to ENABLED for your "
-      + "controller, 2) use TEMPLATES → 'Keyboard (WASD) and Mouse'. "
-      + "Avoid the community layouts: this game's popular ones are "
-      + "ancient legacy configs that show BLANK in today's Steam and "
-      + "don't apply.",
+      "Fallout 3's controller support is broken since GFWL was removed. "
+      + "In the layout screen: 1) set 'Steam Input' to ENABLED for your "
+      + "controller, 2) use TEMPLATES → 'Gamepad' (verified working on "
+      + "device). Avoid community layouts - this game's popular ones are "
+      + "legacy configs that show BLANK in today's Steam. Quirk: the "
+      + "layout sometimes drops after a game restart - re-apply it.",
   },
   1030300: {
     appId: 1030300,

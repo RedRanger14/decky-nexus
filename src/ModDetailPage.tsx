@@ -145,7 +145,10 @@ export function ModDetailPage() {
     if (sel) loadAll(sel);
     const listener = addEventListener<[p: InstallProgress]>(
       "install_progress",
-      (p) => setProgress(p)
+      // Only THIS mod's events - background pipeline events for other
+      // mods made the install button flicker downloading<->installing.
+      (p) =>
+        setProgress((prev) => (p.mod_id === sel?.mod.modId ? p : prev))
     );
     return () => removeEventListener("install_progress", listener);
   }, []);
