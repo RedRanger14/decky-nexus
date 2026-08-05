@@ -1014,11 +1014,17 @@ function CurrentGameSection() {
                     .map((t) => t.name)
                     .join(" and ")} inside the game's own environment. ${
                     game.prefixTools[0].description
-                  }${firstRunNeeded ? " (Do Step 2 first.)" : ""}`}
+                  } Takes a few minutes - Steam may close this menu while a tool's window flashes up; reopen it to see the result.${
+                    firstRunNeeded ? " (Do Step 2 first.)" : ""
+                  }`}
                   onClick={async () => {
                     for (const tool of game.prefixTools!) {
                       if (toolsDone[tool.nexusModId]) continue;
-                      setToolsBusy(`Running ${tool.name}…`);
+                      setToolsBusy(
+                        `⚙ Running ${tool.name}… (up to ${Math.ceil(
+                          (tool.timeoutSec ?? 180) / 60
+                        )} min)`
+                      );
                       const r = await runPrefixTool(
                         game.nexusDomain,
                         tool.nexusModId,
