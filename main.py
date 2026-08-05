@@ -947,6 +947,61 @@ def _enabled_plugins(path: str, style: str) -> list:
     return names
 
 
+# Timestamp-ordered games (FO3/FNV): the engine loads ESMs then ESPs by
+# file MTIME, not plugins.txt order. These must load first, in this order.
+VANILLA_MASTERS_BY_DOMAIN = {
+    "fallout3": [
+        "Fallout3.esm", "Anchorage.esm", "ThePitt.esm",
+        "BrokenSteel.esm", "PointLookout.esm", "Zeta.esm",
+    ],
+    "newvegas": [
+        "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm",
+        "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm",
+        "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm",
+        "CaravanPack.esm",
+    ],
+}
+
+
+def _stagger_plugin_mtimes(
+    data_path: str, plugins_txt_path: str, style: str, game_domain: str
+) -> int:
+    """FO3/FNV load order = plugin file TIMESTAMPS. Archive-extracted
+    mods carry arbitrary mtimes (a Jan-2000 ESM loaded BEFORE its own
+    master on device - guaranteed boot crash). Restamp every enabled
+    plugin: vanilla masters first in canonical order, then mod ESMs,
+    then ESPs, one minute apart, all in the past so future installs
+    naturally land after. Returns how many were stamped."""
+    if style != "listed":
+        return 0
+    vanilla = VANILLA_MASTERS_BY_DOMAIN.get(game_domain) or []
+    names = _enabled_plugins(plugins_txt_path, style)
+    try:
+        real = {n.lower(): n for n in os.listdir(data_path)}
+    except OSError:
+        return 0
+    vanilla_lower = [v.lower() for v in vanilla]
+    esms = [
+        n for n in names
+        if n.lower().endswith(".esm") and n.lower() not in vanilla_lower
+    ]
+    esps = [n for n in names if not n.lower().endswith(".esm")]
+    ordered = vanilla + esms + esps
+    base = time.time() - (len(ordered) + 10) * 60
+    stamped = 0
+    for i, name in enumerate(ordered):
+        actual = real.get(name.lower())
+        if not actual:
+            continue
+        t = base + i * 60
+        try:
+            os.utime(os.path.join(data_path, actual), (t, t))
+            stamped += 1
+        except OSError:
+            pass
+    return stamped
+
+
 def _add_plugins(path: str, names: list, style: str = "starred") -> None:
     """Activate plugins. 'starred' (SSE/FO4): '*Name.esp' lines; 'listed'
     (FNV/FO3/Oldrim): a plugin's bare presence in the file activates it."""
@@ -4482,10 +4537,12 @@ query Link($slug: String!, $domainName: String!) {
             if not files_rel:
                 return {"ok": False, "error": "Archive contained no files"}
             if plugins and plugins_subpath:
-                _add_plugins(
-                    _plugins_txt_path(app_id, plugins_subpath),
-                    plugins,
-                    plugins_style,
+                ptxt = _plugins_txt_path(app_id, plugins_subpath)
+                _add_plugins(ptxt, plugins, plugins_style)
+                # FO3/FNV: load order = file timestamps; restamp so a
+                # Jan-2000 archive mtime can't load before its master.
+                _stagger_plugin_mtimes(
+                    mods_path, ptxt, plugins_style, game_domain
                 )
             record_key = _safe_name(mod_name)
             settings = _load_settings()  # re-read: parallel installs
@@ -5179,12 +5236,13 @@ query Link($slug: String!, $domainName: String!) {
                         plugins.append(rel)
             _force_rmtree(scratch)
             if plugins and entry["plugins_subpath"]:
-                _add_plugins(
-                    _plugins_txt_path(
-                        entry["app_id"], entry["plugins_subpath"]
-                    ),
-                    plugins,
-                    entry["plugins_style"],
+                ptxt = _plugins_txt_path(
+                    entry["app_id"], entry["plugins_subpath"]
+                )
+                _add_plugins(ptxt, plugins, entry["plugins_style"])
+                _stagger_plugin_mtimes(
+                    mods_path, ptxt, entry["plugins_style"],
+                    entry["game_domain"],
                 )
             record_key = _safe_name(entry["mod_name"])
             settings = _load_settings()
@@ -5409,15 +5467,24 @@ query Link($slug: String!, $domainName: String!) {
             except OSError:
                 before[rel] = None
 
-        # The backend runs as root; Proton must run as the deck user or
-        # it litters the prefix with root-owned files.
-        cmd = [
-            "runuser", "-u", "deck", "--", "env",
-            f"STEAM_COMPAT_CLIENT_INSTALL_PATH={steam_root}",
-            f"STEAM_COMPAT_DATA_PATH={compat}",
-            "python3", proton, "run",
-            os.path.join(install_path, *exe_rel.split("/")),
-        ]
+        # Proton must run as the deck user. The backend normally IS deck
+        # (runuser refused with "may not be used by non-root users" on
+        # device) - only drop privileges when actually root.
+        exe_abs = os.path.join(install_path, *exe_rel.split("/"))
+        run_env = {
+            **os.environ,
+            "STEAM_COMPAT_CLIENT_INSTALL_PATH": steam_root,
+            "STEAM_COMPAT_DATA_PATH": compat,
+        }
+        if getattr(os, "geteuid", lambda: 1000)() == 0:
+            cmd = [
+                "runuser", "-u", "deck", "--", "env",
+                f"STEAM_COMPAT_CLIENT_INSTALL_PATH={steam_root}",
+                f"STEAM_COMPAT_DATA_PATH={compat}",
+                "python3", proton, "run", exe_abs,
+            ]
+        else:
+            cmd = ["python3", proton, "run", exe_abs]
         decky.logger.info(
             f"prefix tool {game_domain}/{mod_id}: running {exe_rel!r} "
             f"via {os.path.basename(os.path.dirname(proton))!r}"
@@ -5430,6 +5497,7 @@ query Link($slug: String!, $domainName: String!) {
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=install_path,
+                env=run_env,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
