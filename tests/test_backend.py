@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import types
 import unittest
 import zipfile
@@ -2915,6 +2916,60 @@ class TestPrefixRuntime(unittest.TestCase):
         result = run(self.plugin.fix_prefix_runtime(424242))
         self.assertFalse(result["ok"])
         self.assertIn("launch the game once", result["error"])
+
+
+class TestPluginMtimeStagger(unittest.TestCase):
+    """FO3/FNV load plugins by file TIMESTAMP. A mod ESM extracted with a
+    Jan-2000 archive mtime loaded before its own master on device and the
+    game refused to boot. Restamp: vanilla masters first (canonical
+    order, regardless of plugins.txt order), mod esms, then esps."""
+
+    def setUp(self):
+        self.data = tempfile.mkdtemp(prefix="stagger-", dir=TEST_ROOT)
+        self.ptxt = os.path.join(self.data, "Plugins.txt")
+
+    def tearDown(self):
+        shutil.rmtree(self.data, ignore_errors=True)
+
+    def _seed(self, name, mtime):
+        p = os.path.join(self.data, name)
+        with open(p, "wb") as f:
+            f.write(b"x")
+        os.utime(p, (mtime, mtime))
+
+    def test_restamps_vanilla_first_then_esms_then_esps(self):
+        # plugins.txt deliberately lists a DLC BEFORE Fallout3.esm (seen
+        # live) and a mod esm carries a Jan-2000 mtime.
+        ancient = 946684800  # 2000-01-01
+        self._seed("Anchorage.esm", 1700000200)
+        self._seed("Fallout3.esm", 1700000100)
+        self._seed("OldMod.esm", ancient)
+        self._seed("SomeMod.esp", ancient)
+        main._write_plugins_txt(
+            self.ptxt,
+            ["Anchorage.esm", "Fallout3.esm", "OldMod.esm", "SomeMod.esp"],
+        )
+        stamped = main._stagger_plugin_mtimes(
+            self.data, self.ptxt, "listed", "fallout3"
+        )
+        self.assertEqual(stamped, 4)
+        mt = lambda n: os.path.getmtime(os.path.join(self.data, n))
+        self.assertLess(mt("Fallout3.esm"), mt("Anchorage.esm"))
+        self.assertLess(mt("Anchorage.esm"), mt("OldMod.esm"))
+        self.assertLess(mt("OldMod.esm"), mt("SomeMod.esp"))
+        # Everything in the past so the next install lands after.
+        self.assertLess(mt("SomeMod.esp"), time.time())
+
+    def test_starred_style_untouched(self):
+        self._seed("Mod.esp", 946684800)
+        main._write_plugins_txt(self.ptxt, ["*Mod.esp"])
+        stamped = main._stagger_plugin_mtimes(
+            self.data, self.ptxt, "starred", "skyrimspecialedition"
+        )
+        self.assertEqual(stamped, 0)
+        self.assertEqual(
+            os.path.getmtime(os.path.join(self.data, "Mod.esp")), 946684800
+        )
 
 
 class TestProtonPicker(unittest.TestCase):
