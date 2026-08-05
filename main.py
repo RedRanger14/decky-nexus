@@ -2721,24 +2721,42 @@ async def _download_archive(
             f"&expires={urllib.parse.quote(str(dl_expires))}"
         )
     headers = _api_headers(api_key)
-    try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30)
-        ) as session:
-            async with session.get(
-                link_url, headers=headers, ssl=SSL_CONTEXT
-            ) as resp:
-                if resp.status == 403:
-                    return (
-                        "Direct downloads need a Premium account "
-                        "(free-user flow not implemented yet)",
-                        "",
-                    )
-                if resp.status != 200:
-                    return f"Download link error (HTTP {resp.status})", ""
-                links = await resp.json()
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        return f"Network error: {type(e).__name__}", ""
+    # Parallel prefetching bursts this endpoint - back off and retry on
+    # rate limits / transient 5xx instead of failing the mod's row.
+    links = None
+    last_err = "Download link error"
+    for attempt in range(3):
+        if attempt:
+            await asyncio.sleep(2 * attempt)
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as session:
+                async with session.get(
+                    link_url, headers=headers, ssl=SSL_CONTEXT
+                ) as resp:
+                    if resp.status == 403:
+                        return (
+                            "Direct downloads need a Premium account "
+                            "(free-user flow not implemented yet)",
+                            "",
+                        )
+                    if resp.status in (429, 500, 502, 503):
+                        last_err = f"Download link error (HTTP {resp.status})"
+                        decky.logger.warning(
+                            f"link fetch {game_domain}/{mod_id}: "
+                            f"HTTP {resp.status}, attempt {attempt + 1}/3"
+                        )
+                        continue
+                    if resp.status != 200:
+                        return f"Download link error (HTTP {resp.status})", ""
+                    links = await resp.json()
+                    break
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            last_err = f"Network error: {type(e).__name__}"
+            continue
+    if links is None:
+        return last_err, ""
 
     if not links or not isinstance(links, list):
         return "Nexus Mods returned no download locations", ""
@@ -2748,10 +2766,18 @@ async def _download_archive(
 
     part_path = archive_path + ".part"
     await _emit_progress(mod_id, "downloading", 0)
-    try:
+    for cdn_attempt in range(2):
+      if cdn_attempt:
+        await asyncio.sleep(3)
+        decky.logger.warning(
+            f"CDN retry for {game_domain}/{mod_id} (attempt 2/2)"
+        )
+      try:
         timeout = aiohttp.ClientTimeout(total=1800, sock_connect=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(_safe_uri(uri), ssl=SSL_CONTEXT) as resp:
+                if resp.status in (429, 500, 502, 503) and cdn_attempt == 0:
+                    continue
                 if resp.status != 200:
                     return f"CDN download failed (HTTP {resp.status})", ""
                 total = int(resp.headers.get("Content-Length") or 0)
@@ -2788,13 +2814,16 @@ async def _download_archive(
                                 bps=ema_bps,
                             )
         os.replace(part_path, archive_path)
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        return "", archive_path
+      except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         try:
             os.remove(part_path)
         except OSError:
             pass
+        if cdn_attempt == 0:
+            continue
         return f"Download failed: {type(e).__name__}", ""
-    return "", archive_path
+    return "CDN download failed after retry", ""
 
 
 async def _validate_key(api_key: str) -> dict:
@@ -3780,7 +3809,7 @@ query Link($slug: String!, $domainName: String!) {
         the website-issued free-download token from an nxm:// link;
         payload_choice picks a folder from an option-style archive."""
         try:
-            return await self._install_mod_inner(
+            result = await self._install_mod_inner(
                 game_domain,
                 mod_id,
                 file_id,
@@ -3807,6 +3836,14 @@ query Link($slug: String!, $domainName: String!) {
                 cp77_layout,
                 pakpatch_layout,
             )
+            if not result.get("ok") and result.get("error"):
+                # UI rows show failures the log never saw - record every
+                # failed install so remote diagnosis has evidence.
+                decky.logger.warning(
+                    f"install {mod_name!r} ({game_domain}/{mod_id}) "
+                    f"failed: {result['error']}"
+                )
+            return result
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception(f"install_mod({mod_name!r}) crashed")
             await _emit_progress(mod_id, "error", 0, str(e))
@@ -3834,6 +3871,9 @@ query Link($slug: String!, $domainName: String!) {
             # itself and surface the REAL failure on its row.
             decky.logger.warning(f"prefetch {game_domain}/{mod_id}: {err}")
             return {"ok": False, "error": err}
+        # Distinct phase so the UI can say "waiting to install" instead
+        # of sitting silently at 100% downloaded.
+        await _emit_progress(mod_id, "queued", 100)
         return {"ok": True, "path": archive_path}
 
     async def _install_root_files(

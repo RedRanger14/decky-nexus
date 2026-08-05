@@ -101,6 +101,7 @@ function Row({
   status,
   dim,
   pct,
+  pulse,
   onActivate,
 }: {
   name: string;
@@ -108,6 +109,8 @@ function Row({
   dim?: boolean;
   /** In-flight rows fill orange left-to-right - the row IS the bar. */
   pct?: number;
+  /** Actively installing: breathe so it reads as "working", not stuck. */
+  pulse?: boolean;
   onActivate?: () => void;
 }) {
   const Tag: any = onActivate ? Focusable : "div";
@@ -127,6 +130,7 @@ function Row({
         borderRadius: "4px",
         fontSize: "13.5px",
         opacity: dim ? 0.65 : 1,
+        animation: pulse ? "nexusInstallPulse 1.4s ease-in-out infinite" : undefined,
       }}
     >
       <span
@@ -399,6 +403,12 @@ export function DownloadsPage() {
         style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
       >
         <TabBar currentId="downloads" />
+        <style>{`
+          @keyframes nexusInstallPulse {
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(1.45); }
+          }
+        `}</style>
         <div
           style={{
             display: "flex",
@@ -437,6 +447,7 @@ export function DownloadsPage() {
               }
               name={d.name}
               pct={d.phase === "extracting" ? 100 : d.percent}
+              pulse={d.phase === "extracting"}
               status={
                 d.phase === "downloading"
                   ? [
@@ -448,7 +459,9 @@ export function DownloadsPage() {
                       .filter(Boolean)
                       .join(" · ")
                   : d.phase === "extracting"
-                  ? "Installing…"
+                  ? "⚙ Installing…"
+                  : d.phase === "queued"
+                  ? "✓ Downloaded · waiting to install"
                   : "Starting…"
               }
             />
