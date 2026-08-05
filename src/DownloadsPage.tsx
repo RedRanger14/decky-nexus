@@ -9,12 +9,15 @@ import {
 import { useEffect, useState } from "react";
 
 import {
+  CollectionRun,
   clearCompletedDownloads,
   getAggregateBps,
   getCollectionRun,
   getCompletedDownloads,
   getDownloads,
   getRunSkippedCount,
+  getSpeedHistory,
+  recordSpeedSample,
   setDetailOrigin,
   setSelectedCollection,
   setSelectedMod,
@@ -38,13 +41,13 @@ function formatSpeed(bps: number): string {
   return `${formatBytes(bps)}/s`;
 }
 
-/** Live download-speed sparkline: one sample per second, ~90s of history,
- * scaled to the window's peak. Sits top-right of the page header. */
-function SpeedGraph({ samples }: { samples: number[] }) {
+/** Live download-speed sparkline. Samples are recorded in the global
+ * store on every progress event (so sub-second downloads register) and
+ * bucketed into 500ms columns over a 60s window here. */
+function SpeedGraph({ samples, current }: { samples: number[]; current: number }) {
   const W = 180;
   const H = 44;
   const peak = Math.max(...samples, 1);
-  const current = samples[samples.length - 1] ?? 0;
   const points = samples
     .map((v, i) => {
       const x = (i / Math.max(samples.length - 1, 1)) * W;
@@ -176,17 +179,184 @@ async function openDownloadTarget(
   }
 }
 
+/** The collection in flight IS the page's centerpiece: blurred cover art
+ * as a backdrop, the cover proper as a card, live counts, an honest
+ * pace-based ETA, and a glowing brand-orange progress bar. */
+function CollectionHero({
+  run,
+  activeNames,
+}: {
+  run: CollectionRun;
+  activeNames: string[];
+}) {
+  const pct = run.total ? Math.round((run.finished / run.total) * 100) : 0;
+  const skipped = getRunSkippedCount(run);
+  // ETA from observed pace (mods/min). Only shown once a few mods are in
+  // - earlier than that it's noise, not information.
+  let eta: string | undefined;
+  if (run.running && run.startedAt && run.finished >= 3) {
+    const perMod = (Date.now() - run.startedAt) / run.finished;
+    const mins = Math.round((perMod * (run.total - run.finished)) / 60_000);
+    eta =
+      mins < 1
+        ? "under a minute left"
+        : mins === 1
+        ? "about 1 minute left"
+        : mins < 90
+        ? `about ${mins} minutes left`
+        : `about ${(mins / 60).toFixed(1)} hours left`;
+  }
+  return (
+    <Focusable
+      onActivate={() => Navigation.Navigate("/nexus-mods/collection")}
+      style={{
+        position: "relative",
+        borderRadius: "12px",
+        overflow: "hidden",
+        marginBottom: "18px",
+        border: "1px solid rgba(218,142,53,0.35)",
+        background: "#14161c",
+      }}
+    >
+      {/* Backdrop: the collection's own art, blurred into atmosphere. */}
+      {run.thumbnailUrl && (
+        <img
+          src={run.thumbnailUrl}
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            filter: "blur(28px) saturate(1.2) brightness(0.5)",
+            transform: "scale(1.25)",
+          }}
+        />
+      )}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "linear-gradient(105deg, rgba(10,11,15,0.92) 0%, rgba(10,11,15,0.6) 55%, rgba(218,142,53,0.16) 100%)",
+        }}
+      />
+      <div style={{ position: "relative", display: "flex", gap: "16px", padding: "16px" }}>
+        {run.thumbnailUrl && (
+          <img
+            src={run.thumbnailUrl}
+            alt=""
+            style={{
+              width: "116px",
+              height: "116px",
+              objectFit: "cover",
+              borderRadius: "8px",
+              boxShadow: "0 4px 18px rgba(0,0,0,0.55)",
+              flexShrink: 0,
+            }}
+          />
+        )}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "5px",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "11px",
+              letterSpacing: "1.5px",
+              textTransform: "uppercase",
+              opacity: 0.7,
+            }}
+          >
+            {run.running ? "Installing collection" : "Collection finished"}
+          </div>
+          <div
+            style={{
+              fontSize: "20px",
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {run.name ?? "Collection"}
+          </div>
+          <div style={{ fontSize: "13px", opacity: 0.85 }}>
+            {run.finished} of {run.total} mods
+            {eta ? ` · ${eta}` : ""}
+            {skipped > 0 && (
+              <span style={{ color: "#4aa9ff" }}> · {skipped} need choices</span>
+            )}
+          </div>
+          {run.running && activeNames.length > 0 && (
+            <div
+              style={{
+                fontSize: "12px",
+                opacity: 0.65,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              ⬇ {activeNames.join(" · ")}
+            </div>
+          )}
+          <div style={{ marginTop: "auto", paddingTop: "6px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: "11.5px",
+                opacity: 0.75,
+                marginBottom: "3px",
+              }}
+            >
+              <span>{pct}%</span>
+              <span>{run.running ? "tap to open" : "tap to finish setup"}</span>
+            </div>
+            <div
+              style={{
+                height: "8px",
+                background: "rgba(255,255,255,0.12)",
+                borderRadius: "4px",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: `${pct}%`,
+                  height: "100%",
+                  background: "linear-gradient(90deg, #da8e35, #f0b160)",
+                  borderRadius: "4px",
+                  transition: "width 0.4s ease",
+                  boxShadow: "0 0 10px rgba(218,142,53,0.6)",
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </Focusable>
+  );
+}
+
 export function DownloadsPage() {
   const [, force] = useState(0);
-  // Speed history: sampled here (not in the global store) so the graph
-  // costs nothing while the page is closed. Zeroes record idle gaps.
-  const [speedSamples, setSpeedSamples] = useState<number[]>([]);
   useEffect(() => {
     const un1 = subscribeDownloads(() => force((n) => n + 1));
     const un2 = subscribeCollectionRun(() => force((n) => n + 1));
+    // 250ms tick: records idle samples (event-driven sampling only fires
+    // while bytes flow) and keeps the graph/ETA visibly live.
     const timer = setInterval(() => {
-      setSpeedSamples((prev) => [...prev, getAggregateBps()].slice(-90));
-    }, 1000);
+      recordSpeedSample();
+      force((n) => n + 1);
+    }, 250);
     return () => {
       un1();
       un2();
@@ -197,6 +367,19 @@ export function DownloadsPage() {
   const active = getDownloads();
   const completed = getCompletedDownloads();
   const run = getCollectionRun();
+
+  // Bucket the event-driven history into 500ms columns over 60s: a mod
+  // that downloaded in 400ms still owns a visible column.
+  const WINDOW_MS = 60_000;
+  const BUCKET_MS = 500;
+  const now = Date.now();
+  const speedSamples = new Array(WINDOW_MS / BUCKET_MS).fill(0);
+  for (const s of getSpeedHistory()) {
+    const age = now - s.t;
+    if (age < 0 || age >= WINDOW_MS) continue;
+    const i = speedSamples.length - 1 - Math.floor(age / BUCKET_MS);
+    speedSamples[i] = Math.max(speedSamples[i], s.bps);
+  }
 
   return (
     <Focusable
@@ -225,43 +408,16 @@ export function DownloadsPage() {
           }}
         >
           <h2 style={{ margin: 0 }}>Downloads</h2>
-          <SpeedGraph samples={speedSamples} />
+          <SpeedGraph samples={speedSamples} current={getAggregateBps()} />
         </div>
 
         {run && (
-          <Focusable
-            onActivate={() => Navigation.Navigate("/nexus-mods/collection")}
-            style={{ marginBottom: "14px" }}
-          >
-            <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "4px" }}>
-              {run.name ?? "Collection"}: {run.finished}/{run.total}{" "}
-              {run.running ? "installing…" : "finished"}
-              {getRunSkippedCount(run) > 0 && (
-                <span style={{ color: "#4aa9ff" }}>
-                  {" "}
-                  · {getRunSkippedCount(run)} need choices → open to finish
-                </span>
-              )}
-            </div>
-            <div
-              style={{
-                height: "6px",
-                background: "rgba(255,255,255,0.1)",
-                borderRadius: "3px",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  width: `${
-                    run.total ? Math.round((run.finished / run.total) * 100) : 0
-                  }%`,
-                  height: "100%",
-                  background: "#da8e35",
-                }}
-              />
-            </div>
-          </Focusable>
+          <CollectionHero
+            run={run}
+            activeNames={active
+              .filter((d) => d.phase === "downloading")
+              .map((d) => d.name)}
+          />
         )}
 
         <div style={{ fontSize: "13px", fontWeight: 600, margin: "8px 0 6px" }}>

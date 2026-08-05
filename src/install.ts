@@ -6,9 +6,29 @@ import {
   getModFiles,
   installFomod,
   installMod,
+  prefetchModFile,
 } from "./api";
 import { SupportedGame, modeParams } from "./games";
 import { nameDownload } from "./state";
+
+/** Download a pinned file into the backend's archive cache ahead of its
+ * serial install - the collection pipeline runs several of these in
+ * parallel so the network never idles while other mods extract. */
+export async function prefetchPinned(
+  game: SupportedGame,
+  modId: number,
+  fileId: number,
+  fileName: string,
+  modName: string
+): Promise<void> {
+  nameDownload(modId, modName, game.appId);
+  try {
+    await prefetchModFile(game.nexusDomain, modId, fileId, fileName);
+  } catch {
+    // Best-effort: the installer retries the download itself and
+    // surfaces the real error on the mod's own row.
+  }
+}
 
 /** Complete a FOMOD install after the wizard. */
 export async function finishFomod(

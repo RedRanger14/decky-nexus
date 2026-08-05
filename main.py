@@ -2604,6 +2604,129 @@ async def _emit_progress(
     await decky.emit("install_progress", payload)
 
 
+def _archive_cache_path(mod_id: int, file_id: int, file_name: str) -> str:
+    """Local archive path for a mod file. Built from ids so non-ASCII
+    upstream filenames can't produce a broken local path; bsdtar detects
+    the format from content anyway. Shared by the installer and the
+    prefetcher - the names MUST match for the cache to hit."""
+    ext = os.path.splitext(file_name or "")[1]
+    if not re.fullmatch(r"\.[A-Za-z0-9]{1,5}", ext):
+        ext = ""
+    return os.path.join(DOWNLOADS_DIR, f"{mod_id}-{file_id}{ext}")
+
+
+async def _download_archive(
+    game_domain: str,
+    mod_id: int,
+    file_id: int,
+    file_name: str,
+    api_key: str,
+    dl_key: str = "",
+    dl_expires: int = 0,
+) -> tuple:
+    """Fetch a mod file to the local cache: resolve the (Premium)
+    download link, stream to <path>.part, rename when complete. A
+    completed cached archive short-circuits - that's what lets the
+    collection pipeline download ahead while installs run. Returns
+    (error, archive_path); error is '' on success."""
+    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    archive_path = _archive_cache_path(mod_id, file_id, file_name)
+    try:
+        if os.path.getsize(archive_path) > 0:
+            # Prefetched (or a retry after install-stage failure). .part
+            # files never rename on failure, so a completed file is whole.
+            await _emit_progress(mod_id, "downloading", 100)
+            return "", archive_path
+    except OSError:
+        pass
+
+    link_url = (
+        f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}"
+        f"/files/{file_id}/download_link.json"
+    )
+    if dl_key:
+        # free-account flow: website-issued token from the nxm:// link
+        link_url += (
+            f"?key={urllib.parse.quote(dl_key)}"
+            f"&expires={urllib.parse.quote(str(dl_expires))}"
+        )
+    headers = _api_headers(api_key)
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as session:
+            async with session.get(
+                link_url, headers=headers, ssl=SSL_CONTEXT
+            ) as resp:
+                if resp.status == 403:
+                    return (
+                        "Direct downloads need a Premium account "
+                        "(free-user flow not implemented yet)",
+                        "",
+                    )
+                if resp.status != 200:
+                    return f"Download link error (HTTP {resp.status})", ""
+                links = await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        return f"Network error: {type(e).__name__}", ""
+
+    if not links or not isinstance(links, list):
+        return "Nexus Mods returned no download locations", ""
+    uri = links[0].get("URI") or links[0].get("uri")
+    if not uri:
+        return "Nexus Mods returned a malformed download link", ""
+
+    part_path = archive_path + ".part"
+    await _emit_progress(mod_id, "downloading", 0)
+    try:
+        timeout = aiohttp.ClientTimeout(total=1800, sock_connect=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(_safe_uri(uri), ssl=SSL_CONTEXT) as resp:
+                if resp.status != 200:
+                    return f"CDN download failed (HTTP {resp.status})", ""
+                total = int(resp.headers.get("Content-Length") or 0)
+                done = 0
+                last_pct = -1
+                # Speed: EMA over inter-emit deltas, emitted at least
+                # every half-second so big files still tick.
+                last_t = time.monotonic()
+                last_done = 0
+                ema_bps = 0.0
+                with open(part_path, "wb") as out:
+                    async for chunk in resp.content.iter_chunked(1 << 20):
+                        out.write(chunk)
+                        done += len(chunk)
+                        now = time.monotonic()
+                        pct = int(done * 100 / total) if total else 0
+                        if pct > last_pct or now - last_t >= 0.5:
+                            dt = max(now - last_t, 1e-3)
+                            inst = (done - last_done) / dt
+                            ema_bps = (
+                                inst
+                                if ema_bps == 0
+                                else 0.6 * ema_bps + 0.4 * inst
+                            )
+                            last_pct = pct
+                            last_t = now
+                            last_done = done
+                            await _emit_progress(
+                                mod_id,
+                                "downloading",
+                                pct,
+                                bytes_done=done,
+                                bytes_total=total or None,
+                                bps=ema_bps,
+                            )
+        os.replace(part_path, archive_path)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        try:
+            os.remove(part_path)
+        except OSError:
+            pass
+        return f"Download failed: {type(e).__name__}", ""
+    return "", archive_path
+
+
 async def _validate_key(api_key: str) -> dict:
     """Ask Nexus who this key belongs to. Doubles as our 'login' check.
     (This endpoint does not consume API rate-limit quota.)"""
@@ -3617,6 +3740,30 @@ query Link($slug: String!, $domainName: String!) {
             await _emit_progress(mod_id, "error", 0, str(e))
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    async def prefetch_mod_file(
+        self,
+        game_domain: str,
+        mod_id: int,
+        file_id: int,
+        file_name: str = "",
+    ) -> dict:
+        """Download a mod file into the archive cache WITHOUT installing.
+        The collection pipeline runs several of these concurrently ahead
+        of the serial installer, so the network stays busy while each
+        mod extracts/installs - installs then hit the cache instantly."""
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            return {"ok": False, "error": "Not signed in"}
+        err, archive_path = await _download_archive(
+            game_domain, mod_id, file_id, file_name, api_key
+        )
+        if err:
+            # No error event: the serial installer will retry this file
+            # itself and surface the REAL failure on its row.
+            decky.logger.warning(f"prefetch {game_domain}/{mod_id}: {err}")
+            return {"ok": False, "error": err}
+        return {"ok": True, "path": archive_path}
+
     async def _install_root_files(
         self, scratch: str, install_path: str, game_domain: str,
         mod_id: int, file_id: int, file_name: str, mod_name: str,
@@ -3721,100 +3868,13 @@ query Link($slug: String!, $domainName: String!) {
             await _emit_progress(mod_id, "error", 0, "game not found")
             return {"ok": False, "error": "Game install folder not found"}
 
-        # 1) Ask for a download link (Premium-only endpoint; free users need
-        #    key+expires params from a website nxm:// link - future work).
-        link_url = (
-            f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}"
-            f"/files/{file_id}/download_link.json"
+        # 1+2) Resolve the download link and fetch to the archive cache -
+        # a completed prefetch (collection pipeline) short-circuits here.
+        err, archive_path = await _download_archive(
+            game_domain, mod_id, file_id, file_name, api_key, dl_key, dl_expires
         )
-        if dl_key:
-            # free-account flow: website-issued token from the nxm:// link
-            link_url += (
-                f"?key={urllib.parse.quote(dl_key)}"
-                f"&expires={urllib.parse.quote(str(dl_expires))}"
-            )
-        headers = _api_headers(api_key)
-        try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as session:
-                async with session.get(
-                    link_url, headers=headers, ssl=SSL_CONTEXT
-                ) as resp:
-                    if resp.status == 403:
-                        return {
-                            "ok": False,
-                            "error": "Direct downloads need a Premium account "
-                            "(free-user flow not implemented yet)",
-                        }
-                    if resp.status != 200:
-                        return {
-                            "ok": False,
-                            "error": f"Download link error (HTTP {resp.status})",
-                        }
-                    links = await resp.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            return {"ok": False, "error": f"Network error: {type(e).__name__}"}
-
-        if not links or not isinstance(links, list):
-            return {"ok": False, "error": "Nexus Mods returned no download locations"}
-        uri = links[0].get("URI") or links[0].get("uri")
-        if not uri:
-            return {"ok": False, "error": "Nexus Mods returned a malformed download link"}
-
-        # 2) Download with progress events. Archive name is built from ids so
-        #    non-ASCII upstream filenames can't produce a broken local path;
-        #    bsdtar detects the format from content anyway.
-        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-        ext = os.path.splitext(file_name or "")[1]
-        if not re.fullmatch(r"\.[A-Za-z0-9]{1,5}", ext):
-            ext = ""
-        archive_path = os.path.join(DOWNLOADS_DIR, f"{mod_id}-{file_id}{ext}")
-        await _emit_progress(mod_id, "downloading", 0)
-        try:
-            timeout = aiohttp.ClientTimeout(total=1800, sock_connect=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(_safe_uri(uri), ssl=SSL_CONTEXT) as resp:
-                    if resp.status != 200:
-                        return {
-                            "ok": False,
-                            "error": f"CDN download failed (HTTP {resp.status})",
-                        }
-                    total = int(resp.headers.get("Content-Length") or 0)
-                    done = 0
-                    last_pct = -1
-                    # Speed: EMA over inter-emit deltas, emitted at least
-                    # every half-second so big files still tick.
-                    last_t = time.monotonic()
-                    last_done = 0
-                    ema_bps = 0.0
-                    with open(archive_path, "wb") as out:
-                        async for chunk in resp.content.iter_chunked(1 << 20):
-                            out.write(chunk)
-                            done += len(chunk)
-                            now = time.monotonic()
-                            pct = int(done * 100 / total) if total else 0
-                            if pct > last_pct or now - last_t >= 0.5:
-                                dt = max(now - last_t, 1e-3)
-                                inst = (done - last_done) / dt
-                                ema_bps = (
-                                    inst
-                                    if ema_bps == 0
-                                    else 0.6 * ema_bps + 0.4 * inst
-                                )
-                                last_pct = pct
-                                last_t = now
-                                last_done = done
-                                await _emit_progress(
-                                    mod_id,
-                                    "downloading",
-                                    pct,
-                                    bytes_done=done,
-                                    bytes_total=total or None,
-                                    bps=ema_bps,
-                                )
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            return {"ok": False, "error": f"Download failed: {type(e).__name__}"}
+        if err:
+            return {"ok": False, "error": err}
 
         # 3) Extract to a scratch dir, then move into mods/.
         await _emit_progress(mod_id, "extracting", 100)
@@ -3824,6 +3884,12 @@ query Link($slug: String!, $domainName: String!) {
         err = await _extract_archive(archive_path, scratch)
         if err:
             _force_rmtree(scratch)
+            # Evict the cached archive: a corrupt download must not keep
+            # short-circuiting every retry.
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
             await _emit_progress(mod_id, "error", 0, err)
             return {"ok": False, "error": f"Extraction failed: {err}"}
         # Archives in the wild ship read-only entries; normalize before moving.

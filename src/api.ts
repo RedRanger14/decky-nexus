@@ -617,6 +617,14 @@ export const checkGameFile = callable<
   { ok: boolean; exists?: boolean; error?: string }
 >("check_game_file");
 
+// Downloads a mod file into the archive cache without installing - the
+// collection pipeline runs several concurrently ahead of the serial
+// installer so the network never idles during extract/install.
+export const prefetchModFile = callable<
+  [game_domain: string, mod_id: number, file_id: number, file_name: string],
+  { ok: boolean; path?: string; error?: string }
+>("prefetch_mod_file");
+
 // Enabled plugins whose master files are absent from the data folder -
 // the engine refuses to boot on these ("X.esm is missing required files").
 export const checkPluginMasters = callable<
