@@ -130,10 +130,11 @@ export interface SupportedGame {
     name: string;
     nexusModId: number;
     description: string;
-    /** Set when the tool opens a window: running it under gamescope has
-     * frozen a device (Legion Go, 2026-08-05 - the compositor died with
-     * it). Such tools are shown as Desktop-Mode instructions instead of
-     * being launched from Gaming Mode. */
+    /** Escape hatch for tools that genuinely can't run headless: shows
+     * Desktop-Mode instructions instead of a launch button. Unused - the
+     * FO3 patchers DO work in-prefix (verified: exe downgraded to
+     * 1.7.0.3 on device), the apparent freeze was a dropped SSH session
+     * during diagnosis, not the compositor. */
     needsDesktopMode?: boolean;
     /** Substring picking the tool exe inside the archive */
     exeHint?: string;
@@ -442,8 +443,6 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       {
         name: "Fallout Anniversary Patcher",
         nexusModId: 24913, // verified live: MAIN v1.1
-        // Froze the Legion twice when launched under gamescope.
-        needsDesktopMode: true,
         description:
           "Patches the game exe: 4GB memory, crash fixes, and FOSE "
           + "support - the community's standard stability fix.",
@@ -455,7 +454,6 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       {
         name: "Unofficial Fallout 3 ESM Patcher",
         nexusModId: 25717, // verified live: paired EN/FR mains - avoid FR
-        needsDesktopMode: true,
         description:
           "Repairs errors inside the game's own master files - required "
           + "by the Updated Unofficial Fallout 3 Patch.",
