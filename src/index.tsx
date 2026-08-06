@@ -53,6 +53,7 @@ import {
   fixPrefixRuntime,
   getPrefixToolsState,
   installFramework,
+  skipPrefixTools,
   runPrefixTool,
   seedGameIni,
   markLaunchOptionsSet,
@@ -418,6 +419,7 @@ function CurrentGameSection() {
   const [toolsLast, setToolsLast] = useState<
     Record<number, { stage: string; message: string }>
   >({});
+  const [toolsSkipped, setToolsSkipped] = useState<Record<number, boolean>>({});
   const [toolsBusy, setToolsBusy] = useState<string | undefined>();
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
@@ -480,6 +482,7 @@ function CurrentGameSection() {
             number,
             { stage: string; message: string }
           >);
+          setToolsSkipped(r.skipped ?? {});
         });
       }
     }
@@ -1034,7 +1037,37 @@ function CurrentGameSection() {
                   transition: background 0.5s linear;
                 }
               `}</style>
-              {game.prefixTools.some((t) => t.needsDesktopMode) &&
+              {game.prefixTools.every(
+                (t) => toolsDone[t.nexusModId] || toolsSkipped[t.nexusModId]
+              ) &&
+              game.prefixTools.some((t) => toolsSkipped[t.nexusModId]) ? (
+                /* Skipped: say plainly what it costs, and offer the way back. */
+                <div>
+                  <Field label="Step 3">
+                    Modding tools skipped — mods that need{" "}
+                    {game.prefixTools
+                      .filter((t) => toolsSkipped[t.nexusModId])
+                      .map((t) => t.name)
+                      .join(" or ")}{" "}
+                    won't work until it's applied. Everything else installs
+                    normally.
+                  </Field>
+                  <ButtonItem
+                    layout="below"
+                    description="Puts the step back so you can try again"
+                    onClick={async () => {
+                      await skipPrefixTools(
+                        game.nexusDomain,
+                        game.prefixTools!.map((t) => t.nexusModId),
+                        false
+                      );
+                      refreshStatus();
+                    }}
+                  >
+                    Un-skip modding tools
+                  </ButtonItem>
+                </div>
+              ) : game.prefixTools.some((t) => t.needsDesktopMode) &&
               !game.prefixTools.every((t) => toolsDone[t.nexusModId]) ? (
                 <Field label="Step 3">
                   ⚠ {game.displayName} needs{" "}
@@ -1147,6 +1180,27 @@ function CurrentGameSection() {
                         {toolsLast[t.nexusModId].message}
                       </div>
                     ))}
+                {!toolsBusy && (
+                  <ButtonItem
+                    layout="below"
+                    description={`Skip if this keeps failing - these are old Windows tools and some refuse to run under Proton. Skipping hides this step and lets you mod normally; only mods that specifically require ${game.prefixTools
+                      .filter((t) => !toolsDone[t.nexusModId])
+                      .map((t) => t.name)
+                      .join(" or ")} will be unavailable. You can apply it later from Desktop Mode, or un-skip to retry.`}
+                    onClick={async () => {
+                      await skipPrefixTools(
+                        game.nexusDomain,
+                        game.prefixTools!
+                          .filter((t) => !toolsDone[t.nexusModId])
+                          .map((t) => t.nexusModId),
+                        true
+                      );
+                      refreshStatus();
+                    }}
+                  >
+                    Skip for now
+                  </ButtonItem>
+                )}
                 </div>
               )}
             </PanelSectionRow>

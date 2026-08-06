@@ -5690,11 +5690,35 @@ query Link($slug: String!, $domainName: String!) {
         settings = _load_settings()
         done = settings.get("prefix_tools", {}).get(game_domain, {})
         last = settings.get("prefix_tool_last", {}).get(game_domain, {})
+        skipped = settings.get("prefix_tools_skipped", {}).get(game_domain, {})
         return {
             "ok": True,
             "done": {int(k): True for k in done},
             "last": {int(k): v for k, v in last.items()},
+            "skipped": {int(k): True for k in skipped},
         }
+
+    async def skip_prefix_tools(
+        self, game_domain: str, mod_ids: list, skipped: bool = True
+    ) -> dict:
+        """Mark tools as deliberately skipped (or un-skip them). A step
+        the user can never complete must not nag forever - but the mods
+        that depend on the tool genuinely won't work, so the UI says so
+        rather than pretending the work is done."""
+        settings = _load_settings()
+        store = settings.setdefault("prefix_tools_skipped", {}).setdefault(
+            game_domain, {}
+        )
+        for mod_id in mod_ids or []:
+            if skipped:
+                store[str(int(mod_id))] = {"at": int(time.time())}
+            else:
+                store.pop(str(int(mod_id)), None)
+        _save_settings(settings)
+        decky.logger.info(
+            f"prefix tools {game_domain}: skipped={skipped} for {mod_ids}"
+        )
+        return {"ok": True}
 
     async def fix_prefix_runtime(self, app_id: int) -> dict:
         """Bring the game prefix's VC++ runtime up to the newest one any
