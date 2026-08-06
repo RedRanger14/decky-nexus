@@ -9,6 +9,7 @@ import {
 } from "@decky/ui";
 import { addEventListener, removeEventListener, toaster } from "@decky/api";
 import { useEffect, useState } from "react";
+import { FaArrowDown, FaThumbsUp } from "react-icons/fa";
 
 import {
   FilesResult,
@@ -361,7 +362,7 @@ export function ModDetailPage() {
     ? installedCopy.version
       ? `⬆ Update to v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`
       : `⟳ Reinstall v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`
-    : `⬇ Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`;
+    : `Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`;
   const primaryDisabled =
     installingFileId !== undefined || !primaryFile || upToDate;
 
@@ -469,7 +470,8 @@ export function ModDetailPage() {
             }}
           >
             <span style={{ opacity: 0.75, fontSize: "14px" }}>
-              👍 {mod.endorsements.toLocaleString()} · ⬇{" "}
+              <FaThumbsUp size={11} style={{ opacity: 0.75, marginRight: "4px" }} />{mod.endorsements.toLocaleString()} ·{" "}
+              <FaArrowDown size={11} style={{ opacity: 0.75, margin: "0 4px 0 4px" }} />{" "}
               {mod.downloads.toLocaleString()}
             </span>
             {endorseStatus !== undefined && endorseStatus !== "unknown" && (
@@ -521,7 +523,10 @@ export function ModDetailPage() {
                       }),
                 }}
               >
-                {endorseStatus === "Endorsed" ? "👍 Endorsed ✓" : "👍 Endorse"}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                  <FaThumbsUp size={12} />
+                  {endorseStatus === "Endorsed" ? "Endorsed" : "Endorse"}
+                </span>
               </Focusable>
             )}
             {uploader?.donationsEnabled && uploader.memberId && (
@@ -606,7 +611,7 @@ export function ModDetailPage() {
                   >
                     {reqBatchBusy
                       ? "Installing…"
-                      : "⬇ Install all missing"}
+                      : "Install all missing"}
                   </DialogButton>
                 )}
               </div>
@@ -664,7 +669,7 @@ export function ModDetailPage() {
                             }),
                       }}
                     >
-                      {external ? "🌐 " : have ? "✓ " : optional ? "○ " : "⬇ "}
+                      {external ? "🌐 " : have ? "✓ " : optional ? "○ " : ""}
                       {label}
                     </Focusable>
                   );
@@ -875,7 +880,7 @@ export function ModDetailPage() {
                   color: done ? ACCENT_SUCCESS : NEXUS_ORANGE,
                 }}
               >
-                {busy ? progressText : done ? "Installed ✓" : "⬇ Install"}
+                {busy ? progressText : done ? "Installed ✓" : "Install"}
               </div>
             </Focusable>
           );

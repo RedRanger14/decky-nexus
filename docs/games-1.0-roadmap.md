@@ -445,3 +445,39 @@ games. Starter saves installed on device (mod 44704, Act One complete).
   gameId 9408. Needs a research pass (paths/framework).
 - **Moonlight Peaks** — OUT with a modding community. Verified live:
   domain `moonlightpeaks`, gameId 9480. Needs a research pass.
+
+## Elden Ring / FromSoft family (research 2026-08-06, me3 path)
+
+Verified: me3 v0.12.1 (garyttierney/me3) is the maintained successor to
+the archived Mod Engine 2 - a NATIVE Linux binary installing under $HOME
+(no root, survives SteamOS updates). It launches the game itself through
+the game's own Proton prefix and bypasses EAC simply by running
+Game/eldenring.exe instead of start_protected_game.exe. Matchmaking is
+blocked by default (start_online = false) and that does NOT affect
+Seamless Co-op, which uses its own Steam P2P.
+
+Family (all first-class in me3): ER 1245620 `eldenring`, DS3 374320
+`darksouls3`, Sekiro 814380 `sekiro`, AC6 1888160
+`armoredcore6firesofrubicon`, Nightreign 2622380 `eldenringnightreign`.
+
+Plugin plan: bootstrap me3 (portable tarball, plugin-owned), write
+~/.config/me3/profiles/deckynexus-<game>.me3, install mods as
+packages/<mod>/ (asset mods incl. regulation.bin) or natives/<mod>/
+(DLL mods), and launch via Steam launch options so Steam keeps Steam
+Input + overlay. Seamless Co-op = ersc.dll as a native with
+load_early + initializer { function = "modengine_ext_init" }, password
+surfaced in the QAM, savefile isolation always on.
+
+Blockers: Proton 8.0 must be installed (me3's Deck fallback for ER;
+preflight it), Steam Input focus when launched outside Steam, one
+regulation.bin only (refuse a second, don't silently pick a winner),
+and regulation.bin is coupled to the game patch.
+
+Colleague's manual methods (2026-08-06), useful as fallbacks/context:
+copy eldenring.exe over start_protected_game.exe (works but breaks
+vanilla online and Steam file-verification undoes it - the plugin must
+NOT do this); a bat that taskkills EasyAntiCheat_EOS.exe and starts
+eldenring.exe with SteamAppId set; and UXM Selective Unpacker
+(Nordgaren/UXM-Selective-Unpack) which unpacks the archives and patches
+the exe for loose files - a no-loader route, but it rewrites the game
+install and needs ~60GB, so it stays out of scope for v1.
