@@ -8,6 +8,7 @@ import {
   TextField,
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
+import { FaArrowDown, FaThumbsUp } from "react-icons/fa";
 
 import {
   CollectionSummary,
@@ -126,8 +127,30 @@ function openMod(game: SupportedGame, mod: NexusMod) {
   Navigation.Navigate("/nexus-mods/mod");
 }
 
-function statsLine(mod: NexusMod): string {
-  return `${mod.author} · 👍 ${mod.endorsements.toLocaleString()} · ⬇ ${mod.downloads.toLocaleString()}`;
+/** Endorsements + downloads with real icons - emoji looked cheap next
+ * to Steam's own UI and rendered inconsistently. */
+function StatsLine({ mod, author }: { mod: NexusMod; author?: boolean }) {
+  const icon = { opacity: 0.75, marginRight: "3px", flexShrink: 0 } as const;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "8px",
+        color: "rgba(255,255,255,0.82)",
+      }}
+    >
+      {author && <span>{mod.author}</span>}
+      <span style={{ display: "inline-flex", alignItems: "center" }}>
+        <FaThumbsUp size={10} style={icon} />
+        {mod.endorsements.toLocaleString()}
+      </span>
+      <span style={{ display: "inline-flex", alignItems: "center" }}>
+        <FaArrowDown size={10} style={icon} />
+        {mod.downloads.toLocaleString()}
+      </span>
+    </span>
+  );
 }
 
 /** "18+" chip for adult mods whose account preference blurs images. */
@@ -217,7 +240,9 @@ function HeroCard({
         >
           {mod.name}
         </div>
-        <div style={{ fontSize: "12px", opacity: 0.85 }}>{statsLine(mod)}</div>
+        <div style={{ fontSize: "12px", opacity: 0.9 }}>
+          <StatsLine mod={mod} author />
+        </div>
       </div>
     </Focusable>
   );
@@ -282,7 +307,7 @@ function ModTile({
           {mod.author} · v{mod.version}
         </div>
         <div style={{ fontSize: "12px", opacity: 0.7 }}>
-          👍 {mod.endorsements.toLocaleString()} · ⬇ {mod.downloads.toLocaleString()}
+          <StatsLine mod={mod} />
         </div>
       </div>
     </Focusable>
@@ -386,6 +411,7 @@ function ModCarousel({
 export function BrowsePage() {
   // Explicit scope from the QAM beats ambient resolution (which could
   // go stale and surface another game's store).
+  const explicitScope = getBrowseGame() !== undefined;
   const game =
     getBrowseGame() ??
     getActiveGame(
@@ -860,7 +886,25 @@ export function BrowsePage() {
                 </Focusable>
               </>
             )}
-            {collections.length > 0 && (
+            {!explicitScope && (
+          <div
+            style={{
+              padding: "8px 11px",
+              margin: "4px 0 12px",
+              background: "rgba(218,142,53,0.10)",
+              borderLeft: `3px solid ${NEXUS_ORANGE}`,
+              borderRadius: "4px",
+              fontSize: "12.5px",
+              lineHeight: 1.45,
+            }}
+          >
+            Showing mods for <b>{game.displayName}</b> - the game this store
+            defaults to. To browse another game's mods, open that game in your
+            Steam library, then use the Nexus Mods panel in the Quick Access
+            Menu (the ... button).
+          </div>
+        )}
+        {collections.length > 0 && (
               <>
                 <SectionHeading title="Collections" />
                 <Focusable

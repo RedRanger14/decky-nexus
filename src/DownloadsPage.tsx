@@ -379,7 +379,7 @@ function CollectionHero({
                 textOverflow: "ellipsis",
               }}
             >
-              ⬇ {activeNames.join(" · ")}
+              {activeNames.join(" · ")}
             </div>
           )}
           <div style={{ marginTop: "auto", paddingTop: "6px" }}>

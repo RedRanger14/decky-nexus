@@ -775,10 +775,10 @@ export function CollectionPage() {
               : remaining.length === 0 && detail
               ? "Everything installed ✓"
               : partialFromRun
-              ? `⬇ Resume collection (${remaining.length} left)`
+              ? `Resume collection (${remaining.length} left)`
               : detail && remaining.length < required.length
-              ? `⬇ Install remaining (${remaining.length} of ${required.length})`
-              : `⬇ Install required (${remaining.length})`}
+              ? `Install remaining (${remaining.length} of ${required.length})`
+              : `Install required (${remaining.length})`}
           </DialogButton>
           {actionable.length > 0 && (
             <DialogButton
