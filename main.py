@@ -5477,6 +5477,19 @@ query Link($slug: String!, $domainName: String!) {
             await _emit_progress(mod_id, "error", 0, "no exe")
             return {"ok": False, "error": "No tool exe in this archive"}
         exe_path = max(exes)[1]
+        # Never re-run a patcher that already did its work: these tools
+        # apply a binary diff expecting the ORIGINAL file, so a second
+        # pass can corrupt what the first one fixed.
+        already = _load_settings().get("prefix_tools", {}).get(
+            game_domain, {}
+        )
+        if str(mod_id) in already:
+            _force_rmtree(scratch)
+            return {
+                "ok": True,
+                "changed": already[str(mod_id)].get("changed") or [],
+                "already_applied": True,
+            }
         tool_dir = os.path.dirname(exe_path)
         exe_rel = os.path.relpath(exe_path, tool_dir).replace(os.sep, "/")
 
