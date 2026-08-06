@@ -5423,12 +5423,23 @@ query Link($slug: String!, $domainName: String!) {
         )
 
         def _fail(stage: str, message: str) -> dict:
-            # Every bail-out is logged: silent early returns made a failed
-            # ESM-Patcher run invisible in the log (2026-08-06).
+            # Every bail-out is logged AND persisted: silent early returns
+            # made a failed ESM-Patcher run invisible (2026-08-06), and
+            # toasts vanish before the user can read them.
             decky.logger.warning(
                 f"prefix tool {game_domain}/{mod_id}: FAILED at {stage}: "
                 f"{message}"
             )
+            st = _load_settings()
+            st.setdefault("prefix_tool_last", {}).setdefault(
+                game_domain, {}
+            )[str(mod_id)] = {
+                "ok": False,
+                "stage": stage,
+                "message": message,
+                "at": int(time.time()),
+            }
+            _save_settings(st)
             return {"ok": False, "error": message, "stage": stage}
 
         api_key = _load_settings().get("api_key")
@@ -5448,11 +5459,30 @@ query Link($slug: String!, $domainName: String!) {
         files = await self.get_mod_files(game_domain, mod_id)
         if not files.get("ok"):
             return _fail("files", files.get("error") or "file list failed")
-        main = _pick_main_file(
-            files.get("files") or [], avoid_file_keywords or []
-        )
+        # The ESM Patcher publishes PAIRED English/French MAIN files, and
+        # the shared picker kept choosing French (174MB, then failed to
+        # unpack). Filter here: drop anything matching an avoid keyword in
+        # EITHER field, case-insensitively, then take the newest MAIN.
+        avoid = [k.lower() for k in (avoid_file_keywords or [])]
+        candidates = []
+        for f in files.get("files") or []:
+            blob = f"{f.get('name', '')} {f.get('file_name', '')}".lower()
+            if any(k in blob for k in avoid):
+                continue
+            candidates.append(f)
+        mains = [
+            f
+            for f in candidates
+            if str(f.get("category_name", "")).upper() == "MAIN"
+        ]
+        pool = mains or candidates
+        main = max(pool, key=lambda f: int(f.get("file_id") or 0), default=None)
         if not main:
             return _fail("pick", "No downloadable file found")
+        decky.logger.info(
+            f"prefix tool {game_domain}/{mod_id}: picked "
+            f"{main.get('name')!r} (file {main.get('file_id')})"
+        )
         err, archive_path = await _download_archive(
             game_domain, mod_id, main["file_id"],
             main.get("file_name") or "", api_key,
@@ -5470,7 +5500,7 @@ query Link($slug: String!, $domainName: String!) {
         if exerr:
             _force_rmtree(scratch)
             await _emit_progress(mod_id, "error", 0, "extract failed")
-            return {"ok": False, "error": f"Extraction failed: {exerr}"}
+            return _fail("extract", f"Extraction failed: {exerr}")
 
         exes = []
         for root, _dirs, names in os.walk(scratch):
@@ -5488,7 +5518,7 @@ query Link($slug: String!, $domainName: String!) {
         if not exes:
             _force_rmtree(scratch)
             await _emit_progress(mod_id, "error", 0, "no exe")
-            return {"ok": False, "error": "No tool exe in this archive"}
+            return _fail("exe", "No tool exe in this archive")
         exe_path = max(exes)[1]
         # Never re-run a patcher that already did its work: these tools
         # apply a binary diff expecting the ORIGINAL file, so a second
@@ -5641,6 +5671,9 @@ query Link($slug: String!, $domainName: String!) {
                 game_domain, {}
             )
             done[str(mod_id)] = {"at": int(time.time()), "changed": changed}
+            settings.setdefault("prefix_tool_last", {}).setdefault(
+                game_domain, {}
+            ).pop(str(mod_id), None)
             _save_settings(settings)
             await _emit_progress(mod_id, "done", 100)
         else:
@@ -5654,8 +5687,14 @@ query Link($slug: String!, $domainName: String!) {
         }
 
     async def get_prefix_tools_state(self, game_domain: str) -> dict:
-        done = _load_settings().get("prefix_tools", {}).get(game_domain, {})
-        return {"ok": True, "done": {int(k): True for k in done}}
+        settings = _load_settings()
+        done = settings.get("prefix_tools", {}).get(game_domain, {})
+        last = settings.get("prefix_tool_last", {}).get(game_domain, {})
+        return {
+            "ok": True,
+            "done": {int(k): True for k in done},
+            "last": {int(k): v for k, v in last.items()},
+        }
 
     async def fix_prefix_runtime(self, app_id: int) -> dict:
         """Bring the game prefix's VC++ runtime up to the newest one any

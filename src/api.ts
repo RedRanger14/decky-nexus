@@ -717,9 +717,21 @@ export const runPrefixTool = callable<
   }
 >("run_prefix_tool");
 
+export interface PrefixToolFailure {
+  ok: false;
+  stage: string;
+  message: string;
+  at: number;
+}
+
 export const getPrefixToolsState = callable<
   [game_domain: string],
-  { ok: boolean; done?: Record<number, boolean> }
+  {
+    ok: boolean;
+    done?: Record<number, boolean>;
+    /** Persisted last failure per tool - toasts vanish too fast to read */
+    last?: Record<number, PrefixToolFailure>;
+  }
 >("get_prefix_tools_state");
 
 // Copies a game-dir default ini into the prefix Documents when missing

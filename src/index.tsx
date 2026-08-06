@@ -415,6 +415,9 @@ function CurrentGameSection() {
   >({});
   // Prefix tools (FO3's exe patchers): applied-state + run progress.
   const [toolsDone, setToolsDone] = useState<Record<number, boolean>>({});
+  const [toolsLast, setToolsLast] = useState<
+    Record<number, { stage: string; message: string }>
+  >({});
   const [toolsBusy, setToolsBusy] = useState<string | undefined>();
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
@@ -471,9 +474,13 @@ function CurrentGameSection() {
         );
       }
       if (game.prefixTools) {
-        getPrefixToolsState(game.nexusDomain).then((r) =>
-          setToolsDone(r.done ?? {})
-        );
+        getPrefixToolsState(game.nexusDomain).then((r) => {
+          setToolsDone(r.done ?? {});
+          setToolsLast((r.last ?? {}) as Record<
+            number,
+            { stage: string; message: string }
+          >);
+        });
       }
     }
   };
@@ -1117,6 +1124,29 @@ function CurrentGameSection() {
                         .length
                     })`}
                 </ButtonItem>
+                {/* Persistent failure detail - a toast is gone before a
+                    two-minute job's result can be read. */}
+                {!toolsBusy &&
+                  game.prefixTools
+                    .filter((t) => toolsLast[t.nexusModId])
+                    .map((t) => (
+                      <div
+                        key={t.nexusModId}
+                        style={{
+                          padding: "7px 10px",
+                          margin: "0 0 8px",
+                          background: "rgba(224, 92, 92, 0.12)",
+                          borderLeft: "3px solid #e05c5c",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        ⚠ {t.name} last failed at{" "}
+                        <b>{toolsLast[t.nexusModId].stage}</b>:{" "}
+                        {toolsLast[t.nexusModId].message}
+                      </div>
+                    ))}
                 </div>
               )}
             </PanelSectionRow>
