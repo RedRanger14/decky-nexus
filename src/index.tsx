@@ -95,7 +95,11 @@ import {
   subscribeDownloads,
   updateDownload,
 } from "./state";
-import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
+import {
+  NEXUS_ORANGE,
+  PRIMARY_BUTTON_CLASS,
+  PRIMARY_BUTTON_CSS,
+} from "./theme";
 
 interface GameContext {
   /** The game being managed; undefined outside a supported game's context. */
@@ -420,6 +424,7 @@ function CurrentGameSection() {
     Record<number, { stage: string; message: string }>
   >({});
   const [toolsSkipped, setToolsSkipped] = useState<Record<number, boolean>>({});
+  const [toolsInfoOpen, setToolsInfoOpen] = useState(false);
   const [toolsBusy, setToolsBusy] = useState<string | undefined>();
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
@@ -1092,19 +1097,19 @@ function CurrentGameSection() {
                       : undefined
                   }
                 >
-                <ButtonItem
-                  label="Step 3"
-                  layout="below"
-                  disabled={toolsBusy !== undefined || firstRunNeeded}
-                  description={`Runs ${game.prefixTools
-                    .filter((t) => !toolsDone[t.nexusModId])
-                    .map((t) => t.name)
-                    .join(" and ")} inside the game's own environment. ${
-                    game.prefixTools[0].description
-                  } Takes a few minutes - Steam may close this menu while a tool's window flashes up; reopen it to see the result.${
-                    firstRunNeeded ? " (Do Step 2 first.)" : ""
-                  }`}
-                  onClick={async () => {
+                <Field label="Step 3" childrenLayout="below">
+                  <Focusable style={{ display: "flex", gap: "8px" }}>
+                    <DialogButton
+                      disabled={toolsBusy !== undefined || firstRunNeeded}
+                      style={{
+                        flex: "1 1 auto",
+                        minWidth: 0,
+                        padding: "8px 10px",
+                        fontSize: "13px",
+                        background: NEXUS_ORANGE,
+                        color: "#fff",
+                      }}
+                      onClick={async () => {
                     for (const tool of game.prefixTools!) {
                       if (toolsDone[tool.nexusModId]) continue;
                       toolClock.current = {
@@ -1150,15 +1155,76 @@ function CurrentGameSection() {
                     }
                     setToolsBusy(undefined);
                   }}
+                    >
+                      {toolsBusy ??
+                        `Apply modding tools (${
+                          game.prefixTools.filter(
+                            (t) => !toolsDone[t.nexusModId]
+                          ).length
+                        })`}
+                    </DialogButton>
+                    {!toolsBusy && (
+                      <DialogButton
+                        style={{
+                          flex: "0 0 auto",
+                          width: "auto",
+                          minWidth: "0",
+                          padding: "8px 14px",
+                          fontSize: "13px",
+                        }}
+                        onClick={async () => {
+                          await skipPrefixTools(
+                            game.nexusDomain,
+                            game.prefixTools!
+                              .filter((t) => !toolsDone[t.nexusModId])
+                              .map((t) => t.nexusModId),
+                            true
+                          );
+                          refreshStatus();
+                        }}
+                      >
+                        Skip
+                      </DialogButton>
+                    )}
+                  </Focusable>
+                </Field>
+                {/* The detail lives in an accordion - the QAM has no room
+                    for two paragraphs, but the trade-off must be readable. */}
+                <ButtonItem
+                  layout="below"
+                  onClick={() => setToolsInfoOpen(!toolsInfoOpen)}
                 >
-                  {toolsBusy ??
-                    `Apply modding tools (${
-                      game.prefixTools.filter((t) => !toolsDone[t.nexusModId])
-                        .length
-                    })`}
+                  {toolsInfoOpen ? "▾" : "▸"} What are these? / Why skip?
                 </ButtonItem>
-                {/* Persistent failure detail - a toast is gone before a
-                    two-minute job's result can be read. */}
+                {toolsInfoOpen && (
+                  <div
+                    style={{
+                      padding: "8px 10px",
+                      margin: "0 0 8px",
+                      background: "rgba(255,255,255,0.05)",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <b>Apply</b> downloads{" "}
+                    {game.prefixTools
+                      .filter((t) => !toolsDone[t.nexusModId])
+                      .map((t) => t.name)
+                      .join(" and ")}{" "}
+                    from Nexus Mods and runs it inside the game's own
+                    environment. {game.prefixTools[0].description} Takes a few
+                    minutes; Steam may close this menu while the tool's window
+                    flashes up - reopen it for the result.
+                    <br />
+                    <br />
+                    <b>Skip</b> if it keeps failing: these are old Windows
+                    tools and some refuse to run under Proton. Skipping hides
+                    this step and lets you mod normally - only mods that
+                    specifically require it become unavailable. You can apply
+                    it later from Desktop Mode, or un-skip to retry.
+                  </div>
+                )}
                 {!toolsBusy &&
                   game.prefixTools
                     .filter((t) => toolsLast[t.nexusModId])
@@ -1180,27 +1246,6 @@ function CurrentGameSection() {
                         {toolsLast[t.nexusModId].message}
                       </div>
                     ))}
-                {!toolsBusy && (
-                  <ButtonItem
-                    layout="below"
-                    description={`Skip if this keeps failing - these are old Windows tools and some refuse to run under Proton. Skipping hides this step and lets you mod normally; only mods that specifically require ${game.prefixTools
-                      .filter((t) => !toolsDone[t.nexusModId])
-                      .map((t) => t.name)
-                      .join(" or ")} will be unavailable. You can apply it later from Desktop Mode, or un-skip to retry.`}
-                    onClick={async () => {
-                      await skipPrefixTools(
-                        game.nexusDomain,
-                        game.prefixTools!
-                          .filter((t) => !toolsDone[t.nexusModId])
-                          .map((t) => t.nexusModId),
-                        true
-                      );
-                      refreshStatus();
-                    }}
-                  >
-                    Skip for now
-                  </ButtonItem>
-                )}
                 </div>
               )}
             </PanelSectionRow>
