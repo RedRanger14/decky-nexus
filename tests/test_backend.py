@@ -2997,6 +2997,61 @@ class TestPluginMtimeStagger(unittest.TestCase):
         self.assertLess(mt("Ranger.esm"), mt("Fairfax.esp"))
 
 
+class TestPrefixToolFilePick(unittest.TestCase):
+    """The ESM Patcher (mod 25717) publishes PAIRED English/French MAIN
+    files. The shared picker chose French - 174MB that then failed to
+    unpack - so run_prefix_tool filters avoid-keywords itself across BOTH
+    name and file_name, case-insensitively, and takes the newest MAIN."""
+
+    # Trimmed from the live file list (2026-08-05).
+    FILES = [
+        {"file_id": 1000025119, "name": "Unofficial Fallout 3 ESM Patcher",
+         "file_name": "Unofficial Fallout 3 ESM Patcher-25717-1-3.7z",
+         "category_name": "OLD_VERSION", "is_primary": True},
+        {"file_id": 1000026334, "name": "Installation Guide",
+         "file_name": "Installation Guide-25717-G1-1.7z",
+         "category_name": "OPTIONAL", "is_primary": False},
+        {"file_id": 1000030170, "name": "Unofficial Fallout 3 ESM Patcher",
+         "file_name": "Unofficial Fallout 3 ESM Patcher-25717-1-8.7z",
+         "category_name": "MAIN", "is_primary": False},
+        {"file_id": 1000030171,
+         "name": "Patcher d'ESMs non officiel pour Fallout 3",
+         "file_name": "Patcher d'ESMs non officiel pour Fallout 3-25717-1-8.7z",
+         "category_name": "MAIN", "is_primary": False},
+    ]
+
+    @staticmethod
+    def _pick(files, avoid):
+        """Mirrors run_prefix_tool's selection block."""
+        avoid = [k.lower() for k in avoid]
+        cands = [
+            f for f in files
+            if not any(
+                k in f"{f.get('name','')} {f.get('file_name','')}".lower()
+                for k in avoid
+            )
+        ]
+        mains = [
+            f for f in cands
+            if str(f.get("category_name", "")).upper() == "MAIN"
+        ]
+        pool = mains or cands
+        return max(pool, key=lambda f: int(f["file_id"]), default=None)
+
+    def test_picks_english_main_not_french(self):
+        got = self._pick(self.FILES, ["non officiel", "guide"])
+        self.assertEqual(got["file_id"], 1000030170)
+        self.assertNotIn("officiel", got["name"].lower())
+
+    def test_ignores_stale_primary_old_version(self):
+        got = self._pick(self.FILES, ["non officiel", "guide"])
+        self.assertEqual(got["category_name"], "MAIN")
+
+    def test_avoid_matching_is_case_insensitive(self):
+        got = self._pick(self.FILES, ["NON OFFICIEL", "GUIDE"])
+        self.assertEqual(got["file_id"], 1000030170)
+
+
 class TestProtonPicker(unittest.TestCase):
     """run_prefix_tool must use the Proton release that OWNS the game's
     prefix (compatdata/<id>/version), not whatever is newest."""
