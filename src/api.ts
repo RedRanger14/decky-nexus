@@ -731,8 +731,15 @@ export const getPrefixToolsState = callable<
     done?: Record<number, boolean>;
     /** Persisted last failure per tool - toasts vanish too fast to read */
     last?: Record<number, PrefixToolFailure>;
+    /** Tools the user chose to skip */
+    skipped?: Record<number, boolean>;
   }
 >("get_prefix_tools_state");
+
+export const skipPrefixTools = callable<
+  [game_domain: string, mod_ids: number[], skipped: boolean],
+  { ok: boolean }
+>("skip_prefix_tools");
 
 // Copies a game-dir default ini into the prefix Documents when missing
 // (FO3's launcher hangs under Proton before creating FALLOUT.INI).
