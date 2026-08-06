@@ -710,6 +710,9 @@ export const runPrefixTool = callable<
     timed_out?: boolean;
     rc?: number;
     output?: string;
+    /** Which phase bailed (auth/game/proton/prefix/files/pick/download) */
+    stage?: string;
+    already_applied?: boolean;
     error?: string;
   }
 >("run_prefix_tool");

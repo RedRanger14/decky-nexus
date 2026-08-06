@@ -5417,35 +5417,48 @@ query Link($slug: String!, $domainName: String!) {
         is judged by whether the files the tool exists to modify actually
         CHANGED (verify_changed): console patchers end on a 'press any
         key' that never comes headless, so exit codes lie."""
+        decky.logger.info(
+            f"prefix tool {game_domain}/{mod_id}: requested "
+            f"(exe_hint={exe_hint!r}, verify={verify_changed})"
+        )
+
+        def _fail(stage: str, message: str) -> dict:
+            # Every bail-out is logged: silent early returns made a failed
+            # ESM-Patcher run invisible in the log (2026-08-06).
+            decky.logger.warning(
+                f"prefix tool {game_domain}/{mod_id}: FAILED at {stage}: "
+                f"{message}"
+            )
+            return {"ok": False, "error": message, "stage": stage}
+
         api_key = _load_settings().get("api_key")
         if not api_key:
-            return {"ok": False, "error": "Not signed in"}
+            return _fail("auth", "Not signed in")
         install_path = os.path.join(STEAM_COMMON, install_dir)
         if not os.path.isdir(install_path):
-            return {"ok": False, "error": "Game install folder not found"}
+            return _fail("game", "Game install folder not found")
         proton, compat, steam_root, perr = _proton_binary_for(app_id)
         if perr:
-            return {"ok": False, "error": perr}
+            return _fail("proton", perr)
         if not os.path.isdir(os.path.join(compat, "pfx")):
-            return {
-                "ok": False,
-                "error": "No Proton prefix yet - launch the game once first",
-            }
+            return _fail(
+                "prefix", "No Proton prefix yet - launch the game once first"
+            )
 
         files = await self.get_mod_files(game_domain, mod_id)
         if not files.get("ok"):
-            return files
+            return _fail("files", files.get("error") or "file list failed")
         main = _pick_main_file(
             files.get("files") or [], avoid_file_keywords or []
         )
         if not main:
-            return {"ok": False, "error": "No downloadable file found"}
+            return _fail("pick", "No downloadable file found")
         err, archive_path = await _download_archive(
             game_domain, mod_id, main["file_id"],
             main.get("file_name") or "", api_key,
         )
         if err:
-            return {"ok": False, "error": err}
+            return _fail("download", err)
         scratch = os.path.join(DOWNLOADS_DIR, f"tool-{mod_id}")
         _force_rmtree(scratch)
         os.makedirs(scratch)

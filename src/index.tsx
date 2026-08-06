@@ -1094,8 +1094,11 @@ function CurrentGameSection() {
                               body: `Verified: ${(r.changed ?? []).join(", ")}`,
                             }
                           : {
-                              title: `${tool.name} failed`,
+                              title: `${tool.name} failed${
+                                r.stage ? ` (${r.stage})` : ""
+                              }`,
                               body: r.error ?? r.output?.slice(-120) ?? "",
+                              duration: 12000,
                             }
                       );
                       if (r.ok) {
