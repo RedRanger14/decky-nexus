@@ -3594,6 +3594,218 @@ class TestIniPatchFidelity(unittest.TestCase):
         self.assertEqual(len(differing), 1, f"changed lines: {differing}")
 
 
+class TestResetToVanillaRegressions(unittest.TestCase):
+    """Reset has regressed more than once - SMAPI surviving it, dlo still
+    replaying a deleted SKSE loader, the me3 loader staying installed. It
+    is the one action a user reaches for when everything is already
+    broken, so every install mode gets pinned here."""
+
+    GAME = "Reset Test Game"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        os.makedirs(self.install)
+        shutil.rmtree(main.ME3_ROOT, ignore_errors=True)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(main.ME3_ROOT, ignore_errors=True)
+
+    def _mk(self, rel, body="x"):
+        path = os.path.join(self.install, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(body)
+        return path
+
+    def _records(self, domain, records):
+        settings = main._load_settings()
+        settings.setdefault("installed", {})[domain] = records
+        main._save_settings(settings)
+
+    def _has(self, rel):
+        return os.path.exists(os.path.join(self.install, *rel.split("/")))
+
+    def _reset(self, domain, mods_subdir="mods", **kw):
+        return run(
+            self.plugin.reset_game_modding(
+                domain, self.GAME, mods_subdir,
+                kw.get("install_mode", "folder"),
+                kw.get("app_id", 0),
+                kw.get("plugins_subpath", ""),
+                kw.get("plugins_style", "starred"),
+                kw.get("framework_file_prefixes", []),
+                kw.get("witcher_layout", False),
+                kw.get("framework_mod_folders", []),
+            )
+        )
+
+    # -- folder mode ------------------------------------------------------
+
+    def test_folder_mode_removes_enabled_and_disabled_mods(self):
+        self._mk("mods/ModA/file.txt")
+        self._mk("mods-disabled/ModB/file.txt")
+        self._mk("mods/Untracked/file.txt")
+        self._records("testgame", {"ModA": {"name": "A"}, "ModB": {"name": "B"}})
+        result = self._reset("testgame")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 2)
+        self.assertFalse(self._has("mods/ModA"))
+        self.assertFalse(self._has("mods-disabled/ModB"))
+        # Not ours to delete - the dialog promises as much.
+        self.assertTrue(self._has("mods/Untracked"))
+
+    # -- dataDir mode -----------------------------------------------------
+
+    def test_datadir_mode_removes_manifest_files_and_the_plugins_file(self):
+        self._mk("Data/meshes/thing.nif")
+        self._mk("Data/Cool.esp")
+        self._mk("Data/Vanilla.esm")
+        plugins = main._plugins_txt_path(489830, "Skyrim/Plugins.txt")
+        os.makedirs(os.path.dirname(plugins), exist_ok=True)
+        with open(plugins, "w") as f:
+            f.write("*Cool.esp\n")
+        self._records(
+            "skyrimtest",
+            {
+                "Cool Mod": {
+                    "name": "Cool Mod",
+                    "mode": "dataDir",
+                    "files": ["meshes/thing.nif", "Cool.esp"],
+                    "plugins": ["Cool.esp"],
+                }
+            },
+        )
+        result = self._reset(
+            "skyrimtest", "Data", install_mode="dataDir", app_id=489830,
+            plugins_subpath="Skyrim/Plugins.txt",
+        )
+        self.assertTrue(result["ok"])
+        self.assertFalse(self._has("Data/Cool.esp"))
+        self.assertFalse(self._has("Data/meshes/thing.nif"))
+        self.assertTrue(self._has("Data/Vanilla.esm"))  # the game's own
+        self.assertFalse(os.path.isfile(plugins))  # game regenerates it
+
+    # -- files mode -------------------------------------------------------
+
+    def test_files_mode_removes_exactly_the_recorded_files(self):
+        self._mk("archive/pc/mod/cool.archive")
+        self._mk("archive/pc/mod/other.archive")
+        self._records(
+            "cp77test",
+            {
+                "Cool": {
+                    "name": "Cool",
+                    "mode": "files",
+                    "target": ".",
+                    "files": ["archive/pc/mod/cool.archive"],
+                }
+            },
+        )
+        self._reset("cp77test", "archive/pc/mod")
+        self.assertFalse(self._has("archive/pc/mod/cool.archive"))
+        self.assertTrue(self._has("archive/pc/mod/other.archive"))
+
+    # -- me3 mode ---------------------------------------------------------
+
+    def _seed_me3(self, domain, mod="Some Mod"):
+        os.makedirs(os.path.join(main.ME3_ROOT, "bin"), exist_ok=True)
+        with open(main.ME3_BIN, "w") as f:
+            f.write("#!/bin/sh\n")
+        folder = os.path.join(main._me3_mods_dir(domain), mod)
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "regulation.bin"), "w") as f:
+            f.write("x")
+        settings = main._load_settings()
+        settings.setdefault("installed", {}).setdefault(domain, {})[mod] = {
+            "name": mod, "mode": "me3", "folder": mod, "package": True,
+            "natives": [], "enabled": True, "installed_at": 1,
+        }
+        main._save_settings(settings)
+        main._write_me3_profile(domain, main._load_settings())
+
+    def test_me3_reset_removes_the_profile_and_the_loader(self):
+        self._seed_me3("eldenring")
+        self.assertTrue(os.path.isfile(main.ME3_BIN))
+        result = self._reset("eldenring", "._nexus_mods_unused", install_mode="me3")
+        self.assertTrue(result["ok"])
+        self.assertFalse(os.path.exists(main._me3_profile_dir("eldenring")))
+        # Leaving it behind is what made a working reset look like a no-op:
+        # the setup step kept reporting the loader as installed.
+        self.assertFalse(os.path.exists(main.ME3_BIN))
+        self.assertIn("me3 (mod loader)", result["framework_files"])
+
+    def test_me3_loader_survives_while_another_fromsoft_game_uses_it(self):
+        self._seed_me3("eldenring")
+        self._seed_me3("darksouls3")
+        self._reset("eldenring", "._nexus_mods_unused", install_mode="me3")
+        self.assertFalse(os.path.exists(main._me3_profile_dir("eldenring")))
+        # Resetting one game must not break another that is still modded.
+        self.assertTrue(os.path.isfile(main.ME3_BIN))
+        self.assertTrue(os.path.exists(main._me3_profile_dir("darksouls3")))
+
+    def test_me3_reset_never_touches_the_game_folder(self):
+        self._mk("Game/eldenring.exe")
+        self._mk("Game/start_protected_game.exe")
+        self._seed_me3("eldenring")
+        self._reset("eldenring", "._nexus_mods_unused", install_mode="me3")
+        self.assertTrue(self._has("Game/eldenring.exe"))
+        self.assertTrue(self._has("Game/start_protected_game.exe"))
+
+    # -- shared behaviour -------------------------------------------------
+
+    def test_every_state_section_for_the_game_is_cleared(self):
+        settings = main._load_settings()
+        for section in ("installed", "collections", "framework_setup",
+                        "collection_attention", "w3_merges"):
+            settings.setdefault(section, {})["testgame"] = {"x": {"name": "x"}}
+            settings[section]["othergame"] = {"keep": {"name": "keep"}}
+        main._save_settings(settings)
+        self._reset("testgame")
+        after = main._load_settings()
+        for section in ("installed", "collections", "framework_setup",
+                        "collection_attention", "w3_merges"):
+            self.assertNotIn("testgame", after.get(section, {}), section)
+            # Another game's state is none of this reset's business.
+            self.assertIn("othergame", after.get(section, {}), section)
+
+    def test_launch_command_is_cleared_from_the_launch_options_plugin(self):
+        # Regression: after a Skyrim reset the game would not boot because
+        # dlo still replayed a launch command pointing at the deleted SKSE
+        # loader - Steam's own field never held it.
+        dlo = main._dlo_settings_path()
+        os.makedirs(os.path.dirname(dlo), exist_ok=True)
+        with open(dlo, "w") as f:
+            json.dump(
+                {"profiles": {"489830": {
+                    "state": {},
+                    "originalLaunchOptions": "bash -c 'exec skse64_loader.exe'",
+                }}},
+                f,
+            )
+        try:
+            result = self._reset("testgame", app_id=489830)
+            self.assertTrue(result["cleared_dlo"])
+            self.assertFalse(result["use_steam_client"])
+            self.assertEqual(main._dlo_get_original(dlo, 489830), "")
+        finally:
+            os.remove(dlo)
+
+    def test_missing_game_folder_is_an_error_not_a_silent_success(self):
+        shutil.rmtree(self.install)
+        result = self._reset("testgame")
+        self.assertFalse(result["ok"])
+        self.assertIn("not found", result["error"])
+
+    def test_a_bad_game_domain_is_refused(self):
+        result = self._reset("../../etc")
+        self.assertFalse(result["ok"])
+
+
 class TestResetRemovesTheFramework(unittest.TestCase):
     """Reset-to-vanilla left SMAPI installed (reported on device): it only
     deleted game-root FILES, so smapi-internal/ and the bundled mods
