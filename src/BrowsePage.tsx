@@ -88,8 +88,15 @@ function CollectionCard({
       }}
     >
       {/* Stacked-card thumb: the at-a-glance cue that a collection is a
-          DECK of mods, not one mod (collection tiles are portrait). */}
-      <StackedThumb src={c.thumbnailUrl} width={50} height={68} peek={5} />
+          DECK of mods, not one mod. "contain" like the detail header -
+          cropping collection art to fill a tile cut the sides off it. */}
+      <StackedThumb
+        src={c.thumbnailUrl}
+        width={72}
+        height={64}
+        peek={5}
+        fit="contain"
+      />
       <div style={{ minWidth: 0, alignSelf: "center" }}>
         <div
           style={{

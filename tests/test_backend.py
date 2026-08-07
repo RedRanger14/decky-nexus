@@ -3699,6 +3699,64 @@ class TestGateToSovngardeFailures(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.dirname(dst)))
 
 
+class TestFomodDotDestination(unittest.TestCase):
+    """A FOMOD destination of "." means the Data root. It produced
+    "./file", whose first component the traversal guard rejects, so every
+    file of the option was silently dropped - 'Store Entrance Doorbells'
+    and 'YASTM' failed this way in Gate To Sovngarde, staging 0 files
+    with no error anywhere."""
+
+    def test_dot_destination_normalises_to_the_root(self):
+        self.assertEqual(main._fomod_norm_source("."), "")
+        self.assertEqual(main._fomod_norm_source("./meshes"), "meshes")
+        self.assertEqual(main._fomod_norm_source(".\\meshes"), "meshes")
+        self.assertEqual(main._fomod_norm_source("main/./sub"), "main/sub")
+
+    def test_ordinary_paths_are_unchanged(self):
+        self.assertEqual(main._fomod_norm_source("meshes/armor"), "meshes/armor")
+        self.assertEqual(main._fomod_norm_source("options\\sneak"), "options/sneak")
+        self.assertEqual(main._fomod_norm_source("/leading/"), "leading")
+        self.assertEqual(main._fomod_norm_source(""), "")
+
+    def test_traversal_is_still_rejected(self):
+        # ".." must survive normalisation so the guard still catches it -
+        # that is the case the guard exists for.
+        self.assertIn("..", main._fomod_norm_source("../../etc/passwd"))
+        self.assertFalse(main._safe_rel_path(main._fomod_norm_source("../x")))
+
+    def test_a_dot_destination_stages_its_files(self):
+        # End to end through the stager, the shape both failures had.
+        base = tempfile.mkdtemp()
+        try:
+            src = os.path.join(base, "main")
+            os.makedirs(os.path.join(src, "meshes"))
+            for rel in ("Doorbell.esp", "meshes/bell.nif"):
+                p = os.path.join(src, *rel.split("/"))
+                with open(p, "w") as f:
+                    f.write("x")
+            ctx = {
+                "fomod_base": base,
+                "required": [
+                    {"kind": "folder", "source": "main", "dest": ".",
+                     "priority": 0}
+                ],
+                "conditional": [],
+                "plugin_index": {},
+                "steps": [],
+            }
+            staging = os.path.join(base, "__staged__")
+            os.makedirs(staging)
+            self.assertEqual(main._fomod_stage(ctx, [], staging), 2)
+            self.assertTrue(
+                os.path.isfile(os.path.join(staging, "Doorbell.esp"))
+            )
+            self.assertTrue(
+                os.path.isfile(os.path.join(staging, "meshes", "bell.nif"))
+            )
+        finally:
+            shutil.rmtree(base, ignore_errors=True)
+
+
 class TestPrepareAheadOfInstall(unittest.TestCase):
     """Extract-ahead: the installer must consume a prepared extraction,
     and must never consume a half-finished one."""
