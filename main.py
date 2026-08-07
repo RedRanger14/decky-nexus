@@ -2868,7 +2868,17 @@ def _fomod_config_path(scratch: str):
 
 
 def _fomod_norm_source(path: str) -> str:
-    return (path or "").replace("\\", "/").strip("/")
+    """Normalise a FOMOD source/destination path.
+
+    A destination of "." means the Data root, and authors write it often.
+    Left alone it produced "./thing.esp", whose first component is "." -
+    which the traversal guard rejects, so EVERY file of that option was
+    silently dropped and the install staged nothing ("Store Entrance
+    Doorbells", "YASTM": 0 files, no error). Dropping "." components here
+    keeps ".." rejected, which is the case the guard is actually for.
+    """
+    parts = (path or "").replace("\\", "/").split("/")
+    return "/".join(p for p in parts if p not in ("", "."))
 
 
 def _fomod_case_resolve(base: str, rel: str):
@@ -6060,6 +6070,9 @@ query Link($slug: String!, $domainName: String!) {
         try:
             entry = PENDING_FOMODS.pop(token, None)
             if not entry:
+                decky.logger.warning(
+                    f"FOMOD token {token!r} expired before it was finished"
+                )
                 return {
                     "ok": False,
                     "error": "This install expired - start it again",
@@ -6071,6 +6084,14 @@ query Link($slug: String!, $domainName: String!) {
             staged = _fomod_stage(entry["ctx"], list(selected_ids or []), staging)
             if staged == 0:
                 _force_rmtree(scratch)
+                # Logged, not just returned: a FOMOD that quietly staged
+                # nothing left no trace anywhere, so two collection mods
+                # failed for a week with the log showing only that their
+                # options had matched.
+                decky.logger.warning(
+                    f"FOMOD {entry.get('mod_name')!r}: staged 0 files from "
+                    f"{len(selected_ids or [])} selected option(s)"
+                )
                 return {"ok": False, "error": "Nothing selected to install"}
 
             _, mods_path, _unused = _game_paths(
