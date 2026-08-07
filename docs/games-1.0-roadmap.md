@@ -13,7 +13,7 @@ All Nexus data below verified live against the v2 API on 2026-07-21.
 | Stardew Valley ✅ shipped | 413150 | `stardewvalley` | 1303 | 32,186 | 4.4M |
 | Skyrim Special Edition ✅ shipped | 489830 | `skyrimspecialedition` | 1704 | 135,505 | 3.1M |
 | Cyberpunk 2077 | 1091500 | `cyberpunk2077` | 3333 | 22,581 | 2.4M |
-| Elden Ring | 1245620 | `eldenring` | 4333 | 7,317 | 2.2M |
+| Elden Ring ✅ built (me3) | 1245620 | `eldenring` | 4333 | 7,317 | 2.2M |
 | Fallout 4 | 377160 | `fallout4` | 1151 | 75,193 | 1.5M |
 | Baldur's Gate 3 | 1086940 | `baldursgate3` | 3474 | 18,598 | 1.3M |
 | Fallout: New Vegas | 22380 | `newvegas` | 130 | 41,363 | 1.3M |
@@ -118,7 +118,9 @@ Tier 3 — big or gated:
 12. **Fallout 3** — dual SKUs + FOSE needs exe downgrade (Anniversary
     Patcher run inside the prefix).
 13. **Palworld UE4SS tier** — blocked on the Proton subfolder bug.
-14. **Elden Ring** — needs a product decision (anti-cheat/offline).
+14. ~~**Elden Ring** — needs a product decision (anti-cheat/offline).~~
+    Decision made (boss-approved with safeguards, 2026-08-06); built in
+    v0.52.0 — see the me3 section below.
 
 ## Cross-game platform work this exposes
 
@@ -472,6 +474,55 @@ Blockers: Proton 8.0 must be installed (me3's Deck fallback for ER;
 preflight it), Steam Input focus when launched outside Steam, one
 regulation.bin only (refuse a second, don't silently pick a winner),
 and regulation.bin is coupled to the game patch.
+
+### BUILT (v0.52.0, 2026-08-06) — awaiting device verification
+
+Elden Ring ships as the first `installMode: "me3"` game. What landed:
+
+- **Loader bootstrap**: `install_me3` fetches the portable Linux tarball
+  into the plugin's runtime dir (`<runtime>/me3/bin/me3` + `bin/win64`),
+  flattens a versioned wrapper, and verifies the binary actually runs
+  (`--version`, falling back to `info`) rather than just existing.
+- **Profile writer** (`_write_me3_profile`) is the tier's plugins.txt:
+  regenerated from the install records on every install, toggle,
+  uninstall and reset. `start_online` is never emitted and `savefile`
+  always redirects — both asserted by tests, not left to convention.
+- **Mods live outside the game folder** (`<runtime>/me3/profiles/
+  eldenring/mods/<Mod>/`), so the install stays byte-identical to
+  vanilla. Routing handles assets-at-root, me3's documented
+  `mod/` + `natives/` layout, and wrapper folders; dlls sitting inside
+  asset content are NOT force-loaded as natives.
+- **regulation.bin gate**: a second owner is refused by name, and the
+  refusal lifts once the first is disabled or uninstalled.
+- **Seamless Co-op**: `ersc.dll` automatically gets `load_early` +
+  `initializer = { function = "modengine_ext_init" }`, and the session
+  password is editable from the QAM (reads/writes ersc_settings.ini).
+- **Launch command** comes from the backend (`get_me3_launch_command`),
+  since the paths are plugin-owned rather than game-relative:
+  `bash -c 'exec "<me3>" --windows-binaries-dir "<win64>" launch -p
+  "<profile>"' -- %command%`. %command% is accepted and discarded —
+  Steam needs it to treat the string as a wrapper, and going through
+  Steam keeps Steam Input and the overlay attached.
+
+Verified against me3 v0.12.1 sources while building: `-p` accepts a full
+path (so profiles stay plugin-owned, no XDG writes); the portable dist
+needs `--windows-binaries-dir`; me3 picks Proton from Steam's own
+CompatToolMapping for the app, falling back to the game's verified-Deck
+runtime — so the panel warns only when NO Proton is present.
+
+Still to verify on device: that Steam Input survives the wrapper, that
+the fallback Proton resolves for Elden Ring, and a real Seamless Co-op
+session. The DS3/Sekiro/AC6/Nightreign entries are one registry block
+each once ER is proven — the backend already maps all five domains.
+
+Known gap (deliberate): **option-pack archives** — one download holding
+"Full version/" and "Lite version/" — are refused with a message telling
+the user to pick a single file, rather than routed through a chooser.
+Installing both would load two copies of the same early-load native and
+crash the game, and picking one for the user is a guess. The dataDir
+tier's `needs_choice` / PayloadChoiceModal flow is the model when this
+comes back round; it needs an me3-shaped definition of what an "option"
+is before it's worth wiring.
 
 Colleague's manual methods (2026-08-06), useful as fallbacks/context:
 copy eldenring.exe over start_protected_game.exe (works but breaks

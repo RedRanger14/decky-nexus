@@ -410,10 +410,11 @@ export function CollectionPage() {
               title: `${f.modName}: PC tool - skipped`,
               body: "Utilities like this run on a desktop, not in-game",
             });
-          } else if (result.script_conflict) {
-            // Unmergeable script conflict: parking it keeps the button
-            // honest ("everything installed" when only these remain)
-            // instead of offering an install that can only re-refuse.
+          } else if (result.script_conflict || result.mod_conflict) {
+            // Conflicts with something already installed: parking it
+            // keeps the button honest ("everything installed" when only
+            // these remain) instead of offering an install that can only
+            // re-refuse until the user resolves the clash.
             dropDownload(f.modId);
             setCollectionRow(f.fileId, "skipped");
             freshAttention.push({
@@ -426,7 +427,7 @@ export function CollectionPage() {
               options: [],
             });
             toaster.toast({
-              title: `${f.modName}: script conflict - skipped`,
+              title: `${f.modName}: conflict - skipped`,
               body: result.error ?? "",
             });
           } else {

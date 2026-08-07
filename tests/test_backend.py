@@ -3528,5 +3528,406 @@ class TestPluginMasters(unittest.TestCase):
         self.assertEqual(result["broken"], [])
 
 
+class TestMe3Layout(unittest.TestCase):
+    """FromSoft tier. The promises that got this tier approved are code,
+    not conventions: the generated profile can never put a modded session
+    online, and it always redirects the save file."""
+
+    DOMAIN = "eldenring"
+    GAME = "ELDEN RING"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        os.makedirs(self.root, exist_ok=True)
+        shutil.rmtree(main._me3_profile_dir(self.DOMAIN), ignore_errors=True)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(main._me3_profile_dir(self.DOMAIN), ignore_errors=True)
+
+    # -- payload routing ------------------------------------------------
+
+    def _scratch(self, files):
+        scratch = os.path.join(TEST_ROOT, "me3-scratch")
+        shutil.rmtree(scratch, ignore_errors=True)
+        for rel in files:
+            path = os.path.join(scratch, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(b"x")
+        return scratch
+
+    def test_asset_mod_is_a_package(self):
+        scratch = self._scratch(["regulation.bin", "parts/wp_a_0000.partsbnd"])
+        root, assets, dlls, err = main._route_me3_payload(scratch, "Reforged")
+        self.assertIsNone(err)
+        self.assertEqual(assets, "")  # assets sit at the payload root
+        self.assertEqual(dlls, [])
+        self.assertEqual(root, scratch)
+
+    def test_dll_mod_is_a_native(self):
+        scratch = self._scratch(["SeamlessCoop/ersc.dll",
+                                 "SeamlessCoop/ersc_settings.ini"])
+        root, assets, dlls, err = main._route_me3_payload(scratch, "Seamless")
+        self.assertIsNone(err)
+        self.assertIsNone(assets)
+        self.assertEqual(dlls, ["ersc.dll"])
+        # The wrapper folder is unwrapped so the dll path stays shallow.
+        self.assertTrue(root.endswith("SeamlessCoop"))
+
+    def test_me3s_own_layout_keeps_both_halves(self):
+        # The layout me3's docs recommend: assets in mod/, dll in
+        # natives/. Reading only the root would install half the mod.
+        scratch = self._scratch([
+            "TheMod/mod/regulation.bin",
+            "TheMod/mod/parts/a.partsbnd",
+            "TheMod/natives/hook.dll",
+            "TheMod/themod.me3",
+        ])
+        _root, assets, dlls, err = main._route_me3_payload(scratch, "The Mod")
+        self.assertIsNone(err)
+        self.assertEqual(assets, "mod")
+        self.assertEqual(dlls, ["natives/hook.dll"])
+
+    def test_dlls_inside_asset_content_are_not_force_loaded(self):
+        # A dll shipped as overridden game data is not a mod host -
+        # loading it as a native crashes the game.
+        scratch = self._scratch(["regulation.bin", "sfx/embedded.dll",
+                                 "sfx/sound.bnk"])
+        _root, assets, dlls, err = main._route_me3_payload(scratch, "FX Mod")
+        self.assertIsNone(err)
+        self.assertEqual(assets, "")
+        self.assertEqual(dlls, [])
+
+    def test_natives_survive_an_unwrappable_wrapper(self):
+        # Too many top-level entries to unwrap, so the asset path is
+        # 'MyMod v1.2/mod'. Blacklisting its first component would take
+        # the sibling natives/ with it and half-install the mod.
+        scratch = self._scratch([
+            "MyMod v1.2/mod/regulation.bin",
+            "MyMod v1.2/natives/hook.dll",
+            "README.txt",
+            "Changelog.txt",
+            "screenshot.jpg",
+        ])
+        _root, assets, dlls, err = main._route_me3_payload(scratch, "My Mod")
+        self.assertIsNone(err)
+        self.assertEqual(assets, "MyMod v1.2/mod")
+        self.assertEqual(dlls, ["MyMod v1.2/natives/hook.dll"])
+
+    def test_a_dll_in_a_marker_named_folder_is_still_a_dll_mod(self):
+        # 'script' is a DVDBND root name, but a folder holding nothing
+        # but a dll is a mod host, not overridden game data.
+        scratch = self._scratch(["script/mymod.dll"])
+        _root, assets, dlls, err = main._route_me3_payload(scratch, "Script Mod")
+        self.assertIsNone(err)
+        self.assertIsNone(assets)
+        self.assertEqual(dlls, ["script/mymod.dll"])
+
+    def test_option_packs_are_refused_rather_than_double_loaded(self):
+        # Two copies of one early-load native crashes the game, and
+        # picking a variant for the user is a guess.
+        scratch = self._scratch(["Full version/ersc.dll",
+                                 "Lite version/ersc.dll"])
+        _root, _a, _d, err = main._route_me3_payload(scratch, "Seamless")
+        self.assertIsNotNone(err)
+        self.assertEqual(err[0], "choice")
+        self.assertIn("ersc.dll", err[1])
+
+    def test_backup_folder_does_not_beat_the_real_payload(self):
+        scratch = self._scratch(["_old/parts/stale.bnd",
+                                 "mod/regulation.bin"])
+        _root, assets, _d, err = main._route_me3_payload(scratch, "My Mod")
+        self.assertIsNone(err)
+        self.assertEqual(assets, "mod")
+
+    def test_a_stray_enabled_txt_does_not_route_to_the_ue4ss_refusal(self):
+        # The UE4SS gate fires on enabled.txt anywhere in the archive;
+        # an me3 game must reach its own branch first.
+        result = self._install("Marked Mod", ["regulation.bin", "enabled.txt"])
+        self.assertTrue(result["ok"], result.get("error"))
+
+    def test_windows_tool_is_refused_not_installed(self):
+        scratch = self._scratch(["ModEngine2/modengine2_launcher.exe",
+                                 "ModEngine2/readme.txt"])
+        _root, _a, _d, err = main._route_me3_payload(scratch, "Mod Engine 2")
+        self.assertIsNotNone(err)
+        self.assertEqual(err[0], "tool")
+
+    def test_unrecognizable_archive_reports_contents(self):
+        scratch = self._scratch(["notes.txt", "screenshot.png"])
+        _root, _a, _d, err = main._route_me3_payload(scratch, "Whatever")
+        self.assertEqual(err[0], "layout")
+        self.assertIn("notes.txt", err[1])
+
+    # -- profile writer -------------------------------------------------
+
+    def _record(self, key, **over):
+        settings = main._load_settings()
+        rec = {
+            "mod_id": 1,
+            "file_id": 1,
+            "name": key,
+            "installed_at": over.pop("installed_at", 1000),
+            "mode": "me3",
+            "folder": key,
+            "package": True,
+            "natives": [],
+            "regulation": False,
+            "enabled": True,
+        }
+        rec.update(over)
+        settings.setdefault("installed", {}).setdefault(self.DOMAIN, {})[key] = rec
+        main._save_settings(settings)
+        return settings
+
+    def test_profile_never_goes_online_and_always_isolates_saves(self):
+        settings = self._record("Reforged", regulation=True)
+        path = main._write_me3_profile(self.DOMAIN, settings)
+        with open(path, encoding="utf-8") as f:
+            body = f.read()
+        # The two promises, asserted directly.
+        self.assertNotIn("start_online", body)
+        self.assertIn(f"savefile = \"{main.ME3_SAVEFILE}\"", body)
+        self.assertIn('profileVersion = "v1"', body)
+        self.assertIn('game = "eldenring"', body)
+        self.assertIn('path = "mods/Reforged"', body)
+
+    def test_seamless_coop_gets_its_early_load_hook(self):
+        settings = self._record(
+            "Seamless Coop", package=False, natives=["ersc.dll"]
+        )
+        with open(main._write_me3_profile(self.DOMAIN, settings)) as f:
+            body = f.read()
+        self.assertIn('path = "mods/Seamless Coop/ersc.dll"', body)
+        self.assertIn("load_early = true", body)
+        self.assertIn('initializer = { function = "modengine_ext_init" }', body)
+        # dll-only mods contribute no package entry
+        self.assertNotIn("[[packages]]", body)
+
+    def test_disabled_mod_stays_listed_but_off(self):
+        settings = self._record("Reforged", enabled=False)
+        with open(main._write_me3_profile(self.DOMAIN, settings)) as f:
+            body = f.read()
+        self.assertIn("[[packages]]", body)
+        self.assertIn("enabled = false", body)
+
+    def test_profile_order_follows_install_order(self):
+        self._record("First", installed_at=100)
+        settings = self._record("Second", installed_at=200)
+        with open(main._write_me3_profile(self.DOMAIN, settings)) as f:
+            body = f.read()
+        self.assertLess(body.index("mods/First"), body.index("mods/Second"))
+
+    def test_quotes_in_a_mod_name_cannot_break_the_toml(self):
+        settings = self._record('Weird" Mod', folder='Weird" Mod')
+        with open(main._write_me3_profile(self.DOMAIN, settings)) as f:
+            body = f.read()
+        self.assertIn('path = "mods/Weird\\" Mod"', body)
+
+    # -- install / toggle / uninstall ------------------------------------
+
+    def _install(self, mod_name, files, mod_id=1, file_id=1):
+        """Full install path with the archive pre-seeded in the cache, so
+        no network is touched (the aiohttp stub would raise)."""
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        archive = main._archive_cache_path(mod_id, file_id, "mod.zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            for rel in files:
+                z.writestr(rel, "x")
+        return run(
+            self.plugin.install_mod(
+                self.DOMAIN, mod_id, file_id, "mod.zip", mod_name, "1.0",
+                self.GAME, "._nexus_mods_unused", "", "", "me3", 1245620,
+            )
+        )
+
+    def _profile_body(self):
+        with open(main._me3_profile_path(self.DOMAIN), encoding="utf-8") as f:
+            return f.read()
+
+    def test_package_path_points_at_the_asset_subfolder(self):
+        result = self._install(
+            "The Mod",
+            ["TheMod/mod/regulation.bin", "TheMod/natives/hook.dll"],
+        )
+        self.assertTrue(result["ok"], result.get("error"))
+        body = self._profile_body()
+        self.assertIn('path = "mods/The Mod/mod"', body)
+        self.assertIn('path = "mods/The Mod/natives/hook.dll"', body)
+
+    def test_install_lands_outside_the_game_folder(self):
+        result = self._install("Reforged", ["regulation.bin", "parts/a.bnd"])
+        self.assertTrue(result["ok"], result.get("error"))
+        installed = os.path.join(
+            main._me3_mods_dir(self.DOMAIN), "Reforged", "regulation.bin"
+        )
+        self.assertTrue(os.path.isfile(installed))
+        # The deal: the game install is never written to.
+        self.assertEqual(os.listdir(self.root), [])
+        self.assertIn('path = "mods/Reforged"', self._profile_body())
+
+    def test_second_regulation_bin_is_refused_by_name(self):
+        self._install("Reforged", ["regulation.bin"], mod_id=1, file_id=1)
+        result = self._install("Convergence", ["regulation.bin"], 2, 2)
+        self.assertFalse(result["ok"])
+        # A conflict, not a bad archive: collections must park it as
+        # resolvable, not as permanently unsupported.
+        self.assertTrue(result["mod_conflict"])
+        self.assertNotIn("unsupported_layout", result)
+        self.assertIn("Reforged", result["error"])
+        # The loser leaves nothing behind.
+        self.assertNotIn(
+            "Convergence", os.listdir(main._me3_mods_dir(self.DOMAIN))
+        )
+
+    def test_regulation_clash_clears_once_the_owner_is_disabled(self):
+        self._install("Reforged", ["regulation.bin"], 1, 1)
+        run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "._nexus_mods_unused", "Reforged", False,
+                "me3", self.DOMAIN,
+            )
+        )
+        result = self._install("Convergence", ["regulation.bin"], 2, 2)
+        self.assertTrue(result["ok"], result.get("error"))
+
+    def test_toggle_rewrites_the_profile_without_moving_files(self):
+        self._install("Reforged", ["regulation.bin"])
+        folder = os.path.join(main._me3_mods_dir(self.DOMAIN), "Reforged")
+        run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "._nexus_mods_unused", "Reforged", False,
+                "me3", self.DOMAIN,
+            )
+        )
+        self.assertTrue(os.path.isdir(folder))  # nothing moved
+        self.assertIn("enabled = false", self._profile_body())
+        mods = run(
+            self.plugin.get_installed_mods(
+                self.DOMAIN, self.GAME, "._nexus_mods_unused", "me3"
+            )
+        )["mods"]
+        self.assertEqual([m["enabled"] for m in mods], [False])
+        self.assertTrue(mods[0]["togglable"])
+
+    def test_uninstall_removes_the_folder_and_the_profile_entry(self):
+        self._install("Reforged", ["regulation.bin"])
+        result = run(
+            self.plugin.uninstall_mod(
+                self.DOMAIN, self.GAME, "._nexus_mods_unused", "Reforged",
+                "me3",
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertFalse(
+            os.path.isdir(
+                os.path.join(main._me3_mods_dir(self.DOMAIN), "Reforged")
+            )
+        )
+        self.assertNotIn("[[packages]]", self._profile_body())
+
+    def test_reset_removes_the_whole_me3_tree(self):
+        self._install("Reforged", ["regulation.bin"])
+        result = run(
+            self.plugin.reset_game_modding(
+                self.DOMAIN, self.GAME, "._nexus_mods_unused", "me3", 1245620,
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["removed"], 1)
+        # A stale profile would still be named by the launch command.
+        self.assertFalse(os.path.exists(main._me3_profile_dir(self.DOMAIN)))
+
+    def test_enable_all_says_which_mod_it_left_off(self):
+        self._install("Reforged", ["regulation.bin"], 1, 1)
+        run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "._nexus_mods_unused", "Reforged", False,
+                "me3", self.DOMAIN,
+            )
+        )
+        self._install("Convergence", ["regulation.bin"], 2, 2)
+        result = run(
+            self.plugin.set_all_mods_enabled(
+                self.GAME, "._nexus_mods_unused", True, "me3", self.DOMAIN
+            )
+        )
+        self.assertTrue(result["ok"])
+        # One regulation owner enabled, the other explained - not silent.
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("regulation.bin", result["errors"][0])
+        self.assertEqual(self._profile_body().count("enabled = false"), 1)
+
+    def test_reset_never_deletes_inside_the_game_folder(self):
+        # A record shape we never write, but reset's folder fallback
+        # would resolve it against the game dir and delete there.
+        stray = os.path.join(self.root, "Game", "Legacy")
+        os.makedirs(stray)
+        settings = main._load_settings()
+        settings.setdefault("installed", {}).setdefault(self.DOMAIN, {})[
+            "Legacy"
+        ] = {"name": "Legacy", "folder": "Legacy", "target": "Game"}
+        main._save_settings(settings)
+        run(
+            self.plugin.reset_game_modding(
+                self.DOMAIN, self.GAME, "._nexus_mods_unused", "me3", 1245620,
+            )
+        )
+        self.assertTrue(os.path.isdir(stray))
+        self.assertNotIn(
+            "Legacy",
+            main._load_settings().get("installed", {}).get(self.DOMAIN, {}),
+        )
+
+    # -- launch command --------------------------------------------------
+
+    def test_launch_command_wraps_steam_and_stays_offline(self):
+        result = run(self.plugin.get_me3_launch_command(self.DOMAIN))
+        self.assertTrue(result["ok"])
+        command = result["command"]
+        # Steam only treats the string as a wrapper when %command% is there.
+        self.assertIn("%command%", command)
+        self.assertIn(main.ME3_BIN, command)
+        self.assertIn("--windows-binaries-dir", command)
+        self.assertIn(main._me3_profile_path(self.DOMAIN), command)
+        self.assertNotIn("--online", command)
+        # Writing the command also (re)generates the profile it names.
+        self.assertTrue(os.path.isfile(main._me3_profile_path(self.DOMAIN)))
+
+    def test_launch_command_refuses_a_game_me3_cannot_load(self):
+        result = run(self.plugin.get_me3_launch_command("skyrimspecialedition"))
+        self.assertFalse(result["ok"])
+
+    # -- Seamless Co-op password ----------------------------------------
+
+    def test_coop_password_round_trips_through_the_mod_ini(self):
+        self._install(
+            "Seamless Coop", ["SeamlessCoop/ersc.dll",
+                              "SeamlessCoop/ersc_settings.ini"]
+        )
+        self.assertTrue(
+            run(self.plugin.get_me3_coop_password(self.DOMAIN))["installed"]
+        )
+        self.assertTrue(
+            run(self.plugin.set_me3_coop_password(self.DOMAIN, "deckcrew"))["ok"]
+        )
+        self.assertEqual(
+            run(self.plugin.get_me3_coop_password(self.DOMAIN))["password"],
+            "deckcrew",
+        )
+
+    def test_coop_password_is_absent_without_the_mod(self):
+        result = run(self.plugin.get_me3_coop_password(self.DOMAIN))
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["installed"])
+
+
 if __name__ == "__main__":
     unittest.main()

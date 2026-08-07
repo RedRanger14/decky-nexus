@@ -1,6 +1,8 @@
 // Registry of games the plugin supports. v1: Slay the Spire 2 only.
 // appid is the Steam app ID; nexusDomain is the game's slug on nexusmods.com.
 
+import type { InstallMode } from "./api";
+
 export type LogAdapter =
   /** Godot games: ~/.local/share/<userDirName>/logs/godot.log */
   | { kind: "godot"; userDirName: string }
@@ -74,9 +76,24 @@ export interface SupportedGame {
   cp77Layout?: boolean;
   /** Mod folders bulk operations must never remove (framework components) */
   protectedModFolders?: string[];
-  /** How mods install: per-mod folders (default) or merged into a shared
-   * data dir with per-file manifests and plugins.txt activation (Skyrim) */
-  installMode?: "folder" | "dataDir";
+  /** How mods install: per-mod folders (default), merged into a shared
+   * data dir with per-file manifests and plugins.txt activation (Skyrim),
+   * or the me3 tier (FromSoft) where mods live outside the game folder
+   * entirely and a generated .me3 profile activates them. */
+  installMode?: InstallMode;
+  /** FromSoft games loaded by me3. The game folder is never written to:
+   * me3 boots the real exe instead of the anti-cheat launcher, so mods
+   * live in the plugin's own profile dir. Matchmaking stays blocked and
+   * modded saves stay separate - both enforced in the backend, not
+   * offered as settings. */
+  me3?: {
+    /** Real exe me3 runs, relative to the install dir - shown to the
+     * user so it's clear the anti-cheat launcher is bypassed, not
+     * patched or replaced. */
+    gameExe: string;
+    /** Mods everyone installs first, named in the setup copy */
+    headlineMod?: string;
+  };
   /** dataDir mode: plugins.txt path relative to the Proton prefix's
    * AppData/Local (e.g. "Skyrim Special Edition/plugins.txt") */
   pluginsTxtSubpath?: string;
@@ -600,6 +617,27 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // (Script Merger is Windows-only); menu XMLs are registered in both
     // dx11/dx12 filelists per the next-gen requirement.
   },
+  1245620: {
+    appId: 1245620,
+    displayName: "Elden Ring",
+    nexusDomain: "eldenring", // verified: game id 4333, ~7.3k mods
+    installDirName: "ELDEN RING",
+    // me3 mods never touch the game folder - they live under the
+    // plugin's runtime dir and are activated by a generated .me3
+    // profile. This path is never created; the mod list comes from the
+    // install records, like RE4's pak tier.
+    modsSubdir: "._nexus_mods_unused",
+    installMode: "me3",
+    me3: {
+      gameExe: "Game/eldenring.exe",
+      headlineMod: "Seamless Co-op",
+    },
+    // me3's profile redirects the modded session to its own save file,
+    // so vanilla characters are safe without our save-profile machinery.
+    moddedSaveWarning: false,
+    processName: "eldenring.exe",
+    recommendedModIds: [510], // verified: Seamless Co-op (LukeYui)
+  },
   1091500: {
     appId: 1091500,
     displayName: "Cyberpunk 2077",
@@ -662,7 +700,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
 /** Positional params several backend calls need for install-mode dispatch. */
 export function modeParams(
   g: SupportedGame
-): ["folder" | "dataDir", number, string, "starred" | "listed"] {
+): [InstallMode, number, string, "starred" | "listed"] {
   return [
     g.installMode ?? "folder",
     g.appId,

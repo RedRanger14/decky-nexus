@@ -33,6 +33,7 @@ import {
   SaveStatus,
   UpdateInfo,
   InstallProgress,
+  Me3State,
   applyDisplayFix,
   checkDocsFile,
   checkGameFile,
@@ -52,6 +53,11 @@ import {
   disablePlugins,
   fixPrefixRuntime,
   getPrefixToolsState,
+  getMe3State,
+  getMe3LaunchCommand,
+  getMe3CoopPassword,
+  setMe3CoopPassword,
+  installMe3,
   installFramework,
   skipPrefixTools,
   runPrefixTool,
@@ -87,6 +93,7 @@ import {
 import {
   getAggregateDownloadPercent,
   getCollectionRun,
+  getCompletedDownloads,
   getDownloads,
   setBrowseGame,
   setDetailOrigin,
@@ -426,6 +433,11 @@ function CurrentGameSection() {
   const [toolsSkipped, setToolsSkipped] = useState<Record<number, boolean>>({});
   const [toolsInfoOpen, setToolsInfoOpen] = useState(false);
   const [toolsBusy, setToolsBusy] = useState<string | undefined>();
+  // me3 (FromSoft games): loader state + Seamless Co-op's session password.
+  const [me3, setMe3] = useState<Me3State | undefined>();
+  const [me3Busy, setMe3Busy] = useState(false);
+  const [coopPassword, setCoopPassword] = useState("");
+  const [coopSaved, setCoopSaved] = useState("");
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
   // time against the tool's own budget - honest, and it always moves.
@@ -490,6 +502,16 @@ function CurrentGameSection() {
           setToolsSkipped(r.skipped ?? {});
         });
       }
+      if (game.me3) {
+        getMe3State(game.nexusDomain, game.installDirName).then(setMe3);
+        getFrameworkSetup(game.nexusDomain).then((r) =>
+          setLaunchOptionsSet(Boolean(r.launch_options_set))
+        );
+        getMe3CoopPassword(game.nexusDomain).then((r) => {
+          setCoopPassword(r.password ?? "");
+          setCoopSaved(r.password ?? "");
+        });
+      }
     }
   };
 
@@ -550,7 +572,28 @@ function CurrentGameSection() {
 
   useEffect(() => {
     setStatus(undefined);
+    // Stale me3 state from the previous game would drive this game's
+    // steps (and its co-op field) until the fetch lands.
+    setMe3(undefined);
+    setCoopPassword("");
+    setCoopSaved("");
     refreshStatus();
+  }, [game?.appId]);
+
+  // Installing a mod happens on another page: the loader panel has to
+  // notice, or Seamless Co-op's password field never appears.
+  useEffect(() => {
+    if (!game?.me3) return;
+    // Finished installs land in the completed list, so its length is the
+    // signal that something new is on disk.
+    let last = getCompletedDownloads().length;
+    return subscribeDownloads(() => {
+      const now = getCompletedDownloads().length;
+      if (now !== last) {
+        last = now;
+        refreshStatus();
+      }
+    });
   }, [game?.appId]);
 
   const onInstallFramework = async () => {
@@ -1003,6 +1046,165 @@ function CurrentGameSection() {
               )}
             </PanelSectionRow>
           )}
+          {/* FromSoft games: me3 is a Linux binary the plugin keeps its
+              own copy of. It boots the game's real exe instead of the
+              anti-cheat launcher, so the game folder stays vanilla and
+              the modded session never reaches FromSoft's servers. */}
+          {game.me3 && status?.installed && (
+            <>
+              <PanelSectionRow>
+                {me3?.installed && !me3.error ? (
+                  <Field label="Step 1">
+                    Mod loader installed ✓{me3.version ? ` (me3 ${me3.version})` : ""}
+                  </Field>
+                ) : (
+                  <ButtonItem
+                    label="Step 1"
+                    layout="below"
+                    disabled={me3Busy}
+                    description={
+                      me3?.error
+                        ? // Unpacked but won't execute: a green tick here
+                          // would resurface as "the game won't start".
+                          `The mod loader is installed but won't run (${me3.error}). Reinstall it.`
+                        : `${game.displayName} mods load through me3, a mod loader that starts ${game.me3.gameExe} directly${game.me3.headlineMod ? ` - it's what ${game.me3.headlineMod} needs` : ""}. Your game files aren't modified.`
+                    }
+                    onClick={async () => {
+                      setMe3Busy(true);
+                      try {
+                        const r = await installMe3();
+                        toaster.toast(
+                          r.ok
+                            ? {
+                                title: "Mod loader installed",
+                                body: `me3 ${r.version ?? ""}`.trim(),
+                              }
+                            : {
+                                title: "Could not install the mod loader",
+                                body: r.error ?? "Check your connection",
+                              }
+                        );
+                        refreshStatus();
+                      } finally {
+                        setMe3Busy(false);
+                      }
+                    }}
+                  >
+                    {me3Busy
+                      ? "Installing…"
+                      : me3?.error
+                        ? "Reinstall mod loader (me3)"
+                        : "Install mod loader (me3)"}
+                  </ButtonItem>
+                )}
+              </PanelSectionRow>
+              <PanelSectionRow>
+                {launchOptionsSet ? (
+                  <Field label="Step 2">Launch command set ✓</Field>
+                ) : (
+                  <ButtonItem
+                    label="Step 2"
+                    layout="below"
+                    disabled={!me3?.installed || Boolean(me3?.error)}
+                    description="Steam needs to start the game through me3. Mods stay inactive until this is set."
+                    onClick={async () => {
+                      const r = await getMe3LaunchCommand(game.nexusDomain);
+                      if (!r.ok || !r.command) {
+                        toaster.toast({
+                          title: "Could not build the launch command",
+                          body: r.error ?? "Try reinstalling the mod loader",
+                        });
+                        return;
+                      }
+                      showModal(
+                        <LaunchOptionsModal
+                          frameworkName="me3"
+                          gameName={game.displayName}
+                          appId={game.appId}
+                          gameDomain={game.nexusDomain}
+                          options={r.command}
+                          onDone={markDone}
+                        />
+                      );
+                    }}
+                  >
+                    Set launch command
+                  </ButtonItem>
+                )}
+              </PanelSectionRow>
+              {/* me3 runs the game through whichever Proton Steam has
+                  mapped for it, falling back to the game's verified-Deck
+                  runtime (Proton 8.0 for Elden Ring) - which only exists
+                  if that build is actually installed. */}
+              {me3?.installed && me3.protons?.length === 0 && (
+                <PanelSectionRow>
+                  <Field label="⚠ Proton">
+                    No Proton build is installed. Set one in{" "}
+                    {game.displayName} → Properties → Compatibility, or the
+                    mod loader has nothing to run the game with.
+                  </Field>
+                </PanelSectionRow>
+              )}
+              {me3?.installed &&
+                (me3.protons?.length ?? 0) > 0 &&
+                me3.proton8 === false && (
+                  <PanelSectionRow>
+                    <Field label="Proton">
+                      Proton 8.0 isn't installed. If the game doesn't start,
+                      pick a Proton version explicitly in{" "}
+                      {game.displayName} → Properties → Compatibility — the
+                      mod loader falls back to Proton 8.0 when Steam hasn't
+                      been told which to use.
+                    </Field>
+                  </PanelSectionRow>
+                )}
+              {/* Seamless Co-op matches players on a shared password.
+                  Editing it otherwise means a Desktop Mode text editor. */}
+              {me3?.coop_installed && (
+                <>
+                  <PanelSectionRow>
+                    <TextField
+                      label="Co-op password"
+                      description="Everyone playing together needs the same password."
+                      value={coopPassword}
+                      onChange={(e) => setCoopPassword(e?.target?.value ?? "")}
+                    />
+                  </PanelSectionRow>
+                  <PanelSectionRow>
+                    <ButtonItem
+                      layout="below"
+                      disabled={coopPassword === coopSaved}
+                      onClick={async () => {
+                        const r = await setMe3CoopPassword(
+                          game.nexusDomain,
+                          coopPassword
+                        );
+                        toaster.toast(
+                          r.ok
+                            ? {
+                                title: "Co-op password saved",
+                                body: "Takes effect next time the game starts",
+                              }
+                            : {
+                                title: "Password not saved",
+                                body: r.error ?? "Try a shorter one",
+                              }
+                        );
+                        if (r.ok) setCoopSaved(coopPassword);
+                      }}
+                    >
+                      Save co-op password
+                    </ButtonItem>
+                  </PanelSectionRow>
+                </>
+              )}
+              <PanelSectionRow>
+                <Field description="Modded sessions run offline with their own save file, so your online character is untouched. Playing modded on FromSoft's servers gets accounts banned — the plugin never enables it.">
+                  Offline &amp; separate saves: always on
+                </Field>
+              </PanelSectionRow>
+            </>
+          )}
           {/* Step 2: prove the launch fix by booting to the main menu
               once BEFORE mods go in - a clean baseline beats debugging
               boot and mods at the same time. */}
@@ -1278,9 +1480,9 @@ function CurrentGameSection() {
             </PanelSectionRow>
           )}
           <PanelSectionRow>
-            {game.launcherBypass && status?.installed ? (
+            {(game.launcherBypass || game.me3) && status?.installed ? (
               <Field
-                label={game.prefixTools ? "Step 4" : "Step 3"}
+                label={game.me3 ? "Step 3" : game.prefixTools ? "Step 4" : "Step 3"}
                 childrenLayout="below"
               >
                 <OrangeActionButton
@@ -1310,10 +1512,14 @@ function CurrentGameSection() {
           <PanelSectionRow>
             <ButtonItem
               label={
-                game.launcherBypass && status?.installed
-                  ? game.prefixTools
-                    ? "Step 5"
-                    : "Step 4"
+                status?.installed
+                  ? game.me3
+                    ? "Step 4"
+                    : game.launcherBypass
+                      ? game.prefixTools
+                        ? "Step 5"
+                        : "Step 4"
+                      : undefined
                   : undefined
               }
               layout="below"
