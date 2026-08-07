@@ -60,9 +60,17 @@ def _make_aiohttp_stub():
         def __init__(self, *args, **kwargs):
             raise RuntimeError("network is disabled in tests")
 
+    class TCPConnector:
+        # Only ever constructed as an argument to ClientSession, which
+        # refuses to exist here - this keeps the failure "network is
+        # disabled" rather than a confusing missing-attribute error.
+        def __init__(self, *args, **kwargs):
+            pass
+
     m.ClientError = ClientError
     m.ClientTimeout = ClientTimeout
     m.ClientSession = ClientSession
+    m.TCPConnector = TCPConnector
     return m
 
 
@@ -2453,6 +2461,62 @@ class TestDataPayload(unittest.TestCase):
             "meshes/weapons/x.nif",
         )
 
+    def test_case_merge_cache_matches_uncached_results(self):
+        """The per-install directory cache is a speed optimisation only -
+        it must resolve identically to re-reading the directory each time.
+        A 2,000-file mod was spending its install re-listing Data/textures
+        once per file."""
+        base = os.path.join(TEST_ROOT, "case-merge-cached")
+        shutil.rmtree(base, ignore_errors=True)
+        os.makedirs(os.path.join(base, "Textures", "terrain"))
+        os.makedirs(os.path.join(base, "Meshes"))
+        rels = [
+            "textures/armor/a.dds",
+            "TEXTURES/TERRAIN/map.dds",
+            "meshes/weapons/x.nif",
+            "scripts/source/y.psc",
+        ]
+        cache: dict = {}
+        for rel in rels:
+            self.assertEqual(
+                main._case_merge_rel(base, rel, cache),
+                main._case_merge_rel(base, rel),
+                rel,
+            )
+
+    def test_case_merge_cache_keeps_one_spelling_for_a_new_dir(self):
+        """The bug this function exists to prevent, via the cache: two
+        files in ONE mod naming the same new directory with different
+        casing must land in the same directory. Uncached, the first
+        file's mkdir made the second find it on disk; cached, the choice
+        has to be remembered instead."""
+        base = os.path.join(TEST_ROOT, "case-merge-new")
+        shutil.rmtree(base, ignore_errors=True)
+        os.makedirs(base)
+        cache: dict = {}
+        first = main._case_merge_rel(base, "SKSE/Plugins/a.dll", cache)
+        second = main._case_merge_rel(base, "skse/plugins/b.dll", cache)
+        self.assertEqual(first, "SKSE/Plugins/a.dll")
+        self.assertEqual(second, "SKSE/Plugins/b.dll")
+        # Same directory, so the game (and Wine) sees one tree, not two.
+        self.assertEqual(
+            os.path.dirname(first), os.path.dirname(second)
+        )
+
+    def test_case_merge_cache_is_not_shared_between_installs(self):
+        """A fresh cache must see directories created since - each install
+        builds its own, so a mod installed later adopts the casing of one
+        installed earlier."""
+        base = os.path.join(TEST_ROOT, "case-merge-fresh")
+        shutil.rmtree(base, ignore_errors=True)
+        os.makedirs(base)
+        main._case_merge_rel(base, "Interface/a.swf", {})
+        os.makedirs(os.path.join(base, "Interface"))
+        self.assertEqual(
+            main._case_merge_rel(base, "interface/b.swf", {}),
+            "Interface/b.swf",
+        )
+
     def test_ini_patch_preserves_and_sets(self):
         """Display-mode doctor: patch [Display] keys in place, preserving
         comments, unrelated sections, and adding what's missing."""
@@ -3526,6 +3590,131 @@ class TestPluginMasters(unittest.TestCase):
             )
         )
         self.assertEqual(result["broken"], [])
+
+
+class TestDataDirInstallEndToEnd(unittest.TestCase):
+    """The Skyrim-class path, exercised for real: archive -> extract ->
+    case-merged move into Data/ -> per-file record -> plugins.txt. The
+    merge runs in a worker thread (so downloads keep flowing during it)
+    and shares one directory-listing cache across the mod's files - both
+    are invisible to unit tests of the helpers, so the whole path gets a
+    test of its own."""
+
+    DOMAIN = "skyrimspecialedition"
+    GAME = "Skyrim Merge Test"
+    APP_ID = 489830
+    PLUGINS = "Skyrim Special Edition/Plugins.txt"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        # Pre-existing capitalised dir: the archive's lowercase spelling
+        # must merge INTO it, not create a twin beside it.
+        os.makedirs(os.path.join(self.data, "Textures", "armor"))
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        plugins_path = main._plugins_txt_path(self.APP_ID, self.PLUGINS)
+        shutil.rmtree(os.path.dirname(plugins_path), ignore_errors=True)
+        self.plugins_path = plugins_path
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def _install(self, name, members, mod_id=1, file_id=1):
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        archive = main._archive_cache_path(mod_id, file_id, "mod.zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            for rel in members:
+                z.writestr(rel, "x")
+        return run(
+            self.plugin.install_mod(
+                self.DOMAIN, mod_id, file_id, "mod.zip", name, "1.0",
+                self.GAME, "Data", "", "", "dataDir", self.APP_ID,
+                self.PLUGINS, "starred",
+            )
+        )
+
+    def test_payload_merges_into_data_with_existing_casing(self):
+        result = self._install(
+            "Cool Armour",
+            [
+                "Data/CoolArmour.esp",
+                "Data/textures/armor/cool.dds",
+                "Data/meshes/armor/cool.nif",
+            ],
+        )
+        self.assertTrue(result["ok"], result.get("error"))
+        # Merged into the EXISTING Textures/, no lowercase twin.
+        self.assertTrue(
+            os.path.isfile(
+                os.path.join(self.data, "Textures", "armor", "cool.dds")
+            )
+        )
+        self.assertNotIn("textures", os.listdir(self.data))
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "CoolArmour.esp")))
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.data, "meshes", "armor", "cool.nif"))
+        )
+
+    def test_record_lists_every_file_and_activates_the_plugin(self):
+        self._install(
+            "Cool Armour",
+            ["Data/CoolArmour.esp", "Data/textures/armor/cool.dds"],
+        )
+        rec = main._load_settings()["installed"][self.DOMAIN]["Cool Armour"]
+        self.assertEqual(rec["mode"], "dataDir")
+        self.assertEqual(rec["plugins"], ["CoolArmour.esp"])
+        self.assertCountEqual(
+            rec["files"], ["CoolArmour.esp", "Textures/armor/cool.dds"]
+        )
+        with open(self.plugins_path, encoding="utf-8") as f:
+            self.assertIn("*CoolArmour.esp", f.read())
+
+    def test_two_mods_naming_a_new_dir_differently_share_one_dir(self):
+        # The cache remembers the spelling chosen for a directory this
+        # install created; the second mod then adopts it from disk.
+        self._install("First", ["Data/SKSE/Plugins/a.dll"], 1, 1)
+        self._install("Second", ["Data/skse/plugins/b.dll"], 2, 2)
+        skse = [d for d in os.listdir(self.data) if d.lower() == "skse"]
+        self.assertEqual(skse, ["SKSE"])
+        plugins_dir = os.path.join(self.data, "SKSE", "Plugins")
+        self.assertCountEqual(os.listdir(plugins_dir), ["a.dll", "b.dll"])
+
+    def test_one_mod_naming_a_new_dir_both_ways_lands_in_one_dir(self):
+        self._install(
+            "Mixed Case",
+            ["Data/Scripts/Source/a.psc", "Data/scripts/source/b.psc"],
+        )
+        scripts = [d for d in os.listdir(self.data) if d.lower() == "scripts"]
+        self.assertEqual(scripts, ["Scripts"])
+        self.assertCountEqual(
+            os.listdir(os.path.join(self.data, "Scripts", "Source")),
+            ["a.psc", "b.psc"],
+        )
+
+    def test_uninstall_removes_exactly_what_the_record_lists(self):
+        self._install(
+            "Cool Armour",
+            ["Data/CoolArmour.esp", "Data/textures/armor/cool.dds"],
+        )
+        result = run(
+            self.plugin.uninstall_mod(
+                self.DOMAIN, self.GAME, "Data", "Cool Armour", "dataDir",
+                self.APP_ID, self.PLUGINS, "starred",
+            )
+        )
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertFalse(os.path.isfile(os.path.join(self.data, "CoolArmour.esp")))
+        self.assertFalse(
+            os.path.isfile(
+                os.path.join(self.data, "Textures", "armor", "cool.dds")
+            )
+        )
 
 
 class TestIniPatchFidelity(unittest.TestCase):

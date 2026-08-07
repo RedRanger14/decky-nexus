@@ -169,6 +169,13 @@ VISIBLE_FILE_CATEGORIES = {1, 2, 3, 4, 5}
 
 
 def _load_settings() -> dict:
+    # Deliberately NOT cached in memory. Caching the parsed document would
+    # save a re-parse per install on big collections, but it also makes
+    # every caller share one mutable object - so anything that loads,
+    # mutates and then decides not to save would start leaking into the
+    # next reader. That is a subtle, state-corrupting class of bug in
+    # exchange for the smallest of the available speedups; the merge and
+    # threading work is where the time actually was.
     try:
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -1431,20 +1438,38 @@ def _safe_rel_path(rel: str) -> bool:
     return all(p not in ("", ".", "..") for p in parts)
 
 
-def _case_merge_rel(base: str, rel: str) -> str:
+def _case_merge_rel(base: str, rel: str, cache=None) -> str:
     """Adopt the on-disk casing of every existing path component under base.
     Wine resolves an exact-case match before falling back to a scan, so twin
     dirs like Data/Textures + Data/textures silently split mods in half -
-    each request only ever sees one of them."""
+    each request only ever sees one of them.
+
+    Pass a dict as `cache` to reuse directory listings across the files of
+    one install. Without it this is O(files x depth) listdir calls against
+    the SAME few directories - and Skyrim's Data/textures can hold
+    thousands of entries, so a 2,000-file mod spent most of its install
+    re-reading directories it had already read.
+    """
     resolved = []
     cur = base
+    index = {} if cache is None else cache
     for part in rel.replace("\\", "/").split("/"):
-        try:
-            entries = os.listdir(cur)
-        except OSError:
-            entries = []
-        match = next((e for e in entries if e.lower() == part.lower()), None)
-        chosen = match if match is not None else part
+        names = index.get(cur)
+        if names is None:
+            try:
+                names = {e.lower(): e for e in os.listdir(cur)}
+            except OSError:
+                names = {}
+            index[cur] = names
+        low = part.lower()
+        chosen = names.get(low)
+        if chosen is None:
+            # Nothing on disk yet: this install is about to create it.
+            # Record the spelling we settled on so a later file differing
+            # only in case lands in the SAME directory instead of a twin
+            # (the exact split this function exists to prevent).
+            chosen = part
+            names[low] = part
         resolved.append(chosen)
         cur = os.path.join(cur, chosen)
     return "/".join(resolved)
@@ -3400,6 +3425,41 @@ def _archive_cache_path(mod_id: int, file_id: int, file_name: str) -> str:
     return os.path.join(DOWNLOADS_DIR, f"{mod_id}-{file_id}{ext}")
 
 
+# One session for every mod-file transfer, instead of one per request.
+# A collection pays two requests per mod (resolve the link, then the CDN),
+# and a fresh ClientSession meant a fresh TCP + TLS handshake for each -
+# 400 handshakes across a 200-mod collection, all of it latency before a
+# single byte of mod. Keep-alive reuses the connections instead.
+#
+# No default timeout on the session: link lookups want seconds, a 2 GB
+# archive wants half an hour, so each request passes its own.
+_HTTP_SESSION = None
+
+
+async def _http_session():
+    global _HTTP_SESSION
+    if _HTTP_SESSION is None or _HTTP_SESSION.closed:
+        _HTTP_SESSION = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(
+                limit=16,
+                # Prefetch runs several transfers at once against one CDN
+                # host; the default cap would serialise them.
+                limit_per_host=8,
+                ttl_dns_cache=300,
+                keepalive_timeout=60,
+                ssl=SSL_CONTEXT,
+            )
+        )
+    return _HTTP_SESSION
+
+
+async def _close_http_session() -> None:
+    global _HTTP_SESSION
+    if _HTTP_SESSION is not None and not _HTTP_SESSION.closed:
+        await _HTTP_SESSION.close()
+    _HTTP_SESSION = None
+
+
 async def _download_archive(
     game_domain: str,
     mod_id: int,
@@ -3444,29 +3504,29 @@ async def _download_archive(
         if attempt:
             await asyncio.sleep(2 * attempt)
         try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as session:
-                async with session.get(
-                    link_url, headers=headers, ssl=SSL_CONTEXT
-                ) as resp:
-                    if resp.status == 403:
-                        return (
-                            "Direct downloads need a Premium account "
-                            "(free-user flow not implemented yet)",
-                            "",
-                        )
-                    if resp.status in (429, 500, 502, 503):
-                        last_err = f"Download link error (HTTP {resp.status})"
-                        decky.logger.warning(
-                            f"link fetch {game_domain}/{mod_id}: "
-                            f"HTTP {resp.status}, attempt {attempt + 1}/3"
-                        )
-                        continue
-                    if resp.status != 200:
-                        return f"Download link error (HTTP {resp.status})", ""
-                    links = await resp.json()
-                    break
+            session = await _http_session()
+            async with session.get(
+                link_url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status == 403:
+                    return (
+                        "Direct downloads need a Premium account "
+                        "(free-user flow not implemented yet)",
+                        "",
+                    )
+                if resp.status in (429, 500, 502, 503):
+                    last_err = f"Download link error (HTTP {resp.status})"
+                    decky.logger.warning(
+                        f"link fetch {game_domain}/{mod_id}: "
+                        f"HTTP {resp.status}, attempt {attempt + 1}/3"
+                    )
+                    continue
+                if resp.status != 200:
+                    return f"Download link error (HTTP {resp.status})", ""
+                links = await resp.json()
+                break
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             last_err = f"Network error: {type(e).__name__}"
             continue
@@ -3500,53 +3560,53 @@ async def _download_archive(
         )
       try:
         timeout = aiohttp.ClientTimeout(total=1800, sock_connect=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(_safe_uri(uri), ssl=SSL_CONTEXT) as resp:
-                if resp.status in (429, 500, 502, 503) and cdn_attempt == 0:
-                    continue
-                if resp.status != 200:
-                    return f"CDN download failed (HTTP {resp.status})", ""
-                total = int(resp.headers.get("Content-Length") or 0)
-                done = 0
-                last_pct = -1
-                # Speed: EMA over inter-emit deltas, emitted at least
-                # every half-second so big files still tick.
-                last_t = time.monotonic()
-                last_done = 0
-                ema_bps = 0.0
-                chunk_count = 0
-                with open(part_path, "wb") as out:
-                    async for chunk in resp.content.iter_chunked(1 << 20):
-                        out.write(chunk)
-                        done += len(chunk)
-                        await _throttle(len(chunk), cap_bytes)
-                        chunk_count += 1
-                        if chunk_count % 256 == 0 and (
-                            _free_disk_gb(DOWNLOADS_DIR) < min_free
-                        ):
-                            disk_low = True
-                            break
-                        now = time.monotonic()
-                        pct = int(done * 100 / total) if total else 0
-                        if pct > last_pct or now - last_t >= 0.5:
-                            dt = max(now - last_t, 1e-3)
-                            inst = (done - last_done) / dt
-                            ema_bps = (
-                                inst
-                                if ema_bps == 0
-                                else 0.6 * ema_bps + 0.4 * inst
-                            )
-                            last_pct = pct
-                            last_t = now
-                            last_done = done
-                            await _emit_progress(
-                                mod_id,
-                                "downloading",
-                                pct,
-                                bytes_done=done,
-                                bytes_total=total or None,
-                                bps=ema_bps,
-                            )
+        session = await _http_session()
+        async with session.get(_safe_uri(uri), timeout=timeout) as resp:
+            if resp.status in (429, 500, 502, 503) and cdn_attempt == 0:
+                continue
+            if resp.status != 200:
+                return f"CDN download failed (HTTP {resp.status})", ""
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            last_pct = -1
+            # Speed: EMA over inter-emit deltas, emitted at least
+            # every half-second so big files still tick.
+            last_t = time.monotonic()
+            last_done = 0
+            ema_bps = 0.0
+            chunk_count = 0
+            with open(part_path, "wb") as out:
+                async for chunk in resp.content.iter_chunked(1 << 20):
+                    out.write(chunk)
+                    done += len(chunk)
+                    await _throttle(len(chunk), cap_bytes)
+                    chunk_count += 1
+                    if chunk_count % 256 == 0 and (
+                        _free_disk_gb(DOWNLOADS_DIR) < min_free
+                    ):
+                        disk_low = True
+                        break
+                    now = time.monotonic()
+                    pct = int(done * 100 / total) if total else 0
+                    if pct > last_pct or now - last_t >= 0.5:
+                        dt = max(now - last_t, 1e-3)
+                        inst = (done - last_done) / dt
+                        ema_bps = (
+                            inst
+                            if ema_bps == 0
+                            else 0.6 * ema_bps + 0.4 * inst
+                        )
+                        last_pct = pct
+                        last_t = now
+                        last_done = done
+                        await _emit_progress(
+                            mod_id,
+                            "downloading",
+                            pct,
+                            bytes_done=done,
+                            bytes_total=total or None,
+                            bps=ema_bps,
+                        )
         if disk_low:
             try:
                 os.remove(part_path)
@@ -4765,6 +4825,12 @@ query Link($slug: String!, $domainName: String!) {
             await _emit_progress(mod_id, "error", 0, "game not found")
             return {"ok": False, "error": "Game install folder not found"}
 
+        # Per-phase timings, logged once per mod. Collection installs are
+        # the slow path and guessing at where the time goes has not served
+        # us well - this makes it a measurement instead.
+        _t0 = time.monotonic()
+        _phase = {}
+
         # 1+2) Resolve the download link and fetch to the archive cache -
         # a completed prefetch (collection pipeline) short-circuits here.
         err, archive_path = await _download_archive(
@@ -4772,6 +4838,7 @@ query Link($slug: String!, $domainName: String!) {
         )
         if err:
             return {"ok": False, "error": err}
+        _phase["download"] = time.monotonic() - _t0
 
         # 3) Extract to a scratch dir, then move into mods/.
         await _emit_progress(mod_id, "extracting", 100)
@@ -4789,8 +4856,22 @@ query Link($slug: String!, $domainName: String!) {
                 pass
             await _emit_progress(mod_id, "error", 0, err)
             return {"ok": False, "error": f"Extraction failed: {err}"}
-        # Archives in the wild ship read-only entries; normalize before moving.
-        _normalize_perms(scratch)
+        _phase["extract"] = time.monotonic() - _t0 - _phase["download"]
+        # Archives in the wild ship read-only entries; normalize before
+        # moving. One chmod per file, so a worker thread - inline, a mod
+        # with thousands of files froze every download in flight.
+        await asyncio.to_thread(_normalize_perms, scratch)
+        _phase["perms"] = (
+            time.monotonic() - _t0 - _phase["download"] - _phase["extract"]
+        )
+
+        def _log_phases(kind: str, extra: str = "") -> None:
+            spent = ", ".join(f"{k} {v * 1000:.0f}ms" for k, v in _phase.items())
+            total = (time.monotonic() - _t0) * 1000
+            decky.logger.info(
+                f"install timing {mod_name!r} [{kind}] total {total:.0f}ms "
+                f"({spent}){extra}"
+            )
 
         entries = os.listdir(scratch)
         if not entries:
@@ -4964,31 +5045,46 @@ query Link($slug: String!, $domainName: String!) {
                     f"It contains: {tops}",
                 }
             os.makedirs(mods_path, exist_ok=True)
-            files_rel, plugins = [], []
-            for payload in payload_dirs:
-                for root, _dirs, names in os.walk(payload):
-                    for name in names:
-                        src_file = os.path.join(root, name)
-                        rel = os.path.relpath(src_file, payload)
-                        if not _safe_rel_path(rel):
-                            continue
-                        # Reuse existing on-disk casing so we never create
-                        # twin dirs (Textures vs textures) that Wine splits
-                        # between.
-                        rel = _case_merge_rel(mods_path, rel)
-                        dst = os.path.join(mods_path, *rel.split("/"))
-                        os.makedirs(os.path.dirname(dst), exist_ok=True)
-                        if os.path.isfile(dst):
-                            os.remove(dst)
-                        shutil.move(src_file, dst)
-                        if rel not in files_rel:
-                            files_rel.append(rel)
-                        if (
-                            "/" not in rel
-                            and rel.lower().endswith(PLUGIN_EXTENSIONS)
-                            and rel not in plugins
-                        ):
-                            plugins.append(rel)
+
+            def _merge_data_payloads():
+                """Thousands of file moves per mod: run them in a worker so
+                the event loop keeps servicing the prefetcher's downloads.
+                Inline, a big mod's merge stalled every download in flight
+                for as long as it took."""
+                files_rel, plugins = [], []
+                seen_rel = set()
+                # One directory index shared by every file in this install.
+                case_cache: dict = {}
+                for payload in payload_dirs:
+                    for root, _dirs, names in os.walk(payload):
+                        for name in names:
+                            src_file = os.path.join(root, name)
+                            rel = os.path.relpath(src_file, payload)
+                            if not _safe_rel_path(rel):
+                                continue
+                            # Reuse existing on-disk casing so we never
+                            # create twin dirs (Textures vs textures) that
+                            # Wine splits between.
+                            rel = _case_merge_rel(mods_path, rel, case_cache)
+                            dst = os.path.join(mods_path, *rel.split("/"))
+                            os.makedirs(os.path.dirname(dst), exist_ok=True)
+                            if os.path.isfile(dst):
+                                os.remove(dst)
+                            shutil.move(src_file, dst)
+                            if rel not in seen_rel:
+                                seen_rel.add(rel)
+                                files_rel.append(rel)
+                            if (
+                                "/" not in rel
+                                and rel.lower().endswith(PLUGIN_EXTENSIONS)
+                                and rel not in plugins
+                            ):
+                                plugins.append(rel)
+                return files_rel, plugins
+
+            _merge_t = time.monotonic()
+            files_rel, plugins = await asyncio.to_thread(_merge_data_payloads)
+            _phase["merge"] = time.monotonic() - _merge_t
             _force_rmtree(scratch)
             try:
                 os.remove(archive_path)
@@ -5028,6 +5124,7 @@ query Link($slug: String!, $domainName: String!) {
                 f"installed {mod_name!r} into Data/ "
                 f"({len(files_rel)} files, {len(plugins)} plugins)"
             )
+            _log_phases("dataDir", f", {len(files_rel)} files")
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
 
@@ -5437,6 +5534,8 @@ query Link($slug: String!, $domainName: String!) {
             # natives/ (Fluffy-format assets - needs REFramework's loose
             # loader switched on) and reframework/ (script mods).
             loose_rel = []
+            seen_loose = set()
+            case_cache: dict = {}
 
             def _merge_tree(src_root: str, root_name: str):
                 for root, _dirs, names in os.walk(src_root):
@@ -5447,19 +5546,23 @@ query Link($slug: String!, $domainName: String!) {
                         ).replace(os.sep, "/")
                         if not _safe_rel_path(rel):
                             continue
-                        rel = _case_merge_rel(install_path, rel)
+                        rel = _case_merge_rel(install_path, rel, case_cache)
                         dst = os.path.join(install_path, *rel.split("/"))
                         os.makedirs(os.path.dirname(dst), exist_ok=True)
                         if os.path.isfile(dst):
                             os.remove(dst)
                         shutil.move(src_file, dst)
-                        if rel not in loose_rel:
+                        if rel not in seen_loose:
+                            seen_loose.add(rel)
                             loose_rel.append(rel)
 
-            for nd in natives_dirs:
-                _merge_tree(nd, "natives")
-            for rd in ref_dirs:
-                _merge_tree(rd, "reframework")
+            def _merge_loose():
+                for nd in natives_dirs:
+                    _merge_tree(nd, "natives")
+                for rd in ref_dirs:
+                    _merge_tree(rd, "reframework")
+
+            await asyncio.to_thread(_merge_loose)
             if natives_dirs:
                 _ensure_config_key(
                     os.path.join(install_path, RE4_REF_CONFIG),
@@ -5762,25 +5865,33 @@ query Link($slug: String!, $domainName: String!) {
                 entry["install_dir"], entry["mods_subdir"]
             )
             os.makedirs(mods_path, exist_ok=True)
-            files_rel, plugins = [], []
-            for root, _dirs, names in os.walk(staging):
-                for name in names:
-                    src_file = os.path.join(root, name)
-                    rel = os.path.relpath(src_file, staging)
-                    if not _safe_rel_path(rel):
-                        continue
-                    rel = _case_merge_rel(mods_path, rel)
-                    dst = os.path.join(mods_path, *rel.split("/"))
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    if os.path.isfile(dst):
-                        os.remove(dst)
-                    shutil.move(src_file, dst)
-                    if rel not in files_rel:
-                        files_rel.append(rel)
-                    if "/" not in rel and rel.lower().endswith(
-                        PLUGIN_EXTENSIONS
-                    ) and rel not in plugins:
-                        plugins.append(rel)
+
+            def _merge_staged():
+                files_rel, plugins = [], []
+                seen_rel = set()
+                case_cache: dict = {}
+                for root, _dirs, names in os.walk(staging):
+                    for name in names:
+                        src_file = os.path.join(root, name)
+                        rel = os.path.relpath(src_file, staging)
+                        if not _safe_rel_path(rel):
+                            continue
+                        rel = _case_merge_rel(mods_path, rel, case_cache)
+                        dst = os.path.join(mods_path, *rel.split("/"))
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        if os.path.isfile(dst):
+                            os.remove(dst)
+                        shutil.move(src_file, dst)
+                        if rel not in seen_rel:
+                            seen_rel.add(rel)
+                            files_rel.append(rel)
+                        if "/" not in rel and rel.lower().endswith(
+                            PLUGIN_EXTENSIONS
+                        ) and rel not in plugins:
+                            plugins.append(rel)
+                return files_rel, plugins
+
+            files_rel, plugins = await asyncio.to_thread(_merge_staged)
             _force_rmtree(scratch)
             if plugins and entry["plugins_subpath"]:
                 ptxt = _plugins_txt_path(
@@ -8075,6 +8186,7 @@ query Link($slug: String!, $domainName: String!) {
         decky.logger.info("Nexus Mods plugin loaded")
 
     async def _unload(self):
+        await _close_http_session()
         decky.logger.info("Nexus Mods plugin unloading")
 
     async def _uninstall(self):
