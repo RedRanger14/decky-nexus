@@ -33,7 +33,12 @@ import {
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 import { modeParams } from "./games";
-import { finishFomod, installPinned, prefetchPinned } from "./install";
+import {
+  finishFomod,
+  installPinned,
+  prefetchPinned,
+  preparePinned,
+} from "./install";
 import { backAction } from "./navRules";
 import {
   CollectionRowState,
@@ -54,8 +59,10 @@ import {
 } from "./state";
 import {
   ACTION_BUTTON,
+  ACTION_COLUMN,
   ACTION_HERO,
   ACTION_ROW,
+  actionColumnWidth,
   BLUE_BUTTON_CLASS,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
@@ -243,6 +250,16 @@ export function CollectionPage() {
     (f) => installedIds.has(f.modId) || rowState[f.fileId] === "done"
   ).length;
 
+  // Secondary buttons actually rendered below the hero: the hero takes
+  // its width from this, so the two rows always share an edge.
+  const secondaryActions =
+    2 + // Go to downloads, Back
+    (actionable.length > 0 ? 1 : 0) +
+    (optionalRemaining.length > 0 ? 1 : 0) +
+    ((ownedCount > 0 && !installing) || (justUninstalled && !installing)
+      ? 1
+      : 0);
+
   const installAll = async (includeOptional = false) => {
     if (!detail || installing) return;
     const queue = includeOptional
@@ -288,6 +305,12 @@ export function CollectionPage() {
       const prefs = await getUserPrefs().catch(() => undefined);
       const PREFETCH_PARALLEL = prefs?.prefs?.parallel_downloads ?? 4;
       const PREFETCH_WINDOW = prefs?.prefs?.prefetch_window ?? 8;
+      // The nearest few mods are EXTRACTED as well as downloaded, so the
+      // serial installer only has to commit them. Extraction shares
+      // nothing, but each prepared mod is an unpacked tree on disk, so
+      // the window is small. 0 turns it off and restores the old
+      // download-only behaviour exactly.
+      const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       let installIndex = 0;
       let nextPrefetch = 0;
       const inflight = new Map<number, Promise<void>>();
@@ -302,7 +325,11 @@ export function CollectionPage() {
           // Cross-domain pins get skipped by the installer - don't waste
           // bandwidth on them.
           if (p.domain && p.domain !== game.nexusDomain) continue;
-          const promise = prefetchPinned(
+          // Only the mods about to be installed are worth unpacking;
+          // the rest just get their bytes fetched.
+          const fetcher =
+            idx < installIndex + EXTRACT_AHEAD ? preparePinned : prefetchPinned;
+          const promise = fetcher(
             game,
             p.modId,
             p.fileId,
@@ -737,10 +764,11 @@ export function CollectionPage() {
               scale: this page is a deck of mods, and looks like one. */}
           <StackedThumb
             src={collection.thumbnailUrl}
-            width={158}
-            height={210}
+            width={180}
+            height={200}
             peek={9}
             radius={8}
+            fit="contain"
           />
           <div style={{ minWidth: 0, alignSelf: "center" }}>
             <h2
@@ -783,10 +811,17 @@ export function CollectionPage() {
           </div>
         </Focusable>
 
-        {/* The page's one main action stands alone - wide, never wraps,
-            and while a run is live the button IS the progress bar (the
-            same fill language as the mod rows beneath it). */}
-        <Focusable autoFocus={true} style={{ margin: "6px 0 0" }}>
+        {/* Install spans exactly the buttons beneath it - the column sets
+            one width and both rows fill it. While a run is live it is
+            also the progress bar, same fill language as the mod rows. */}
+        <Focusable
+          autoFocus={true}
+          style={{
+            ...ACTION_COLUMN,
+            margin: "6px 0 14px",
+            maxWidth: actionColumnWidth(secondaryActions),
+          }}
+        >
           <DialogButton
             className={installing ? undefined : PRIMARY_BUTTON_CLASS}
             disabled={!detail || installing || remaining.length === 0}
@@ -818,8 +853,7 @@ export function CollectionPage() {
               ? `Install remaining (${remaining.length} of ${required.length})`
               : `Install required (${remaining.length})`}
           </DialogButton>
-        </Focusable>
-        <Focusable style={{ ...ACTION_ROW, margin: "10px 0 14px" }}>
+          <Focusable style={ACTION_ROW}>
           {actionable.length > 0 && (
             <DialogButton
               className={BLUE_BUTTON_CLASS}
@@ -881,6 +915,7 @@ export function CollectionPage() {
           >
             Back
           </DialogButton>
+          </Focusable>
         </Focusable>
 
         {/* Partial without a run of ours = the user already owns some of

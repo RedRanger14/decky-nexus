@@ -19,6 +19,7 @@ const Scroller: any = ScrollPanelGroup;
 const DEFAULTS: UserPrefs = {
   parallel_downloads: 4,
   prefetch_window: 8,
+  extract_ahead: 2,
   speed_cap_mbps: 0,
   min_free_gb: 5,
   mod_language: "english",
@@ -215,6 +216,23 @@ export function SettingsPage() {
                   ⚠ A large buffer can briefly hold several GB of archives -
                   fine on a roomy SSD, risky when the drive is nearly full.
                   The free-space floor below is your safety net.
+                </Caution>
+              )}
+              <SliderField
+                label="Unpack ahead"
+                description="Mods unpacked while the previous one is still being installed. Unpacking is the slow half of an install and uses a different part of your hardware than the download, so overlapping them is close to free. Mods are still INSTALLED one at a time, in the collection's order - that order is what decides which mod wins a conflict. Set to 0 for the old one-at-a-time behaviour."
+                value={prefs.extract_ahead}
+                min={0}
+                max={4}
+                step={1}
+                notchCount={5}
+                showValue={true}
+                onChange={(v: number) => update({ extract_ahead: v })}
+              />
+              {prefs.extract_ahead === 0 && (
+                <Caution>
+                  Unpacking ahead is off - installs run strictly one at a
+                  time. Turn it back up if collections feel slow.
                 </Caution>
               )}
             </Section>

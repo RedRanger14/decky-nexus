@@ -3426,6 +3426,12 @@ USER_PREF_BOUNDS = {
     # name: (default, min, max)
     "parallel_downloads": (4, 1, 8),
     "prefetch_window": (8, 2, 16),
+    # How many mods are extracted AHEAD of the installer. Extraction is
+    # the CPU-bound half of an install and touches nothing shared, so it
+    # parallelises safely - but each prepared mod is an extracted tree
+    # sitting on disk, so the window stays small. 0 disables it entirely
+    # and restores the old strictly-serial behaviour.
+    "extract_ahead": (2, 0, 4),
     "speed_cap_mbps": (0, 0, 200),  # 0 = unlimited
     "min_free_gb": (5, 1, 50),
 }
@@ -3489,6 +3495,20 @@ def _free_disk_gb(path: str) -> float:
         return shutil.disk_usage(path).free / (1 << 30)
     except OSError:
         return float("inf")
+
+
+# A prepared extraction is the scratch dir plus this marker file, written
+# only after the extract AND the permission pass have finished. Without
+# it, an extraction interrupted half way (plugin reload, power loss)
+# would look exactly like a finished one and install half a mod.
+PREPARED_MARKER = ".decky-prepared"
+
+
+def _extract_scratch(mod_id: int, file_id: int) -> str:
+    """Where a mod file is extracted before it is committed to the game.
+    Shared by the installer and the extract-ahead worker - the names MUST
+    match or the work is done twice."""
+    return os.path.join(DOWNLOADS_DIR, f"extract-{mod_id}-{file_id}")
 
 
 def _archive_cache_path(mod_id: int, file_id: int, file_name: str) -> str:
@@ -4848,6 +4868,56 @@ query Link($slug: String!, $domainName: String!) {
         await _emit_progress(mod_id, "queued", 100)
         return {"ok": True, "path": archive_path}
 
+    async def prepare_mod_file(
+        self,
+        game_domain: str,
+        mod_id: int,
+        file_id: int,
+        file_name: str = "",
+    ) -> dict:
+        """Download AND extract a mod file, leaving it ready for install.
+
+        Extraction is the expensive part of a cached install (measured on
+        device: 579-1408ms of a 736-1586ms install), it is CPU-bound, and
+        it touches nothing shared - so it can run for the NEXT mods while
+        the current one is being committed to the game folder. The commit
+        stays strictly serial in collection order, because for dataDir
+        games the order files overwrite each other IS the load order and
+        re-ordering afterwards cannot undo it.
+
+        Leaves the scratch dir where _install_mod_inner looks for it; if
+        anything here fails the installer just does the work itself.
+        """
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            return {"ok": False, "error": "Not signed in"}
+        err, archive_path = await _download_archive(
+            game_domain, mod_id, file_id, file_name, api_key
+        )
+        if err:
+            decky.logger.warning(f"prepare {game_domain}/{mod_id}: {err}")
+            return {"ok": False, "error": err}
+        scratch = _extract_scratch(mod_id, file_id)
+        ready = scratch + PREPARED_MARKER
+        if os.path.isfile(ready):
+            return {"ok": True, "prepared": True}
+        _force_rmtree(scratch)
+        os.makedirs(scratch, exist_ok=True)
+        err = await _extract_archive(archive_path, scratch)
+        if err:
+            # Leave it to the installer, which owns the error reporting
+            # and the eviction of a corrupt archive.
+            _force_rmtree(scratch)
+            decky.logger.info(f"prepare {game_domain}/{mod_id}: {err[:120]}")
+            return {"ok": False, "error": err}
+        await asyncio.to_thread(_normalize_perms, scratch)
+        # The marker is written last, so a half-done prepare (crash, or
+        # the plugin reloading mid-extract) is never mistaken for ready.
+        with open(ready, "w") as f:
+            f.write(str(int(time.time())))
+        await _emit_progress(mod_id, "queued", 100)
+        return {"ok": True, "prepared": True}
+
     async def _install_root_files(
         self, scratch: str, install_path: str, game_domain: str,
         mod_id: int, file_id: int, file_name: str, mod_name: str,
@@ -4968,30 +5038,44 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": err}
         _phase["download"] = time.monotonic() - _t0
 
-        # 3) Extract to a scratch dir, then move into mods/.
+        # 3) Extract to a scratch dir, then move into mods/. The
+        # extract-ahead worker may already have done this for us while the
+        # previous mod was being committed - in which case take its work
+        # and go straight to the merge.
         await _emit_progress(mod_id, "extracting", 100)
-        scratch = os.path.join(DOWNLOADS_DIR, f"extract-{mod_id}-{file_id}")
-        _force_rmtree(scratch)
-        os.makedirs(scratch, exist_ok=True)
-        err = await _extract_archive(archive_path, scratch)
-        if err:
-            _force_rmtree(scratch)
-            # Evict the cached archive: a corrupt download must not keep
-            # short-circuiting every retry.
+        scratch = _extract_scratch(mod_id, file_id)
+        prepared = os.path.isfile(scratch + PREPARED_MARKER)
+        if prepared:
             try:
-                os.remove(archive_path)
+                os.remove(scratch + PREPARED_MARKER)
             except OSError:
                 pass
-            await _emit_progress(mod_id, "error", 0, err)
-            return {"ok": False, "error": f"Extraction failed: {err}"}
+        else:
+            _force_rmtree(scratch)
+            os.makedirs(scratch, exist_ok=True)
+            err = await _extract_archive(archive_path, scratch)
+            if err:
+                _force_rmtree(scratch)
+                # Evict the cached archive: a corrupt download must not
+                # keep short-circuiting every retry.
+                try:
+                    os.remove(archive_path)
+                except OSError:
+                    pass
+                await _emit_progress(mod_id, "error", 0, err)
+                return {"ok": False, "error": f"Extraction failed: {err}"}
         _phase["extract"] = time.monotonic() - _t0 - _phase["download"]
-        # Archives in the wild ship read-only entries; normalize before
-        # moving. One chmod per file, so a worker thread - inline, a mod
-        # with thousands of files froze every download in flight.
-        await asyncio.to_thread(_normalize_perms, scratch)
+        if not prepared:
+            # Archives in the wild ship read-only entries; normalize
+            # before moving. One chmod per file, so a worker thread -
+            # inline, a mod with thousands of files froze every download
+            # in flight. (A prepared scratch has had this done already.)
+            await asyncio.to_thread(_normalize_perms, scratch)
         _phase["perms"] = (
             time.monotonic() - _t0 - _phase["download"] - _phase["extract"]
         )
+        if prepared:
+            _phase["prepared"] = 1.0
 
         def _log_phases(kind: str, extra: str = "") -> None:
             spent = ", ".join(f"{k} {v * 1000:.0f}ms" for k, v in _phase.items())

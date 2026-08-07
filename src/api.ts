@@ -239,6 +239,12 @@ export const dismissUpdate = callable<
   { ok: boolean; error?: string }
 >("dismiss_update");
 
+// Download AND extract, leaving the mod staged for a fast serial commit.
+export const prepareModFile = callable<
+  [game_domain: string, mod_id: number, file_id: number, file_name: string],
+  { ok: boolean; prepared?: boolean; error?: string }
+>("prepare_mod_file");
+
 export const installFomod = callable<
   [token: string, selected_ids: string[]],
   InstallResult
@@ -633,6 +639,10 @@ export interface UserPrefs {
   parallel_downloads: number;
   /** Archives buffered ahead of the serial installer (2-16, default 8). */
   prefetch_window: number;
+  /** Mods extracted ahead of the serial installer (0-4, default 2).
+   * Extraction is the CPU-bound half of an install and shares nothing,
+   * so it overlaps safely; 0 restores strictly-serial installs. */
+  extract_ahead: number;
   /** Total download cap in MB/s shared across streams; 0 = unlimited. */
   speed_cap_mbps: number;
   /** Downloads pause when free disk falls below this many GB. */
