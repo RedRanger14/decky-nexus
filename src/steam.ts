@@ -1,6 +1,11 @@
 // Thin wrappers around the Steam client globals Decky exposes.
 import { Router } from "@decky/ui";
 
+import type { CompatTool } from "./protonPick";
+
+export { pickProton } from "./protonPick";
+export type { CompatTool } from "./protonPick";
+
 /** All currently running app ids (Steam supports several at once). */
 export function getRunningAppIds(): number[] {
   try {
@@ -79,6 +84,28 @@ export function setLaunchOptions(appId: number, options: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Compatibility tools Steam offers for this app. The name has to come
+ * from Steam rather than be derived from the folder: Valve's own Proton
+ * builds ship no manifest, and this same string is what a mod loader
+ * looks the runtime up by, so a guess that's close isn't good enough. */
+export async function getAvailableCompatTools(
+  appId: number
+): Promise<CompatTool[]> {
+  try {
+    const apps = (globalThis as any).SteamClient?.Apps;
+    if (!apps?.GetAvailableCompatTools) return [];
+    const list = await apps.GetAvailableCompatTools(appId);
+    return (list ?? [])
+      .map((t: any) => ({
+        name: String(t?.strToolName ?? ""),
+        displayName: String(t?.strDisplayName ?? t?.strToolName ?? ""),
+      }))
+      .filter((t: CompatTool) => t.name);
+  } catch {
+    return [];
   }
 }
 

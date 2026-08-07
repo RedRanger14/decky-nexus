@@ -82,10 +82,12 @@ import {
 } from "./games";
 import {
   getAppDisplayName,
+  getAvailableCompatTools,
   getMainWindowPath,
   getRunningAppIds,
   getViewedLibraryAppId,
   isGameRunning,
+  pickProton,
   restartGame,
   setCompatTool,
   setLaunchOptions,
@@ -452,6 +454,9 @@ function CurrentGameSection() {
   const [me3Busy, setMe3Busy] = useState(false);
   const [coopPassword, setCoopPassword] = useState("");
   const [coopSaved, setCoopSaved] = useState("");
+  // Steam batches its config writes, so the backend can't confirm a
+  // just-set compat tool for a second or two - remember what we set.
+  const [protonChosen, setProtonChosen] = useState<string | undefined>();
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
   // time against the tool's own budget - honest, and it always moves.
@@ -593,6 +598,7 @@ function CurrentGameSection() {
     setMe3(undefined);
     setCoopPassword("");
     setCoopSaved("");
+    setProtonChosen(undefined);
     refreshStatus();
   }, [game?.appId]);
 
@@ -1068,14 +1074,58 @@ function CurrentGameSection() {
               the modded session never reaches FromSoft's servers. */}
           {game.me3 && status?.installed && (
             <>
+              {/* Step 1 is Proton because the mod loader asks Steam which
+                  one to use, and Steam only answers if it's been told.
+                  A Verified game runs on an implicit default that's
+                  written down nowhere, so the loader falls back to a
+                  build that may not be installed and the game just
+                  doesn't start. One tap writes it down. */}
               <PanelSectionRow>
-                {me3?.installed && !me3.error ? (
+                {protonChosen || me3?.compat_tool ? (
                   <Field label="Step 1">
-                    Mod loader installed ✓{me3.version ? ` (me3 ${me3.version})` : ""}
+                    Compatibility set ✓ ({protonChosen ?? me3?.compat_tool})
                   </Field>
                 ) : (
                   <ButtonItem
                     label="Step 1"
+                    layout="below"
+                    disabled={me3?.protons?.length === 0}
+                    description={
+                      me3?.protons?.length === 0
+                        ? "No Proton version is installed on this device - install one from Steam's Library → Tools first."
+                        : `Tells Steam which Proton to run ${game.displayName} with. The mod loader needs a named version; unmodded play is unaffected.`
+                    }
+                    onClick={async () => {
+                      const tools = await getAvailableCompatTools(game.appId);
+                      const pick = pickProton(tools);
+                      if (!pick || !setCompatTool(game.appId, pick.name)) {
+                        toaster.toast({
+                          title: "Could not set compatibility",
+                          body: `${game.displayName} → Properties → Compatibility → tick "Force the use of a specific Steam Play tool"`,
+                        });
+                        return;
+                      }
+                      setProtonChosen(pick.displayName || pick.name);
+                      toaster.toast({
+                        title: `Compatibility set to ${pick.displayName}`,
+                        body: `${game.displayName} is ready for the mod loader`,
+                      });
+                      // Steam writes config.vdf on its own schedule.
+                      setTimeout(refreshStatus, 2000);
+                    }}
+                  >
+                    Set compatibility (Proton)
+                  </ButtonItem>
+                )}
+              </PanelSectionRow>
+              <PanelSectionRow>
+                {me3?.installed && !me3.error ? (
+                  <Field label="Step 2">
+                    Mod loader installed ✓{me3.version ? ` (me3 ${me3.version})` : ""}
+                  </Field>
+                ) : (
+                  <ButtonItem
+                    label="Step 2"
                     layout="below"
                     disabled={me3Busy}
                     description={
@@ -1116,10 +1166,10 @@ function CurrentGameSection() {
               </PanelSectionRow>
               <PanelSectionRow>
                 {launchOptionsSet ? (
-                  <Field label="Step 2">Launch command set ✓</Field>
+                  <Field label="Step 3">Launch command set ✓</Field>
                 ) : (
                   <ButtonItem
-                    label="Step 2"
+                    label="Step 3"
                     layout="below"
                     disabled={!me3?.installed || Boolean(me3?.error)}
                     description="Steam needs to start the game through me3. Mods stay inactive until this is set."
@@ -1158,35 +1208,6 @@ function CurrentGameSection() {
                     No Proton build is installed. Set one in{" "}
                     {game.displayName} → Properties → Compatibility, or the
                     mod loader has nothing to run the game with.
-                  </Field>
-                </PanelSectionRow>
-              )}
-              {/* The loader reads Steam's own compatibility setting. When
-                  Steam has never been told (the usual case for a Verified
-                  game, which just runs on an implicit default) the loader
-                  falls back to Proton 8.0 - and if that isn't installed
-                  either, the game fails to start with nothing useful said.
-                  Both facts are knowable up front, so say them up front. */}
-              {me3?.installed &&
-                (me3.protons?.length ?? 0) > 0 &&
-                !me3.compat_tool &&
-                me3.proton8 === false && (
-                  <PanelSectionRow>
-                    <Field label="⚠ Proton">
-                      Set a Proton version for {game.displayName} in
-                      Properties → Compatibility before launching. Steam
-                      hasn't been told which to use, and the mod loader's
-                      fallback (Proton 8.0) isn't installed — without one of
-                      those, the game won't start.
-                    </Field>
-                  </PanelSectionRow>
-                )}
-              {me3?.installed && Boolean(me3.compat_tool) && !me3.proton8 && (
-                <PanelSectionRow>
-                  <Field label="Proton">
-                    Running through {me3.compat_tool}. If the game won't
-                    start, try a different version in Properties →
-                    Compatibility.
                   </Field>
                 </PanelSectionRow>
               )}
@@ -1514,7 +1535,7 @@ function CurrentGameSection() {
           <PanelSectionRow>
             {(game.launcherBypass || game.me3) && status?.installed ? (
               <Field
-                label={game.me3 ? "Step 3" : game.prefixTools ? "Step 4" : "Step 3"}
+                label={game.me3 ? "Step 4" : game.prefixTools ? "Step 4" : "Step 3"}
                 childrenLayout="below"
               >
                 <OrangeActionButton
@@ -1546,7 +1567,7 @@ function CurrentGameSection() {
               label={
                 status?.installed
                   ? game.me3
-                    ? "Step 4"
+                    ? "Step 5"
                     : game.launcherBypass
                       ? game.prefixTools
                         ? "Step 5"
