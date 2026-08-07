@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 // Brand accents for the plugin's full-screen pages. The QAM panel stays
 // native Steam styling on purpose - these are only for our own surfaces.
 //
@@ -63,3 +65,47 @@ export const PRIMARY_BUTTON_CSS = `
   font-weight: 600;
 }
 `;
+
+// ---- Action rows -----------------------------------------------------------
+// The row of buttons under a mod's or collection's header. A page with two
+// actions and a page with five should look like the same app: buttons take
+// a comfortable width and WRAP onto a second line rather than stretching to
+// whatever space is left. Capping each button is what stops a two-button
+// page from rendering two enormous slabs.
+
+export const ACTION_ROW: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "10px",
+};
+
+export const ACTION_BUTTON: CSSProperties = {
+  flexGrow: 1,
+  flexBasis: "170px",
+  minWidth: "150px",
+  maxWidth: "230px",
+};
+
+/** The one action the page exists for - wider, but still capped. */
+export const ACTION_BUTTON_PRIMARY: CSSProperties = {
+  flexGrow: 2,
+  flexBasis: "280px",
+  minWidth: "240px",
+  maxWidth: "360px",
+};
+
+/** Icon-only button (Downloads). Sized so it reads as a different kind of
+ * control than the labelled actions beside it. */
+export const ACTION_BUTTON_ICON: CSSProperties = {
+  flexGrow: 0,
+  flexShrink: 0,
+  // DialogButton fills its container by default; both are needed to make
+  // it size to its content instead.
+  width: "auto",
+  minWidth: "58px",
+  padding: "0 14px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "6px",
+};

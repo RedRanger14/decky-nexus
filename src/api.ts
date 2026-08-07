@@ -264,7 +264,8 @@ export const resetGameModding = callable<
     plugins_subpath: string,
     plugins_style: "starred" | "listed",
     framework_file_prefixes: string[],
-    witcher_layout: boolean
+    witcher_layout: boolean,
+    framework_mod_folders: string[]
   ],
   {
     ok: boolean;
@@ -762,6 +763,10 @@ export interface Me3State {
   protons?: string[];
   /** me3's fallback runtime for Elden Ring when Steam maps none */
   proton8?: boolean;
+  /** Proton Steam has mapped for this app (or the global default).
+   * Empty means Steam chose one implicitly and wrote nothing down, so
+   * me3 has to fall back - see proton8. */
+  compat_tool?: string;
   profile_path?: string;
   profile_exists?: boolean;
   mods?: number;
@@ -772,7 +777,7 @@ export interface Me3State {
 }
 
 export const getMe3State = callable<
-  [game_domain: string, install_dir: string],
+  [game_domain: string, install_dir: string, app_id: number],
   Me3State
 >("get_me3_state");
 

@@ -3528,6 +3528,95 @@ class TestPluginMasters(unittest.TestCase):
         self.assertEqual(result["broken"], [])
 
 
+class TestResetRemovesTheFramework(unittest.TestCase):
+    """Reset-to-vanilla left SMAPI installed (reported on device): it only
+    deleted game-root FILES, so smapi-internal/ and the bundled mods
+    survived and the setup step stayed ticked. Layout mirrors a real
+    SMAPI 4.5.2 install."""
+
+    DOMAIN = "stardewvalley"
+    GAME = "Stardew Valley"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        for rel in (
+            "StardewModdingAPI",
+            "StardewModdingAPI.dll",
+            "StardewModdingAPI.deps.json",
+            "StardewModdingAPI.runtimeconfig.json",
+            "StardewModdingAPI.xml",
+            "smapi-internal/MonoMod.dll",
+            "Mods/ConsoleCommands/manifest.json",
+            "Mods/SaveBackup/manifest.json",
+            "Mods/PlayerMod/manifest.json",
+            # Game files that must survive, plus the save backups SMAPI
+            # writes - the reset dialog promises saves aren't touched.
+            "Stardew Valley",
+            "Stardew Valley.dll",
+            "StardewValley",
+            "Content/data.xnb",
+            "save-backups/2026-08-06 backup.zip",
+        ):
+            path = os.path.join(self.root, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("x")
+        settings = main._load_settings()
+        settings.setdefault("installed", {})[self.DOMAIN] = {
+            "PlayerMod": {"mod_id": 1, "name": "Player Mod"}
+        }
+        main._save_settings(settings)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _reset(self):
+        return run(
+            self.plugin.reset_game_modding(
+                self.DOMAIN, self.GAME, "Mods", "folder", 413150, "", "starred",
+                ["StardewModdingAPI", "smapi-internal"], False,
+                ["SaveBackup", "ConsoleCommands", "ErrorHandler"],
+            )
+        )
+
+    def _exists(self, rel):
+        return os.path.exists(os.path.join(self.root, *rel.split("/")))
+
+    def test_loader_files_and_directories_both_go(self):
+        result = self._reset()
+        self.assertTrue(result["ok"])
+        self.assertFalse(self._exists("StardewModdingAPI"))
+        self.assertFalse(self._exists("StardewModdingAPI.dll"))
+        self.assertFalse(self._exists("StardewModdingAPI.xml"))
+        # The directory is what the old file-only sweep left behind.
+        self.assertFalse(self._exists("smapi-internal"))
+
+    def test_bundled_mods_go_but_the_players_mods_are_recorded_removals(self):
+        self._reset()
+        self.assertFalse(self._exists("Mods/ConsoleCommands"))
+        self.assertFalse(self._exists("Mods/SaveBackup"))
+        self.assertFalse(self._exists("Mods/PlayerMod"))
+
+    def test_game_files_and_save_backups_survive(self):
+        self._reset()
+        self.assertTrue(self._exists("Stardew Valley"))
+        self.assertTrue(self._exists("Stardew Valley.dll"))
+        self.assertTrue(self._exists("StardewValley"))
+        self.assertTrue(self._exists("Content/data.xnb"))
+        # Saves are not touched - the confirm dialog says so.
+        self.assertTrue(self._exists("save-backups/2026-08-06 backup.zip"))
+
+    def test_reset_reports_what_it_removed(self):
+        result = self._reset()
+        self.assertIn("smapi-internal", result["framework_files"])
+        self.assertIn("Mods/SaveBackup", result["framework_files"])
+        self.assertEqual(result["errors"], [])
+
+
 class TestMe3Layout(unittest.TestCase):
     """FromSoft tier. The promises that got this tier approved are code,
     not conventions: the generated profile can never put a modded session
@@ -3885,6 +3974,34 @@ class TestMe3Layout(unittest.TestCase):
             "Legacy",
             main._load_settings().get("installed", {}).get(self.DOMAIN, {}),
         )
+
+    # -- Proton preflight -------------------------------------------------
+
+    def test_compat_tool_prefers_the_app_then_the_global_default(self):
+        config = os.path.join(
+            main.decky.DECKY_USER_HOME, ".steam", "steam", "config", "config.vdf"
+        )
+        os.makedirs(os.path.dirname(config), exist_ok=True)
+        with open(config, "w", encoding="utf-8") as f:
+            f.write(
+                '"InstallConfigStore"\n{\n "Software"\n {\n'
+                '  "CompatToolMapping"\n  {\n'
+                '   "0"\n   {\n    "name"  "proton_experimental"\n'
+                '    "config"  ""\n   }\n'
+                '   "1245620"\n   {\n    "name"  "proton_9"\n'
+                '    "config"  ""\n   }\n  }\n }\n}\n'
+            )
+        try:
+            self.assertEqual(main._steam_compat_tool(1245620), "proton_9")
+            # An unmapped app inherits Steam's global default.
+            self.assertEqual(main._steam_compat_tool(999999), "proton_experimental")
+        finally:
+            os.remove(config)
+
+    def test_compat_tool_is_empty_when_steam_wrote_nothing(self):
+        # The real state on the test device: a Verified game running on an
+        # implicit default, so me3 has to fall back to Proton 8.0.
+        self.assertEqual(main._steam_compat_tool(1245620), "")
 
     # -- launch command --------------------------------------------------
 

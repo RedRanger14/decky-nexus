@@ -47,10 +47,14 @@ import { isGameRunning, restartGame } from "./steam";
 import {
   ACCENT_DANGER,
   ACCENT_SUCCESS,
+  ACTION_BUTTON,
+  ACTION_BUTTON_PRIMARY,
+  ACTION_ROW,
   NEXUS_ORANGE,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
 } from "./theme";
+import { DownloadsButton } from "./DownloadsButton";
 
 function fmtSize(sizeKb: number): string {
   if (sizeKb >= 1024 * 1024) return `${(sizeKb / 1024 / 1024).toFixed(1)} GB`;
@@ -715,12 +719,7 @@ export function ModDetailPage() {
           above it (first-in-DOM otherwise wins). */}
       <Focusable
         autoFocus={true}
-        style={{
-          display: "flex",
-          gap: "10px",
-          margin: "12px 0 0",
-          maxWidth: "760px",
-        }}
+        style={{ ...ACTION_ROW, margin: "12px 0 0" }}
       >
         <style>{PRIMARY_BUTTON_CSS}</style>
         <DialogButton
@@ -728,8 +727,7 @@ export function ModDetailPage() {
           onClick={() => primaryFile && onInstall(primaryFile)}
           className={PRIMARY_BUTTON_CLASS}
           style={{
-            flexGrow: 2,
-            minWidth: "240px",
+            ...ACTION_BUTTON_PRIMARY,
             opacity: primaryDisabled && !upToDate ? 0.55 : upToDate ? 0.75 : 1,
           }}
         >
@@ -738,14 +736,14 @@ export function ModDetailPage() {
         <DialogButton
           disabled={fileList.length === 0}
           onClick={() => setShowAllFiles(!showAllFiles)}
-          style={{ flexGrow: 1, minWidth: "150px" }}
+          style={ACTION_BUTTON}
         >
           {showAllFiles ? "Hide files ▴" : `All files (${fileList.length}) ▾`}
         </DialogButton>
         {installedCopy && (
           <DialogButton
             disabled={installingFileId !== undefined}
-            style={{ flexGrow: 1, minWidth: "140px", color: ACCENT_DANGER }}
+            style={{ ...ACTION_BUTTON, color: ACCENT_DANGER }}
             onClick={() =>
               showModal(
                 <ConfirmModal
@@ -776,6 +774,7 @@ export function ModDetailPage() {
             Uninstall
           </DialogButton>
         )}
+        <DownloadsButton />
       </Focusable>
       {files && !files.ok && (
         <div style={{ opacity: 0.8, fontSize: "13px" }}>

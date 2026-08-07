@@ -2298,6 +2298,35 @@ ME3_ASSET_MARKERS = {
 }
 
 
+# Diagnostics-grade, like the launch-options peek: enough to answer "has
+# Steam been told which Proton to use", not a VDF parser.
+_VDF_COMPAT_TOOL_RE = re.compile(r'"(\d+)"\s*\{[^{}]*?"name"\s*"([^"]*)"', re.S)
+
+
+def _steam_compat_tool(app_id: int) -> str:
+    """The Proton Steam runs this app with: its own CompatToolMapping
+    entry, else the global default (app 0). Empty means Steam has picked
+    one implicitly and written nothing down - which matters because me3
+    reads this same mapping, and when it finds nothing it falls back to
+    the game's verified-Deck runtime, a Proton build that may well not
+    be installed."""
+    path = os.path.join(
+        decky.DECKY_USER_HOME, ".steam", "steam", "config", "config.vdf"
+    )
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    start = text.find("CompatToolMapping")
+    if start < 0:
+        return ""
+    mapping = {}
+    for m in _VDF_COMPAT_TOOL_RE.finditer(text[start:start + 20000]):
+        mapping[m.group(1)] = m.group(2)
+    return mapping.get(str(app_id)) or mapping.get("0") or ""
+
+
 def _me3_profile_dir(game_domain: str) -> str:
     return os.path.join(ME3_PROFILES_DIR, game_domain)
 
@@ -6224,7 +6253,9 @@ query Link($slug: String!, $domainName: String!) {
             }
         return {"ok": True, "version": status.get("version", "")}
 
-    async def get_me3_state(self, game_domain: str, install_dir: str) -> dict:
+    async def get_me3_state(
+        self, game_domain: str, install_dir: str, app_id: int = 0
+    ) -> dict:
         """Everything the FromSoft panel needs in one call: whether our
         me3 copy is there, whether a Proton it can use is installed, and
         what the generated profile currently activates."""
@@ -6252,6 +6283,7 @@ query Link($slug: String!, $domainName: String!) {
             # no compat tool mapped for the app; for Elden Ring that is
             # Proton 8.0, so its absence is worth flagging up front.
             "proton8": any(p.lower().startswith("proton 8") for p in protons),
+            "compat_tool": _steam_compat_tool(app_id) if app_id else "",
             "profile_path": profile,
             "profile_exists": os.path.isfile(profile),
             "mods": len(records),
@@ -6919,6 +6951,7 @@ query Link($slug: String!, $domainName: String!) {
         plugins_style: str = "starred",
         framework_file_prefixes: list = None,
         witcher_layout: bool = False,
+        framework_mod_folders: list = None,
     ) -> dict:
         """One-button return to vanilla: uninstall every tracked mod (all
         record modes), remove framework loader files by prefix (copyRoot
@@ -7007,12 +7040,34 @@ query Link($slug: String!, $domainName: String!) {
                 continue
             for name in sorted(os.listdir(install_path)):
                 p = os.path.join(install_path, name)
-                if name.lower().startswith(pl) and os.path.isfile(p):
-                    try:
+                if not name.lower().startswith(pl):
+                    continue
+                try:
+                    # Loaders ship directories too (SMAPI's smapi-internal/):
+                    # removing only files left the framework installed and
+                    # its setup step still ticked after a "reset to vanilla".
+                    if os.path.isdir(p) and not os.path.islink(p):
+                        _force_rmtree(p)
+                    else:
                         os.remove(p)
-                        framework_files.append(name)
+                    framework_files.append(name)
+                except OSError as e:
+                    errors.append(f"{name}: {e}")
+        # Mods the framework bundles with itself (SMAPI's ConsoleCommands /
+        # SaveBackup). They have no install record, so the loop above never
+        # sees them - but leaving them behind isn't vanilla either.
+        for folder in framework_mod_folders or []:
+            fl = str(folder)
+            if not fl or "/" in fl or "\\" in fl or fl.startswith("."):
+                continue
+            for base in (mods_path, disabled_path):
+                p = os.path.join(base, fl)
+                if os.path.isdir(p) and not os.path.islink(p):
+                    try:
+                        _force_rmtree(p)
+                        framework_files.append(f"{mods_subdir}/{fl}")
                     except OSError as e:
-                        errors.append(f"{name}: {e}")
+                        errors.append(f"{fl}: {e}")
         if install_mode == "dataDir" and plugins_subpath and app_id:
             p = _plugins_txt_path(app_id, plugins_subpath)
             try:

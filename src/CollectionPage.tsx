@@ -52,11 +52,15 @@ import {
   updateDownload,
 } from "./state";
 import {
+  ACTION_BUTTON,
+  ACTION_BUTTON_PRIMARY,
+  ACTION_ROW,
   BLUE_BUTTON_CLASS,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
   WHITE_BUTTON_CLASS,
 } from "./theme";
+import { DownloadsButton } from "./DownloadsButton";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -761,13 +765,13 @@ export function CollectionPage() {
 
         <Focusable
           autoFocus={true}
-          style={{ display: "flex", gap: "10px", margin: "6px 0 14px" }}
+          style={{ ...ACTION_ROW, margin: "6px 0 14px" }}
         >
           <DialogButton
             className={PRIMARY_BUTTON_CLASS}
             disabled={!detail || installing || remaining.length === 0}
             onClick={() => installAll(false)}
-            style={{ flexGrow: 2, minWidth: "260px" }}
+            style={ACTION_BUTTON_PRIMARY}
           >
             {installing
               ? `Installing… ${runIsOurs ? run!.finished : 0}/${
@@ -787,8 +791,7 @@ export function CollectionPage() {
               disabled={finishingFileId !== undefined}
               onClick={finishSetup}
               style={{
-                flexGrow: 1,
-                minWidth: "200px",
+                ...ACTION_BUTTON,
                 animation:
                   finishingFileId !== undefined
                     ? "nexusFinishPulse 1.4s ease-in-out infinite"
@@ -810,7 +813,7 @@ export function CollectionPage() {
               className={WHITE_BUTTON_CLASS}
               disabled={!detail || installing}
               onClick={() => installAll(true)}
-              style={{ flexGrow: 1, minWidth: "190px" }}
+              style={ACTION_BUTTON}
             >
               {remaining.length === 0
                 ? `Install optional (${optionalRemaining.length})`
@@ -818,7 +821,7 @@ export function CollectionPage() {
             </DialogButton>
           )}
           <DialogButton
-            style={{ flexGrow: 1, minWidth: "120px" }}
+            style={ACTION_BUTTON}
             onClick={() => {
               Navigation.NavigateBack();
             }}
@@ -830,18 +833,19 @@ export function CollectionPage() {
               className={WHITE_BUTTON_CLASS}
               disabled={finishingFileId !== undefined}
               onClick={onUninstallCollection}
-              style={{ flexGrow: 1, minWidth: "150px" }}
+              style={ACTION_BUTTON}
             >
               Uninstall ({ownedCount})
             </DialogButton>
           ) : justUninstalled && !installing ? (
             <DialogButton
               onClick={() => {}}
-              style={{ flexGrow: 1, minWidth: "150px", opacity: 0.7 }}
+              style={{ ...ACTION_BUTTON, opacity: 0.7 }}
             >
               Uninstalled ✓
             </DialogButton>
           ) : null}
+          <DownloadsButton />
         </Focusable>
 
         {/* Partial without a run of ours = the user already owns some of
