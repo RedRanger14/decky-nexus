@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
 } from "../.test-build/panelRules.js";
@@ -37,4 +38,23 @@ test("hiding the mods section never hides reset", () => {
   const modsHidden = showInstalledModsSection(0, false);
   assert.equal(modsHidden, false);
   assert.equal(showResetRow(true), true);
+});
+
+test("a saved co-op password is hidden by default", () => {
+  assert.equal(maskCoopPassword("hunter2", false), true);
+});
+
+test("the eye reveals it", () => {
+  assert.equal(maskCoopPassword("hunter2", true), false);
+});
+
+test("an empty password stays editable - there is nothing to hide", () => {
+  assert.equal(maskCoopPassword("", false), false);
+});
+
+test("typing a first password does not mask mid-keystroke", () => {
+  // The rule reads the SAVED value, so a draft never flips it to dots.
+  for (const draftLength of [1, 2, 3]) {
+    assert.equal(maskCoopPassword("", false), false, `draft ${draftLength}`);
+  }
 });

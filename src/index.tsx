@@ -71,7 +71,11 @@ import {
   setApiKey,
   setModEnabled,
 } from "./api";
-import { showInstalledModsSection, showResetRow } from "./panelRules";
+import {
+  maskCoopPassword,
+  showInstalledModsSection,
+  showResetRow,
+} from "./panelRules";
 import {
   ALL_GAMES,
   DEFAULT_GAME,
@@ -550,6 +554,14 @@ function CurrentGameSection() {
     }
   };
 
+  /** Launching is the end of what the panel is for - leaving it open just
+   * puts something over the game that has to be dismissed. */
+  const launchGame = () => {
+    if (!game) return;
+    restartGame(game.appId);
+    Navigation.CloseSideMenus();
+  };
+
   const openLaunchOptionsModal = () => {
     if (!game?.framework?.launchOptionsTemplate || !status) return;
     showModal(
@@ -695,6 +707,7 @@ function CurrentGameSection() {
     ? [game.framework, ...(game.extraFrameworks ?? [])]
     : [];
   const isMultiFw = (game?.extraFrameworks?.length ?? 0) > 0;
+  const coopMasked = maskCoopPassword(coopSaved, coopShown);
   const missingFrameworks = allFrameworks.filter((fw, i) =>
     i === 0 ? !status?.framework_installed : !extraFwInstalled[fw.name]
   );
@@ -1022,7 +1035,7 @@ function CurrentGameSection() {
               label="Step 4"
               layout="below"
               description="Restarts are required for mods to take effect"
-              onClick={() => restartGame(game.appId)}
+              onClick={launchGame}
             >
               {gameIsRunning
                 ? `Restart ${game.displayName}`
@@ -1237,7 +1250,7 @@ function CurrentGameSection() {
                   disabled={!launchOptionsSet}
                   description={game.firstRunNotice.message}
                   onClick={() => {
-                    restartGame(game.appId);
+                    launchGame();
                     // The marker file appears once the game reaches the
                     // menu - re-check when the user comes back.
                     setTimeout(refreshStatus, 15000);
@@ -1554,33 +1567,58 @@ function CurrentGameSection() {
                     }}
                   >
                     <div style={{ flexGrow: 1, minWidth: 0 }}>
-                      <TextField
-                        bIsPassword={!coopShown}
-                        value={coopPassword}
-                        onChange={(e) =>
-                          setCoopPassword(e?.target?.value ?? "")
-                        }
-                      />
-                    </div>
-                    <DialogButton
-                      onClick={() => setCoopShown((s) => !s)}
-                      style={{
-                        minWidth: "40px",
-                        width: "40px",
-                        height: "32px",
-                        padding: "0",
-                        flexShrink: 0,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      {coopShown ? (
-                        <FaEyeSlash size={14} />
+                      {/* A saved password is rendered as dots by us rather
+                          than left to the field's own bIsPassword, which
+                          doesn't mask on this Steam build. An empty one
+                          has nothing to hide, so it stays editable and
+                          you can just type. */}
+                      {coopMasked ? (
+                        <div
+                          style={{
+                            background: "rgba(0, 0, 0, 0.2)",
+                            borderRadius: "2px",
+                            padding: "10px 12px",
+                            fontSize: "14px",
+                            letterSpacing: "2px",
+                            opacity: 0.8,
+                            overflow: "hidden",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {"•".repeat(Math.min(coopSaved.length, 20))}
+                        </div>
                       ) : (
-                        <FaEye size={14} />
+                        <TextField
+                          bIsPassword={false}
+                          value={coopPassword}
+                          onChange={(e) =>
+                            setCoopPassword(e?.target?.value ?? "")
+                          }
+                        />
                       )}
-                    </DialogButton>
+                    </div>
+                    {/* Nothing saved yet means nothing to reveal. */}
+                    {coopSaved.length > 0 && (
+                      <DialogButton
+                        onClick={() => setCoopShown((s) => !s)}
+                        style={{
+                          minWidth: "40px",
+                          width: "40px",
+                          height: "32px",
+                          padding: "0",
+                          flexShrink: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        {coopShown ? (
+                          <FaEyeSlash size={14} />
+                        ) : (
+                          <FaEye size={14} />
+                        )}
+                      </DialogButton>
+                    )}
                   </Focusable>
                 </Field>
               </PanelSectionRow>
@@ -1627,7 +1665,7 @@ function CurrentGameSection() {
               }
               layout="below"
               description="Restarts are required for mods to take effect"
-              onClick={() => restartGame(game.appId)}
+              onClick={launchGame}
             >
               {gameIsRunning
                 ? `Restart ${game.displayName}`

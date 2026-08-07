@@ -22,3 +22,14 @@ export function showInstalledModsSection(
 export function showResetRow(gameInstalled: boolean): boolean {
   return gameInstalled;
 }
+
+/** Whether the co-op password renders as dots. Hidden by default, since
+ * the panel gets opened on a TV as often as a handheld.
+ *
+ * Keyed off the SAVED password rather than the draft: keying off the
+ * draft would turn the field to dots on the first keystroke of a new one,
+ * and an empty saved password has nothing to hide, so the field stays
+ * editable and you can just type. */
+export function maskCoopPassword(saved: string, revealed: boolean): boolean {
+  return !revealed && saved.length > 0;
+}
