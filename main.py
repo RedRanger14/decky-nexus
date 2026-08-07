@@ -696,7 +696,21 @@ DATA_MARKER_DIRS = {
     # TTW-run stragglers (2026-08-05): .bik movie replacers live in
     # Data/Video; kNVSE-era keyword configs in Data/keywords.
     "video", "keywords",
+    # Gate To Sovngarde stragglers (2026-08-07): modern framework addons
+    # ship ONE Data subfolder and nothing else recognisable, so the
+    # payload check refused them outright. Each of these was a real
+    # refusal in that run.
+    "nemesis_engine", "mapmarkers", "lightplacer", "seasons",
+    "distributedmods", "netscriptframework", "dialogueviews", "lodsettings",
+    "planetdata", "calientetools", "tools", "source", "facegendata",
+    "actors", "effects", "misc", "dyndolod",
 }
+
+# Junk some archives carry that must never reach the game folder: macOS
+# zip metadata (a __MACOSX tree beside the payload) and Explorer/Finder
+# droppings.
+ARCHIVE_JUNK_DIRS = {"__macosx"}
+ARCHIVE_JUNK_FILES = {".ds_store", "thumbs.db", "desktop.ini"}
 
 
 def _adopt_case(path: str) -> str:
@@ -1153,18 +1167,81 @@ def _remove_plugins(path: str, names: list) -> None:
     _write_plugins_txt(path, lines)
 
 
+def _makedirs_for(dst: str) -> None:
+    """Create a destination file's parent directories.
+
+    os.makedirs(exist_ok=True) still raises FileExistsError when a path
+    component exists as a FILE, and that killed two installs outright in
+    the Gate To Sovngarde run: an earlier mod had left a file named
+    Data/Textures/terrain/blackreach, so every later mod wanting that
+    directory crashed. A stray extension-less file where a directory
+    belongs is mod debris - the directory is what the game reads - so it
+    is removed rather than allowed to fail the install.
+    """
+    parent = os.path.dirname(dst)
+    if not parent:
+        return
+    try:
+        os.makedirs(parent, exist_ok=True)
+        return
+    except FileExistsError:
+        pass
+    # Walk UP to whichever component exists as a file, clear it, retry.
+    # Walking up with dirname rather than splitting on separators keeps
+    # this correct on both the device and a Windows dev box.
+    probe = parent
+    blockers = []
+    while probe and not os.path.isdir(probe):
+        if os.path.isfile(probe) or os.path.islink(probe):
+            blockers.append(probe)
+        nxt = os.path.dirname(probe)
+        if nxt == probe:
+            break
+        probe = nxt
+    for blocker in blockers:
+        decky.logger.warning(
+            f"clearing file blocking a mod directory: {blocker}"
+        )
+        try:
+            os.remove(blocker)
+        except OSError as e:
+            raise FileExistsError(
+                f"{blocker} is a file where a folder is needed"
+            ) from e
+    os.makedirs(parent, exist_ok=True)
+
+
 def _looks_like_data(dir_path: str) -> bool:
     try:
         names = os.listdir(dir_path)
     except OSError:
         return False
+    has_exe = False
+    loose_config = False
     for name in names:
         low = name.lower()
         if low.endswith(PLUGIN_EXTENSIONS) or low.endswith((".bsa", ".ba2")):
             return True
         if low in DATA_MARKER_DIRS and os.path.isdir(os.path.join(dir_path, name)):
             return True
-    return False
+        if low.endswith(".exe"):
+            has_exe = True
+        elif (
+            low.endswith((".ini", ".json"))
+            # meta.ini is Mod Organizer's export marker, not mod content -
+            # claiming the payload here would skip the MO2 handler that
+            # strips it, and ship it into the game's Data dir.
+            and low != "meta.ini"
+            and os.path.isfile(os.path.join(dir_path, name))
+        ):
+            loose_config = True
+    # Config-only mods: KID, SPID, ANIO, FLM, CoMAP and Light Placer
+    # addons ship a single .ini or .json that belongs in Data/ and nothing
+    # else to recognise them by, so they were refused as "no recognizable
+    # Data payload" (six of them in one Gate To Sovngarde run). An .exe
+    # alongside means a PC tool rather than a mod - those keep being
+    # refused, which is what the tool check downstream is for.
+    return loose_config and not has_exe
 
 
 def _looks_like_ue4ss_mod(scratch: str) -> bool:
@@ -3067,7 +3144,7 @@ def _fomod_stage(ctx: dict, selected_ids: list, staging: str) -> int:
                     if not _safe_rel_path(target_rel):
                         continue
                     dst = os.path.join(staging, *target_rel.split("/"))
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    _makedirs_for(dst)
                     if os.path.isfile(dst):
                         os.remove(dst)
                     shutil.copy2(os.path.join(root, n), dst)
@@ -3077,7 +3154,7 @@ def _fomod_stage(ctx: dict, selected_ids: list, staging: str) -> int:
             if not _safe_rel_path(target_rel):
                 continue
             dst = os.path.join(staging, *target_rel.split("/"))
-            os.makedirs(os.path.dirname(dst) or staging, exist_ok=True)
+            _makedirs_for(dst)
             if os.path.isfile(dst):
                 os.remove(dst)
             shutil.copy2(src, dst)
@@ -3660,34 +3737,85 @@ async def _validate_key(api_key: str) -> dict:
         return {"ok": False, "error": "Nexus Mods API timed out"}
 
 
+def _strip_archive_junk(root: str) -> None:
+    """Delete metadata some archives carry beside the payload. A mod
+    zipped on a Mac brings a __MACOSX tree, which is not mod content and
+    must not be merged into the game folder - and it also masks the real
+    payload, since an archive of 'GuardsTalk_KID.ini + __MACOSX' does not
+    look like a single-folder mod until the junk is gone."""
+    for current, dirs, names in os.walk(root, topdown=True):
+        for d in list(dirs):
+            if d.lower() in ARCHIVE_JUNK_DIRS:
+                dirs.remove(d)
+                _force_rmtree(os.path.join(current, d))
+        for n in names:
+            if n.lower() in ARCHIVE_JUNK_FILES:
+                try:
+                    os.remove(os.path.join(current, n))
+                except OSError:
+                    pass
+
+
+# Extractors in preference order. bsdtar reads nearly everything and is
+# always present on SteamOS, but libarchive refuses two RAR variants that
+# Nexus is full of - RAR3 with a VM program filter, and RAR5 with a large
+# dictionary ("Declared dictionary size is not supported"). Three mods in
+# one Gate To Sovngarde run died on exactly those, so when bsdtar fails
+# we retry with 7z and then unrar, both of which handle them.
+_EXTRACTORS = (
+    ("bsdtar", lambda a, d: ["bsdtar", "-xf", a, "-C", d]),
+    ("7z", lambda a, d: ["7z", "x", "-y", f"-o{d}", a]),
+    ("unrar", lambda a, d: ["unrar", "x", "-y", "-o+", a, d + os.sep]),
+)
+
+
 async def _extract_archive(archive_path: str, dest_dir: str) -> str:
-    """Extract with bsdtar (handles zip/7z/rar on SteamOS); fall back to
-    Python's zipfile for .zip if bsdtar is missing. Returns '' on success,
-    error text otherwise."""
-    if shutil.which("bsdtar"):
-        proc = await asyncio.create_subprocess_exec(
-            "bsdtar",
-            "-xf",
-            archive_path,
-            "-C",
-            dest_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+    """Extract an archive into dest_dir, trying each available extractor
+    until one succeeds. Returns '' on success, error text otherwise."""
+    errors = []
+    for name, build in _EXTRACTORS:
+        if not shutil.which(name):
+            continue
+        if errors:
+            # A failed attempt can leave a half-written tree behind; the
+            # next extractor must not merge into someone else's debris.
+            _force_rmtree(dest_dir)
+            os.makedirs(dest_dir, exist_ok=True)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *build(archive_path, dest_dir),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, err = await proc.communicate()
+        except OSError as e:
+            errors.append(f"{name}: {e}")
+            continue
+        if proc.returncode == 0:
+            if errors:
+                decky.logger.info(
+                    f"{name} extracted {os.path.basename(archive_path)} after "
+                    f"{len(errors)} extractor(s) failed"
+                )
+            _strip_archive_junk(dest_dir)
+            return ""
+        errors.append(
+            f"{name}: " + (err.decode(errors="replace").strip()[:200] or "failed")
         )
-        _, err = await proc.communicate()
-        if proc.returncode != 0:
-            return err.decode(errors="replace")[:300] or "bsdtar failed"
-        return ""
+
     if archive_path.lower().endswith(".zip"):
         import zipfile
 
         try:
             with zipfile.ZipFile(archive_path) as zf:
                 zf.extractall(dest_dir)
+            _strip_archive_junk(dest_dir)
             return ""
         except Exception as e:  # noqa: BLE001 - report to UI
-            return f"zip extraction failed: {e}"
-    return "no extractor available for this archive type"
+            errors.append(f"zipfile: {e}")
+    if not errors:
+        return "no extractor available for this archive type"
+    return " | ".join(errors)[:300]
 
 
 class Plugin:
@@ -4750,7 +4878,7 @@ query Link($slug: String!, $domainName: String!) {
             if not os.path.isfile(src):
                 continue
             dst = os.path.join(install_path, *dst_rel.split("/"))
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            _makedirs_for(dst)
             if os.path.isfile(dst):
                 os.remove(dst)
             shutil.move(src, dst)
@@ -5067,7 +5195,7 @@ query Link($slug: String!, $domainName: String!) {
                             # Wine splits between.
                             rel = _case_merge_rel(mods_path, rel, case_cache)
                             dst = os.path.join(mods_path, *rel.split("/"))
-                            os.makedirs(os.path.dirname(dst), exist_ok=True)
+                            _makedirs_for(dst)
                             if os.path.isfile(dst):
                                 os.remove(dst)
                             shutil.move(src_file, dst)
@@ -5548,7 +5676,7 @@ query Link($slug: String!, $domainName: String!) {
                             continue
                         rel = _case_merge_rel(install_path, rel, case_cache)
                         dst = os.path.join(install_path, *rel.split("/"))
-                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        _makedirs_for(dst)
                         if os.path.isfile(dst):
                             os.remove(dst)
                         shutil.move(src_file, dst)
@@ -5619,7 +5747,7 @@ query Link($slug: String!, $domainName: String!) {
             installed_rel = []
             for rel, src in cp_files:
                 dst = os.path.join(install_path, *rel.split("/"))
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                _makedirs_for(dst)
                 if os.path.isfile(dst):
                     os.remove(dst)
                 shutil.move(src, dst)
@@ -5878,7 +6006,7 @@ query Link($slug: String!, $domainName: String!) {
                             continue
                         rel = _case_merge_rel(mods_path, rel, case_cache)
                         dst = os.path.join(mods_path, *rel.split("/"))
-                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        _makedirs_for(dst)
                         if os.path.isfile(dst):
                             os.remove(dst)
                         shutil.move(src_file, dst)
@@ -5991,7 +6119,7 @@ query Link($slug: String!, $domainName: String!) {
         src = os.path.join(STEAM_COMMON, install_dir, *source_rel.split("/"))
         if not os.path.isfile(src):
             return {"ok": False, "error": f"{source_rel} not found in game dir"}
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        _makedirs_for(dst)
         shutil.copy2(src, dst)
         decky.logger.info(f"seeded {prefs_subpath} from {source_rel}")
         return {"ok": True, "seeded": True}
@@ -6152,7 +6280,7 @@ query Link($slug: String!, $domainName: String!) {
                             "not overwriting it"
                         )
                     continue
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                _makedirs_for(dst)
                 shutil.copy2(src, dst)
                 try:
                     os.chmod(dst, 0o755)
@@ -6672,7 +6800,7 @@ query Link($slug: String!, $domainName: String!) {
                         if not _safe_rel_path(rel):
                             continue
                         dst = os.path.join(dest_root, rel)
-                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        _makedirs_for(dst)
                         if os.path.isfile(dst):
                             os.remove(dst)
                         shutil.move(os.path.join(root, name), dst)

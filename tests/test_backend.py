@@ -3592,6 +3592,113 @@ class TestPluginMasters(unittest.TestCase):
         self.assertEqual(result["broken"], [])
 
 
+class TestGateToSovngardeFailures(unittest.TestCase):
+    """The 15 mods that failed in a 1,954-mod Gate To Sovngarde install
+    (device, 2026-08-07). Every archive shape here is one the log named."""
+
+    def setUp(self):
+        self.scratch = os.path.join(TEST_ROOT, "gts-shapes")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+
+    def tearDown(self):
+        shutil.rmtree(self.scratch, ignore_errors=True)
+
+    def _mk(self, *rels):
+        for rel in rels:
+            path = os.path.join(self.scratch, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("x")
+
+    # -- framework addons that ship one Data subfolder --------------------
+
+    def test_nemesis_engine_folder_is_a_payload(self):
+        # 'USSEP Nemesis or Pandora Patch', '1st Person Vertical Aim Fix',
+        # '(SBF) State Behavior Framework' - all refused on this shape.
+        self._mk("Nemesis_Engine/mod/x.txt")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_comap_mapmarkers_folder_is_a_payload(self):
+        # 'VIGILANT - CoMAP Addon', 'DAc0da - CoMAP Addon'
+        self._mk("MapMarkers/Vigilant.json", "MapMarkers/Resources/a.dds")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_light_placer_folder_is_a_payload(self):
+        # 'Holidays -x- Light Placer'
+        self._mk("LightPlacer/megnoeu/a.json")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_seasons_folder_is_a_payload(self):
+        # 'Thickets and Dead Shrub Swapper with Options'
+        self._mk("Seasons/swap.ini")
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    # -- config-only mods --------------------------------------------------
+
+    def test_loose_kid_ini_at_root_is_a_payload(self):
+        # 'GuardsTalk': a single _KID.ini beside macOS zip metadata.
+        self._mk("GuardsTalk_KID.ini", "__MACOSX/._GuardsTalk_KID.ini")
+        main._strip_archive_junk(self.scratch)
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+        # The macOS tree must never reach the game's Data dir.
+        self.assertFalse(
+            os.path.exists(os.path.join(self.scratch, "__MACOSX"))
+        )
+
+    def test_wrapped_config_only_mod_resolves_to_the_wrapper(self):
+        # 'Very Important Cannibal Bug Fix': one wrapper folder holding
+        # nothing but an _ANIO.ini.
+        self._mk("Important Immersion Fix/VeryImportantCannibalFix_ANIO.ini")
+        self.assertEqual(
+            main._find_data_payload(self.scratch),
+            os.path.join(self.scratch, "Important Immersion Fix"),
+        )
+
+    def test_folder_plus_loose_ini_is_a_payload(self):
+        # 'Simple Fishing Overhaul - FLM Addon'
+        self._mk(
+            "SimpleFishingOverhaul (FLM)/a.txt",
+            "SimpleFishingOverhaul_FLM.ini",
+        )
+        self.assertEqual(main._find_data_payload(self.scratch), self.scratch)
+
+    def test_a_pc_tool_with_a_config_is_still_refused(self):
+        # The guard on the rule above: an .exe means a desktop tool, and
+        # those must keep being refused rather than dumped into Data/.
+        self._mk("xEdit.exe", "xEdit.ini")
+        self.assertIsNone(main._find_data_payload(self.scratch))
+
+    def test_a_readme_only_archive_is_still_refused(self):
+        self._mk("readme.txt", "changelog.txt")
+        self.assertIsNone(main._find_data_payload(self.scratch))
+
+    # -- a file where a directory belongs ---------------------------------
+
+    def test_a_file_blocking_a_directory_is_cleared(self):
+        # The crash: an earlier mod left a FILE at
+        # Data/Textures/terrain/blackreach, so every later mod wanting
+        # that directory died with FileExistsError - makedirs(exist_ok)
+        # raises when the path exists and is not a directory. It killed
+        # two installs outright, one of them a FOMOD.
+        base = os.path.join(self.scratch, "Data", "Textures", "terrain")
+        os.makedirs(base)
+        with open(os.path.join(base, "blackreach"), "w") as f:
+            f.write("debris")
+        dst = os.path.join(base, "blackreach", "lod.dds")
+        main._makedirs_for(dst)
+        self.assertTrue(os.path.isdir(os.path.join(base, "blackreach")))
+        with open(dst, "w") as f:
+            f.write("x")
+        self.assertTrue(os.path.isfile(dst))
+
+    def test_makedirs_for_is_a_no_op_when_the_tree_is_fine(self):
+        dst = os.path.join(self.scratch, "a", "b", "c.txt")
+        main._makedirs_for(dst)
+        main._makedirs_for(dst)  # idempotent
+        self.assertTrue(os.path.isdir(os.path.dirname(dst)))
+
+
 class TestDataDirInstallEndToEnd(unittest.TestCase):
     """The Skyrim-class path, exercised for real: archive -> extract ->
     case-merged move into Data/ -> per-file record -> plugins.txt. The
