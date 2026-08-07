@@ -48,8 +48,10 @@ import {
   ACCENT_DANGER,
   ACCENT_SUCCESS,
   ACTION_BUTTON,
+  ACTION_COLUMN,
   ACTION_HERO,
   ACTION_ROW,
+  actionColumnWidth,
   NEXUS_ORANGE,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
@@ -372,6 +374,9 @@ export function ModDetailPage() {
     installingFileId !== undefined || !primaryFile || upToDate;
   // While the main file installs, the button IS the progress bar - the
   // same fill language as the collection rows and the QAM tool button.
+  // All files + (Uninstall) + Go to downloads. The hero above them takes
+  // its width from this count.
+  const secondaryActions = 2 + (installedCopy ? 1 : 0);
   const primaryBusy =
     primaryFile !== undefined && installingFileId === primaryFile.file_id;
   const primaryPct =
@@ -745,11 +750,17 @@ export function ModDetailPage() {
            toggle, uninstall - mirroring the site's single download button ---- */}
       {/* Focus starts on the page's main action row, not the endorse chip
           above it (first-in-DOM otherwise wins). */}
-      {/* The page's one main action stands alone - wide enough that no
-          label ("⬆ Update to v1.2.3 (36.5 MB)") ever wraps - and doubles
-          as its own progress bar while installing. The secondaries below
-          share one uniform size. */}
-      <Focusable autoFocus={true} style={{ margin: "14px 0 0" }}>
+      {/* Install spans exactly the buttons beneath it - the column sets
+          one width and both rows fill it. It also doubles as its own
+          progress bar while installing. */}
+      <Focusable
+        autoFocus={true}
+        style={{
+          ...ACTION_COLUMN,
+          margin: "14px 0 0",
+          maxWidth: actionColumnWidth(secondaryActions),
+        }}
+      >
         <style>{PRIMARY_BUTTON_CSS}</style>
         <DialogButton
           disabled={primaryDisabled}
@@ -769,8 +780,7 @@ export function ModDetailPage() {
         >
           {primaryLabel}
         </DialogButton>
-      </Focusable>
-      <Focusable style={{ ...ACTION_ROW, margin: "10px 0 0" }}>
+      <Focusable style={ACTION_ROW}>
         <DialogButton
           disabled={fileList.length === 0}
           onClick={() => setShowAllFiles(!showAllFiles)}
@@ -813,6 +823,7 @@ export function ModDetailPage() {
           </DialogButton>
         )}
         <DownloadsButton />
+      </Focusable>
       </Focusable>
       {files && !files.ok && (
         <div style={{ opacity: 0.8, fontSize: "13px" }}>

@@ -7,9 +7,30 @@ import {
   installFomod,
   installMod,
   prefetchModFile,
+  prepareModFile,
 } from "./api";
 import { SupportedGame, modeParams } from "./games";
 import { nameDownload } from "./state";
+
+/** Download AND extract a pinned file so the installer only has to
+ * commit it. Extraction is the CPU-bound half of an install and shares
+ * nothing, so running it for the next mods while the current one commits
+ * is free wall-clock. The commit itself stays serial and in order. */
+export async function preparePinned(
+  game: SupportedGame,
+  modId: number,
+  fileId: number,
+  fileName: string,
+  modName: string
+): Promise<void> {
+  nameDownload(modId, modName, game.appId);
+  try {
+    await prepareModFile(game.nexusDomain, modId, fileId, fileName);
+  } catch {
+    // Best-effort: the installer does the work itself and owns the
+    // error reporting for this mod's row.
+  }
+}
 
 /** Download a pinned file into the backend's archive cache ahead of its
  * serial install - the collection pipeline runs several of these in

@@ -79,10 +79,13 @@ export const PRIMARY_BUTTON_CSS = `
 // flex distribute space equally, so widths stay locked to each other; the
 // max-width stops a two-button row becoming two slabs.
 
+export const ACTION_BUTTON_MAX = 240;
+export const ACTION_GAP = 10;
+
 export const ACTION_ROW: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
-  gap: "10px",
+  gap: `${ACTION_GAP}px`,
   alignItems: "stretch",
 };
 
@@ -91,7 +94,7 @@ export const ACTION_BUTTON: CSSProperties = {
   flexShrink: 1,
   flexBasis: "0",
   minWidth: "120px",
-  maxWidth: "240px",
+  maxWidth: `${ACTION_BUTTON_MAX}px`,
   // A label that wraps to two lines makes its button taller than its
   // neighbours - the row stops reading as one set of controls. Labels
   // are kept short enough to fit; this is the backstop.
@@ -100,17 +103,32 @@ export const ACTION_BUTTON: CSSProperties = {
   textOverflow: "ellipsis",
 };
 
-/** The page's ONE main action (install this mod / install the
- * collection), alone on its own row above the uniform secondaries.
- * Being alone is what lets it be wide: nothing sits beside it to
- * mismatch, and a long label ("Install remaining (43 of 61)") never
- * needs to wrap. */
+/** The page's ONE main action, alone on the row above the secondaries.
+ * Width comes from the column (see ACTION_COLUMN) so it lands exactly on
+ * the outer edges of the buttons beneath it - a deliberate relationship,
+ * not a size picked by eye. */
 export const ACTION_HERO: CSSProperties = {
   width: "100%",
-  maxWidth: "640px",
   height: "44px",
   fontSize: "15px",
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
 };
+
+/** Wraps the hero row and the secondary row. Both are 100% of it, so the
+ * hero always spans exactly the secondaries - two buttons below means a
+ * hero two buttons wide, three means three. */
+export const ACTION_COLUMN: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: `${ACTION_GAP}px`,
+};
+
+/** Width of an action block holding `count` secondary buttons: the
+ * buttons at their natural maximum plus the gaps between them. The hero
+ * inherits it, which is what makes the two rows share an edge. */
+export function actionColumnWidth(count: number): string {
+  const n = Math.max(1, count);
+  return `${n * ACTION_BUTTON_MAX + (n - 1) * ACTION_GAP}px`;
+}

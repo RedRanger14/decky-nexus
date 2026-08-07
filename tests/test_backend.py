@@ -3699,6 +3699,94 @@ class TestGateToSovngardeFailures(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.dirname(dst)))
 
 
+class TestPrepareAheadOfInstall(unittest.TestCase):
+    """Extract-ahead: the installer must consume a prepared extraction,
+    and must never consume a half-finished one."""
+
+    DOMAIN = "skyrimspecialedition"
+    GAME = "Prepare Test"
+    MOD, FILE = 4242, 8484
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        os.makedirs(os.path.join(self.install, "Data"))
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        self.archive = main._archive_cache_path(self.MOD, self.FILE, "m.zip")
+        with zipfile.ZipFile(self.archive, "w") as z:
+            z.writestr("Data/Prepared.esp", "x")
+            z.writestr("Data/textures/p.dds", "x")
+        self.scratch = main._extract_scratch(self.MOD, self.FILE)
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(self.scratch, ignore_errors=True)
+
+    def _install(self):
+        return run(
+            self.plugin.install_mod(
+                self.DOMAIN, self.MOD, self.FILE, "m.zip", "Prepared Mod",
+                "1.0", self.GAME, "Data", "", "", "dataDir", 489830,
+                "Skyrim Special Edition/Plugins.txt", "starred",
+            )
+        )
+
+    def test_prepare_then_install_uses_the_prepared_extraction(self):
+        prep = run(
+            self.plugin.prepare_mod_file(self.DOMAIN, self.MOD, self.FILE, "m.zip")
+        )
+        self.assertTrue(prep["ok"], prep.get("error"))
+        self.assertTrue(os.path.isfile(self.scratch + main.PREPARED_MARKER))
+        result = self._install()
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.install, "Data", "Prepared.esp"))
+        )
+        # Consumed: the marker is gone and the scratch cleaned up, so a
+        # later install of the same file cannot pick up a stale tree.
+        self.assertFalse(os.path.isfile(self.scratch + main.PREPARED_MARKER))
+        self.assertFalse(os.path.isdir(self.scratch))
+
+    def test_install_without_prepare_still_works(self):
+        # extract_ahead = 0, or the prepare lost the race: the installer
+        # does the extraction itself exactly as before.
+        result = self._install()
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.install, "Data", "Prepared.esp"))
+        )
+
+    def test_a_half_finished_extraction_is_not_treated_as_prepared(self):
+        # Scratch exists with partial content but NO marker (interrupted
+        # extract). Installing must redo it rather than ship half a mod.
+        os.makedirs(os.path.join(self.scratch, "Data"), exist_ok=True)
+        with open(os.path.join(self.scratch, "Data", "Partial.esp"), "w") as f:
+            f.write("half")
+        result = self._install()
+        self.assertTrue(result["ok"], result.get("error"))
+        data = os.path.join(self.install, "Data")
+        self.assertTrue(os.path.isfile(os.path.join(data, "Prepared.esp")))
+        # The debris from the interrupted attempt never reached the game.
+        self.assertFalse(os.path.isfile(os.path.join(data, "Partial.esp")))
+
+    def test_preparing_twice_is_cheap_and_idempotent(self):
+        first = run(
+            self.plugin.prepare_mod_file(self.DOMAIN, self.MOD, self.FILE, "m.zip")
+        )
+        second = run(
+            self.plugin.prepare_mod_file(self.DOMAIN, self.MOD, self.FILE, "m.zip")
+        )
+        self.assertTrue(first["ok"] and second["ok"])
+        self.assertTrue(os.path.isfile(self.scratch + main.PREPARED_MARKER))
+
+
 class TestDataDirInstallEndToEnd(unittest.TestCase):
     """The Skyrim-class path, exercised for real: archive -> extract ->
     case-merged move into Data/ -> per-file record -> plugins.txt. The

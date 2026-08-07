@@ -127,12 +127,18 @@ export function StackedThumb({
   height,
   peek = 6,
   radius = 4,
+  fit = "cover",
 }: {
   src?: string;
   width: number;
   height: number;
   peek?: number;
   radius?: number;
+  /** "cover" fills the tile and crops; "contain" shows the whole image.
+   * Small tiles crop happily, but a header is the one place the artwork
+   * is meant to be looked at - cropping it there loses the sides of the
+   * image, which is exactly what it looked like: a cut-off thumbnail. */
+  fit?: "cover" | "contain";
 }) {
   const layer = (offset: number, opacity: number): CSSProperties => ({
     position: "absolute",
@@ -168,7 +174,8 @@ export function StackedThumb({
             left: 0,
             width: `${width}px`,
             height: "100%",
-            objectFit: "cover",
+            objectFit: fit,
+            background: "#0b0e13",
             borderRadius: `${radius}px`,
             display: "block",
           }}
