@@ -38,6 +38,7 @@ import {
 // only declare children, but the underlying component takes Focusable-ish
 // props.
 const Scroller: any = ScrollPanelGroup;
+import { PageBackdrop, SectionHeading, StackedThumb } from "./chrome";
 import { NEXUS_ORANGE } from "./theme";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
@@ -51,7 +52,12 @@ const SORT_OPTIONS = [
 ];
 
 const PAGE_SIZE = 24;
-const ROW_SIZE = 8;
+// Rail length + tile width are a pair: 5 tiles and the View-all card
+// must all fit across a 1280px screen (minus the 24px page gutters)
+// WITHOUT scrolling - a rail that hides its own exit invites nobody in.
+// 6 × 195px + 5 × 10px gaps = 1220px ≤ 1232px available.
+const ROW_SIZE = 5;
+const TILE_WIDTH = 195;
 
 function CollectionCard({
   game,
@@ -81,22 +87,10 @@ function CollectionCard({
         padding: "8px",
       }}
     >
-      {c.thumbnailUrl && (
-        <img
-          src={c.thumbnailUrl}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          style={{
-            width: "64px",
-            height: "64px",
-            objectFit: "cover",
-            borderRadius: "4px",
-            flexShrink: 0,
-          }}
-        />
-      )}
-      <div style={{ minWidth: 0 }}>
+      {/* Stacked-card thumb: the at-a-glance cue that a collection is a
+          DECK of mods, not one mod (collection tiles are portrait). */}
+      <StackedThumb src={c.thumbnailUrl} width={50} height={68} peek={5} />
+      <div style={{ minWidth: 0, alignSelf: "center" }}>
         <div
           style={{
             fontWeight: 600,
@@ -314,30 +308,6 @@ function ModTile({
   );
 }
 
-/** Section heading with a brand accent bar - the 10-foot-UI signpost. */
-function SectionHeading({ title }: { title: string }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "8px",
-        margin: "18px 0 8px",
-      }}
-    >
-      <div
-        style={{
-          width: "4px",
-          height: "18px",
-          background: NEXUS_ORANGE,
-          borderRadius: "2px",
-        }}
-      />
-      <h3 style={{ margin: 0 }}>{title}</h3>
-    </div>
-  );
-}
-
 /** End-of-rail card that jumps into the sorted list view - an organic way
  * into the same place the sort dropdown goes. */
 function ViewAllCard({
@@ -347,13 +317,13 @@ function ViewAllCard({
   onActivate: () => void;
   label?: string;
 }) {
-  // Mirrors ModTile's footprint (16:9 media + text rows) so the card
-  // lines up with tiles in every rail.
+  // No fixed height: the flex row's default stretch matches it to the
+  // tiles beside it, whatever their text rows add up to.
   return (
     <Focusable
       onActivate={onActivate}
       style={{
-        width: "205px",
+        width: `${TILE_WIDTH}px`,
         flexShrink: 0,
         display: "flex",
         alignItems: "center",
@@ -361,7 +331,6 @@ function ViewAllCard({
         borderRadius: "6px",
         background: "rgba(218, 142, 53, 0.12)",
         border: `1px solid ${NEXUS_ORANGE}55`,
-        aspectRatio: "205 / 165",
         fontWeight: 600,
         fontSize: "15px",
       }}
@@ -397,8 +366,8 @@ function ModCarousel({
           paddingBottom: "6px",
         }}
       >
-        {mods.map((mod) => (
-          <div key={mod.modId} style={{ width: "205px", flexShrink: 0 }}>
+        {mods.slice(0, ROW_SIZE).map((mod) => (
+          <div key={mod.modId} style={{ width: `${TILE_WIDTH}px`, flexShrink: 0 }}>
             <ModTile mod={mod} game={game} blur={blur} />
           </div>
         ))}
@@ -716,38 +685,11 @@ export function BrowsePage() {
         }}
       >
       {/* Game hero art as a faded backdrop banner behind the header. */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: "220px",
-          overflow: "hidden",
-          pointerEvents: "none",
-          zIndex: 0,
-        }}
-      >
-        <img
-          src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${game.appId}/library_hero.jpg`}
-          alt=""
-          onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            opacity: 0.28,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background:
-              "linear-gradient(180deg, rgba(11,14,19,0.15) 0%, rgba(11,14,19,0.55) 55%, rgba(11,14,19,1) 100%)",
-          }}
-        />
-      </div>
+      <PageBackdrop
+        src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${game.appId}/library_hero.jpg`}
+        height={220}
+        blur={false}
+      />
 
       <div style={{ position: "relative", zIndex: 1 }}>
         <TabBar currentId="store" />

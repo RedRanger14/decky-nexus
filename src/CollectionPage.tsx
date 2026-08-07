@@ -12,7 +12,7 @@ import {
 } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
-import { FaEye } from "react-icons/fa";
+import { FaArrowDown, FaEye, FaPuzzlePiece } from "react-icons/fa";
 
 import {
   AttentionItem,
@@ -40,6 +40,7 @@ import {
   beginCollectionRun,
   dropDownload,
   endCollectionRun,
+  getAggregateDownloadPercent,
   getCollectionRun,
   getDownloadPercent,
   getDownloads,
@@ -53,12 +54,14 @@ import {
 } from "./state";
 import {
   ACTION_BUTTON,
+  ACTION_HERO,
   ACTION_ROW,
   BLUE_BUTTON_CLASS,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
   WHITE_BUTTON_CLASS,
 } from "./theme";
+import { PageBackdrop, SectionHeading, StackedThumb, StatChip } from "./chrome";
 import { DownloadsButton } from "./DownloadsButton";
 
 const Scroller: any = ScrollPanelGroup;
@@ -726,51 +729,82 @@ export function CollectionPage() {
           50% { filter: brightness(1.45); }
         }
       `}</style>
-        <Focusable style={{ display: "flex", gap: "18px", padding: "12px 0" }}>
-          {collection.thumbnailUrl && (
-            <img
-              src={collection.thumbnailUrl}
-              alt=""
-              loading="lazy"
+        {/* Collection art as blurred atmosphere behind the header. */}
+        <PageBackdrop src={collection.thumbnailUrl} height={250} />
+        <div style={{ position: "relative", zIndex: 1 }}>
+        <Focusable style={{ display: "flex", gap: "20px", padding: "12px 0" }}>
+          {/* The same stacked-card language as the store tiles, at header
+              scale: this page is a deck of mods, and looks like one. */}
+          <StackedThumb
+            src={collection.thumbnailUrl}
+            width={158}
+            height={210}
+            peek={9}
+            radius={8}
+          />
+          <div style={{ minWidth: 0, alignSelf: "center" }}>
+            <h2
               style={{
-                width: "180px",
-                borderRadius: "8px",
-                objectFit: "contain",
-                background: "#0b0e13",
-                alignSelf: "flex-start",
+                margin: "0 0 3px 0",
+                fontSize: "24px",
+                lineHeight: 1.2,
+                fontWeight: 700,
               }}
-            />
-          )}
-          <div style={{ minWidth: 0 }}>
-            <h2 style={{ margin: "0 0 2px 0" }}>{collection.name}</h2>
-            <div style={{ opacity: 0.75, fontSize: "14px" }}>
+            >
+              {collection.name}
+            </h2>
+            <div style={{ opacity: 0.75, fontSize: "13.5px", marginBottom: "10px" }}>
               a collection by {detail?.author ?? collection.author} ·{" "}
               {game.displayName}
             </div>
-            <div style={{ opacity: 0.75, fontSize: "13px", marginTop: "4px" }}>
-              {detail
-                ? `${detail.files.length} mods · ${fmtBytes(detail.totalSize)}`
-                : `${collection.modCount} mods · ${fmtBytes(
-                    collection.totalSize
-                  )}`}
-            </div>
+            <Focusable
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "8px",
+                marginBottom: "10px",
+              }}
+            >
+              <StatChip icon={<FaPuzzlePiece size={11} />}>
+                {detail ? detail.files.length : collection.modCount} mods
+              </StatChip>
+              <StatChip icon={<FaArrowDown size={11} />}>
+                {fmtBytes(detail ? detail.totalSize : collection.totalSize)}
+              </StatChip>
+              {installedRequiredCount > 0 && (
+                <StatChip>✓ {installedRequiredCount} installed</StatChip>
+              )}
+            </Focusable>
             {(detail?.summary ?? collection.summary) && (
-              <div style={{ fontSize: "13px", opacity: 0.9, marginTop: "8px" }}>
+              <div style={{ fontSize: "13px", opacity: 0.9, lineHeight: 1.5 }}>
                 {detail?.summary ?? collection.summary}
               </div>
             )}
           </div>
         </Focusable>
 
-        <Focusable
-          autoFocus={true}
-          style={{ ...ACTION_ROW, margin: "6px 0 14px" }}
-        >
+        {/* The page's one main action stands alone - wide, never wraps,
+            and while a run is live the button IS the progress bar (the
+            same fill language as the mod rows beneath it). */}
+        <Focusable autoFocus={true} style={{ margin: "6px 0 0" }}>
           <DialogButton
-            className={PRIMARY_BUTTON_CLASS}
+            className={installing ? undefined : PRIMARY_BUTTON_CLASS}
             disabled={!detail || installing || remaining.length === 0}
             onClick={() => installAll(false)}
-            style={ACTION_BUTTON}
+            style={{
+              ...ACTION_HERO,
+              ...(installing
+                ? {
+                    background: `linear-gradient(90deg, rgba(218,142,53,0.55) ${
+                      getAggregateDownloadPercent(run) ?? 0
+                    }%, rgba(255,255,255,0.10) ${
+                      getAggregateDownloadPercent(run) ?? 0
+                    }%)`,
+                    color: "#fff",
+                    transition: "background 0.4s linear",
+                  }
+                : {}),
+            }}
           >
             {installing
               ? `Installing… ${runIsOurs ? run!.finished : 0}/${
@@ -784,6 +818,8 @@ export function CollectionPage() {
               ? `Install remaining (${remaining.length} of ${required.length})`
               : `Install required (${remaining.length})`}
           </DialogButton>
+        </Focusable>
+        <Focusable style={{ ...ACTION_ROW, margin: "10px 0 14px" }}>
           {actionable.length > 0 && (
             <DialogButton
               className={BLUE_BUTTON_CLASS}
@@ -798,10 +834,10 @@ export function CollectionPage() {
               }}
             >
               {finishProgress
-                ? `⚙ Finishing ${finishProgress.name} (${Math.min(
+                ? `⚙ Finishing ${Math.min(
                     finishProgress.done + 1,
                     finishProgress.total
-                  )}/${finishProgress.total})…`
+                  )}/${finishProgress.total}…`
                 : finishingFileId !== undefined
                 ? "⚙ Finishing…"
                 : `⚙ Finish setup (${actionable.length})`}
@@ -816,17 +852,9 @@ export function CollectionPage() {
             >
               {remaining.length === 0
                 ? `Install optional (${optionalRemaining.length})`
-                : `Install All (inc ${optionalRemaining.length} optional)`}
+                : `+ optional (${optionalRemaining.length})`}
             </DialogButton>
           )}
-          <DialogButton
-            style={ACTION_BUTTON}
-            onClick={() => {
-              Navigation.NavigateBack();
-            }}
-          >
-            Back
-          </DialogButton>
           {ownedCount > 0 && !installing ? (
             <DialogButton
               className={WHITE_BUTTON_CLASS}
@@ -845,6 +873,14 @@ export function CollectionPage() {
             </DialogButton>
           ) : null}
           <DownloadsButton />
+          <DialogButton
+            style={ACTION_BUTTON}
+            onClick={() => {
+              Navigation.NavigateBack();
+            }}
+          >
+            Back
+          </DialogButton>
         </Focusable>
 
         {/* Partial without a run of ours = the user already owns some of
@@ -943,6 +979,13 @@ export function CollectionPage() {
           </div>
         )}
 
+        {detail && (
+          <SectionHeading
+            title={`Mods (${required.length}${
+              optional.length > 0 ? ` + ${optional.length} optional` : ""
+            })`}
+          />
+        )}
         {detail && (
           <Focusable
             style={{ display: "flex", flexDirection: "column", gap: "4px" }}
@@ -1276,6 +1319,7 @@ export function CollectionPage() {
             Loading collection…
           </div>
         )}
+        </div>
       </Scroller>
     </Focusable>
   );
