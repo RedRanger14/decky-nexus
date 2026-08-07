@@ -494,9 +494,9 @@ Elden Ring ships as the first `installMode: "me3"` game. What landed:
   asset content are NOT force-loaded as natives.
 - **regulation.bin gate**: a second owner is refused by name, and the
   refusal lifts once the first is disabled or uninstalled.
-- **Seamless Co-op**: `ersc.dll` automatically gets `load_early` +
-  `initializer = { function = "modengine_ext_init" }`, and the session
+- **Seamless Co-op**: installs as a plain native, and the session
   password is editable from the QAM (reads/writes ersc_settings.ini).
+  Natives get a `path` and nothing else — see the launch-crash note.
 - **Launch command** comes from the backend (`get_me3_launch_command`),
   since the paths are plugin-owned rather than game-relative:
   `bash -c 'exec "<me3>" --windows-binaries-dir "<win64>" launch -p
@@ -524,6 +524,31 @@ from folder names: Valve's own Proton builds ship no
 Still to verify on device: that Steam Input survives the wrapper and a
 real Seamless Co-op session. The DS3/Sekiro/AC6/Nightreign entries are one registry block
 each once ER is proven — the backend already maps all five domains.
+
+### RESOLVED (v0.57.0): Seamless Co-op crashed Elden Ring on launch
+
+Every launch died ~8s in, with a byte-identical me3 log ending at
+`hooking system allocator` and no error. Bisected on device with a
+launch harness (write profile variant → launch through Steam → poll for
+the game process → dump the me3 log):
+
+| variant | result |
+|---|---|
+| me3, no mods | boots |
+| ERSC with `load_early` + `initializer` | crash at ~8s |
+| same, `mem_patch = false` | crash at ~8s |
+| ERSC as a plain native | boots |
+
+The cause was ours. me3 already recognises ModEngine2-style natives and
+says so in its log — `loaded native with me2 compatibility shim` — so the
+`initializer = { function = "modengine_ext_init" }` we generated ran a
+second initialisation on top of me3's. The `modengine_ext_init` symbol
+really is exported by ersc.dll (confirmed with `strings`), which is what
+made the wrong recipe look plausible.
+
+Lesson for the tier: **declare natives with a path and let me3 decide how
+to load them.** It knows more about a given mod than a table in this repo
+can. Anything else needs evidence from a launch, not from docs.
 
 Known gap (deliberate): **option-pack archives** — one download holding
 "Full version/" and "Lite version/" — are refused with a message telling

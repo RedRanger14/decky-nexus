@@ -2306,10 +2306,16 @@ ME3_GAMES = {
 # written to. Non-overridable by design.
 ME3_SAVEFILE = "deckynexus-modded.sl2"
 
-# Natives that hook before the game's own startup and export their own
-# entry point. Seamless Co-op is inert without both - it loads, does
-# nothing, and the user gets a vanilla session they think is modded.
-ME3_EARLY_NATIVES = {"ersc.dll": "modengine_ext_init"}
+# Natives are declared with their path and nothing else, deliberately.
+#
+# We used to hand Seamless Co-op `load_early` plus
+# `initializer = { function = "modengine_ext_init" }`, on the reasoning
+# that it needs to hook before the game starts. That crashed Elden Ring
+# about eight seconds into every launch (device, 2026-08-07). me3 detects
+# ModEngine2-style natives on its own and says so - "loaded native with
+# me2 compatibility shim" - so our initializer was a second call on top
+# of the one me3 had already made. Let me3 decide how to load a native;
+# it knows more about the mod than a hard-coded table here can.
 
 # Top-level names that mark an archive as an asset (package) mod: the
 # DVDBND directory roots plus the params blob every balance mod ships.
@@ -2452,10 +2458,6 @@ def _write_me3_profile(game_domain: str, settings: dict) -> str:
             ]
             if not enabled:
                 lines.append("enabled = false")
-            hook = ME3_EARLY_NATIVES.get(os.path.basename(native).lower())
-            if hook:
-                lines.append("load_early = true")
-                lines.append(f"initializer = {{ function = {_me3_toml_str(hook)} }}")
     path = _me3_profile_path(game_domain)
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
