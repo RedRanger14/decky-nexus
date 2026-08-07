@@ -4063,15 +4063,21 @@ class TestMe3Layout(unittest.TestCase):
         self.assertIn('game = "eldenring"', body)
         self.assertIn('path = "mods/Reforged"', body)
 
-    def test_seamless_coop_gets_its_early_load_hook(self):
+    def test_natives_are_declared_with_a_path_and_nothing_else(self):
+        # Regression: adding load_early + initializer for Seamless Co-op
+        # crashed Elden Ring ~8s into every launch. me3 recognises
+        # ModEngine2-style natives itself ("loaded native with me2
+        # compatibility shim"), so our initializer ran a second time on
+        # top of me3's. Loading is me3's call, not ours.
         settings = self._record(
             "Seamless Coop", package=False, natives=["ersc.dll"]
         )
         with open(main._write_me3_profile(self.DOMAIN, settings)) as f:
             body = f.read()
         self.assertIn('path = "mods/Seamless Coop/ersc.dll"', body)
-        self.assertIn("load_early = true", body)
-        self.assertIn('initializer = { function = "modengine_ext_init" }', body)
+        self.assertNotIn("load_early", body)
+        self.assertNotIn("initializer", body)
+        self.assertNotIn("modengine_ext_init", body)
         # dll-only mods contribute no package entry
         self.assertNotIn("[[packages]]", body)
 
