@@ -1,6 +1,11 @@
 // Typed bridge to the Python backend (main.py). All callables are positional.
 import { callable } from "@decky/api";
 
+/** How a game's mods are stored and activated. "folder" per-mod dirs,
+ * "dataDir" merged into Data/ with plugins.txt, "me3" outside the game
+ * folder entirely with a generated .me3 profile (FromSoft games). */
+export type InstallMode = "folder" | "dataDir" | "me3";
+
 export interface NexusMod {
   modId: number;
   name: string;
@@ -60,6 +65,10 @@ export interface InstallResult {
   /** Witcher script conflict with an installed mod - not retryable
    * without script merging; collections park it, not fail it. */
   script_conflict?: boolean;
+  /** Conflicts with a mod that's already installed (two FromSoft mods
+   * claiming regulation.bin). Retryable once the other one is disabled,
+   * so it's parked with an explanation rather than called unsupported. */
+  mod_conflict?: boolean;
   /** Archive layout we can't recognize - parked as skipped so it stops
    * counting as remaining (retrying can't change the layout). */
   unsupported_layout?: boolean;
@@ -179,7 +188,7 @@ export const installMod = callable<
     mods_subdir: string,
     dl_key: string,
     dl_expires: string,
-    install_mode: "folder" | "dataDir",
+    install_mode: InstallMode,
     app_id: number,
     plugins_subpath: string,
     plugins_style: "starred" | "listed",
@@ -250,7 +259,7 @@ export const resetGameModding = callable<
     game_domain: string,
     install_dir: string,
     mods_subdir: string,
-    install_mode: "folder" | "dataDir",
+    install_mode: InstallMode,
     app_id: number,
     plugins_subpath: string,
     plugins_style: "starred" | "listed",
@@ -273,7 +282,7 @@ export const uninstallCollection = callable<
     game_domain: string,
     install_dir: string,
     mods_subdir: string,
-    install_mode: "folder" | "dataDir",
+    install_mode: InstallMode,
     app_id: number,
     plugins_subpath: string,
     plugins_style: "starred" | "listed",
@@ -375,7 +384,7 @@ export const getInstalledMods = callable<
     game_domain: string,
     install_dir: string,
     mods_subdir: string,
-    install_mode: "folder" | "dataDir",
+    install_mode: InstallMode,
     app_id: number,
     plugins_subpath: string,
     plugins_style: "starred" | "listed",
@@ -390,7 +399,7 @@ export const setModEnabled = callable<
     mods_subdir: string,
     folder: string,
     enabled: boolean,
-    install_mode: "folder" | "dataDir",
+    install_mode: InstallMode,
     game_domain: string,
     app_id: number,
     plugins_subpath: string,
@@ -404,7 +413,7 @@ export const setAllModsEnabled = callable<
     install_dir: string,
     mods_subdir: string,
     enabled: boolean,
-    install_mode: "folder" | "dataDir",
+    install_mode: InstallMode,
     game_domain: string,
     app_id: number,
     plugins_subpath: string,
@@ -419,7 +428,7 @@ export const uninstallMod = callable<
     install_dir: string,
     mods_subdir: string,
     folder: string,
-    install_mode: "folder" | "dataDir",
+    install_mode: InstallMode,
     app_id: number,
     plugins_subpath: string,
     plugins_style: "starred" | "listed"
@@ -433,7 +442,7 @@ export const uninstallAllMods = callable<
     install_dir: string,
     mods_subdir: string,
     protected_folders: string[],
-    install_mode: "folder" | "dataDir",
+    install_mode: InstallMode,
     app_id: number,
     plugins_subpath: string,
     plugins_style: "starred" | "listed"
@@ -723,6 +732,66 @@ export interface PrefixToolFailure {
   message: string;
   at: number;
 }
+
+// me3: the FromSoft mod loader (Elden Ring, DS3, Sekiro, AC6,
+// Nightreign). Native Linux binary, kept as our own copy; it launches
+// the game past EasyAntiCheat and offline-by-default.
+export const getMe3Status = callable<
+  [],
+  {
+    ok: boolean;
+    installed?: boolean;
+    version?: string;
+    info?: string;
+    error?: string;
+  }
+>("get_me3_status");
+
+export const installMe3 = callable<
+  [],
+  { ok: boolean; version?: string; error?: string }
+>("install_me3");
+
+export interface Me3State {
+  ok: boolean;
+  installed: boolean;
+  version?: string;
+  error?: string;
+  game_installed?: boolean;
+  /** Proton builds present in the Steam library */
+  protons?: string[];
+  /** me3's fallback runtime for Elden Ring when Steam maps none */
+  proton8?: boolean;
+  profile_path?: string;
+  profile_exists?: boolean;
+  mods?: number;
+  natives?: number;
+  /** Mod currently owning regulation.bin, if any */
+  regulation_owner?: string | null;
+  coop_installed?: boolean;
+}
+
+export const getMe3State = callable<
+  [game_domain: string, install_dir: string],
+  Me3State
+>("get_me3_state");
+
+// Rebuilds the profile and returns the Steam launch command that boots
+// the game through me3 (offline, modded saves kept separate).
+export const getMe3LaunchCommand = callable<
+  [game_domain: string],
+  { ok: boolean; command?: string; profile_path?: string; error?: string }
+>("get_me3_launch_command");
+
+export const getMe3CoopPassword = callable<
+  [game_domain: string],
+  { ok: boolean; installed?: boolean; password?: string }
+>("get_me3_coop_password");
+
+export const setMe3CoopPassword = callable<
+  [game_domain: string, password: string],
+  { ok: boolean; error?: string }
+>("set_me3_coop_password");
 
 export const getPrefixToolsState = callable<
   [game_domain: string],
