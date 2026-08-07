@@ -67,45 +67,29 @@ export const PRIMARY_BUTTON_CSS = `
 `;
 
 // ---- Action rows -----------------------------------------------------------
-// The row of buttons under a mod's or collection's header. A page with two
-// actions and a page with five should look like the same app: buttons take
-// a comfortable width and WRAP onto a second line rather than stretching to
-// whatever space is left. Capping each button is what stops a two-button
-// page from rendering two enormous slabs.
+// The row of buttons under a mod's or collection's header.
+//
+// Every button in a row is the SAME width - no exceptions, not even the
+// primary one. They shrink together as more actions appear and grow
+// together (to a cap) as fewer do, so the row always reads as one set of
+// controls rather than a ransom note. Four buttons of four different
+// widths is what this replaced.
+//
+// The mechanism: identical flex-basis with flexGrow/flexShrink of 1 makes
+// flex distribute space equally, so widths stay locked to each other; the
+// max-width stops a two-button row becoming two slabs.
 
 export const ACTION_ROW: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
   gap: "10px",
+  alignItems: "stretch",
 };
 
 export const ACTION_BUTTON: CSSProperties = {
   flexGrow: 1,
-  flexBasis: "170px",
-  minWidth: "150px",
-  maxWidth: "230px",
-};
-
-/** The one action the page exists for - wider, but still capped. */
-export const ACTION_BUTTON_PRIMARY: CSSProperties = {
-  flexGrow: 2,
-  flexBasis: "280px",
-  minWidth: "240px",
-  maxWidth: "360px",
-};
-
-/** Icon-only button (Downloads). Sized so it reads as a different kind of
- * control than the labelled actions beside it. */
-export const ACTION_BUTTON_ICON: CSSProperties = {
-  flexGrow: 0,
-  flexShrink: 0,
-  // DialogButton fills its container by default; both are needed to make
-  // it size to its content instead.
-  width: "auto",
-  minWidth: "58px",
-  padding: "0 14px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "6px",
+  flexShrink: 1,
+  flexBasis: "0",
+  minWidth: "120px",
+  maxWidth: "240px",
 };

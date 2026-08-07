@@ -23,7 +23,7 @@ import {
   toaster,
 } from "@decky/api";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { FaEye, FaPuzzlePiece } from "react-icons/fa";
+import { FaEye, FaEyeSlash, FaPuzzlePiece } from "react-icons/fa";
 
 import {
   AuthStatus,
@@ -454,6 +454,7 @@ function CurrentGameSection() {
   const [me3Busy, setMe3Busy] = useState(false);
   const [coopPassword, setCoopPassword] = useState("");
   const [coopSaved, setCoopSaved] = useState("");
+  const [coopShown, setCoopShown] = useState(false);
   // Steam batches its config writes, so the backend can't confirm a
   // just-set compat tool for a second or two - remember what we set.
   const [protonChosen, setProtonChosen] = useState<string | undefined>();
@@ -598,6 +599,7 @@ function CurrentGameSection() {
     setMe3(undefined);
     setCoopPassword("");
     setCoopSaved("");
+    setCoopShown(false);
     setProtonChosen(undefined);
     refreshStatus();
   }, [game?.appId]);
@@ -1211,51 +1213,6 @@ function CurrentGameSection() {
                   </Field>
                 </PanelSectionRow>
               )}
-              {/* Seamless Co-op matches players on a shared password.
-                  Editing it otherwise means a Desktop Mode text editor. */}
-              {me3?.coop_installed && (
-                <>
-                  <PanelSectionRow>
-                    <TextField
-                      label="Co-op password"
-                      description="Everyone playing together needs the same password."
-                      value={coopPassword}
-                      onChange={(e) => setCoopPassword(e?.target?.value ?? "")}
-                    />
-                  </PanelSectionRow>
-                  <PanelSectionRow>
-                    <ButtonItem
-                      layout="below"
-                      disabled={coopPassword === coopSaved}
-                      onClick={async () => {
-                        const r = await setMe3CoopPassword(
-                          game.nexusDomain,
-                          coopPassword
-                        );
-                        toaster.toast(
-                          r.ok
-                            ? {
-                                title: "Co-op password saved",
-                                body: "Takes effect next time the game starts",
-                              }
-                            : {
-                                title: "Password not saved",
-                                body: r.error ?? "Try a shorter one",
-                              }
-                        );
-                        if (r.ok) setCoopSaved(coopPassword);
-                      }}
-                    >
-                      Save co-op password
-                    </ButtonItem>
-                  </PanelSectionRow>
-                </>
-              )}
-              <PanelSectionRow>
-                <Field description="Modded sessions run offline with their own save file, so your online character is untouched. Playing modded on FromSoft's servers gets accounts banned — the plugin never enables it.">
-                  Offline &amp; separate saves: always on
-                </Field>
-              </PanelSectionRow>
             </>
           )}
           {/* Step 2: prove the launch fix by booting to the main menu
@@ -1562,6 +1519,68 @@ function CurrentGameSection() {
               </OrangeActionButton>
             )}
           </PanelSectionRow>
+          {/* Seamless Co-op matches players on a shared password. It sits
+              between "get mods" and "play" because that's when it's set:
+              after the mod is in, before the session starts. Masked by
+              default - it's shown on a TV as often as a handheld. */}
+          {game.me3 && me3?.coop_installed && (
+            <>
+              <PanelSectionRow>
+                <Focusable style={{ display: "flex", gap: "8px", alignItems: "flex-end" }}>
+                  <div style={{ flexGrow: 1, minWidth: 0 }}>
+                    <TextField
+                      label="Co-op password"
+                      description="Everyone playing together needs the same one."
+                      bIsPassword={!coopShown}
+                      value={coopPassword}
+                      onChange={(e) => setCoopPassword(e?.target?.value ?? "")}
+                    />
+                  </div>
+                  <DialogButton
+                    onClick={() => setCoopShown((s) => !s)}
+                    style={{
+                      flexGrow: 0,
+                      flexShrink: 0,
+                      width: "50px",
+                      minWidth: "50px",
+                      padding: "0",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {coopShown ? <FaEyeSlash /> : <FaEye />}
+                  </DialogButton>
+                </Focusable>
+              </PanelSectionRow>
+              <PanelSectionRow>
+                <ButtonItem
+                  layout="below"
+                  disabled={coopPassword === coopSaved}
+                  onClick={async () => {
+                    const r = await setMe3CoopPassword(
+                      game.nexusDomain,
+                      coopPassword
+                    );
+                    toaster.toast(
+                      r.ok
+                        ? {
+                            title: "Co-op password saved",
+                            body: "Takes effect next time the game starts",
+                          }
+                        : {
+                            title: "Password not saved",
+                            body: r.error ?? "Try a shorter one",
+                          }
+                    );
+                    if (r.ok) setCoopSaved(coopPassword);
+                  }}
+                >
+                  Save co-op password
+                </ButtonItem>
+              </PanelSectionRow>
+            </>
+          )}
           <PanelSectionRow>
             <ButtonItem
               label={
@@ -1584,6 +1603,15 @@ function CurrentGameSection() {
                 : `Launch ${game.displayName}`}
             </ButtonItem>
           </PanelSectionRow>
+          {/* Reassurance, not a step - so it sits after the steps rather
+              than interrupting them. */}
+          {game.me3 && status?.installed && (
+            <PanelSectionRow>
+              <Field description="Modded sessions run offline with their own save file, so your online character is untouched. Playing modded on FromSoft's servers gets accounts banned — the plugin never enables it.">
+                Offline &amp; separate saves: always on
+              </Field>
+            </PanelSectionRow>
+          )}
         </>
       )}
     </PanelSection>

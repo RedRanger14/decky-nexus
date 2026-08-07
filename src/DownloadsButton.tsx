@@ -13,12 +13,12 @@ import {
   subscribeDownloads,
 } from "./state";
 import { DOWNLOADS_ROUTE, noteTabPush } from "./Tabs";
-import { ACTION_BUTTON_ICON, NEXUS_ORANGE } from "./theme";
+import { ACTION_BUTTON, NEXUS_ORANGE } from "./theme";
 
-/** Icon-only on purpose: the action rows it joins are already crowded
- * with "Install optional", "Finish setup", "Uninstall" and friends, and
- * another labelled button would crush them. Shows live progress when
- * something is downloading, so it doubles as the at-a-glance status. */
+/** Says where it goes, not what it is: an icon-only download glyph next
+ * to an Install button reads as a second download button. Sized like
+ * every other action in the row. Shows live progress when something is
+ * downloading, so it doubles as the at-a-glance status. */
 export function DownloadsButton() {
   const [, bump] = useState(0);
   useEffect(() => subscribeDownloads(() => bump((n) => n + 1)), []);
@@ -34,16 +34,24 @@ export function DownloadsButton() {
         Navigation.Navigate(DOWNLOADS_ROUTE);
       }}
       style={{
-        ...ACTION_BUTTON_ICON,
+        ...ACTION_BUTTON,
         ...(busy ? { color: NEXUS_ORANGE, fontWeight: 600 } : {}),
       }}
     >
-      <FaDownload />
-      {busy && (
-        <span style={{ fontSize: "12px" }}>
-          {percent !== undefined ? `${percent}%` : active}
-        </span>
-      )}
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "7px",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <FaDownload />
+        {busy && percent !== undefined
+          ? `Downloads ${percent}%`
+          : "Go to downloads"}
+      </span>
     </DialogButton>
   );
 }

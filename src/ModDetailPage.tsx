@@ -48,7 +48,6 @@ import {
   ACCENT_DANGER,
   ACCENT_SUCCESS,
   ACTION_BUTTON,
-  ACTION_BUTTON_PRIMARY,
   ACTION_ROW,
   NEXUS_ORANGE,
   PRIMARY_BUTTON_CLASS,
@@ -727,7 +726,7 @@ export function ModDetailPage() {
           onClick={() => primaryFile && onInstall(primaryFile)}
           className={PRIMARY_BUTTON_CLASS}
           style={{
-            ...ACTION_BUTTON_PRIMARY,
+            ...ACTION_BUTTON,
             opacity: primaryDisabled && !upToDate ? 0.55 : upToDate ? 0.75 : 1,
           }}
         >
