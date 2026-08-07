@@ -3528,6 +3528,72 @@ class TestPluginMasters(unittest.TestCase):
         self.assertEqual(result["broken"], [])
 
 
+class TestIniPatchFidelity(unittest.TestCase):
+    """These are Windows programs' config files inside a Proton prefix.
+    Setting one key rewrote every line of Seamless Co-op's CRLF ini as LF
+    (device, 2026-08-07) - a whole-file change we were never asked for."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "ersc_settings.ini")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _write(self, text):
+        with open(self.path, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+
+    def _raw(self):
+        with open(self.path, encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def test_crlf_files_stay_crlf(self):
+        self._write(
+            "[PASSWORD]\r\n\r\n; Session password\r\ncooppassword = \r\n"
+        )
+        main._patch_ini_settings(self.path, "PASSWORD", {"cooppassword": "hunter2"})
+        raw = self._raw()
+        self.assertNotIn("\n", raw.replace("\r\n", ""))
+        self.assertEqual(raw.count("\r\n"), 4)
+        self.assertIn("cooppassword = hunter2", raw)
+
+    def test_lf_files_stay_lf(self):
+        self._write("[Archive]\nbInvalidateOlderFiles=0\n")
+        main._patch_ini_settings(
+            self.path, "Archive", {"bInvalidateOlderFiles": "1"}
+        )
+        raw = self._raw()
+        self.assertNotIn("\r", raw)
+        self.assertIn("bInvalidateOlderFiles=1", raw)
+
+    def test_spacing_around_equals_is_the_files_own(self):
+        self._write("[S]\r\nspaced = old\r\ntight=old\r\n")
+        main._patch_ini_settings(self.path, "S", {"spaced": "new", "tight": "new"})
+        raw = self._raw()
+        self.assertIn("spaced = new", raw)
+        self.assertIn("tight=new", raw)
+
+    def test_a_file_with_no_trailing_newline_does_not_gain_one(self):
+        self._write("[S]\r\nkey = old")
+        main._patch_ini_settings(self.path, "S", {"key": "new"})
+        self.assertEqual(self._raw(), "[S]\r\nkey = new")
+
+    def test_only_the_targeted_line_changes(self):
+        original = (
+            "[GAMEPLAY]\r\n\r\n; a comment\r\nallow_invaders = 1\r\n\r\n"
+            "[PASSWORD]\r\ncooppassword = \r\n\r\n[SAVE]\r\n"
+            "save_file_extension = co2\r\n"
+        )
+        self._write(original)
+        main._patch_ini_settings(self.path, "PASSWORD", {"cooppassword": "pw"})
+        before = original.split("\r\n")
+        after = self._raw().split("\r\n")
+        self.assertEqual(len(before), len(after))
+        differing = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+        self.assertEqual(len(differing), 1, f"changed lines: {differing}")
+
+
 class TestResetRemovesTheFramework(unittest.TestCase):
     """Reset-to-vanilla left SMAPI installed (reported on device): it only
     deleted game-root FILES, so smapi-internal/ and the bundled mods

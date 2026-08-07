@@ -868,11 +868,26 @@ def _read_ini_settings(path: str, section: str, keys: list) -> dict:
 def _patch_ini_settings(path: str, section: str, settings: dict) -> None:
     """Set keys in [section], preserving everything else (order, comments,
     unrelated sections). Missing keys are appended to the section; a missing
-    section is appended to the file. Writes a one-time .decky-nexus.bak."""
+    section is appended to the file. Writes a one-time .decky-nexus.bak.
+
+    Line endings are preserved. These are Windows programs' config files
+    living inside a Proton prefix and they arrive CRLF; rewriting the
+    whole file as LF is a change to every line of a file we were asked to
+    touch one key in, and how forgiving the reader is isn't ours to
+    assume.
+    """
     lines = []
+    newline = "\n"  # only for files we create; existing ones keep theirs
+    trailing_newline = True
     if os.path.isfile(path):
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
+        with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
+            raw = f.read()
+        lines = raw.splitlines()
+        if "\r\n" in raw:
+            newline = "\r\n"
+        elif "\n" in raw:
+            newline = "\n"
+        trailing_newline = raw.endswith(("\n", "\r"))
         backup = path + ".decky-nexus.bak"
         if not os.path.isfile(backup):
             shutil.copy2(path, backup)
@@ -892,8 +907,15 @@ def _patch_ini_settings(path: str, section: str, settings: dict) -> None:
         if in_section and "=" in stripped and not stripped.startswith((";", "#")):
             key = stripped.partition("=")[0].strip().lower()
             if key in remaining:
-                canon, val = remaining.pop(key)
-                out.append(f"{canon}={val}")
+                _canon, val = remaining.pop(key)
+                # Keep the line's own shape - indentation, the key as the
+                # program wrote it, and the spacing around '=' - so the
+                # diff is the value and nothing else.
+                head, sep, tail = line.partition("=")
+                pad = tail[: len(tail) - len(tail.lstrip())] or (
+                    " " if tail.startswith(" ") or not tail else ""
+                )
+                out.append(f"{head}{sep}{pad}{val}")
                 continue
         out.append(line)
     if in_section:
@@ -910,8 +932,8 @@ def _patch_ini_settings(path: str, section: str, settings: dict) -> None:
             out.extend(pairs)
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(out) + "\n")
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(newline.join(out) + (newline if trailing_newline else ""))
 
 
 def _read_plugins_txt(path: str) -> list:

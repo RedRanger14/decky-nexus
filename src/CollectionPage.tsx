@@ -53,7 +53,6 @@ import {
 } from "./state";
 import {
   ACTION_BUTTON,
-  ACTION_BUTTON_PRIMARY,
   ACTION_ROW,
   BLUE_BUTTON_CLASS,
   PRIMARY_BUTTON_CLASS,
@@ -771,7 +770,7 @@ export function CollectionPage() {
             className={PRIMARY_BUTTON_CLASS}
             disabled={!detail || installing || remaining.length === 0}
             onClick={() => installAll(false)}
-            style={ACTION_BUTTON_PRIMARY}
+            style={ACTION_BUTTON}
           >
             {installing
               ? `Installing… ${runIsOurs ? run!.finished : 0}/${
