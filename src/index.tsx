@@ -71,6 +71,7 @@ import {
   setApiKey,
   setModEnabled,
 } from "./api";
+import { showInstalledModsSection, showResetRow } from "./panelRules";
 import {
   ALL_GAMES,
   DEFAULT_GAME,
@@ -346,7 +347,7 @@ function ResetGameRow({
   onDone,
 }: {
   game: SupportedGame;
-  onDone: () => void;
+  onDone?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
 
@@ -397,9 +398,10 @@ function ResetGameRow({
       toaster.toast({ title: "Reset failed", body: String(e) });
     } finally {
       setBusy(false);
-      onDone();
-      // The setup steps are a different component: without this they keep
-      // showing the loader as installed and the reset looks like a no-op.
+      onDone?.();
+      // Every other section is a different component: without this they
+      // keep showing the loader as installed and the mods as present, and
+      // the reset looks like it did nothing.
       notifyGameStateChanged();
     }
   };
@@ -1870,6 +1872,9 @@ function InstalledModsSection() {
   };
 
   useEffect(refresh, [game?.appId]);
+  // Reset now lives in its own section, so this list has to be told when
+  // one happens or it keeps listing mods that are already gone.
+  useEffect(() => subscribeGameState(refresh), [game?.appId]);
 
   if (!game) return null;
 
@@ -1925,7 +1930,10 @@ function InstalledModsSection() {
       detail: loadStateFor(m.folder)?.detail ?? "",
     }));
 
-  if ((mods === undefined || mods.length === 0) && !showFrameworkRow) return null;
+  // Reset deliberately does NOT live in here - see ResetSection.
+  if (!showInstalledModsSection((mods ?? []).length, showFrameworkRow)) {
+    return null;
+  }
 
   // Only mods with a toggle count: the framework renders its own row and
   // always-active mods can't be flipped - with none toggleable, a lone
@@ -2140,8 +2148,30 @@ function InstalledModsSection() {
           </ButtonItem>
         </PanelSectionRow>
       )}
-      {/* The nuclear option lives with the other bulk actions. */}
-      <ResetGameRow game={game} onDone={refresh} />
+    </PanelSection>
+  );
+}
+
+/** Reset lives in its own section so it survives an empty mod list. When
+ * it sat with the bulk actions, running it removed the last mod, the
+ * section returned null, and the button disappeared - unreachable for
+ * anyone wanting to start over from a half-configured state. */
+function ResetSection() {
+  const { game } = resolveGameContext();
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    setInstalled(false);
+    if (!game) return;
+    getGameStatus(game.installDirName, game.modsSubdir, "").then((s) =>
+      setInstalled(Boolean(s.installed))
+    );
+  }, [game?.appId]);
+
+  if (!game || !showResetRow(installed)) return null;
+  return (
+    <PanelSection>
+      <ResetGameRow game={game} />
     </PanelSection>
   );
 }
@@ -2645,6 +2675,7 @@ function Content() {
         <>
           <InstalledModsSection />
           <SavesSection />
+          <ResetSection />
         </>
       ) : (
         <AllInstalledModsSection />
