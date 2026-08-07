@@ -48,11 +48,13 @@ import {
   ACCENT_DANGER,
   ACCENT_SUCCESS,
   ACTION_BUTTON,
+  ACTION_HERO,
   ACTION_ROW,
   NEXUS_ORANGE,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
 } from "./theme";
+import { PageBackdrop, SectionHeading, StatChip } from "./chrome";
 import { DownloadsButton } from "./DownloadsButton";
 
 function fmtSize(sizeKb: number): string {
@@ -368,6 +370,16 @@ export function ModDetailPage() {
     : `Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`;
   const primaryDisabled =
     installingFileId !== undefined || !primaryFile || upToDate;
+  // While the main file installs, the button IS the progress bar - the
+  // same fill language as the collection rows and the QAM tool button.
+  const primaryBusy =
+    primaryFile !== undefined && installingFileId === primaryFile.file_id;
+  const primaryPct =
+    primaryBusy && progress?.mod_id === mod.modId
+      ? progress.phase === "extracting"
+        ? 100
+        : progress.percent
+      : 0;
 
   const heroUrl = mod.pictureUrl ?? mod.thumbnailUrl;
   const compatHint = getCompatHint(game.nexusDomain, mod.modId);
@@ -436,47 +448,64 @@ export function ModDetailPage() {
           scrollPaddingBottom: "110px",
         }}
       >
+      {/* Mod art as blurred atmosphere behind the header - depth without
+          competing with the real artwork card in front of it. */}
+      <PageBackdrop src={heroUrl} height={250} />
+      <div style={{ position: "relative", zIndex: 1 }}>
       {/* ---- Header: hero image + facts ---- */}
       <Focusable style={{ display: "flex", gap: "20px", padding: "12px 0 4px" }}>
         {heroUrl && (
           <Focusable
             onActivate={() => setImageFull(true)}
-            style={{ width: "44%", flexShrink: 0, alignSelf: "flex-start" }}
+            style={{ width: "40%", flexShrink: 0, alignSelf: "flex-start" }}
           >
             <img
               src={heroUrl}
               alt={mod.name}
               style={{
                 width: "100%",
-                height: "280px",
+                height: "250px",
                 // Never crop the artwork - letterbox odd aspect ratios.
                 objectFit: "contain",
-                background: "#0b0e13",
+                background: "rgba(11,14,19,0.85)",
                 borderRadius: "8px",
+                border: "1px solid rgba(255,255,255,0.08)",
                 display: "block",
               }}
             />
           </Focusable>
         )}
         <div style={{ minWidth: 0, flexGrow: 1 }}>
-          <h2 style={{ margin: "0 0 2px 0" }}>{mod.name}</h2>
-          <div style={{ opacity: 0.75, fontSize: "14px" }}>
-            by {mod.author} · v{mod.version}
-            {updatedDate ? ` · updated ${updatedDate}` : ""}
+          <h2
+            style={{
+              margin: "0 0 3px 0",
+              fontSize: "24px",
+              lineHeight: 1.2,
+              fontWeight: 700,
+            }}
+          >
+            {mod.name}
+          </h2>
+          <div style={{ opacity: 0.75, fontSize: "13.5px", marginBottom: "8px" }}>
+            by {mod.author}
           </div>
           <Focusable
             style={{
               display: "flex",
               alignItems: "center",
-              gap: "10px",
-              marginBottom: "8px",
+              flexWrap: "wrap",
+              gap: "8px",
+              marginBottom: "10px",
             }}
           >
-            <span style={{ opacity: 0.75, fontSize: "14px" }}>
-              <FaThumbsUp size={11} style={{ opacity: 0.75, marginRight: "4px" }} />{mod.endorsements.toLocaleString()} ·{" "}
-              <FaArrowDown size={11} style={{ opacity: 0.75, margin: "0 4px 0 4px" }} />{" "}
+            <StatChip icon={<FaThumbsUp size={11} />}>
+              {mod.endorsements.toLocaleString()}
+            </StatChip>
+            <StatChip icon={<FaArrowDown size={11} />}>
               {mod.downloads.toLocaleString()}
-            </span>
+            </StatChip>
+            <StatChip>v{mod.version}</StatChip>
+            {updatedDate && <StatChip>updated {updatedDate}</StatChip>}
             {endorseStatus !== undefined && endorseStatus !== "unknown" && (
               <Focusable
                 onActivate={async () => {
@@ -716,22 +745,32 @@ export function ModDetailPage() {
            toggle, uninstall - mirroring the site's single download button ---- */}
       {/* Focus starts on the page's main action row, not the endorse chip
           above it (first-in-DOM otherwise wins). */}
-      <Focusable
-        autoFocus={true}
-        style={{ ...ACTION_ROW, margin: "12px 0 0" }}
-      >
+      {/* The page's one main action stands alone - wide enough that no
+          label ("⬆ Update to v1.2.3 (36.5 MB)") ever wraps - and doubles
+          as its own progress bar while installing. The secondaries below
+          share one uniform size. */}
+      <Focusable autoFocus={true} style={{ margin: "14px 0 0" }}>
         <style>{PRIMARY_BUTTON_CSS}</style>
         <DialogButton
           disabled={primaryDisabled}
           onClick={() => primaryFile && onInstall(primaryFile)}
-          className={PRIMARY_BUTTON_CLASS}
+          className={primaryBusy ? undefined : PRIMARY_BUTTON_CLASS}
           style={{
-            ...ACTION_BUTTON,
+            ...ACTION_HERO,
+            ...(primaryBusy
+              ? {
+                  background: `linear-gradient(90deg, rgba(218,142,53,0.55) ${primaryPct}%, rgba(255,255,255,0.10) ${primaryPct}%)`,
+                  color: "#fff",
+                  transition: "background 0.4s linear",
+                }
+              : {}),
             opacity: primaryDisabled && !upToDate ? 0.55 : upToDate ? 0.75 : 1,
           }}
         >
           {primaryLabel}
         </DialogButton>
+      </Focusable>
+      <Focusable style={{ ...ACTION_ROW, margin: "10px 0 0" }}>
         <DialogButton
           disabled={fileList.length === 0}
           onClick={() => setShowAllFiles(!showAllFiles)}
@@ -796,7 +835,7 @@ export function ModDetailPage() {
         <div style={{ opacity: 0.7, padding: "8px 0" }}>Loading description…</div>
       ) : description ? (
         <>
-          <h3 style={{ margin: "14px 0 4px" }}>About</h3>
+          <SectionHeading title="About" />
           <div
             style={{
               fontSize: "13px",
@@ -829,7 +868,9 @@ export function ModDetailPage() {
       ) : null}
 
       {/* ---- All files (collapsed by default) ---- */}
-      {!isFrameworkMod && showAllFiles && <h3 style={{ margin: "16px 0 6px" }}>All Files</h3>}
+      {!isFrameworkMod && showAllFiles && (
+        <SectionHeading title={`All files (${fileList.length})`} />
+      )}
       {!isFrameworkMod && showAllFiles && (
       <Focusable
         style={{
@@ -905,6 +946,7 @@ export function ModDetailPage() {
           {getDetailOrigin() === "qam" ? "Back" : "Back to browse"}
         </DialogButton>
       </Focusable>
+      </div>
       </Scroller>
     </Focusable>
   );

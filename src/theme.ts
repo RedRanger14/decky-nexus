@@ -92,4 +92,25 @@ export const ACTION_BUTTON: CSSProperties = {
   flexBasis: "0",
   minWidth: "120px",
   maxWidth: "240px",
+  // A label that wraps to two lines makes its button taller than its
+  // neighbours - the row stops reading as one set of controls. Labels
+  // are kept short enough to fit; this is the backstop.
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+/** The page's ONE main action (install this mod / install the
+ * collection), alone on its own row above the uniform secondaries.
+ * Being alone is what lets it be wide: nothing sits beside it to
+ * mismatch, and a long label ("Install remaining (43 of 61)") never
+ * needs to wrap. */
+export const ACTION_HERO: CSSProperties = {
+  width: "100%",
+  maxWidth: "640px",
+  height: "44px",
+  fontSize: "15px",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
 };

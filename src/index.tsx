@@ -2078,9 +2078,9 @@ function InstalledModsSection() {
           />
         </PanelSectionRow>
       )}
-      {/* Collections make this list enormous - cap the QAM at 8 rows and
+      {/* Collections make this list enormous - cap the QAM at 5 rows and
           hand the rest to the full-screen manager. */}
-      {(mods ?? []).slice(0, 8).map((mod) => {
+      {(mods ?? []).slice(0, 5).map((mod) => {
         const load = mod.enabled ? loadStateFor(mod.folder) : undefined;
         const update = updates?.[mod.folder];
         const badge =
@@ -2146,6 +2146,15 @@ function InstalledModsSection() {
           </PanelSectionRow>
         );
       })}
+      {(mods?.length ?? 0) > 5 && (
+        <PanelSectionRow>
+          <Field
+            description={`…and ${
+              (mods?.length ?? 0) - 5
+            } more — Manage my mods below has the full list`}
+          />
+        </PanelSectionRow>
+      )}
       {failures.length > 0 && (
         <PanelSectionRow>
           <ButtonItem
