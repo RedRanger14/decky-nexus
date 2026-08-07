@@ -510,9 +510,19 @@ needs `--windows-binaries-dir`; me3 picks Proton from Steam's own
 CompatToolMapping for the app, falling back to the game's verified-Deck
 runtime — so the panel warns only when NO Proton is present.
 
-Still to verify on device: that Steam Input survives the wrapper, that
-the fallback Proton resolves for Elden Ring, and a real Seamless Co-op
-session. The DS3/Sekiro/AC6/Nightreign entries are one registry block
+Proton is Step 1 (v0.54.0). me3 asks Steam which Proton to use and Steam
+only answers if it's been told: a Verified game runs on an implicit
+default written down nowhere, so me3 falls back to the game's
+verified-Deck runtime (Proton 8.0 for ER) — which the test device didn't
+have installed. That combination fails at launch with nothing useful
+said. The step writes the mapping with one tap, picking the newest
+numbered Proton Steam reports as available, so unmodded play is
+unchanged. Tool names come from `GetAvailableCompatTools`, never derived
+from folder names: Valve's own Proton builds ship no
+`compatibilitytool.vdf` (verified on device).
+
+Still to verify on device: that Steam Input survives the wrapper and a
+real Seamless Co-op session. The DS3/Sekiro/AC6/Nightreign entries are one registry block
 each once ER is proven — the backend already maps all five domains.
 
 Known gap (deliberate): **option-pack archives** — one download holding
