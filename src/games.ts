@@ -35,10 +35,14 @@ export interface GameFramework {
   installSubdir?: string;
   /** Steam launch options needed after install; {install_path} is replaced */
   launchOptionsTemplate?: string;
-  /** Reset-to-vanilla: game-root FILES starting with any of these
-   * prefixes belong to the framework (copyRoot installs keep no
+  /** Reset-to-vanilla: game-root files AND directories starting with any
+   * of these prefixes belong to the framework (copyRoot installs keep no
    * manifest) and are removed on reset (e.g. ["skse64"]). */
   cleanupPrefixes?: string[];
+  /** Reset-to-vanilla: mods the framework bundles with itself (SMAPI
+   * ships ConsoleCommands and SaveBackup). No install record exists for
+   * them, so reset has to be told they belong to the loader. */
+  frameworkModFolders?: string[];
 }
 
 export interface SupportedGame {
@@ -212,9 +216,14 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       url: "smapi.io",
       nexusModId: 2400, // verified: "SMAPI - Stardew Modding API" by Pathoschild
       launchOptionsTemplate: '"{install_path}/StardewModdingAPI" %command%',
+      // Verified on device: SMAPI leaves StardewModdingAPI{,.dll,.deps.json,
+      // .runtimeconfig.json,.xml} plus the smapi-internal/ directory. Its
+      // save-backups/ folder is deliberately NOT listed - that's user data.
+      cleanupPrefixes: ["StardewModdingAPI", "smapi-internal"],
+      frameworkModFolders: ["SaveBackup", "ConsoleCommands", "ErrorHandler"],
     },
     // SMAPI's own bundled components - "uninstall all" keeps these
-    protectedModFolders: ["SaveBackup", "ConsoleCommands"],
+    protectedModFolders: ["SaveBackup", "ConsoleCommands", "ErrorHandler"],
     recommendedModIds: [2400, 1915], // SMAPI, Content Patcher
     // verified on device: SMAPI logs land in ~/.config/StardewValley/
     logAdapter: { kind: "smapi", configDirName: "StardewValley" },

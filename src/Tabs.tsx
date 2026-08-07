@@ -12,9 +12,11 @@ export interface TabDef {
   route: string;
 }
 
+export const DOWNLOADS_ROUTE = "/nexus-mods/downloads";
+
 export const TABS: TabDef[] = [
   { id: "store", label: "Store", route: "/nexus-mods" },
-  { id: "downloads", label: "Downloads", route: "/nexus-mods/downloads" },
+  { id: "downloads", label: "Downloads", route: DOWNLOADS_ROUTE },
   { id: "manager", label: "My Mods", route: "/nexus-mods/manager" },
   { id: "updates", label: "Updates", route: "/nexus-mods/updates" },
   { id: "settings", label: "Settings", route: "/nexus-mods/settings" },
@@ -28,6 +30,14 @@ let tabPushes = 0;
 
 export function resetTabStack(): void {
   tabPushes = 0;
+}
+
+/** Count a navigation into a tabbed page made from somewhere other than
+ * the tab strip (the Downloads shortcut on a mod/collection page). Without
+ * it, B on the destination unwinds one page too few and "returns" to the
+ * stale pages left underneath. */
+export function noteTabPush(): void {
+  tabPushes += 1;
 }
 
 export function switchTab(currentId: string, direction: 1 | -1): void {

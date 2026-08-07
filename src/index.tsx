@@ -357,8 +357,22 @@ function ResetGameRow({
         game.appId,
         game.pluginsTxtSubpath ?? "",
         game.pluginsTxtStyle ?? "starred",
-        game.framework?.cleanupPrefixes ?? [],
-        game.witcherLayout ?? false
+        // Every loader's leftovers, not just the primary one's: CP77
+        // installs four frameworks, and each keeps its own copyRoot
+        // files with no manifest to remove them by.
+        [
+          ...(game.framework?.cleanupPrefixes ?? []),
+          ...(game.extraFrameworks ?? []).flatMap(
+            (fw) => fw.cleanupPrefixes ?? []
+          ),
+        ],
+        game.witcherLayout ?? false,
+        [
+          ...(game.framework?.frameworkModFolders ?? []),
+          ...(game.extraFrameworks ?? []).flatMap(
+            (fw) => fw.frameworkModFolders ?? []
+          ),
+        ]
       );
       if (result.ok && result.use_steam_client) {
         setLaunchOptions(game.appId, "");
@@ -503,7 +517,9 @@ function CurrentGameSection() {
         });
       }
       if (game.me3) {
-        getMe3State(game.nexusDomain, game.installDirName).then(setMe3);
+        getMe3State(game.nexusDomain, game.installDirName, game.appId).then(
+          setMe3
+        );
         getFrameworkSetup(game.nexusDomain).then((r) =>
           setLaunchOptionsSet(Boolean(r.launch_options_set))
         );
@@ -1145,19 +1161,35 @@ function CurrentGameSection() {
                   </Field>
                 </PanelSectionRow>
               )}
+              {/* The loader reads Steam's own compatibility setting. When
+                  Steam has never been told (the usual case for a Verified
+                  game, which just runs on an implicit default) the loader
+                  falls back to Proton 8.0 - and if that isn't installed
+                  either, the game fails to start with nothing useful said.
+                  Both facts are knowable up front, so say them up front. */}
               {me3?.installed &&
                 (me3.protons?.length ?? 0) > 0 &&
+                !me3.compat_tool &&
                 me3.proton8 === false && (
                   <PanelSectionRow>
-                    <Field label="Proton">
-                      Proton 8.0 isn't installed. If the game doesn't start,
-                      pick a Proton version explicitly in{" "}
-                      {game.displayName} → Properties → Compatibility — the
-                      mod loader falls back to Proton 8.0 when Steam hasn't
-                      been told which to use.
+                    <Field label="⚠ Proton">
+                      Set a Proton version for {game.displayName} in
+                      Properties → Compatibility before launching. Steam
+                      hasn't been told which to use, and the mod loader's
+                      fallback (Proton 8.0) isn't installed — without one of
+                      those, the game won't start.
                     </Field>
                   </PanelSectionRow>
                 )}
+              {me3?.installed && Boolean(me3.compat_tool) && !me3.proton8 && (
+                <PanelSectionRow>
+                  <Field label="Proton">
+                    Running through {me3.compat_tool}. If the game won't
+                    start, try a different version in Properties →
+                    Compatibility.
+                  </Field>
+                </PanelSectionRow>
+              )}
               {/* Seamless Co-op matches players on a shared password.
                   Editing it otherwise means a Desktop Mode text editor. */}
               {me3?.coop_installed && (
