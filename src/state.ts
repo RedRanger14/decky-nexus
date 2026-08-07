@@ -277,6 +277,26 @@ export function subscribeDownloads(listener: () => void): () => void {
   };
 }
 
+// ---- Game state changes -------------------------------------------------------
+// Bulk actions (reset to vanilla, uninstall all) live in the installed-mods
+// section, but they invalidate what the setup-steps section shows - a
+// different component, with its own state. Without this nudge a successful
+// reset leaves "Mod loader installed ✓" on screen, which reads as the reset
+// having done nothing at all.
+
+const gameStateListeners = new Set<() => void>();
+
+export function subscribeGameState(listener: () => void): () => void {
+  gameStateListeners.add(listener);
+  return () => {
+    gameStateListeners.delete(listener);
+  };
+}
+
+export function notifyGameStateChanged(): void {
+  for (const listener of gameStateListeners) listener();
+}
+
 // ---- Collection batch run ------------------------------------------------------
 // The install loop lives OUTSIDE the page component: navigating away must
 // not orphan the batch's UI state (the loop itself always survived - the

@@ -7137,6 +7137,19 @@ query Link($slug: String!, $domainName: String!) {
             # means removing it outright - profile included, or a stale
             # one would still be named by the launch command.
             _force_rmtree(_me3_profile_dir(game_domain))
+            # The loader itself is the FromSoft equivalent of SMAPI: leave
+            # it and the setup step still reads "installed", which is what
+            # made a working reset look like it had done nothing. It is
+            # shared by all five games though, so it only goes with the
+            # last one - resetting Elden Ring must not break a modded
+            # Dark Souls III.
+            if not any(
+                settings.get("installed", {}).get(other)
+                for other in ME3_GAMES
+                if other != game_domain
+            ):
+                _force_rmtree(ME3_ROOT)
+                framework_files.append("me3 (mod loader)")
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges"):
             settings.get(section, {}).pop(game_domain, None)

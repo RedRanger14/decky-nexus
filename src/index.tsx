@@ -97,6 +97,8 @@ import {
   getCollectionRun,
   getCompletedDownloads,
   getDownloads,
+  notifyGameStateChanged,
+  subscribeGameState,
   setBrowseGame,
   setDetailOrigin,
   setSelectedMod,
@@ -396,6 +398,9 @@ function ResetGameRow({
     } finally {
       setBusy(false);
       onDone();
+      // The setup steps are a different component: without this they keep
+      // showing the loader as installed and the reset looks like a no-op.
+      notifyGameStateChanged();
     }
   };
 
@@ -603,6 +608,9 @@ function CurrentGameSection() {
     setProtonChosen(undefined);
     refreshStatus();
   }, [game?.appId]);
+
+  // A reset (or any bulk action) invalidates every step on this panel.
+  useEffect(() => subscribeGameState(refreshStatus), [game?.appId]);
 
   // Installing a mod happens on another page: the loader panel has to
   // notice, or Seamless Co-op's password field never appears.
@@ -1526,32 +1534,53 @@ function CurrentGameSection() {
           {game.me3 && me3?.coop_installed && (
             <>
               <PanelSectionRow>
-                <Focusable style={{ display: "flex", gap: "8px", alignItems: "flex-end" }}>
-                  <div style={{ flexGrow: 1, minWidth: 0 }}>
-                    <TextField
-                      label="Co-op password"
-                      description="Everyone playing together needs the same one."
-                      bIsPassword={!coopShown}
-                      value={coopPassword}
-                      onChange={(e) => setCoopPassword(e?.target?.value ?? "")}
-                    />
-                  </div>
-                  <DialogButton
-                    onClick={() => setCoopShown((s) => !s)}
+                {/* Label and description belong to the Field, not the
+                    TextField: that leaves the flex row holding just the
+                    input and the button, so centring them against each
+                    other needs no guessed offsets. Sized to match the
+                    reveal buttons on the installed-mod rows. */}
+                <Field
+                  label="Co-op password"
+                  description="Everyone playing together needs the same one."
+                  childrenLayout="below"
+                >
+                  <Focusable
                     style={{
-                      flexGrow: 0,
-                      flexShrink: 0,
-                      width: "50px",
-                      minWidth: "50px",
-                      padding: "0",
                       display: "flex",
+                      gap: "8px",
                       alignItems: "center",
-                      justifyContent: "center",
                     }}
                   >
-                    {coopShown ? <FaEyeSlash /> : <FaEye />}
-                  </DialogButton>
-                </Focusable>
+                    <div style={{ flexGrow: 1, minWidth: 0 }}>
+                      <TextField
+                        bIsPassword={!coopShown}
+                        value={coopPassword}
+                        onChange={(e) =>
+                          setCoopPassword(e?.target?.value ?? "")
+                        }
+                      />
+                    </div>
+                    <DialogButton
+                      onClick={() => setCoopShown((s) => !s)}
+                      style={{
+                        minWidth: "40px",
+                        width: "40px",
+                        height: "32px",
+                        padding: "0",
+                        flexShrink: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {coopShown ? (
+                        <FaEyeSlash size={14} />
+                      ) : (
+                        <FaEye size={14} />
+                      )}
+                    </DialogButton>
+                  </Focusable>
+                </Field>
               </PanelSectionRow>
               <PanelSectionRow>
                 <ButtonItem
