@@ -3699,6 +3699,98 @@ class TestGateToSovngardeFailures(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.dirname(dst)))
 
 
+class TestRepairOnlyInstall(unittest.TestCase):
+    """Repair restores files a partial install dropped. It must never
+    overwrite: a file already on disk is either this mod's or a LATER
+    mod's deliberate override, and re-asserting it would silently undo
+    the collection's conflict order."""
+
+    DOMAIN = "skyrimspecialedition"
+    GAME = "Repair Test"
+    MOD, FILE = 777, 888
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(self.data)
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        shutil.rmtree(main._extract_scratch(self.MOD, self.FILE), ignore_errors=True)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def _install(self, repair):
+        archive = main._archive_cache_path(self.MOD, self.FILE, "m.zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            z.writestr("Data/Framework.esp", "from-archive")
+            z.writestr("Data/textures/shared.dds", "from-archive")
+            z.writestr("Data/meshes/only-here.nif", "from-archive")
+        return run(
+            self.plugin.install_mod(
+                self.DOMAIN, self.MOD, self.FILE, "m.zip", "Partial Mod",
+                "1.0", self.GAME, "Data", "", "", "dataDir", 489830,
+                "Skyrim Special Edition/Plugins.txt", "starred",
+                "", "", "", "", None, "", "", False, "", False, False, repair,
+            )
+        )
+
+    def _write(self, rel, body):
+        path = os.path.join(self.data, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(body)
+
+    def _read(self, rel):
+        with open(os.path.join(self.data, *rel.split("/"))) as f:
+            return f.read()
+
+    def test_repair_adds_only_what_is_missing(self):
+        # A later mod owns shared.dds; Framework.esp went missing.
+        self._write("textures/shared.dds", "from-a-later-mod")
+        result = self._install(repair=True)
+        self.assertTrue(result["ok"], result.get("error"))
+        # Restored.
+        self.assertEqual(self._read("Framework.esp"), "from-archive")
+        self.assertEqual(self._read("meshes/only-here.nif"), "from-archive")
+        # NOT clobbered - this is the whole point.
+        self.assertEqual(self._read("textures/shared.dds"), "from-a-later-mod")
+        self.assertEqual(result["added"], 2)
+
+    def test_a_normal_install_still_overwrites(self):
+        self._write("textures/shared.dds", "from-a-later-mod")
+        result = self._install(repair=False)
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(self._read("textures/shared.dds"), "from-archive")
+        self.assertEqual(result["added"], 3)
+
+    def test_repairing_a_complete_mod_changes_nothing(self):
+        self._install(repair=False)
+        result = self._install(repair=True)
+        self.assertTrue(result["ok"], result.get("error"))
+        # 0 added is what the UI reports as "already complete".
+        self.assertEqual(result["added"], 0)
+        self.assertEqual(self._read("Framework.esp"), "from-archive")
+
+    def test_repair_records_the_whole_mod_not_just_what_it_added(self):
+        # Uninstall has to remove everything the mod owns, including the
+        # files repair found already present.
+        self._write("textures/shared.dds", "from-a-later-mod")
+        self._install(repair=True)
+        rec = main._load_settings()["installed"][self.DOMAIN]["Partial Mod"]
+        self.assertCountEqual(
+            rec["files"],
+            ["Framework.esp", "textures/shared.dds", "meshes/only-here.nif"],
+        )
+        self.assertEqual(rec["plugins"], ["Framework.esp"])
+
+
 class TestFomodDotDestination(unittest.TestCase):
     """A FOMOD destination of "." means the Data root. It produced
     "./file", whose first component the traversal guard rejects, so every

@@ -69,7 +69,10 @@ export async function installPinned(
   modName: string,
   version = "",
   collectionSlug = "",
-  payloadChoice = ""
+  payloadChoice = "",
+  /** Restore missing files only - never overwrite what's on disk. Used
+   * by the collection repair pass; see installModWith. */
+  repairOnly = false
 ): Promise<InstallResult> {
   nameDownload(modId, modName, game.appId);
   return installModWith(
@@ -82,7 +85,8 @@ export async function installPinned(
     "collection",
     "",
     collectionSlug,
-    payloadChoice
+    payloadChoice,
+    repairOnly
   );
 }
 
@@ -96,7 +100,8 @@ function installModWith(
   source: string,
   pageVersion = "",
   collectionSlug = "",
-  payloadChoice = ""
+  payloadChoice = "",
+  repairOnly = false
 ): Promise<InstallResult> {
   return installMod(
     game.nexusDomain,
@@ -120,7 +125,8 @@ function installModWith(
     game.witcherLayout ?? false,
     collectionSlug,
     game.cp77Layout ?? false,
-    game.pakPatchLayout ?? false
+    game.pakPatchLayout ?? false,
+    repairOnly
   );
 }
 

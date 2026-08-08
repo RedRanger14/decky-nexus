@@ -81,6 +81,9 @@ export interface InstallResult {
   needs_fomod?: boolean;
   fomod_token?: string;
   wizard?: unknown;
+  /** Files actually written. On a repair pass this is how many were
+   * missing - 0 means the mod was already complete. */
+  added?: number;
 }
 
 export interface InstalledMod {
@@ -202,7 +205,8 @@ export const installMod = callable<
     witcher_layout: boolean,
     collection_slug: string,
     cp77_layout: boolean,
-    pakpatch_layout: boolean
+    pakpatch_layout: boolean,
+    repair_only: boolean
   ],
   InstallResult
 >("install_mod");
