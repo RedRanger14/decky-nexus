@@ -1961,6 +1961,13 @@ function InstalledModsSection() {
   const loadStateFor = (folder: string): ModLoadState | undefined =>
     loadStates?.[folder.toLowerCase().replace(/[^a-z0-9]/g, "")];
 
+  // Creation Club masters (cc*.esl/.esm) are paid Anniversary Edition
+  // content, not a missing mod - no amount of installing fixes them, so
+  // the copy says so rather than implying the user can act on it.
+  const creationClubCount = brokenPlugins.filter((b) =>
+    b.missing.some((m) => /^cc[a-z]/i.test(m))
+  ).length;
+
   const failures = (mods ?? [])
     .filter((m) => m.enabled && loadStateFor(m.folder)?.state === "error")
     .map((m) => ({
@@ -2033,12 +2040,26 @@ function InstalledModsSection() {
         <PanelSectionRow>
           <ButtonItem
             layout="below"
-            label={`⚠ ${game.displayName} won't start`}
-            description={`${brokenPlugins.length} enabled mod${
+            // "Broken" reads as "you broke something", and on a big
+            // collection the number is alarming. Nothing is damaged:
+            // these mods are waiting on files that aren't there, and
+            // most of the time that is paid Creation Club content the
+            // user simply doesn't own. Say that, and call the fix what
+            // it is - skipping them.
+            label={`${brokenPlugins.length} mod${
               brokenPlugins.length > 1 ? "s" : ""
-            } need${brokenPlugins.length > 1 ? "" : "s"} files that aren't installed (e.g. ${
-              brokenPlugins[0].plugin
-            } needs ${brokenPlugins[0].missing[0]}). Usually missing Steam DLC or an external tool the collection assumes. This turns them off - files stay, re-enable any time.`}
+            } can't load yet`}
+            description={
+              `${
+                brokenPlugins.length > 1 ? "They need" : "It needs"
+              } files that aren't installed (e.g. ${
+                brokenPlugins[0].plugin
+              } needs ${brokenPlugins[0].missing[0]}). ` +
+              (creationClubCount > 0
+                ? `${creationClubCount} of them want Creation Club content, which comes with the paid Anniversary Edition upgrade - installing more mods won't help those. `
+                : "") +
+              `Skipping turns them off so ${game.displayName} starts. Nothing is deleted and you can turn them back on any time.`
+            }
             onClick={async () => {
               const result = await disablePlugins(
                 game.appId,
@@ -2049,15 +2070,15 @@ function InstalledModsSection() {
               toaster.toast(
                 result.ok
                   ? {
-                      title: "Broken mods disabled",
-                      body: `${result.disabled ?? 0} turned off — ${game.displayName} should boot now`,
+                      title: "Mods skipped",
+                      body: `${result.disabled ?? 0} turned off — ${game.displayName} should start now`,
                     }
-                  : { title: "Could not disable", body: result.error ?? "" }
+                  : { title: "Could not skip them", body: result.error ?? "" }
               );
               refresh();
             }}
           >
-            Disable {brokenPlugins.length} broken mod
+            Skip {brokenPlugins.length} mod
             {brokenPlugins.length > 1 ? "s" : ""}
           </ButtonItem>
         </PanelSectionRow>
