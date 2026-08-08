@@ -977,16 +977,26 @@ def _write_plugins_txt(path: str, lines: list) -> None:
         f.write("\n".join(lines) + ("\n" if lines else ""))
 
 
-def _plugin_masters(path: str):
-    """MAST entries from a Bethesda plugin's TES4 header (FO3/FNV/SSE/FO4
-    share the 24-byte record header + 4cc/uint16 subrecord format). None
-    when the file isn't a plugin; [] when it has no masters."""
+# TES4 header record flags.
+PLUGIN_FLAG_MASTER = 0x00000001  # .esm-style: loads before regular plugins
+PLUGIN_FLAG_LIGHT = 0x00000200  # ESL: shares the FE index, no slot of its own
+
+
+def _plugin_header(path: str):
+    """(flags, masters) from a Bethesda plugin's TES4 header (FO3/FNV/SSE
+    /FO4 share the 24-byte record header + 4cc/uint16 subrecord format).
+    None when the file isn't a plugin.
+
+    One read for both, because the load-order sort asks about every
+    plugin in the game and a collection can have two thousand of them.
+    """
     try:
         with open(path, "rb") as f:
             head = f.read(24)
             if len(head) < 24 or head[:4] != b"TES4":
                 return None
             data_size = int.from_bytes(head[4:8], "little")
+            flags = int.from_bytes(head[8:12], "little")
             data = f.read(min(data_size, 1 << 20))
     except OSError:
         return None
@@ -1001,7 +1011,48 @@ def _plugin_masters(path: str):
                 .decode("cp1252", "replace")
             )
         off += 6 + size
-    return masters
+    return flags, masters
+
+
+def _plugin_masters(path: str):
+    """MAST entries only. None when the file isn't a plugin; [] when it
+    has no masters."""
+    head = _plugin_header(path)
+    return None if head is None else head[1]
+
+
+def _topo_by_masters(data_path: str, group: list, cache: dict = None) -> list:
+    """Stable dependency sort: mod plugins can master EACH OTHER (Rebirth+
+    shipped an esm mastering another mod esm, and a patch esp mastering
+    another esp) - listed order alone produced loads-before-master
+    crashes on device. Cycles fall back to the input order."""
+    idx = {n.lower(): i for i, n in enumerate(group)}
+    indeg = {n.lower(): 0 for n in group}
+    rev = {n.lower(): [] for n in group}
+    for n in group:
+        if cache is not None and n.lower() in cache:
+            ms = cache[n.lower()][1]
+        else:
+            ms = _plugin_masters(os.path.join(data_path, n)) or []
+        for m in ms:
+            ml = m.lower()
+            if ml in idx and ml != n.lower():
+                indeg[n.lower()] += 1
+                rev[ml].append(n.lower())
+    ready = sorted([n for n in indeg if indeg[n] == 0], key=lambda x: idx[x])
+    out = []
+    while ready:
+        n = ready.pop(0)
+        out.append(n)
+        for d in rev[n]:
+            indeg[d] -= 1
+            if indeg[d] == 0:
+                ready.append(d)
+                ready.sort(key=lambda x: idx[x])
+    if len(out) != len(group):
+        return group
+    actual = {n.lower(): n for n in group}
+    return [actual[n] for n in out]
 
 
 def _enabled_plugins(path: str, style: str) -> list:
@@ -1056,37 +1107,7 @@ def _stagger_plugin_mtimes(
     vanilla_lower = [v.lower() for v in vanilla]
 
     def _topo(group: list) -> list:
-        """Stable dependency sort: mod plugins can master EACH OTHER
-        (Rebirth+ shipped an esm mastering another mod esm, and a patch
-        esp mastering another esp) - plugins.txt order alone produced
-        loads-before-master crashes on device. Cycles fall back to the
-        input order."""
-        idx = {n.lower(): i for i, n in enumerate(group)}
-        indeg = {n.lower(): 0 for n in group}
-        rev = {n.lower(): [] for n in group}
-        for n in group:
-            ms = _plugin_masters(os.path.join(data_path, n)) or []
-            for m in ms:
-                ml = m.lower()
-                if ml in idx and ml != n.lower():
-                    indeg[n.lower()] += 1
-                    rev[ml].append(n.lower())
-        ready = sorted(
-            [n for n in indeg if indeg[n] == 0], key=lambda x: idx[x]
-        )
-        out = []
-        while ready:
-            n = ready.pop(0)
-            out.append(n)
-            for d in rev[n]:
-                indeg[d] -= 1
-                if indeg[d] == 0:
-                    ready.append(d)
-                    ready.sort(key=lambda x: idx[x])
-        if len(out) != len(group):
-            return group
-        actual = {n.lower(): n for n in group}
-        return [actual[n] for n in out]
+        return _topo_by_masters(data_path, group)
 
     esms = [
         real[n.lower()] for n in names
@@ -1111,6 +1132,111 @@ def _stagger_plugin_mtimes(
         except OSError:
             pass
     return stamped
+
+
+LOAD_ORDER_BACKUP = ".decky-bak"
+
+
+def _plugin_entries(lines: list) -> list:
+    """(name, enabled) for the real entries, skipping comments/blanks."""
+    out = []
+    for line in lines:
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        out.append((s[1:].strip() if s.startswith("*") else s,
+                    s.startswith("*")))
+    return out
+
+
+def _load_order_report(data_path: str, names: list, cache: dict = None) -> int:
+    """How many plugins are listed BEFORE a master they depend on.
+
+    Skyrim and Fallout 4 take plugins.txt order as the load order. A
+    plugin listed before something it masters is not a nuance - the
+    record it overrides does not exist yet, and the game crashes on the
+    way in.
+    """
+    pos = {n.lower(): i for i, n in enumerate(names)}
+    bad = 0
+    for i, n in enumerate(names):
+        if cache is not None and n.lower() in cache:
+            ms = cache[n.lower()][1]
+        else:
+            ms = _plugin_masters(os.path.join(data_path, n)) or []
+        for m in ms:
+            j = pos.get(m.lower())
+            if j is not None and j > i:
+                bad += 1
+    return bad
+
+
+def _sort_load_order(data_path: str, names: list) -> list:
+    """Masters first, then everything else, each group in dependency
+    order.
+
+    Two rules, in this priority. Master-flagged plugins load before
+    regular ones whatever the file says, so grouping them first makes the
+    file mean what the engine will actually do. Within a group, a plugin
+    must follow every master it names.
+
+    Deliberately NOT a full LOOT sort: LOOT also carries thousands of
+    hand-written rules about which mods should win a conflict, which we
+    have no source for. This fixes the class that hard-crashes on load
+    and leaves the rest in the order the collection's author chose.
+    """
+    try:
+        real = {f.lower(): f for f in os.listdir(data_path)}
+    except OSError:
+        return list(names)
+    cache = {}
+    for n in names:
+        f = real.get(n.lower())
+        head = _plugin_header(os.path.join(data_path, f)) if f else None
+        cache[n.lower()] = head if head else (0, [])
+    masters = [n for n in names
+               if n.lower().endswith(".esm")
+               or cache[n.lower()][0] & PLUGIN_FLAG_MASTER]
+    regular = [n for n in names if n not in set(masters)]
+    return (_topo_by_masters(data_path, masters, cache)
+            + _topo_by_masters(data_path, regular, cache))
+
+
+def _rewrite_load_order(data_path: str, path: str, style: str) -> dict:
+    """Sort plugins.txt in place, keeping a copy of what was there.
+
+    Disabled entries are carried along in the same sort: they do not
+    load, so their position is irrelevant to the game, but leaving them
+    where they were would scatter them through the file for no reason.
+    """
+    lines = _read_plugins_txt(path)
+    if not lines:
+        return {"ok": False, "error": "No plugins.txt to sort"}
+    header = [l for l in lines if l.strip().startswith("#")]
+    entries = _plugin_entries(lines)
+    names = [n for n, _ in entries]
+    enabled = {n.lower() for n, on in entries if on}
+    before = _load_order_report(data_path, [n for n, on in entries if on])
+    ordered = _sort_load_order(data_path, names)
+    after = _load_order_report(
+        data_path, [n for n in ordered if n.lower() in enabled]
+    )
+    # Never make it worse. A cycle or an unreadable Data folder falls
+    # back to the input order, and rewriting the file for no gain just
+    # risks the copy we would restore from.
+    if after > before:
+        return {"ok": False, "error": "Sort would not improve the order",
+                "violations": before}
+    try:
+        shutil.copy2(path, path + LOAD_ORDER_BACKUP)
+    except OSError:
+        pass
+    _write_plugins_txt(path, header + [
+        ("*" + n if style != "listed" and n.lower() in enabled else n)
+        for n in ordered
+    ])
+    return {"ok": True, "violations_before": before, "violations_after": after,
+            "sorted": len(ordered)}
 
 
 def _add_plugins(path: str, names: list, style: str = "starred") -> None:
@@ -8083,6 +8209,49 @@ query Link($slug: String!, $domainName: String!) {
         return {"ok": True}
 
     # ---- Installed mods / enable & disable ----------------------------------
+
+    async def get_load_order_state(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str
+    ) -> dict:
+        """How many enabled plugins are listed before a master they need.
+
+        Skyrim and Fallout 4 read plugins.txt as the load order, and we
+        only ever appended to it - so the order was the order things
+        happened to be installed in. On the device's 1,960-plugin
+        collection that put 557 plugins ahead of a master they depend on,
+        which is a crash on the way into the world, not a nuance.
+        """
+        if not plugins_subpath or plugins_style == "listed":
+            return {"ok": True, "supported": False}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        if not os.path.isfile(path) or not os.path.isdir(data_path):
+            return {"ok": True, "supported": False}
+        enabled = [n for n, on in _plugin_entries(_read_plugins_txt(path)) if on]
+        return {
+            "ok": True,
+            "supported": True,
+            "total": len(enabled),
+            "violations": _load_order_report(data_path, enabled),
+        }
+
+    async def fix_load_order(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str
+    ) -> dict:
+        """Sort plugins.txt so nothing loads before its masters."""
+        if not plugins_subpath:
+            return {"ok": False, "error": "This game has no plugin list"}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        r = _rewrite_load_order(data_path, path, plugins_style)
+        if r.get("ok"):
+            decky.logger.info(
+                f"load order sorted: {r['violations_before']} -> "
+                f"{r['violations_after']} violations over {r['sorted']} plugins"
+            )
+        return r
 
     async def get_installed_count(self, game_domain: str) -> dict:
         """How many mods we have installed for a game.

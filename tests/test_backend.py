@@ -3849,6 +3849,150 @@ class TestScriptExtenderPlugins(unittest.TestCase):
         self.assertFalse(s["available"])
 
 
+def _make_plugin(path, masters=(), flags=0):
+    """Smallest valid TES4 header: 24-byte record header then MAST subs."""
+    data = b""
+    for m in masters:
+        raw = m.encode("cp1252") + b"\x00"
+        data += b"MAST" + len(raw).to_bytes(2, "little") + raw
+    head = (b"TES4" + len(data).to_bytes(4, "little")
+            + flags.to_bytes(4, "little") + b"\x00" * 12)
+    with open(path, "wb") as f:
+        f.write(head + data)
+
+
+class TestLoadOrder(unittest.TestCase):
+    """Skyrim/FO4 read plugins.txt AS the load order, and we only ever
+    appended to it - so it was install order. On the device's Gate To
+    Sovngarde install that left 557 of 1,960 enabled plugins ahead of a
+    master they depend on: a crash on the way into the world."""
+
+    GAME = "Load Order Test"
+    APP_ID = 489830
+    SUB = "Skyrim Special Edition/Plugins.txt"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(self.data)
+        _make_plugin(os.path.join(self.data, "Base.esm"), flags=1)
+        _make_plugin(os.path.join(self.data, "Town.esp"), ["Base.esm"])
+        # The shape that breaks: a patch installed before what it patches.
+        _make_plugin(os.path.join(self.data, "TownPatch.esp"),
+                     ["Base.esm", "Town.esp"])
+        _make_plugin(os.path.join(self.data, "Late.esm"), ["Base.esm"], flags=1)
+        self.path = main._plugins_txt_path(self.APP_ID, self.SUB)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.path), ignore_errors=True)
+
+    def _write(self, names):
+        main._write_plugins_txt(
+            self.path,
+            ["# This file is used by Skyrim"] + ["*" + n for n in names],
+        )
+
+    def _state(self):
+        return run(self.plugin.get_load_order_state(
+            self.APP_ID, self.GAME, self.SUB, "starred"))
+
+    def _fix(self):
+        return run(self.plugin.fix_load_order(
+            self.APP_ID, self.GAME, self.SUB, "starred"))
+
+    def _order(self):
+        return [n for n, _ in
+                main._plugin_entries(main._read_plugins_txt(self.path))]
+
+    def test_it_counts_plugins_listed_before_their_masters(self):
+        self._write(["TownPatch.esp", "Town.esp", "Base.esm"])
+        s = self._state()
+        # TownPatch needs Base + Town (both later), Town needs Base.
+        self.assertEqual(s["violations"], 3)
+        self.assertEqual(s["total"], 3)
+
+    def test_sorting_puts_every_plugin_after_its_masters(self):
+        self._write(["TownPatch.esp", "Town.esp", "Base.esm"])
+        r = self._fix()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["violations_after"], 0)
+        self.assertEqual(self._order(), ["Base.esm", "Town.esp", "TownPatch.esp"])
+
+    def test_masters_lead_because_the_engine_loads_them_first(self):
+        # Late.esm is last in the file but master-flagged, so the game
+        # loads it before any esp regardless. The file should say so.
+        self._write(["Town.esp", "TownPatch.esp", "Base.esm", "Late.esm"])
+        self._fix()
+        order = self._order()
+        self.assertEqual(order[:2], ["Base.esm", "Late.esm"])
+
+    def test_an_esp_with_the_master_flag_sorts_as_a_master(self):
+        # "ESM-flagged esp" is a normal, deliberate thing in Skyrim, and
+        # the extension alone would file it under regular plugins.
+        _make_plugin(os.path.join(self.data, "Flagged.esp"), flags=1)
+        self._write(["Town.esp", "Base.esm", "Flagged.esp"])
+        self._fix()
+        self.assertIn("Flagged.esp", self._order()[:2])
+
+    def test_disabled_plugins_are_kept(self):
+        main._write_plugins_txt(self.path, [
+            "# header", "*TownPatch.esp", "Town.esp", "*Base.esm",
+        ])
+        self._fix()
+        entries = main._plugin_entries(main._read_plugins_txt(self.path))
+        self.assertEqual(
+            {n: on for n, on in entries},
+            {"Base.esm": True, "Town.esp": False, "TownPatch.esp": True},
+        )
+
+    def test_the_previous_order_is_kept_so_it_can_be_undone(self):
+        self._write(["TownPatch.esp", "Town.esp", "Base.esm"])
+        self._fix()
+        backup = self.path + main.LOAD_ORDER_BACKUP
+        self.assertTrue(os.path.isfile(backup))
+        self.assertEqual(
+            [n for n, _ in main._plugin_entries(main._read_plugins_txt(backup))],
+            ["TownPatch.esp", "Town.esp", "Base.esm"],
+        )
+
+    def test_an_order_that_is_already_right_is_left_alone(self):
+        self._write(["Base.esm", "Town.esp", "TownPatch.esp"])
+        self.assertEqual(self._state()["violations"], 0)
+        self._fix()
+        self.assertEqual(self._order(), ["Base.esm", "Town.esp", "TownPatch.esp"])
+
+    def test_a_master_cycle_falls_back_instead_of_mangling_the_file(self):
+        # Two plugins mastering each other cannot be ordered. Refusing to
+        # touch it beats emitting a confident wrong answer.
+        _make_plugin(os.path.join(self.data, "A.esp"), ["B.esp"])
+        _make_plugin(os.path.join(self.data, "B.esp"), ["A.esp"])
+        self._write(["A.esp", "B.esp"])
+        self._fix()
+        self.assertEqual(set(self._order()), {"A.esp", "B.esp"})
+
+    def test_a_missing_master_does_not_stop_the_sort(self):
+        # 284 masters on the device are not installed at all. Those
+        # plugins cannot load, but they must not break ordering for the
+        # ones that can.
+        _make_plugin(os.path.join(self.data, "Orphan.esp"), ["Nothing.esm"])
+        self._write(["TownPatch.esp", "Orphan.esp", "Town.esp", "Base.esm"])
+        r = self._fix()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["violations_after"], 0)
+        self.assertIn("Orphan.esp", self._order())
+
+    def test_timestamp_games_are_not_touched_here(self):
+        # FO3/FNV order by file mtime; rewriting their list would do
+        # nothing and imply a fix that had not happened.
+        s = run(self.plugin.get_load_order_state(
+            self.APP_ID, self.GAME, self.SUB, "listed"))
+        self.assertFalse(s["supported"])
+
+
 class TestCrashCulprits(unittest.TestCase):
     """A plugin SKSE loads happily can still crash the game later, and
     that leaves nothing in skse64.log - the only record is the crash log.
