@@ -3386,6 +3386,95 @@ def _parse_script_extender_log(path: str) -> list:
     return out
 
 
+# A crash-log call stack frame, as written by CrashLoggerSSE / Buffout:
+#   "[ 6][P] 0x6FFFF3894153 NPCWaterAIFix.dll+0024153"
+# The [P]robable/[S]tack-scan marker is CrashLoggerSSE's; Buffout omits
+# it, so it is optional and a missing marker is treated as probable.
+_CRASH_FRAME_RE = re.compile(
+    r"^\[\s*(?P<idx>\d+)\]\s*(?:\[(?P<kind>[PS])\])?\s*"
+    r"0x[0-9A-Fa-f]+\s+(?P<mod>[^\s+]+)\+[0-9A-Fa-f]+",
+)
+_CRASH_HEADING_RE = re.compile(r"^[A-Z][A-Z0-9 /()_-]*:")
+
+
+def _parse_crash_log(path: str) -> dict:
+    """What was on the call stack when the game died.
+
+    A plugin the extender loaded happily can still crash the game hours
+    later, and that failure leaves no trace in the extender's own log -
+    which is why this reads the crash log instead. Frames are returned in
+    stack order; the caller decides which of them it can actually act on.
+    """
+    frames, seen, when, exc = [], set(), "", ""
+    in_stack = False
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                line = raw.strip()
+                if not when and line.startswith("CRASH TIME:"):
+                    when = line.split(":", 1)[1].strip()
+                    continue
+                if not exc and line.startswith("Unhandled exception"):
+                    exc = line
+                    continue
+                if "CALL STACK" in line and line.endswith(":"):
+                    in_stack = True
+                    continue
+                if not in_stack:
+                    continue
+                if _CRASH_HEADING_RE.match(line):
+                    break
+                m = _CRASH_FRAME_RE.match(line)
+                if not m:
+                    continue
+                mod = m.group("mod")
+                key = mod.lower()
+                # Keep only the frame closest to the crash per module -
+                # a DLL appearing again further up says nothing extra.
+                if key in seen:
+                    continue
+                seen.add(key)
+                frames.append(
+                    {
+                        "index": int(m.group("idx")),
+                        "module": mod,
+                        "probable": (m.group("kind") or "P") == "P",
+                    }
+                )
+    except OSError:
+        return {}
+    return {"crashed_at": when, "exception": exc, "frames": frames}
+
+
+# A crash REPORT: "crash-2026-08-08-12-08-13.log" (CrashLoggerSSE,
+# Buffout) or "Crash_2026-08-08.txt" (.NET Script Framework). The
+# separator is what matters - CrashLoggerSSE also keeps its own diary in
+# "CrashLogger.log", which sits in the same folder, is written a beat
+# LATER than the report it just wrote, and contains no call stack at all.
+_CRASH_FILE_RE = re.compile(r"^crash[-_].*\.(log|txt)$", re.IGNORECASE)
+
+
+def _newest_crash_log(dirs) -> str:
+    """Most recent crash report across the places the loggers write to."""
+    best, best_mtime = "", -1.0
+    for d in dirs:
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            if not _CRASH_FILE_RE.match(n):
+                continue
+            p = os.path.join(d, n)
+            try:
+                mt = os.path.getmtime(p)
+            except OSError:
+                continue
+            if mt > best_mtime:
+                best, best_mtime = p, mt
+    return best
+
+
 def _smapi_log_path(config_dir_name: str) -> str:
     return os.path.join(
         decky.DECKY_USER_HOME, ".config", config_dir_name,
@@ -7217,24 +7306,28 @@ query Link($slug: String!, $domainName: String!) {
                 log_subpath.split("/")[0], ("Data", "SKSE", "Plugins")
             )
         )
-        parked = []
+        parked, live_names = [], {}
         if os.path.isdir(plugins_dir):
-            parked = sorted(
-                n[: -len(SE_DISABLED_SUFFIX)]
-                for n in os.listdir(plugins_dir)
-                if n.endswith(SE_DISABLED_SUFFIX)
-            )
-        if not os.path.isfile(log_path):
+            for n in os.listdir(plugins_dir):
+                if n.endswith(SE_DISABLED_SUFFIX):
+                    parked.append(n[: -len(SE_DISABLED_SUFFIX)])
+                elif n.lower().endswith(".dll"):
+                    live_names[n.lower()] = n
+            parked.sort()
+        parked_lower = {p.lower() for p in parked}
+        se_log_at = os.path.getmtime(log_path) if os.path.isfile(log_path) else 0.0
+        crash = self._crash_culprits(log_path, live_names, parked_lower, se_log_at)
+        if not se_log_at:
             return {
                 "ok": True,
                 "available": False,
                 "parked": parked,
                 "plugins_dir": plugins_dir,
+                "crash": crash,
             }
         failed = _parse_script_extender_log(log_path)
         # A plugin already set aside cannot have failed this run; its
         # entry is just the last log that still mentions it.
-        parked_lower = {p.lower() for p in parked}
         failed = [f for f in failed if f["name"].lower() not in parked_lower]
         return {
             "ok": True,
@@ -7242,7 +7335,48 @@ query Link($slug: String!, $domainName: String!) {
             "failed": failed,
             "parked": parked,
             "plugins_dir": plugins_dir,
-            "log_at": int(os.path.getmtime(log_path)),
+            "crash": crash,
+            "log_at": int(se_log_at),
+        }
+
+    @staticmethod
+    def _crash_culprits(
+        log_path: str, live_names: dict, parked_lower: set, se_log_at: float
+    ) -> dict:
+        """Mod DLLs that were on the stack when the game last crashed.
+
+        Only plugins sitting in the extender's own folder are offered,
+        which is both the honest limit of what we can act on and a
+        precise filter - Windows and Proton DLLs live elsewhere, so no
+        list of names to ignore is needed.
+        """
+        se_dir = os.path.dirname(log_path)
+        newest = _newest_crash_log((se_dir, os.path.join(se_dir, "Crashlogs")))
+        if not newest:
+            return {}
+        crash_at = os.path.getmtime(newest)
+        # The extender rewrites its log at every launch, so a newer one
+        # means the game has started since - the crash is history.
+        if se_log_at and se_log_at > crash_at:
+            return {}
+        parsed = _parse_crash_log(newest)
+        culprits = []
+        for fr in parsed.get("frames") or []:
+            actual = live_names.get(fr["module"].lower())
+            if not actual or actual.lower() in parked_lower:
+                continue
+            culprits.append(
+                {"name": actual, "frame": fr["index"], "probable": fr["probable"]}
+            )
+        if not culprits:
+            return {}
+        # Nearest the crash first: frame 0 is where it died, and a
+        # probable frame is real evidence where a stack scan is a guess.
+        culprits.sort(key=lambda c: (not c["probable"], c["frame"]))
+        return {
+            "culprits": culprits,
+            "crashed_at": parsed.get("crashed_at") or "",
+            "log": os.path.basename(newest),
         }
 
     async def set_script_extender_plugins(

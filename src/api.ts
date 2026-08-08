@@ -846,7 +846,24 @@ export interface ScriptExtenderPlugin {
   outdated: boolean;
 }
 
-// DLL plugins the script extender refused to load last launch.
+/** A mod DLL that was on the call stack when the game last crashed. */
+export interface CrashCulprit {
+  name: string;
+  /** Stack depth: 0 is where it died, so lower is stronger evidence. */
+  frame: number;
+  /** A real stack frame, as opposed to a stack-scan guess. */
+  probable: boolean;
+}
+
+export interface CrashReport {
+  culprits?: CrashCulprit[];
+  crashed_at?: string;
+  log?: string;
+}
+
+// DLL plugins the script extender refused to load last launch, plus
+// anything implicated in a crash since - two different failures with the
+// same fix, so they arrive together.
 export const getScriptExtenderState = callable<
   [app_id: number, install_dir: string, log_subpath: string],
   {
@@ -855,6 +872,7 @@ export const getScriptExtenderState = callable<
     failed?: ScriptExtenderPlugin[];
     parked?: string[];
     plugins_dir?: string;
+    crash?: CrashReport;
     log_at?: number;
   }
 >("get_script_extender_state");
