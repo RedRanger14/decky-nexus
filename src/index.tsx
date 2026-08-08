@@ -82,6 +82,7 @@ import {
 import {
   crashSuspect,
   launchWaitNotice,
+  loadOrderProblem,
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
@@ -501,7 +502,13 @@ function CurrentGameSection() {
   const [modCount, setModCount] = useState<number | undefined>();
   // Enabled plugins listed before a master they need - a boot crash.
   const [loadOrder, setLoadOrder] = useState<
-    { total: number; violations: number } | undefined
+    {
+      total: number;
+      violations: number;
+      disabledMasters: number;
+      examples: string[];
+    }
+    | undefined
   >();
   const [loadOrderBusy, setLoadOrderBusy] = useState(false);
   // Same visual language as the download rows: the button FILLS orange.
@@ -581,11 +588,17 @@ function CurrentGameSection() {
           game.appId,
           game.installDirName,
           game.pluginsTxtSubpath,
-          game.pluginsTxtStyle ?? "starred"
+          game.pluginsTxtStyle ?? "starred",
+          game.nexusDomain
         ).then((r) =>
           setLoadOrder(
             r.ok && r.supported
-              ? { total: r.total ?? 0, violations: r.violations ?? 0 }
+              ? {
+                  total: r.total ?? 0,
+                  violations: r.violations ?? 0,
+                  disabledMasters: r.disabled_masters ?? 0,
+                  examples: r.examples ?? [],
+                }
               : undefined
           )
         );
@@ -800,6 +813,14 @@ function CurrentGameSection() {
   const coopMasked = maskCoopPassword(coopSaved, coopShown);
   // The one plugin worth offering to skip after a crash, if any.
   const suspect = crashSuspect(sePlugins?.crash?.culprits);
+  // Two faults, one row: nothing loads if either is true.
+  const loadOrderIssue = loadOrder
+    ? loadOrderProblem(
+        loadOrder.violations,
+        loadOrder.disabledMasters,
+        loadOrder.examples
+      )
+    : undefined;
   const missingFrameworks = allFrameworks.filter((fw, i) =>
     i === 0 ? !status?.framework_installed : !extraFwInstalled[fw.name]
   );
@@ -1125,18 +1146,13 @@ function CurrentGameSection() {
           ever appended to it - so it was whatever order things happened
           to install in. A plugin listed before a master it depends on
           crashes the game on the way into the world. */}
-      {(loadOrder?.violations ?? 0) > 0 && status?.installed && (
+      {loadOrderIssue && status?.installed && (
         <PanelSectionRow>
           <ButtonItem
             layout="below"
-            label="Load order needs fixing"
+            label={`${game.displayName} won't start?`}
             disabled={loadOrderBusy}
-            description={
-              `${loadOrder!.violations.toLocaleString()} of ${loadOrder!.total.toLocaleString()} ` +
-              "plugins load before a mod they depend on, which crashes the " +
-              "game as it starts. Sorting them is safe and reversible — " +
-              "nothing is installed or removed."
-            }
+            description={loadOrderIssue}
             onClick={async () => {
               setLoadOrderBusy(true);
               try {
@@ -1144,26 +1160,42 @@ function CurrentGameSection() {
                   game.appId,
                   game.installDirName,
                   game.pluginsTxtSubpath!,
-                  game.pluginsTxtStyle ?? "starred"
+                  game.pluginsTxtStyle ?? "starred",
+                  game.nexusDomain
                 );
                 toaster.toast(
                   r.ok
                     ? {
-                        title: "Load order sorted",
-                        body: `${(r.violations_before ?? 0).toLocaleString()} problems fixed across ${(r.sorted ?? 0).toLocaleString()} plugins`,
+                        title: "Load order fixed",
+                        body: [
+                          (r.enabled_masters ?? 0) > 0 &&
+                            `${r.enabled_masters} mod${
+                              r.enabled_masters === 1 ? "" : "s"
+                            } switched back on`,
+                          (r.violations_before ?? 0) > 0 &&
+                            `${(r.violations_before ?? 0).toLocaleString()} reordered`,
+                        ]
+                          .filter(Boolean)
+                          .join(", ") || "Nothing needed changing",
                         duration: 10000,
                       }
-                    : { title: "Could not sort it", body: r.error ?? "" }
+                    : { title: "Could not fix it", body: r.error ?? "" }
                 );
                 const s = await getLoadOrderState(
                   game.appId,
                   game.installDirName,
                   game.pluginsTxtSubpath!,
-                  game.pluginsTxtStyle ?? "starred"
+                  game.pluginsTxtStyle ?? "starred",
+                  game.nexusDomain
                 );
                 setLoadOrder(
                   s.ok && s.supported
-                    ? { total: s.total ?? 0, violations: s.violations ?? 0 }
+                    ? {
+                        total: s.total ?? 0,
+                        violations: s.violations ?? 0,
+                        disabledMasters: s.disabled_masters ?? 0,
+                        examples: s.examples ?? [],
+                      }
                     : undefined
                 );
               } finally {
@@ -1171,7 +1203,7 @@ function CurrentGameSection() {
               }
             }}
           >
-            {loadOrderBusy ? "Sorting…" : "Fix load order"}
+            {loadOrderBusy ? "Fixing…" : "Fix load order"}
           </ButtonItem>
         </PanelSectionRow>
       )}

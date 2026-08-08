@@ -56,6 +56,41 @@ export function launchWaitNotice(modCount: number): string | undefined {
   );
 }
 
+/** What is wrong with the load order, phrased for someone who has never
+ * heard the word "master", or undefined when there is nothing to say.
+ *
+ * Two faults, one button. Plugins listed before something they depend on,
+ * and dependencies that are installed but switched off. Both crash the
+ * game as it loads and neither is the user's doing, so the row leads with
+ * the consequence rather than the vocabulary. */
+export function loadOrderProblem(
+  violations: number,
+  disabledMasters: number,
+  examples: string[] = []
+): string | undefined {
+  const parts: string[] = [];
+  if (disabledMasters > 0) {
+    const shown = examples
+      .slice(0, 2)
+      .map((n) => n.replace(/\.es[lmp]$/i, ""))
+      .join(", ");
+    parts.push(
+      `${disabledMasters} mod${disabledMasters > 1 ? "s are" : " is"} ` +
+        `installed but switched off while other mods depend on ` +
+        `${disabledMasters > 1 ? "them" : "it"}` +
+        (shown ? ` (${shown})` : "")
+    );
+  }
+  if (violations > 0) {
+    parts.push(
+      `${violations.toLocaleString()} mod${violations > 1 ? "s" : ""} ` +
+        `load before something they need`
+    );
+  }
+  if (!parts.length) return undefined;
+  return `${parts.join(", and ")}. Either one crashes the game while it starts. Fixing this only turns mods on and reorders them — nothing is installed, removed or downloaded.`;
+}
+
 /** One crash-log call stack frame that names a mod DLL we could skip. */
 export interface CrashSuspect {
   name: string;

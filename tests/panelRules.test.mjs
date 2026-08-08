@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   crashSuspect,
   launchWaitNotice,
+  loadOrderProblem,
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
@@ -125,4 +126,45 @@ test("every notice says not to quit - that is the whole point", () => {
   for (const count of [50, 399, 400, 5000]) {
     assert.match(launchWaitNotice(count), /don't quit/, `at ${count}`);
   }
+});
+
+// Two faults, one row. Both crash the game while it loads, and neither
+// is the user's doing, so the wording leads with the consequence.
+test("a healthy load order says nothing", () => {
+  assert.equal(loadOrderProblem(0, 0, []), undefined);
+});
+
+test("switched-off dependencies are named, not just counted", () => {
+  const n = loadOrderProblem(0, 13, ["ccBGSSSE001-Fish.esm", "_ResourcePack.esl"]);
+  assert.match(n, /13 mods are installed but switched off/);
+  // Extensions are jargon; the names alone are the useful part.
+  assert.match(n, /ccBGSSSE001-Fish, _ResourcePack/);
+  assert.doesNotMatch(n, /\.esm/);
+});
+
+test("ordering problems are reported with a thousands separator", () => {
+  assert.match(loadOrderProblem(557, 0, []), /557 mods load before/);
+  assert.match(loadOrderProblem(1200, 0, []), /1,200/);
+});
+
+test("both faults are joined rather than one hiding the other", () => {
+  const n = loadOrderProblem(557, 13, ["A.esm"]);
+  assert.match(n, /switched off/);
+  assert.match(n, /load before/);
+});
+
+test("it always promises nothing is installed or removed", () => {
+  for (const [v, d] of [[1, 0], [0, 1], [5, 5]]) {
+    assert.match(
+      loadOrderProblem(v, d, ["X.esm"]),
+      /nothing is installed, removed or downloaded/,
+      `${v}/${d}`
+    );
+  }
+});
+
+test("singular reads correctly for one switched-off mod", () => {
+  const n = loadOrderProblem(0, 1, ["Solo.esm"]);
+  assert.match(n, /1 mod is installed but switched off/);
+  assert.match(n, /depend on it/);
 });

@@ -397,9 +397,18 @@ export const getLoadOrderState = callable<
     app_id: number,
     install_dir: string,
     plugins_subpath: string,
-    plugins_style: "starred" | "listed"
+    plugins_style: "starred" | "listed",
+    game_domain: string
   ],
-  { ok: boolean; supported?: boolean; total?: number; violations?: number }
+  {
+    ok: boolean;
+    supported?: boolean;
+    total?: number;
+    violations?: number;
+    /** Masters installed but switched off, that enabled plugins need. */
+    disabled_masters?: number;
+    examples?: string[];
+  }
 >("get_load_order_state");
 
 export const fixLoadOrder = callable<
@@ -407,13 +416,16 @@ export const fixLoadOrder = callable<
     app_id: number,
     install_dir: string,
     plugins_subpath: string,
-    plugins_style: "starred" | "listed"
+    plugins_style: "starred" | "listed",
+    game_domain: string
   ],
   {
     ok: boolean;
     violations_before?: number;
     violations_after?: number;
     sorted?: number;
+    enabled_masters?: number;
+    removed_base_masters?: number;
     error?: string;
   }
 >("fix_load_order");
