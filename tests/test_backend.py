@@ -807,20 +807,44 @@ class TestCallableArity(unittest.TestCase):
                 count += 1
         return count + 1 if blob.strip() else 0
 
+    @staticmethod
+    def _callables(src: str):
+        """(arg-tuple, backend name) for every callable<> in api.ts.
+
+        The tuple is found by matching brackets rather than by regex: a
+        non-greedy \\[(.*?)\\] stops at the first ']', which is the one
+        inside 'names: string[]' whenever an array parameter is not the
+        last one. That mis-parse reported a correct 4-arg signature as 3
+        and failed this test for a bug that did not exist.
+        """
+        import re as _re
+
+        for start in (m.end() for m in _re.finditer(r"callable<", src)):
+            open_at = src.find("[", start)
+            if open_at < 0:
+                continue
+            depth, i = 0, open_at
+            while i < len(src):
+                if src[i] in "<[({":
+                    depth += 1
+                elif src[i] in ">])}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            blob = src[open_at + 1 : i]
+            call = _re.search(r'>\(\s*"([a-z0-9_]+)"\s*\)', src[i:])
+            if call:
+                yield blob, call.group(1)
+
     def test_every_api_ts_callable_fits_its_backend_signature(self):
         import inspect
-        import re as _re
 
         src = open(
             os.path.join(REPO_ROOT, "src", "api.ts"), encoding="utf-8"
         ).read()
-        pattern = _re.compile(
-            r"callable<\s*\[(.*?)\]\s*,.*?>\(\s*\"([a-z0-9_]+)\"\s*\)",
-            _re.S,
-        )
         checked = 0
-        for m in pattern.finditer(src):
-            blob, name = m.group(1), m.group(2)
+        for blob, name in self._callables(src):
             ts_args = self._count_ts_args(blob)
             method = getattr(main.Plugin, name, None)
             self.assertIsNotNone(method, f"api.ts calls unknown method {name}")
@@ -3697,6 +3721,132 @@ class TestGateToSovngardeFailures(unittest.TestCase):
         main._makedirs_for(dst)
         main._makedirs_for(dst)  # idempotent
         self.assertTrue(os.path.isdir(os.path.dirname(dst)))
+
+
+class TestScriptExtenderPlugins(unittest.TestCase):
+    """A mod built for an older game will never load, and SKSE stops the
+    whole game with a modal asking whether to continue. Parking the DLL
+    (renamed, never deleted) is what lets the other 1,900 mods run."""
+
+    GAME = "SE Plugin Test"
+    APP_ID = 489830
+    LOG = "Skyrim Special Edition/SKSE/skse64.log"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.plugins = os.path.join(self.install, "Data", "SKSE", "Plugins")
+        os.makedirs(self.plugins)
+        for n in ("BehaviorDataInjector.dll", "Working.dll", "Broken.dll"):
+            with open(os.path.join(self.plugins, n), "w") as f:
+                f.write("x")
+        self.log = main._game_prefs_path(self.APP_ID, self.LOG)
+        os.makedirs(os.path.dirname(self.log), exist_ok=True)
+        with open(self.log, "w") as f:
+            f.write(
+                "SKSE64 runtime: initialize (version = 2.2.6)\n"
+                "checking plugin BehaviorDataInjector.dll\n"
+                "plugin BehaviorDataInjector.dll (00000001 BDI 00010030) "
+                "disabled, only compatible with versions earlier than "
+                "1.6.629 0 (handle 0)\n"
+                "checking plugin Working.dll\n"
+                "plugin Working.dll (00000001 W 00010000) loaded correctly "
+                "(handle 5)\n"
+                "checking plugin Broken.dll\n"
+                "plugin Broken.dll (00000001 B 00010000) disabled, fatal "
+                "error occurred while loading plugin 0 (handle 7)\n"
+            )
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.log), ignore_errors=True)
+
+    def _state(self):
+        return run(
+            self.plugin.get_script_extender_state(
+                self.APP_ID, self.GAME, self.LOG
+            )
+        )
+
+    def test_the_log_names_the_failures_and_why(self):
+        s = self._state()
+        self.assertTrue(s["available"])
+        names = {f["name"]: f for f in s["failed"]}
+        self.assertCountEqual(
+            names, ["BehaviorDataInjector.dll", "Broken.dll"]
+        )
+        # The distinction the user needs: one is the author's problem,
+        # the other might be fixable here.
+        self.assertTrue(names["BehaviorDataInjector.dll"]["outdated"])
+        self.assertFalse(names["Broken.dll"]["outdated"])
+        self.assertIn("1.6.629", names["BehaviorDataInjector.dll"]["reason"])
+
+    def test_parking_renames_rather_than_deletes(self):
+        s = self._state()
+        r = run(
+            self.plugin.set_script_extender_plugins(
+                self.GAME, s["plugins_dir"], ["BehaviorDataInjector.dll"], False
+            )
+        )
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["changed"], 1)
+        self.assertFalse(
+            os.path.isfile(os.path.join(self.plugins, "BehaviorDataInjector.dll"))
+        )
+        # Still on disk, just not something SKSE will scan.
+        self.assertTrue(
+            os.path.isfile(
+                os.path.join(
+                    self.plugins,
+                    "BehaviorDataInjector.dll" + main.SE_DISABLED_SUFFIX,
+                )
+            )
+        )
+
+    def test_a_parked_plugin_stops_being_reported_as_failing(self):
+        s = self._state()
+        run(
+            self.plugin.set_script_extender_plugins(
+                self.GAME, s["plugins_dir"], ["BehaviorDataInjector.dll"], False
+            )
+        )
+        after = self._state()
+        self.assertEqual(
+            [f["name"] for f in after["failed"]], ["Broken.dll"]
+        )
+        self.assertEqual(after["parked"], ["BehaviorDataInjector.dll"])
+
+    def test_restoring_puts_it_back(self):
+        s = self._state()
+        run(
+            self.plugin.set_script_extender_plugins(
+                self.GAME, s["plugins_dir"], ["BehaviorDataInjector.dll"], False
+            )
+        )
+        r = run(
+            self.plugin.set_script_extender_plugins(
+                self.GAME, s["plugins_dir"], ["BehaviorDataInjector.dll"], True
+            )
+        )
+        self.assertEqual(r["changed"], 1)
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.plugins, "BehaviorDataInjector.dll"))
+        )
+
+    def test_it_refuses_a_folder_outside_the_game(self):
+        r = run(
+            self.plugin.set_script_extender_plugins(
+                self.GAME, "/tmp", ["anything.dll"], False
+            )
+        )
+        self.assertFalse(r["ok"])
+
+    def test_no_log_yet_is_not_an_error(self):
+        os.remove(self.log)
+        s = self._state()
+        self.assertTrue(s["ok"])
+        self.assertFalse(s["available"])
 
 
 class TestRootBinaryPayload(unittest.TestCase):

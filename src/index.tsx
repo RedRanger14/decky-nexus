@@ -34,6 +34,7 @@ import {
   UpdateInfo,
   InstallProgress,
   Me3State,
+  ScriptExtenderPlugin,
   applyDisplayFix,
   checkDocsFile,
   checkGameFile,
@@ -53,6 +54,8 @@ import {
   disablePlugins,
   fixPrefixRuntime,
   getPrefixRuntimeState,
+  getScriptExtenderState,
+  setScriptExtenderPlugins,
   getPrefixToolsState,
   getMe3State,
   getMe3LaunchCommand,
@@ -476,6 +479,11 @@ function CurrentGameSection() {
     { have?: string; newest?: string; outdated?: boolean } | undefined
   >();
   const [runtimeBusy, setRuntimeBusy] = useState(false);
+  // DLL plugins the script extender refused to load last launch.
+  const [sePlugins, setSePlugins] = useState<
+    { failed: ScriptExtenderPlugin[]; parked: string[]; dir: string } | undefined
+  >();
+  const [seBusy, setSeBusy] = useState(false);
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
   // time against the tool's own budget - honest, and it always moves.
@@ -543,6 +551,23 @@ function CurrentGameSection() {
       if (game.prefixRuntimeFix) {
         getPrefixRuntimeState(game.appId).then((r) =>
           setRuntime(r.ok && r.prefix_exists ? r : undefined)
+        );
+      }
+      if (game.scriptExtenderLog) {
+        getScriptExtenderState(
+          game.appId,
+          game.installDirName,
+          game.scriptExtenderLog
+        ).then((r) =>
+          setSePlugins(
+            r.ok
+              ? {
+                  failed: r.failed ?? [],
+                  parked: r.parked ?? [],
+                  dir: r.plugins_dir ?? "",
+                }
+              : undefined
+          )
         );
       }
       if (game.me3) {
@@ -982,6 +1007,108 @@ function CurrentGameSection() {
             }}
           >
             {runtimeBusy ? "Updating…" : "Update the Windows runtime"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {/* Mods built for an older game than Steam ships will never load,
+          and the script extender stops the whole game with a modal
+          asking whether to continue - an impossible question, and a
+          rotten trade when it's one stale mod out of two thousand.
+          Setting it aside (renamed, not deleted) makes the game boot. */}
+      {(sePlugins?.failed.length ?? 0) > 0 && status?.installed && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            label={`${sePlugins!.failed.length} mod plugin${
+              sePlugins!.failed.length > 1 ? "s" : ""
+            } can't run`}
+            disabled={seBusy}
+            description={
+              `${sePlugins!.failed
+                .slice(0, 3)
+                .map((p) => p.name.replace(/\.dll$/i, ""))
+                .join(", ")}${
+                sePlugins!.failed.length > 3
+                  ? ` and ${sePlugins!.failed.length - 3} more`
+                  : ""
+              } failed to load last time` +
+              (sePlugins!.failed.some((p) => p.outdated)
+                ? " — they're built for an older version of the game, so only their authors can fix them. "
+                : ". ") +
+              "Skipping sets them aside so the game starts. They're renamed, not deleted."
+            }
+            onClick={async () => {
+              setSeBusy(true);
+              try {
+                const r = await setScriptExtenderPlugins(
+                  game.installDirName,
+                  sePlugins!.dir,
+                  sePlugins!.failed.map((p) => p.name),
+                  false
+                );
+                toaster.toast(
+                  r.ok
+                    ? {
+                        title: `Skipped ${r.changed ?? 0} mod plugin${
+                          (r.changed ?? 0) === 1 ? "" : "s"
+                        }`,
+                        body: `${game.displayName} should start now — the mods that needed them just won't do their thing`,
+                        duration: 10000,
+                      }
+                    : { title: "Could not skip them", body: r.error ?? "" }
+                );
+                refreshStatus();
+              } finally {
+                setSeBusy(false);
+              }
+            }}
+          >
+            {seBusy
+              ? "Skipping…"
+              : `Skip ${sePlugins!.failed.length} mod plugin${
+                  sePlugins!.failed.length > 1 ? "s" : ""
+                }`}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {(sePlugins?.parked.length ?? 0) > 0 && status?.installed && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={seBusy}
+            description={`${sePlugins!.parked
+              .slice(0, 3)
+              .map((n) => n.replace(/\.dll$/i, ""))
+              .join(", ")}${
+              sePlugins!.parked.length > 3
+                ? ` and ${sePlugins!.parked.length - 3} more`
+                : ""
+            } are set aside. Bring them back if their authors have since updated them.`}
+            onClick={async () => {
+              setSeBusy(true);
+              try {
+                const r = await setScriptExtenderPlugins(
+                  game.installDirName,
+                  sePlugins!.dir,
+                  sePlugins!.parked.map((n) => `${n}`),
+                  true
+                );
+                toaster.toast({
+                  title: r.ok
+                    ? `Restored ${r.changed ?? 0} mod plugin${
+                        (r.changed ?? 0) === 1 ? "" : "s"
+                      }`
+                    : "Could not restore them",
+                  body: r.ok ? "They'll be tried again next launch" : r.error ?? "",
+                });
+                refreshStatus();
+              } finally {
+                setSeBusy(false);
+              }
+            }}
+          >
+            Restore {sePlugins!.parked.length} skipped plugin
+            {sePlugins!.parked.length > 1 ? "s" : ""}
           </ButtonItem>
         </PanelSectionRow>
       )}

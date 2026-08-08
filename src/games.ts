@@ -73,6 +73,12 @@ export interface SupportedGame {
    * error 998, and 37 of Skyrim's SKSE plugins with nothing but "fatal
    * error occurred while loading plugin" in the SKSE log. */
   prefixRuntimeFix?: boolean;
+  /** Script-extender log under the prefix's Documents/My Games, e.g.
+   * "Skyrim Special Edition/SKSE/skse64.log". Reading it tells us which
+   * DLL plugins the extender refused to load, so a stale mod can be set
+   * aside instead of stopping the game with a modal the user has to
+   * guess at. */
+  scriptExtenderLog?: string;
   /** RE Engine pak-patch chain (RE4 remake): every .pak in an archive
    * takes the next re_chunk_000.pak.patch_XXX.pak number in the game
    * root; uninstalls renumber survivors to close the gap. */
@@ -249,6 +255,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // fails to load - 37 of them on a Gate To Sovngarde install, and
     // vcruntime140_1.dll isn't in that redist at all.
     prefixRuntimeFix: true,
+    scriptExtenderLog: "Skyrim Special Edition/SKSE/skse64.log",
     framework: {
       name: "SKSE64",
       detectFile: "skse64_loader.exe",
@@ -281,6 +288,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     processName: "Fallout4.exe",
     // Same class as Skyrim: F4SE plugins link the runtime dynamically.
     prefixRuntimeFix: true,
+    scriptExtenderLog: "Fallout4/F4SE/f4se.log",
     framework: {
       name: "F4SE",
       detectFile: "f4se_loader.exe",
