@@ -8084,6 +8084,16 @@ query Link($slug: String!, $domainName: String!) {
 
     # ---- Installed mods / enable & disable ----------------------------------
 
+    async def get_installed_count(self, game_domain: str) -> dict:
+        """How many mods we have installed for a game.
+
+        Cheap on purpose - the panel asks on every open just to size the
+        "this will take a while" notice at launch, and the full listing
+        walks the whole game folder.
+        """
+        records = _load_settings().get("installed", {}).get(game_domain, {})
+        return {"ok": True, "mods": len(records)}
+
     async def get_installed_mods(
         self,
         game_domain: str,

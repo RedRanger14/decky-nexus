@@ -34,6 +34,28 @@ export function maskCoopPassword(saved: string, revealed: boolean): boolean {
   return !revealed && saved.length > 0;
 }
 
+/** What to warn about the black screen after pressing Launch, or
+ * undefined when the wait is short enough not to be worth a word.
+ *
+ * A heavily modded game shows nothing at all for minutes while it loads,
+ * which is indistinguishable from a hang unless you already know. On a
+ * handheld in Gaming Mode there is no window title, no spinner and no
+ * console to reassure you, so people quit a game that was working.
+ *
+ * The bands are coarse on purpose - the one measurement we have is the
+ * device's Gate To Sovngarde install (1,954 mods / 2,367 plugins) taking
+ * a bit over three minutes to reach the main menu. Below ~50 mods the
+ * wait is unremarkable and a notice would just be noise. */
+export function launchWaitNotice(modCount: number): string | undefined {
+  if (modCount < 50) return undefined;
+  const many = modCount >= 400;
+  return (
+    `With ${modCount.toLocaleString()} mods the screen can stay black for ` +
+    `${many ? "several minutes" : "a minute or so"}. That's normal — ` +
+    `don't quit, it's still loading.`
+  );
+}
+
 /** One crash-log call stack frame that names a mod DLL we could skip. */
 export interface CrashSuspect {
   name: string;

@@ -54,6 +54,7 @@ import {
   checkPluginMasters,
   disablePlugins,
   fixPrefixRuntime,
+  getInstalledCount,
   getPrefixRuntimeState,
   getScriptExtenderState,
   setScriptExtenderPlugins,
@@ -78,6 +79,7 @@ import {
 } from "./api";
 import {
   crashSuspect,
+  launchWaitNotice,
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
@@ -493,6 +495,8 @@ function CurrentGameSection() {
     | undefined
   >();
   const [seBusy, setSeBusy] = useState(false);
+  // Only used to size the launch notice, so undefined just means silent.
+  const [modCount, setModCount] = useState<number | undefined>();
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
   // time against the tool's own budget - honest, and it always moves.
@@ -562,6 +566,9 @@ function CurrentGameSection() {
           setRuntime(r.ok && r.prefix_exists ? r : undefined)
         );
       }
+      getInstalledCount(game.nexusDomain).then((r) =>
+        setModCount(r.ok ? r.mods : undefined)
+      );
       if (game.scriptExtenderLog) {
         getScriptExtenderState(
           game.appId,
@@ -606,6 +613,16 @@ function CurrentGameSection() {
   const launchGame = () => {
     if (!game) return;
     restartGame(game.appId);
+    // Said on the way out, because the panel is about to close and the
+    // black screen that follows looks exactly like a hang.
+    const wait = launchWaitNotice(modCount ?? 0);
+    if (wait) {
+      toaster.toast({
+        title: `Starting ${game.displayName}`,
+        body: wait,
+        duration: 15000,
+      });
+    }
     Navigation.CloseSideMenus();
   };
 
