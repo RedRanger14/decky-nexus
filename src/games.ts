@@ -65,10 +65,13 @@ export interface SupportedGame {
   /** Additional frameworks beyond the primary (CP77 script mods need
    * 3-4 at once) - installed together by the one-button Step 1. */
   extraFrameworks?: GameFramework[];
-  /** Upgrade the Proton prefix's VC++ runtime during Step 1. CP77's own
-   * Steam install script downgrades the prefix CRT to 2019 (14.28);
-   * modern CET/RED4ext builds need 14.40+ or Wine fails their
-   * LoadLibrary with error 998. */
+  /** Upgrade the Proton prefix's VC++ runtime, during Step 1 and via a
+   * repair row whenever it falls behind. Games' own Steam install
+   * scripts leave an ancient CRT in the prefix - CP77's is 2019
+   * (14.28), Skyrim's is 2017 (14.0) - and any mod binary that links
+   * the runtime dynamically then fails to load: CET and RED4ext with
+   * error 998, and 37 of Skyrim's SKSE plugins with nothing but "fatal
+   * error occurred while loading plugin" in the SKSE log. */
   prefixRuntimeFix?: boolean;
   /** RE Engine pak-patch chain (RE4 remake): every .pak in an archive
    * takes the next re_chunk_000.pak.patch_XXX.pak number in the game
@@ -241,6 +244,11 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     pluginsTxtSubpath: "Skyrim Special Edition/Plugins.txt",
     moddedSaveWarning: false,
     processName: "SkyrimSE.exe",
+    // Skyrim's Steam install script leaves VC++ 14.0 (2017) in the
+    // prefix. Every SKSE plugin that links the runtime dynamically then
+    // fails to load - 37 of them on a Gate To Sovngarde install, and
+    // vcruntime140_1.dll isn't in that redist at all.
+    prefixRuntimeFix: true,
     framework: {
       name: "SKSE64",
       detectFile: "skse64_loader.exe",
@@ -271,6 +279,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     pluginsTxtStyle: "starred",
     moddedSaveWarning: false,
     processName: "Fallout4.exe",
+    // Same class as Skyrim: F4SE plugins link the runtime dynamically.
+    prefixRuntimeFix: true,
     framework: {
       name: "F4SE",
       detectFile: "f4se_loader.exe",

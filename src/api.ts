@@ -839,6 +839,18 @@ export const seedGameIni = callable<
 // Upgrades the game prefix's VC++ runtime from the newest installed
 // Proton's bundled copy (idempotent). CP77's install script downgrades
 // the prefix CRT below what CET/RED4ext need (error 998 at boot).
+// Read-only: is the prefix's VC++ runtime older than the newest Proton's?
+export const getPrefixRuntimeState = callable<
+  [app_id: number],
+  {
+    ok: boolean;
+    prefix_exists?: boolean;
+    have?: string;
+    newest?: string;
+    outdated?: boolean;
+  }
+>("get_prefix_runtime_state");
+
 export const fixPrefixRuntime = callable<
   [app_id: number],
   {
