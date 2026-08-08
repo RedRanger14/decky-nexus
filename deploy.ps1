@@ -72,13 +72,29 @@ $remoteScriptPath = Join-Path $env:TEMP "decky-nexus-remote.sh"
 # instead of hanging forever.
 $keepAlive = @("-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=4")
 
-# Handhelds drop Wi-Fi aggressively in power save / suspend: probe first, retry a few times
+# Handhelds drop Wi-Fi aggressively in power save / suspend: probe first, retry a few times.
+# ErrorActionPreference is relaxed for the probe: a failed hostname makes ssh write to
+# stderr, and under "Stop" PowerShell turns that into a terminating error BEFORE the loop
+# can try deckipfallback - so the IP fallback never ran on the one day mDNS was down.
 $target = $null
 foreach ($i in 1..3) {
     foreach ($h in $hosts) {
+        if (-not $h) { continue }
         $candidate = "$($cfg.deckuser)@$h"
-        ssh -p $cfg.deckport -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=accept-new @keepAlive $candidate "true"
-        if ($LASTEXITCODE -eq 0) { $target = $candidate; break }
+        $probe = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            ssh -p $cfg.deckport -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=accept-new @keepAlive $candidate "true"
+        } catch {
+            # unreachable host: fall through to the next candidate
+        } finally {
+            $ErrorActionPreference = $probe
+        }
+        if ($LASTEXITCODE -eq 0) {
+            $target = $candidate
+            if ($h -ne $cfg.deckip) { Write-Host "Reached the device at $h (mDNS name did not resolve)" -ForegroundColor Yellow }
+            break
+        }
     }
     if ($target) { break }
     Write-Host "Device not answering (attempt $i/3) - make sure it's awake..." -ForegroundColor Yellow
