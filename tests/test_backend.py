@@ -3849,6 +3849,165 @@ class TestScriptExtenderPlugins(unittest.TestCase):
         self.assertFalse(s["available"])
 
 
+class TestCrashCulprits(unittest.TestCase):
+    """A plugin SKSE loads happily can still crash the game later, and
+    that leaves nothing in skse64.log - the only record is the crash log.
+    Device, 2026-08-08: NPCWaterAIFix.dll logged "loaded successfully"
+    and then took Skyrim down three minutes later."""
+
+    GAME = "Crash Test"
+    APP_ID = 489830
+    LOG = "Skyrim Special Edition/SKSE/skse64.log"
+
+    # Trimmed from the real crash-2026-08-08-12-08-13.log.
+    CRASH = (
+        "CRASH TIME: 2026-08-08 12:08:13\n"
+        "Skyrim SSE v1.6.1170\n"
+        "\n"
+        'Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at 0x0001401D74A0\n'
+        "\n"
+        "CALL STACK ([P]robable / [S]tack scan):\n"
+        "\t[ 0][P] 0x0001401D74A0      SkyrimSE.exe+01D74A0 -> 14371+0x10\n"
+        "\t[ 6][P] 0x6FFFF3894153 NPCWaterAIFix.dll+0024153\n"
+        "\t[ 7][P] 0x000140CD0DBD      SkyrimSE.exe+0CD0DBD -> 68445+0x3D\n"
+        "\t[ 8][P] 0x6FFFFFED0C59      kernel32.dll+0010C59\n"
+        "\t[ 9][P] 0x6FFFFFF4FB8F         ntdll.dll+000FB8F\n"
+        "\t[10][S] 0x6FFFF1230000 Working.dll+0001234\n"
+        "\n"
+        "REGISTERS:\n"
+        "\tRAX 0x2104             (size_t) [8452]\n"
+    )
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.plugins = os.path.join(self.install, "Data", "SKSE", "Plugins")
+        os.makedirs(self.plugins)
+        for n in ("NPCWaterAIFix.dll", "Working.dll"):
+            with open(os.path.join(self.plugins, n), "w") as f:
+                f.write("x")
+        self.log = main._game_prefs_path(self.APP_ID, self.LOG)
+        self.se_dir = os.path.dirname(self.log)
+        os.makedirs(self.se_dir, exist_ok=True)
+        with open(self.log, "w") as f:
+            f.write("plugin NPCWaterAIFix.dll (1 NPC Water AI Fix 5) loaded "
+                    "correctly (handle 88)\n")
+        self.crash = os.path.join(self.se_dir, "crash-2026-08-08-12-08-13.log")
+        self._write_crash(self.CRASH)
+        # CrashLoggerSSE's own diary lives in the same folder and is
+        # written a beat AFTER the report - so "newest file starting with
+        # crash" picks it, and it has no call stack. That is exactly how
+        # this came back empty against the real device folder.
+        self._write_crash(
+            "[info] CrashLoggerSSE v1-24-0-0 loaded\n",
+            os.path.join(self.se_dir, "CrashLogger.log"),
+            offset=61,
+        )
+        self.plugin = main.Plugin()
+
+    def _write_crash(self, body, where=None, offset=60):
+        path = where or self.crash
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(body)
+        # Order the logs explicitly - the real signal is which is newer,
+        # and same-second writes would make this a coin toss.
+        launch = os.path.getmtime(self.log)
+        os.utime(path, (launch + offset, launch + offset))
+        return path
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(self.se_dir, ignore_errors=True)
+
+    def _crash(self):
+        return run(
+            self.plugin.get_script_extender_state(
+                self.APP_ID, self.GAME, self.LOG
+            )
+        ).get("crash") or {}
+
+    def test_it_names_the_mod_dll_and_ignores_the_game_and_windows(self):
+        c = self._crash()
+        names = [x["name"] for x in c["culprits"]]
+        # SkyrimSE.exe, kernel32 and ntdll are on the same stack and are
+        # not ours to touch; the filter is "is it in the plugins folder".
+        self.assertEqual(names[0], "NPCWaterAIFix.dll")
+        self.assertNotIn("kernel32.dll", names)
+        self.assertNotIn("SkyrimSE.exe", names)
+        self.assertEqual(c["crashed_at"], "2026-08-08 12:08:13")
+
+    def test_a_stack_scan_hit_ranks_below_a_real_frame(self):
+        # Working.dll is at frame 10 but only via stack scan, so it must
+        # never outrank a genuine frame - a scanned hit is a leftover
+        # value that happens to look like a return address.
+        c = self._crash()
+        by_name = {x["name"]: x for x in c["culprits"]}
+        self.assertFalse(by_name["Working.dll"]["probable"])
+        self.assertEqual(c["culprits"][0]["name"], "NPCWaterAIFix.dll")
+
+    def test_a_dll_not_in_the_plugins_folder_is_not_offered(self):
+        os.remove(os.path.join(self.plugins, "NPCWaterAIFix.dll"))
+        names = [x["name"] for x in self._crash().get("culprits", [])]
+        self.assertNotIn("NPCWaterAIFix.dll", names)
+
+    def test_a_launch_since_the_crash_retires_it(self):
+        # The extender rewrites its log every launch. A newer one means
+        # the game has started since, so the crash is history and the
+        # panel must stop nagging about it.
+        self._write_crash(self.CRASH, offset=-60)
+        self.assertEqual(self._crash(), {})
+
+    def test_parking_the_suspect_clears_the_report(self):
+        s = run(
+            self.plugin.get_script_extender_state(
+                self.APP_ID, self.GAME, self.LOG
+            )
+        )
+        run(
+            self.plugin.set_script_extender_plugins(
+                self.GAME, s["plugins_dir"], ["NPCWaterAIFix.dll"], False
+            )
+        )
+        names = [x["name"] for x in self._crash().get("culprits", [])]
+        self.assertNotIn("NPCWaterAIFix.dll", names)
+
+    def test_it_finds_logs_in_the_crashlogs_subfolder(self):
+        os.remove(self.crash)
+        self._write_crash(
+            self.CRASH, os.path.join(self.se_dir, "Crashlogs", "crash-1.log")
+        )
+        self.assertEqual(
+            self._crash()["culprits"][0]["name"], "NPCWaterAIFix.dll"
+        )
+
+    def test_buffout_style_frames_without_a_marker_still_parse(self):
+        os.remove(self.crash)
+        self._write_crash(
+            "CALL STACK:\n"
+            "\t[0] 0x7FF612340000 Fallout4.exe+1234567\n"
+            "\t[1] 0x7FF6ABCD0000 NPCWaterAIFix.dll+0024153\n",
+            os.path.join(self.se_dir, "crash-buffout.log"),
+        )
+        c = self._crash()
+        self.assertEqual(c["culprits"][0]["name"], "NPCWaterAIFix.dll")
+        # No [P]/[S] column at all, so every frame is taken at face value.
+        self.assertTrue(c["culprits"][0]["probable"])
+
+    def test_the_loggers_own_diary_is_not_mistaken_for_a_report(self):
+        # CrashLogger.log is the newest "crash*" file in the folder and
+        # holds no call stack. Matching it produced an empty report
+        # against the real device folder while every synthetic test
+        # passed, because no test had a diary in it.
+        self.assertEqual(
+            self._crash()["culprits"][0]["name"], "NPCWaterAIFix.dll"
+        )
+
+    def test_no_crash_log_is_just_an_empty_report(self):
+        os.remove(self.crash)
+        self.assertEqual(self._crash(), {})
+
+
 class TestRootBinaryPayload(unittest.TestCase):
     """SSE Engine Fixes part 2 ships three loose dlls that must sit
     beside SkyrimSE.exe. They went into Data/ instead, and Engine Fixes

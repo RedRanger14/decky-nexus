@@ -33,3 +33,35 @@ export function showResetRow(gameInstalled: boolean): boolean {
 export function maskCoopPassword(saved: string, revealed: boolean): boolean {
   return !revealed && saved.length > 0;
 }
+
+/** One crash-log call stack frame that names a mod DLL we could skip. */
+export interface CrashSuspect {
+  name: string;
+  /** Stack depth: 0 is where it died, so lower is stronger evidence. */
+  frame: number;
+  /** A real stack frame, as opposed to a stack-scan guess. */
+  probable: boolean;
+}
+
+/** Which single plugin to offer to skip after a crash, or undefined for
+ * none.
+ *
+ * ONE, deliberately. Several mod DLLs can sit on one call stack, and only
+ * the frame nearest the crash is meaningful evidence - skipping the rest
+ * would take out mods that were working fine to fix a crash they had no
+ * part in. If the pick is wrong the next launch writes a new crash log
+ * naming the next candidate, so a wrong guess costs one launch and never
+ * compounds.
+ *
+ * Stack-scan frames rank below every real frame no matter how shallow:
+ * a scan hit is a leftover value that merely looks like a return address,
+ * so a genuine frame 9 is better evidence than a scanned frame 1. */
+export function crashSuspect(
+  culprits: CrashSuspect[] | undefined
+): CrashSuspect | undefined {
+  if (!culprits?.length) return undefined;
+  return [...culprits].sort(
+    (a, b) => Number(a.probable ? 0 : 1) - Number(b.probable ? 0 : 1) ||
+      a.frame - b.frame
+  )[0];
+}

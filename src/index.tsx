@@ -34,6 +34,7 @@ import {
   UpdateInfo,
   InstallProgress,
   Me3State,
+  CrashReport,
   ScriptExtenderPlugin,
   applyDisplayFix,
   checkDocsFile,
@@ -76,6 +77,7 @@ import {
   setModEnabled,
 } from "./api";
 import {
+  crashSuspect,
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
@@ -479,9 +481,16 @@ function CurrentGameSection() {
     { have?: string; newest?: string; outdated?: boolean } | undefined
   >();
   const [runtimeBusy, setRuntimeBusy] = useState(false);
-  // DLL plugins the script extender refused to load last launch.
+  // DLL plugins the script extender refused to load last launch, plus
+  // any implicated in a crash since.
   const [sePlugins, setSePlugins] = useState<
-    { failed: ScriptExtenderPlugin[]; parked: string[]; dir: string } | undefined
+    | {
+        failed: ScriptExtenderPlugin[];
+        parked: string[];
+        dir: string;
+        crash?: CrashReport;
+      }
+    | undefined
   >();
   const [seBusy, setSeBusy] = useState(false);
   // Same visual language as the download rows: the button FILLS orange.
@@ -565,6 +574,7 @@ function CurrentGameSection() {
                   failed: r.failed ?? [],
                   parked: r.parked ?? [],
                   dir: r.plugins_dir ?? "",
+                  crash: r.crash,
                 }
               : undefined
           )
@@ -750,6 +760,8 @@ function CurrentGameSection() {
     : [];
   const isMultiFw = (game?.extraFrameworks?.length ?? 0) > 0;
   const coopMasked = maskCoopPassword(coopSaved, coopShown);
+  // The one plugin worth offering to skip after a crash, if any.
+  const suspect = crashSuspect(sePlugins?.crash?.culprits);
   const missingFrameworks = allFrameworks.filter((fw, i) =>
     i === 0 ? !status?.framework_installed : !extraFwInstalled[fw.name]
   );
@@ -1068,6 +1080,57 @@ function CurrentGameSection() {
               : `Skip ${sePlugins!.failed.length} mod plugin${
                   sePlugins!.failed.length > 1 ? "s" : ""
                 }`}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {/* A plugin the extender loaded happily can still crash the game
+          later, which leaves nothing in the extender's log - so this
+          reads the crash log instead. Only the frame nearest the crash
+          is offered: several mod DLLs can sit on one stack, and skipping
+          all of them would take out mods that were working fine. */}
+      {suspect && status?.installed && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            label={`${game.displayName} crashed last time`}
+            disabled={seBusy}
+            description={
+              `${suspect.name.replace(/\.dll$/i, "")} was ${
+                suspect.frame === 0
+                  ? "the code running when it crashed"
+                  : "on the stack when it crashed"
+              }, so it's the most likely cause${
+                suspect.probable ? "" : " (a weaker match)"
+              }. Skipping sets it aside so you can get back in — it's ` +
+              "renamed, not deleted, and the crash may still turn out to be something else."
+            }
+            onClick={async () => {
+              setSeBusy(true);
+              try {
+                const r = await setScriptExtenderPlugins(
+                  game.installDirName,
+                  sePlugins!.dir,
+                  [suspect.name],
+                  false
+                );
+                toaster.toast(
+                  r.ok
+                    ? {
+                        title: `Skipped ${suspect.name.replace(/\.dll$/i, "")}`,
+                        body: "Launch again — if it still crashes, the next suspect will show up here",
+                        duration: 10000,
+                      }
+                    : { title: "Could not skip it", body: r.error ?? "" }
+                );
+                refreshStatus();
+              } finally {
+                setSeBusy(false);
+              }
+            }}
+          >
+            {seBusy
+              ? "Skipping…"
+              : `Skip ${suspect.name.replace(/\.dll$/i, "")}`}
           </ButtonItem>
         </PanelSectionRow>
       )}
