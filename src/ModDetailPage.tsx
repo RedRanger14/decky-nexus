@@ -275,7 +275,8 @@ export function ModDetailPage() {
         game.witcherLayout ?? false,
         "",
         game.cp77Layout ?? false,
-        game.pakPatchLayout ?? false
+        game.pakPatchLayout ?? false,
+        false
       );
       if (result.needs_fomod && result.fomod_token && result.wizard) {
         // FOMOD archive: run the wizard, then finish with the choices.

@@ -104,6 +104,7 @@ export function CollectionPage() {
   // gamepad focus dies and the next press falls through to Steam's
   // back-chain (reported as "closed the page and went back to the game").
   const [justUninstalled, setJustUninstalled] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   // Batch state lives in a module store so navigating away and back
   // shows live progress instead of a stale page.
   const [, force] = useState(0);
@@ -256,9 +257,105 @@ export function CollectionPage() {
     2 + // Go to downloads, Back
     (actionable.length > 0 ? 1 : 0) +
     (optionalRemaining.length > 0 ? 1 : 0) +
+    (ownedCount > 0 && !installing ? 1 : 0) + // Repair
     ((ownedCount > 0 && !installing) || (justUninstalled && !installing)
       ? 1
       : 0);
+
+  /** Re-run the mods that install through a FOMOD, restoring any files
+   * that never made it. A destination of "." in a FOMOD used to have
+   * every one of its files dropped by the traversal guard, so mods
+   * reported success having installed only part of themselves - one of
+   * them took 15 of its 68 files and left 79 other mods without the
+   * master they needed. Nothing recorded that, so the only way to find
+   * it is to stage each installer again and see what's absent.
+   *
+   * Files already on disk are left ALONE: a file that is present is
+   * either this mod's or a later mod's deliberate override, and
+   * re-asserting it would undo the collection's conflict order. */
+  const repairInstallers = async () => {
+    if (!detail || installing || repairing) return;
+    setRepairing(true);
+    let checked = 0;
+    let repaired = 0;
+    let restored = 0;
+    let failed = 0;
+    try {
+      const manifest = await getCollectionManifest(
+        collection.slug,
+        game.nexusDomain
+      );
+      const choices = (manifest.ok ? manifest.choices : {}) ?? {};
+      // Only mods with recorded installer choices can have hit this -
+      // everything else took the plain payload path.
+      const queue = detail.files.filter(
+        (f) => choices[String(f.fileId)] !== undefined
+      );
+      beginCollectionRun(collection.slug, queue.length, {
+        gameAppId: game.appId,
+        name: `Repairing ${collection.name}`,
+        thumbnailUrl: collection.thumbnailUrl,
+      });
+      for (const f of queue) {
+        if (f.domain && f.domain !== game.nexusDomain) continue;
+        checked += 1;
+        setCollectionRow(f.fileId, "installing");
+        try {
+          let result = await installPinned(
+            game,
+            f.modId,
+            f.fileId,
+            f.fileName,
+            f.modName,
+            f.version,
+            collection.slug,
+            "",
+            true
+          );
+          if (result.needs_fomod && result.fomod_token) {
+            const picked = choices[String(f.fileId)];
+            if (picked !== undefined) {
+              result = await installFomodAuto(result.fomod_token, picked);
+            }
+          }
+          if (result.ok) {
+            const added = result.added ?? 0;
+            if (added > 0) {
+              repaired += 1;
+              restored += added;
+            }
+            setCollectionRow(f.fileId, "done");
+          } else {
+            failed += 1;
+            setCollectionRow(f.fileId, "failed");
+          }
+        } catch {
+          failed += 1;
+          setCollectionRow(f.fileId, "failed");
+        }
+        dropDownload(f.modId);
+      }
+    } finally {
+      endCollectionRun();
+      setRepairing(false);
+      refreshInstalled();
+      toaster.toast({
+        title:
+          repaired > 0
+            ? `Repaired ${repaired} mod${repaired > 1 ? "s" : ""}`
+            : "Nothing needed repairing",
+        body:
+          repaired > 0
+            ? `${restored} missing file${
+                restored > 1 ? "s" : ""
+              } restored across ${checked} checked${
+                failed > 0 ? ` · ${failed} couldn't be checked` : ""
+              }`
+            : `All ${checked} installer-based mods were already complete`,
+        duration: 12000,
+      });
+    }
+  };
 
   const installAll = async (includeOptional = false) => {
     if (!detail || installing) return;
@@ -889,10 +986,19 @@ export function CollectionPage() {
                 : `+ optional (${optionalRemaining.length})`}
             </DialogButton>
           )}
+          {ownedCount > 0 && !installing && (
+            <DialogButton
+              disabled={repairing || finishingFileId !== undefined}
+              onClick={repairInstallers}
+              style={ACTION_BUTTON}
+            >
+              {repairing ? "Checking…" : "Repair"}
+            </DialogButton>
+          )}
           {ownedCount > 0 && !installing ? (
             <DialogButton
               className={WHITE_BUTTON_CLASS}
-              disabled={finishingFileId !== undefined}
+              disabled={repairing || finishingFileId !== undefined}
               onClick={onUninstallCollection}
               style={ACTION_BUTTON}
             >

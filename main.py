@@ -4769,6 +4769,7 @@ query Link($slug: String!, $domainName: String!) {
         collection_slug: str = "",
         cp77_layout: bool = False,
         pakpatch_layout: bool = False,
+        repair_only: bool = False,
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -4801,6 +4802,7 @@ query Link($slug: String!, $domainName: String!) {
                 collection_slug,
                 cp77_layout,
                 pakpatch_layout,
+                repair_only,
             )
             if not result.get("ok") and result.get("error"):
                 # UI rows show failures the log never saw - record every
@@ -5021,6 +5023,7 @@ query Link($slug: String!, $domainName: String!) {
         collection_slug: str = "",
         cp77_layout: bool = False,
         pakpatch_layout: bool = False,
+        repair_only: bool = False,
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -5132,6 +5135,7 @@ query Link($slug: String!, $domainName: String!) {
                             "page_version": page_version,
                             "record_source": record_source,
                             "collection_slug": collection_slug,
+                            "repair_only": repair_only,
                         }
                         try:
                             os.remove(archive_path)
@@ -5275,6 +5279,7 @@ query Link($slug: String!, $domainName: String!) {
                 for as long as it took."""
                 files_rel, plugins = [], []
                 seen_rel = set()
+                added = 0
                 # One directory index shared by every file in this install.
                 case_cache: dict = {}
                 for payload in payload_dirs:
@@ -5289,10 +5294,28 @@ query Link($slug: String!, $domainName: String!) {
                             # Wine splits between.
                             rel = _case_merge_rel(mods_path, rel, case_cache)
                             dst = os.path.join(mods_path, *rel.split("/"))
-                            _makedirs_for(dst)
                             if os.path.isfile(dst):
+                                if repair_only:
+                                    # Repair restores what went missing; it
+                                    # must NOT overwrite. A file that is
+                                    # already there is either this mod's or
+                                    # a later mod's deliberate override,
+                                    # and re-asserting it would undo the
+                                    # collection's conflict order.
+                                    if rel not in seen_rel:
+                                        seen_rel.add(rel)
+                                        files_rel.append(rel)
+                                    if (
+                                        "/" not in rel
+                                        and rel.lower().endswith(PLUGIN_EXTENSIONS)
+                                        and rel not in plugins
+                                    ):
+                                        plugins.append(rel)
+                                    continue
                                 os.remove(dst)
+                            _makedirs_for(dst)
                             shutil.move(src_file, dst)
+                            added += 1
                             if rel not in seen_rel:
                                 seen_rel.add(rel)
                                 files_rel.append(rel)
@@ -5302,10 +5325,12 @@ query Link($slug: String!, $domainName: String!) {
                                 and rel not in plugins
                             ):
                                 plugins.append(rel)
-                return files_rel, plugins
+                return files_rel, plugins, added
 
             _merge_t = time.monotonic()
-            files_rel, plugins = await asyncio.to_thread(_merge_data_payloads)
+            files_rel, plugins, added = await asyncio.to_thread(
+                _merge_data_payloads
+            )
             _phase["merge"] = time.monotonic() - _merge_t
             _force_rmtree(scratch)
             try:
@@ -5343,12 +5368,13 @@ query Link($slug: String!, $domainName: String!) {
             }
             _save_settings(settings)
             decky.logger.info(
-                f"installed {mod_name!r} into Data/ "
-                f"({len(files_rel)} files, {len(plugins)} plugins)"
+                f"{'repaired' if repair_only else 'installed'} {mod_name!r} "
+                f"into Data/ ({len(files_rel)} files, {len(plugins)} plugins"
+                f"{f', {added} restored' if repair_only else ''})"
             )
             _log_phases("dataDir", f", {len(files_rel)} files")
             await _emit_progress(mod_id, "done", 100)
-            return {"ok": True, "folder": record_key}
+            return {"ok": True, "folder": record_key, "added": added}
 
         # FromSoft games: mods never enter the game folder. The payload
         # becomes one folder under the plugin's me3 profile dir, and the
@@ -6099,9 +6125,12 @@ query Link($slug: String!, $domainName: String!) {
             )
             os.makedirs(mods_path, exist_ok=True)
 
+            repair_only = bool(entry.get("repair_only"))
+
             def _merge_staged():
                 files_rel, plugins = [], []
                 seen_rel = set()
+                added = 0
                 case_cache: dict = {}
                 for root, _dirs, names in os.walk(staging):
                     for name in names:
@@ -6111,10 +6140,22 @@ query Link($slug: String!, $domainName: String!) {
                             continue
                         rel = _case_merge_rel(mods_path, rel, case_cache)
                         dst = os.path.join(mods_path, *rel.split("/"))
-                        _makedirs_for(dst)
                         if os.path.isfile(dst):
+                            # Repair restores what went missing and never
+                            # overwrites - see the dataDir merge.
+                            if repair_only:
+                                if rel not in seen_rel:
+                                    seen_rel.add(rel)
+                                    files_rel.append(rel)
+                                if "/" not in rel and rel.lower().endswith(
+                                    PLUGIN_EXTENSIONS
+                                ) and rel not in plugins:
+                                    plugins.append(rel)
+                                continue
                             os.remove(dst)
+                        _makedirs_for(dst)
                         shutil.move(src_file, dst)
+                        added += 1
                         if rel not in seen_rel:
                             seen_rel.add(rel)
                             files_rel.append(rel)
@@ -6122,9 +6163,9 @@ query Link($slug: String!, $domainName: String!) {
                             PLUGIN_EXTENSIONS
                         ) and rel not in plugins:
                             plugins.append(rel)
-                return files_rel, plugins
+                return files_rel, plugins, added
 
-            files_rel, plugins = await asyncio.to_thread(_merge_staged)
+            files_rel, plugins, added = await asyncio.to_thread(_merge_staged)
             _force_rmtree(scratch)
             if plugins and entry["plugins_subpath"]:
                 ptxt = _plugins_txt_path(
@@ -6156,12 +6197,13 @@ query Link($slug: String!, $domainName: String!) {
             }
             _save_settings(settings)
             decky.logger.info(
-                f"installed FOMOD {entry['mod_name']!r}: {len(files_rel)} "
-                f"files, {len(plugins)} plugins, "
-                f"{len(selected_ids or [])} options"
+                f"{'repaired' if repair_only else 'installed'} FOMOD "
+                f"{entry['mod_name']!r}: {len(files_rel)} files, "
+                f"{len(plugins)} plugins, {len(selected_ids or [])} options"
+                f"{f', {added} restored' if repair_only else ''}"
             )
             await _emit_progress(entry["mod_id"], "done", 100)
-            return {"ok": True, "folder": record_key}
+            return {"ok": True, "folder": record_key, "added": added}
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception("install_fomod crashed")
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
