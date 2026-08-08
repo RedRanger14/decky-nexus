@@ -390,6 +390,12 @@ export const installFramework = callable<
   { ok: boolean; install_path?: string; error?: string }
 >("install_framework");
 
+// Just the count, for sizing the "this will take a while" launch notice.
+export const getInstalledCount = callable<
+  [game_domain: string],
+  { ok: boolean; mods?: number }
+>("get_installed_count");
+
 export const getInstalledMods = callable<
   [
     game_domain: string,

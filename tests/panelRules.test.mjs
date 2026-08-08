@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   crashSuspect,
+  launchWaitNotice,
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
@@ -98,4 +99,30 @@ test("picking does not reorder the caller's array", () => {
   ];
   crashSuspect(culprits);
   assert.equal(culprits[0].name, "Deep.dll");
+});
+
+// A heavily modded game shows a black screen for minutes. In Gaming Mode
+// that is indistinguishable from a hang, so people quit a working game.
+test("a light setup gets no notice - it would just be noise", () => {
+  assert.equal(launchWaitNotice(0), undefined);
+  assert.equal(launchWaitNotice(49), undefined);
+});
+
+test("a middling setup is warned in the right order of magnitude", () => {
+  const n = launchWaitNotice(120);
+  assert.match(n, /a minute or so/);
+  assert.match(n, /120/);
+});
+
+test("a collection-sized setup says minutes, plural", () => {
+  const n = launchWaitNotice(1954);
+  assert.match(n, /several minutes/);
+  // Thousands separator: "1954 mods" reads like a typo at a glance.
+  assert.match(n, /1,954/);
+});
+
+test("every notice says not to quit - that is the whole point", () => {
+  for (const count of [50, 399, 400, 5000]) {
+    assert.match(launchWaitNotice(count), /don't quit/, `at ${count}`);
+  }
 });
