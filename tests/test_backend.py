@@ -3896,13 +3896,13 @@ class TestLoadOrder(unittest.TestCase):
             ["# This file is used by Skyrim"] + ["*" + n for n in names],
         )
 
-    def _state(self):
+    def _state(self, domain=""):
         return run(self.plugin.get_load_order_state(
-            self.APP_ID, self.GAME, self.SUB, "starred"))
+            self.APP_ID, self.GAME, self.SUB, "starred", domain))
 
-    def _fix(self):
+    def _fix(self, domain=""):
         return run(self.plugin.fix_load_order(
-            self.APP_ID, self.GAME, self.SUB, "starred"))
+            self.APP_ID, self.GAME, self.SUB, "starred", domain))
 
     def _order(self):
         return [n for n, _ in
@@ -3939,14 +3939,19 @@ class TestLoadOrder(unittest.TestCase):
         self.assertIn("Flagged.esp", self._order()[:2])
 
     def test_disabled_plugins_are_kept(self):
+        # Off and not needed by anything: it stays listed and stays off.
+        # (Town.esp would be switched ON here, correctly - TownPatch
+        # masters it - so an unrelated plugin is what tests this.)
+        _make_plugin(os.path.join(self.data, "Spare.esp"))
         main._write_plugins_txt(self.path, [
-            "# header", "*TownPatch.esp", "Town.esp", "*Base.esm",
+            "# header", "*TownPatch.esp", "*Town.esp", "Spare.esp", "*Base.esm",
         ])
         self._fix()
         entries = main._plugin_entries(main._read_plugins_txt(self.path))
         self.assertEqual(
             {n: on for n, on in entries},
-            {"Base.esm": True, "Town.esp": False, "TownPatch.esp": True},
+            {"Base.esm": True, "Town.esp": True, "TownPatch.esp": True,
+             "Spare.esp": False},
         )
 
     def test_the_previous_order_is_kept_so_it_can_be_undone(self):
@@ -3985,11 +3990,100 @@ class TestLoadOrder(unittest.TestCase):
         self.assertEqual(r["violations_after"], 0)
         self.assertIn("Orphan.esp", self._order())
 
+    def test_a_master_that_is_installed_but_switched_off_is_found(self):
+        # The device's actual crash: Skyrim ships the free Anniversary
+        # Edition Creation Club files in Data but leaves them out of the
+        # plugin list, so 139 enabled plugins depended on 13 masters that
+        # were never turned on. Checking only "is the file on disk"
+        # reported everything as fine.
+        main._write_plugins_txt(self.path, ["*Town.esp", "Base.esm"])
+        s = self._state()
+        self.assertEqual(s["disabled_masters"], 1)
+        self.assertEqual(s["examples"], ["Base.esm"])
+
+    def test_fixing_switches_those_masters_on(self):
+        main._write_plugins_txt(self.path, ["*TownPatch.esp", "*Town.esp",
+                                            "Base.esm"])
+        r = self._fix()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["enabled_masters"], 1)
+        entries = dict(main._plugin_entries(main._read_plugins_txt(self.path)))
+        self.assertTrue(entries["Base.esm"])
+        self.assertEqual(self._state()["disabled_masters"], 0)
+
+    def test_a_required_master_missing_from_the_list_is_added(self):
+        # Creation Club files are on disk but absent from Plugins.txt
+        # entirely - there is nothing to flip, so it has to be inserted.
+        main._write_plugins_txt(self.path, ["*Town.esp"])
+        r = self._fix()
+        self.assertEqual(r["enabled_masters"], 1)
+        self.assertEqual(self._order(), ["Base.esm", "Town.esp"])
+
+    def test_enabling_a_master_brings_its_own_masters_too(self):
+        _make_plugin(os.path.join(self.data, "Mid.esp"), ["Base.esm"])
+        _make_plugin(os.path.join(self.data, "Top.esp"), ["Mid.esp"])
+        main._write_plugins_txt(self.path, ["*Top.esp", "Mid.esp", "Base.esm"])
+        self._fix()
+        entries = dict(main._plugin_entries(main._read_plugins_txt(self.path)))
+        self.assertTrue(entries["Mid.esp"], "the direct master")
+        self.assertTrue(entries["Base.esm"], "the master's own master")
+
+    def test_a_master_that_is_not_installed_is_left_alone(self):
+        # Nothing to switch on, and pretending otherwise would report a
+        # fix that cannot have happened.
+        _make_plugin(os.path.join(self.data, "Orphan.esp"), ["Gone.esm"])
+        main._write_plugins_txt(self.path, ["*Orphan.esp"])
+        self.assertEqual(self._state()["disabled_masters"], 0)
+
+    def test_it_does_not_switch_on_unrelated_plugins(self):
+        # Turning things on that nobody asked for would silently change
+        # what the user installed.
+        _make_plugin(os.path.join(self.data, "Unrelated.esp"))
+        main._write_plugins_txt(self.path, ["*Town.esp", "Base.esm",
+                                            "Unrelated.esp"])
+        self._fix()
+        entries = dict(main._plugin_entries(main._read_plugins_txt(self.path)))
+        self.assertFalse(entries["Unrelated.esp"])
+
+    def test_the_games_own_masters_are_never_written_into_the_list(self):
+        # Skyrim loads Skyrim.esm and its DLC implicitly and its launcher
+        # never lists them. Writing them in renumbers every other plugin,
+        # and the load index is what save files record - so this is a
+        # save-breaking difference, not a cosmetic one. The first cut of
+        # this feature happily "enabled" all five on the device.
+        _make_plugin(os.path.join(self.data, "Skyrim.esm"), flags=1)
+        _make_plugin(os.path.join(self.data, "Dawnguard.esm"),
+                     ["Skyrim.esm"], flags=1)
+        _make_plugin(os.path.join(self.data, "Mod.esp"),
+                     ["Skyrim.esm", "Dawnguard.esm"])
+        main._write_plugins_txt(self.path, ["*Mod.esp"])
+        s = self._state("skyrimspecialedition")
+        self.assertEqual(s["disabled_masters"], 0, "nothing to switch on")
+        self._fix("skyrimspecialedition")
+        self.assertEqual(self._order(), ["Mod.esp"])
+
+    def test_base_masters_already_in_the_list_are_taken_back_out(self):
+        main._write_plugins_txt(
+            self.path, ["*Skyrim.esm", "*Update.esm", "*Town.esp", "*Base.esm"]
+        )
+        r = self._fix("skyrimspecialedition")
+        self.assertEqual(r["removed_base_masters"], 2)
+        self.assertNotIn("Skyrim.esm", self._order())
+        self.assertNotIn("Update.esm", self._order())
+        self.assertIn("Town.esp", self._order())
+
+    def test_an_unknown_domain_leaves_the_list_exactly_as_found(self):
+        # No implicit-master list for a game means no opinion about it;
+        # guessing would be worse than doing nothing.
+        main._write_plugins_txt(self.path, ["*Town.esp", "*Base.esm"])
+        r = self._fix("someothergame")
+        self.assertEqual(r["removed_base_masters"], 0)
+
     def test_timestamp_games_are_not_touched_here(self):
         # FO3/FNV order by file mtime; rewriting their list would do
         # nothing and imply a fix that had not happened.
         s = run(self.plugin.get_load_order_state(
-            self.APP_ID, self.GAME, self.SUB, "listed"))
+            self.APP_ID, self.GAME, self.SUB, "listed", ""))
         self.assertFalse(s["supported"])
 
 

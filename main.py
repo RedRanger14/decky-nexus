@@ -1071,6 +1071,27 @@ def _enabled_plugins(path: str, style: str) -> list:
     return names
 
 
+# The game's OWN masters: always loaded, never managed. Skyrim and FO4
+# load these implicitly and their launchers never write them into
+# plugins.txt - listing them there shifts every plugin's load index,
+# which is what save files record, so it is not a cosmetic difference.
+IMPLICIT_MASTERS_BY_DOMAIN = {
+    "skyrimspecialedition": {
+        "skyrim.esm", "update.esm", "dawnguard.esm", "hearthfires.esm",
+        "dragonborn.esm",
+    },
+    "skyrim": {
+        "skyrim.esm", "update.esm", "dawnguard.esm", "hearthfires.esm",
+        "dragonborn.esm",
+    },
+    "fallout4": {
+        "fallout4.esm", "dlcrobot.esm", "dlcworkshop01.esm", "dlccoast.esm",
+        "dlcworkshop02.esm", "dlcworkshop03.esm", "dlcnukaworld.esm",
+        "dlcultrahighresolution.esm",
+    },
+}
+
+
 # Timestamp-ordered games (FO3/FNV): the engine loads ESMs then ESPs by
 # file MTIME, not plugins.txt order. These must load first, in this order.
 VANILLA_MASTERS_BY_DOMAIN = {
@@ -1171,6 +1192,54 @@ def _load_order_report(data_path: str, names: list, cache: dict = None) -> int:
     return bad
 
 
+def _masters_to_enable(
+    data_path: str, entries: list, implicit: set = frozenset()
+) -> list:
+    """Installed plugins an enabled plugin needs as a master, but which
+    are switched off.
+
+    Checking only "is the master file on disk" misses this entirely, and
+    it is the worse half: Skyrim ships the free Anniversary Edition
+    Creation Club files in Data but leaves them out of the plugin list,
+    so a collection built on Fishing or Survival Mode installs perfectly
+    and then dies on the way in. Device: 13 such masters, 139 enabled
+    plugins depending on them.
+
+    Transitive, because a master turned back on brings its own masters.
+    """
+    try:
+        real = {f.lower(): f for f in os.listdir(data_path)}
+    except OSError:
+        return []
+    listed = {n.lower() for n, _ in entries}
+    on = {n.lower() for n, enabled in entries if enabled}
+    # The game's own masters load whether or not anyone says so, so they
+    # are never "missing" and must never be written into the list.
+    on |= set(implicit)
+    add, frontier = set(), set(on)
+    while frontier:
+        nxt = set()
+        for low in frontier:
+            f = real.get(low)
+            if not f:
+                continue
+            for m in _plugin_masters(os.path.join(data_path, f)) or []:
+                ml = m.lower()
+                # Not on disk is a different problem (and a different
+                # message); only act on what we can actually switch on.
+                if ml in on or ml in add or ml not in real:
+                    continue
+                add.add(ml)
+                nxt.add(ml)
+        frontier = nxt
+    # Preserve the file's own spelling where it already lists the plugin,
+    # otherwise the name as it sits on disk.
+    spelled = {n.lower(): n for n, _ in entries}
+    return [
+        (spelled.get(low) or real[low], low in listed) for low in sorted(add)
+    ]
+
+
 def _sort_load_order(data_path: str, names: list) -> list:
     """Masters first, then everything else, each group in dependency
     order.
@@ -1202,7 +1271,9 @@ def _sort_load_order(data_path: str, names: list) -> list:
             + _topo_by_masters(data_path, regular, cache))
 
 
-def _rewrite_load_order(data_path: str, path: str, style: str) -> dict:
+def _rewrite_load_order(
+    data_path: str, path: str, style: str, implicit: set = frozenset()
+) -> dict:
     """Sort plugins.txt in place, keeping a copy of what was there.
 
     Disabled entries are carried along in the same sort: they do not
@@ -1214,9 +1285,22 @@ def _rewrite_load_order(data_path: str, path: str, style: str) -> dict:
         return {"ok": False, "error": "No plugins.txt to sort"}
     header = [l for l in lines if l.strip().startswith("#")]
     entries = _plugin_entries(lines)
+    # Drop the game's own masters if anything ever wrote them in: they
+    # load regardless, and their presence renumbers every other plugin.
+    dropped = [n for n, _ in entries if n.lower() in implicit]
+    entries = [(n, on) for n, on in entries if n.lower() not in implicit]
+    before = _load_order_report(data_path, [n for n, on in entries if on])
+    # Switch on the masters that enabled plugins need before ordering -
+    # they have to be in the list for the sort to place them at all.
+    turned_on = _masters_to_enable(data_path, entries, implicit)
+    for name, already_listed in turned_on:
+        if already_listed:
+            entries = [(n, True if n.lower() == name.lower() else on)
+                       for n, on in entries]
+        else:
+            entries.append((name, True))
     names = [n for n, _ in entries]
     enabled = {n.lower() for n, on in entries if on}
-    before = _load_order_report(data_path, [n for n, on in entries if on])
     ordered = _sort_load_order(data_path, names)
     after = _load_order_report(
         data_path, [n for n in ordered if n.lower() in enabled]
@@ -1236,7 +1320,8 @@ def _rewrite_load_order(data_path: str, path: str, style: str) -> dict:
         for n in ordered
     ])
     return {"ok": True, "violations_before": before, "violations_after": after,
-            "sorted": len(ordered)}
+            "sorted": len(ordered), "enabled_masters": len(turned_on),
+            "removed_base_masters": len(dropped)}
 
 
 def _add_plugins(path: str, names: list, style: str = "starred") -> None:
@@ -8212,7 +8297,7 @@ query Link($slug: String!, $domainName: String!) {
 
     async def get_load_order_state(
         self, app_id: int, install_dir: str, plugins_subpath: str,
-        plugins_style: str
+        plugins_style: str, game_domain: str = ""
     ) -> dict:
         """How many enabled plugins are listed before a master they need.
 
@@ -8228,24 +8313,35 @@ query Link($slug: String!, $domainName: String!) {
         data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
         if not os.path.isfile(path) or not os.path.isdir(data_path):
             return {"ok": True, "supported": False}
-        enabled = [n for n, on in _plugin_entries(_read_plugins_txt(path)) if on]
+        implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())
+        entries = [(n, on) for n, on in
+                   _plugin_entries(_read_plugins_txt(path))
+                   if n.lower() not in implicit]
+        enabled = [n for n, on in entries if on]
+        needed = _masters_to_enable(data_path, entries, implicit)
         return {
             "ok": True,
             "supported": True,
             "total": len(enabled),
             "violations": _load_order_report(data_path, enabled),
+            "disabled_masters": len(needed),
+            "examples": [n for n, _ in needed[:3]],
         }
 
     async def fix_load_order(
         self, app_id: int, install_dir: str, plugins_subpath: str,
-        plugins_style: str
+        plugins_style: str, game_domain: str = ""
     ) -> dict:
-        """Sort plugins.txt so nothing loads before its masters."""
+        """Switch on the dependencies that are off, then sort so nothing
+        loads before its masters."""
         if not plugins_subpath:
             return {"ok": False, "error": "This game has no plugin list"}
         path = _plugins_txt_path(app_id, plugins_subpath)
         data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
-        r = _rewrite_load_order(data_path, path, plugins_style)
+        r = _rewrite_load_order(
+            data_path, path, plugins_style,
+            IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset()),
+        )
         if r.get("ok"):
             decky.logger.info(
                 f"load order sorted: {r['violations_before']} -> "
