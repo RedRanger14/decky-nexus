@@ -712,6 +712,13 @@ DATA_MARKER_DIRS = {
 ARCHIVE_JUNK_DIRS = {"__macosx"}
 ARCHIVE_JUNK_FILES = {".ds_store", "thumbs.db", "desktop.ini"}
 
+# Binaries that load beside the game exe rather than from Data/. A
+# Bethesda mod's dlls live in Data/SKSE/Plugins; a loose one at an
+# archive's root is a preloader or graphics shim (SSE Engine Fixes'
+# d3dx9_42.dll, ENB's d3d11.dll) and is useless anywhere but the game
+# root - Engine Fixes aborts the launch when it cannot find its own.
+ROOT_BINARY_EXTS = (".dll", ".asi")
+
 
 def _adopt_case(path: str) -> str:
     """If the exact path is missing but a sibling differs only by case,
@@ -5228,6 +5235,23 @@ query Link($slug: String!, $domainName: String!) {
                     and all(os.path.isfile(p) for p in top_paths)
                     and not any(e.lower().endswith(".exe") for e in entries)
                 ):
+                    # ...unless they are dlls. A Bethesda mod's dlls live
+                    # in Data/SKSE/Plugins, never loose in Data/ - a dll
+                    # at the archive root belongs BESIDE the game exe
+                    # (SSE Engine Fixes part 2's d3dx9_42.dll preloader,
+                    # ENB binaries). Sending those to Data/ installs a
+                    # file the game never looks at, and Engine Fixes then
+                    # refuses to start the game (device, 2026-08-08).
+                    if any(e.lower().endswith(ROOT_BINARY_EXTS) for e in entries):
+                        decky.logger.info(
+                            f"install {mod_name!r}: loose binaries at the "
+                            "archive root - installing beside the game exe"
+                        )
+                        return await self._install_root_files(
+                            scratch, install_path, game_domain, mod_id,
+                            file_id, file_name, mod_name, mod_version,
+                            page_version, record_source, collection_slug,
+                        )
                     payload_dirs = [scratch]
                 else:
                     exes = [
