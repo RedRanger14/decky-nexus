@@ -390,6 +390,34 @@ export const installFramework = callable<
   { ok: boolean; install_path?: string; error?: string }
 >("install_framework");
 
+// Skyrim/FO4 read plugins.txt AS the load order. How many enabled
+// plugins are listed before a master they need (i.e. will crash)?
+export const getLoadOrderState = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
+  ],
+  { ok: boolean; supported?: boolean; total?: number; violations?: number }
+>("get_load_order_state");
+
+export const fixLoadOrder = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
+  ],
+  {
+    ok: boolean;
+    violations_before?: number;
+    violations_after?: number;
+    sorted?: number;
+    error?: string;
+  }
+>("fix_load_order");
+
 // Just the count, for sizing the "this will take a while" launch notice.
 export const getInstalledCount = callable<
   [game_domain: string],

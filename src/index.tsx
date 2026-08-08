@@ -54,7 +54,9 @@ import {
   checkPluginMasters,
   disablePlugins,
   fixPrefixRuntime,
+  fixLoadOrder,
   getInstalledCount,
+  getLoadOrderState,
   getPrefixRuntimeState,
   getScriptExtenderState,
   setScriptExtenderPlugins,
@@ -497,6 +499,11 @@ function CurrentGameSection() {
   const [seBusy, setSeBusy] = useState(false);
   // Only used to size the launch notice, so undefined just means silent.
   const [modCount, setModCount] = useState<number | undefined>();
+  // Enabled plugins listed before a master they need - a boot crash.
+  const [loadOrder, setLoadOrder] = useState<
+    { total: number; violations: number } | undefined
+  >();
+  const [loadOrderBusy, setLoadOrderBusy] = useState(false);
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
   // time against the tool's own budget - honest, and it always moves.
@@ -569,6 +576,20 @@ function CurrentGameSection() {
       getInstalledCount(game.nexusDomain).then((r) =>
         setModCount(r.ok ? r.mods : undefined)
       );
+      if (game.pluginsTxtSubpath) {
+        getLoadOrderState(
+          game.appId,
+          game.installDirName,
+          game.pluginsTxtSubpath,
+          game.pluginsTxtStyle ?? "starred"
+        ).then((r) =>
+          setLoadOrder(
+            r.ok && r.supported
+              ? { total: r.total ?? 0, violations: r.violations ?? 0 }
+              : undefined
+          )
+        );
+      }
       if (game.scriptExtenderLog) {
         getScriptExtenderState(
           game.appId,
@@ -1097,6 +1118,60 @@ function CurrentGameSection() {
               : `Skip ${sePlugins!.failed.length} mod plugin${
                   sePlugins!.failed.length > 1 ? "s" : ""
                 }`}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {/* Skyrim and FO4 read plugins.txt AS the load order, and we only
+          ever appended to it - so it was whatever order things happened
+          to install in. A plugin listed before a master it depends on
+          crashes the game on the way into the world. */}
+      {(loadOrder?.violations ?? 0) > 0 && status?.installed && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            label="Load order needs fixing"
+            disabled={loadOrderBusy}
+            description={
+              `${loadOrder!.violations.toLocaleString()} of ${loadOrder!.total.toLocaleString()} ` +
+              "plugins load before a mod they depend on, which crashes the " +
+              "game as it starts. Sorting them is safe and reversible — " +
+              "nothing is installed or removed."
+            }
+            onClick={async () => {
+              setLoadOrderBusy(true);
+              try {
+                const r = await fixLoadOrder(
+                  game.appId,
+                  game.installDirName,
+                  game.pluginsTxtSubpath!,
+                  game.pluginsTxtStyle ?? "starred"
+                );
+                toaster.toast(
+                  r.ok
+                    ? {
+                        title: "Load order sorted",
+                        body: `${(r.violations_before ?? 0).toLocaleString()} problems fixed across ${(r.sorted ?? 0).toLocaleString()} plugins`,
+                        duration: 10000,
+                      }
+                    : { title: "Could not sort it", body: r.error ?? "" }
+                );
+                const s = await getLoadOrderState(
+                  game.appId,
+                  game.installDirName,
+                  game.pluginsTxtSubpath!,
+                  game.pluginsTxtStyle ?? "starred"
+                );
+                setLoadOrder(
+                  s.ok && s.supported
+                    ? { total: s.total ?? 0, violations: s.violations ?? 0 }
+                    : undefined
+                );
+              } finally {
+                setLoadOrderBusy(false);
+              }
+            }}
+          >
+            {loadOrderBusy ? "Sorting…" : "Fix load order"}
           </ButtonItem>
         </PanelSectionRow>
       )}
