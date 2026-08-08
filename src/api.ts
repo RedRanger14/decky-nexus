@@ -839,6 +839,32 @@ export const seedGameIni = callable<
 // Upgrades the game prefix's VC++ runtime from the newest installed
 // Proton's bundled copy (idempotent). CP77's install script downgrades
 // the prefix CRT below what CET/RED4ext need (error 998 at boot).
+export interface ScriptExtenderPlugin {
+  name: string;
+  reason: string;
+  /** Built for an older game version - only its author can fix it. */
+  outdated: boolean;
+}
+
+// DLL plugins the script extender refused to load last launch.
+export const getScriptExtenderState = callable<
+  [app_id: number, install_dir: string, log_subpath: string],
+  {
+    ok: boolean;
+    available?: boolean;
+    failed?: ScriptExtenderPlugin[];
+    parked?: string[];
+    plugins_dir?: string;
+    log_at?: number;
+  }
+>("get_script_extender_state");
+
+// Park a DLL plugin (rename, never delete) or bring it back.
+export const setScriptExtenderPlugins = callable<
+  [install_dir: string, plugins_dir: string, names: string[], enabled: boolean],
+  { ok: boolean; changed?: number; errors?: string[]; error?: string }
+>("set_script_extender_plugins");
+
 // Read-only: is the prefix's VC++ runtime older than the newest Proton's?
 export const getPrefixRuntimeState = callable<
   [app_id: number],

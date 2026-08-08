@@ -3331,6 +3331,61 @@ def _parse_smapi_log(lines: list):
     return status, modded_session
 
 
+# Script-extender plugin folders, keyed by the first component of the
+# log path ("Skyrim Special Edition/SKSE/skse64.log" -> SKSE).
+SE_PLUGIN_DIRS = {
+    "Skyrim Special Edition": ("Data", "SKSE", "Plugins"),
+    "Fallout4": ("Data", "F4SE", "Plugins"),
+    "FalloutNV": ("Data", "NVSE", "Plugins"),
+}
+# Parked plugins keep their file and lose their extension - script
+# extenders only scan *.dll, so this is enough to take one out of the
+# game while leaving it trivially restorable.
+SE_DISABLED_SUFFIX = ".decky-disabled"
+
+# "plugin Foo.dll (00000001 Foo 00010030) disabled, <reason> 0 (handle 0)"
+_SE_DISABLED_RE = re.compile(
+    r"^plugin\s+(?P<name>\S+\.dll)\b.*?\bdisabled,\s*(?P<reason>.*?)"
+    r"(?:\s+\d+\s*\(handle\s+\d+\))?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _parse_script_extender_log(path: str) -> list:
+    """DLL plugins the extender refused to load, with its own wording.
+
+    Two shapes matter and read very differently to a user: a plugin
+    built for another game version ("only compatible with versions
+    earlier than X"), which will never work until its author updates it,
+    and one that failed to load at all, which is usually a missing
+    dependency and often fixable.
+    """
+    out, seen = [], set()
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = _SE_DISABLED_RE.match(line.strip())
+                if not m:
+                    continue
+                name = m.group("name")
+                if name.lower() in seen:
+                    continue
+                seen.add(name.lower())
+                reason = m.group("reason").strip()
+                out.append(
+                    {
+                        "name": name,
+                        "reason": reason,
+                        # Version-gated plugins are the author's problem;
+                        # everything else may still be repairable here.
+                        "outdated": "compatible with versions" in reason.lower(),
+                    }
+                )
+    except OSError:
+        return []
+    return out
+
+
 def _smapi_log_path(config_dir_name: str) -> str:
     return os.path.join(
         decky.DECKY_USER_HOME, ".config", config_dir_name,
@@ -7141,6 +7196,90 @@ query Link($slug: String!, $domainName: String!) {
                 f"missing masters, e.g. {broken[0]}"
             )
         return {"ok": True, "broken": broken}
+
+    async def get_script_extender_state(
+        self, app_id: int, install_dir: str, log_subpath: str
+    ) -> dict:
+        """Which script-extender DLL plugins failed to load last launch.
+
+        Some mods are simply built for an older game than the one Steam
+        ships, and no amount of installing fixes that - SKSE stops the
+        game with a modal asking whether to continue, which is a dead end
+        on a handheld and reads as "your setup is broken" when one mod of
+        two thousand is stale. Reading the extender's own log lets the
+        panel offer to set those aside.
+        """
+        if not log_subpath:
+            return {"ok": True, "available": False}
+        log_path = _game_prefs_path(app_id, log_subpath)
+        plugins_dir = os.path.join(
+            STEAM_COMMON, install_dir, *SE_PLUGIN_DIRS.get(
+                log_subpath.split("/")[0], ("Data", "SKSE", "Plugins")
+            )
+        )
+        parked = []
+        if os.path.isdir(plugins_dir):
+            parked = sorted(
+                n[: -len(SE_DISABLED_SUFFIX)]
+                for n in os.listdir(plugins_dir)
+                if n.endswith(SE_DISABLED_SUFFIX)
+            )
+        if not os.path.isfile(log_path):
+            return {
+                "ok": True,
+                "available": False,
+                "parked": parked,
+                "plugins_dir": plugins_dir,
+            }
+        failed = _parse_script_extender_log(log_path)
+        # A plugin already set aside cannot have failed this run; its
+        # entry is just the last log that still mentions it.
+        parked_lower = {p.lower() for p in parked}
+        failed = [f for f in failed if f["name"].lower() not in parked_lower]
+        return {
+            "ok": True,
+            "available": True,
+            "failed": failed,
+            "parked": parked,
+            "plugins_dir": plugins_dir,
+            "log_at": int(os.path.getmtime(log_path)),
+        }
+
+    async def set_script_extender_plugins(
+        self, install_dir: str, plugins_dir: str, names: list, enabled: bool
+    ) -> dict:
+        """Park a DLL plugin (or bring one back) by renaming it. The file
+        is never deleted - the extender only scans *.dll, so a suffix is
+        enough to take it out of the game, and the user can always have
+        it back."""
+        base = os.path.abspath(os.path.join(STEAM_COMMON, install_dir))
+        target_dir = os.path.abspath(plugins_dir or "")
+        # The directory comes from the frontend; never touch anything
+        # outside the game it names.
+        if not target_dir.startswith(base + os.sep):
+            return {"ok": False, "error": "Refusing to touch that folder"}
+        if not os.path.isdir(target_dir):
+            return {"ok": False, "error": "No script-extender plugins folder"}
+        changed, errors = [], []
+        for name in names or []:
+            clean = os.path.basename(str(name))
+            if not clean or not clean.lower().endswith(".dll"):
+                continue
+            live = os.path.join(target_dir, clean)
+            parked = live + SE_DISABLED_SUFFIX
+            src, dst = (parked, live) if enabled else (live, parked)
+            if not os.path.isfile(src):
+                continue
+            try:
+                os.replace(src, dst)
+                changed.append(clean)
+            except OSError as e:
+                errors.append(f"{clean}: {e}")
+        decky.logger.info(
+            f"{'restored' if enabled else 'parked'} {len(changed)} "
+            f"script-extender plugin(s) in {target_dir}"
+        )
+        return {"ok": True, "changed": len(changed), "errors": errors}
 
     async def disable_plugins(
         self,
