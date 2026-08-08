@@ -3699,6 +3699,90 @@ class TestGateToSovngardeFailures(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.dirname(dst)))
 
 
+class TestRootBinaryPayload(unittest.TestCase):
+    """SSE Engine Fixes part 2 ships three loose dlls that must sit
+    beside SkyrimSE.exe. They went into Data/ instead, and Engine Fixes
+    then refused to start the game: "did not pre-load ... verify the
+    installation of d3dx9_42.dll" (device, 2026-08-08)."""
+
+    DOMAIN = "skyrimspecialedition"
+    GAME = "Root Binary Test"
+    MOD, FILE = 17230, 669324
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        os.makedirs(os.path.join(self.install, "Data"))
+        with open(os.path.join(self.install, "SkyrimSE.exe"), "w") as f:
+            f.write("game")
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        shutil.rmtree(main._extract_scratch(self.MOD, self.FILE), ignore_errors=True)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def _install(self, members):
+        archive = main._archive_cache_path(self.MOD, self.FILE, "p2.zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            for rel in members:
+                z.writestr(rel, "x")
+        return run(
+            self.plugin.install_mod(
+                self.DOMAIN, self.MOD, self.FILE, "p2.zip",
+                "SSE Engine Fixes part 2", "1.0", self.GAME, "Data", "", "",
+                "dataDir", 489830, "Skyrim Special Edition/Plugins.txt",
+                "starred",
+            )
+        )
+
+    def test_loose_dlls_install_beside_the_game_exe(self):
+        result = self._install(["d3dx9_42.dll", "tbb.dll", "tbbmalloc.dll"])
+        self.assertTrue(result["ok"], result.get("error"))
+        for name in ("d3dx9_42.dll", "tbb.dll", "tbbmalloc.dll"):
+            self.assertTrue(
+                os.path.isfile(os.path.join(self.install, name)), name
+            )
+            # Emphatically NOT in Data/, where the game never looks.
+            self.assertFalse(
+                os.path.isfile(os.path.join(self.install, "Data", name)), name
+            )
+        rec = main._load_settings()["installed"][self.DOMAIN][
+            "SSE Engine Fixes part 2"
+        ]
+        self.assertEqual(rec["mode"], "files")
+        self.assertEqual(rec["target"], ".")
+
+    def test_uninstall_removes_them_from_the_root(self):
+        self._install(["d3dx9_42.dll", "tbb.dll"])
+        run(
+            self.plugin.uninstall_mod(
+                self.DOMAIN, self.GAME, "Data", "SSE Engine Fixes part 2",
+                "dataDir", 489830, "Skyrim Special Edition/Plugins.txt",
+            )
+        )
+        self.assertFalse(
+            os.path.isfile(os.path.join(self.install, "d3dx9_42.dll"))
+        )
+        self.assertTrue(os.path.isfile(os.path.join(self.install, "SkyrimSE.exe")))
+
+    def test_loose_config_files_still_go_to_data(self):
+        # The rule is about binaries only - a config-only mod must keep
+        # landing in Data/ (that was its own hard-won fix).
+        result = self._install(["MyMod_KID.ini", "swaps.json"])
+        self.assertTrue(result["ok"], result.get("error"))
+        data = os.path.join(self.install, "Data")
+        self.assertTrue(os.path.isfile(os.path.join(data, "MyMod_KID.ini")))
+        self.assertFalse(
+            os.path.isfile(os.path.join(self.install, "MyMod_KID.ini"))
+        )
+
+
 class TestRepairOnlyInstall(unittest.TestCase):
     """Repair restores files a partial install dropped. It must never
     overwrite: a file already on disk is either this mod's or a LATER
