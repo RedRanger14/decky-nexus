@@ -52,6 +52,7 @@ import {
   checkPluginMasters,
   disablePlugins,
   fixPrefixRuntime,
+  getPrefixRuntimeState,
   getPrefixToolsState,
   getMe3State,
   getMe3LaunchCommand,
@@ -469,6 +470,12 @@ function CurrentGameSection() {
   // Steam batches its config writes, so the backend can't confirm a
   // just-set compat tool for a second or two - remember what we set.
   const [protonChosen, setProtonChosen] = useState<string | undefined>();
+  // Prefix VC++ runtime: mod binaries that link it dynamically won't
+  // load against the ancient one a game's install script leaves behind.
+  const [runtime, setRuntime] = useState<
+    { have?: string; newest?: string; outdated?: boolean } | undefined
+  >();
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
   // time against the tool's own budget - honest, and it always moves.
@@ -532,6 +539,11 @@ function CurrentGameSection() {
           >);
           setToolsSkipped(r.skipped ?? {});
         });
+      }
+      if (game.prefixRuntimeFix) {
+        getPrefixRuntimeState(game.appId).then((r) =>
+          setRuntime(r.ok && r.prefix_exists ? r : undefined)
+        );
       }
       if (game.me3) {
         getMe3State(game.nexusDomain, game.installDirName, game.appId).then(
@@ -646,6 +658,11 @@ function CurrentGameSection() {
     if (!game?.framework?.nexusModId) return;
     setFrameworkBusy(true);
     try {
+      // Same reason as the multi-framework path: a loader installs fine
+      // against an old prefix CRT and then its plugins refuse to load.
+      if (game.prefixRuntimeFix) {
+        await fixPrefixRuntime(game.appId).catch(() => undefined);
+      }
       const result = await installFramework(
         game.nexusDomain,
         game.framework.nexusModId,
@@ -919,6 +936,52 @@ function CurrentGameSection() {
             }}
           >
             Switch to Proton (required)
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+      {/* The prefix's VC++ runtime falls behind on its own: a game's own
+          Steam install script writes an old one, and any mod binary that
+          links it dynamically then fails to load with nothing said
+          in-game. Sits outside the framework branches because it applies
+          to any game with a prefix, and long after setup is "done". */}
+      {runtime?.outdated && status?.installed && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            label="Mods not loading?"
+            disabled={runtimeBusy}
+            description={`${game.displayName}'s Windows runtime is ${
+              runtime.have || "very old"
+            } — mods built against ${
+              runtime.newest || "a newer one"
+            } can't load against it, and they fail silently. This copies the newer runtime out of Proton. Safe to run any time.`}
+            onClick={async () => {
+              setRuntimeBusy(true);
+              try {
+                const r = await fixPrefixRuntime(game.appId);
+                toaster.toast(
+                  r.ok
+                    ? {
+                        title: r.updated
+                          ? "Runtime updated"
+                          : "Runtime already current",
+                        body: r.updated
+                          ? `${r.previous ?? "old"} → ${r.version} — restart ${game.displayName} to load the mods that were failing`
+                          : `Already on ${r.version}`,
+                        duration: 10000,
+                      }
+                    : {
+                        title: "Could not update the runtime",
+                        body: r.error ?? "",
+                      }
+                );
+                refreshStatus();
+              } finally {
+                setRuntimeBusy(false);
+              }
+            }}
+          >
+            {runtimeBusy ? "Updating…" : "Update the Windows runtime"}
           </ButtonItem>
         </PanelSectionRow>
       )}

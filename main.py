@@ -6858,6 +6858,38 @@ query Link($slug: String!, $domainName: String!) {
             "previous": ".".join(map(str, have)) if have else None,
         }
 
+    async def get_prefix_runtime_state(self, app_id: int) -> dict:
+        """Read-only twin of fix_prefix_runtime, so the panel can OFFER
+        the fix instead of only doing it during first-time setup.
+
+        A game whose setup finished long ago still has the prefix its
+        Steam install script gave it: Skyrim's ships VC++ 14.0 (2017),
+        and 37 of its SKSE plugins - every one that links the runtime
+        dynamically rather than statically - failed to load against it
+        (device, 2026-08-08). Nothing in the game says why; SKSE just
+        logs "fatal error occurred while loading plugin".
+        """
+        sys32 = _prefix_system32(app_id)
+        if not os.path.isdir(sys32):
+            return {"ok": True, "prefix_exists": False}
+        have = _pe_file_version(os.path.join(sys32, "msvcp140.dll"))
+        _src_dir, src_ver = _newest_proton_crt_dir()
+        # Plugins built against VS2019+ import vcruntime140_1.dll, which
+        # the 2017 redist does not ship at all - its absence is the same
+        # fault as an old version and has to count as outdated.
+        missing_140_1 = not _pe_file_version(
+            os.path.join(sys32, "vcruntime140_1.dll")
+        )
+        return {
+            "ok": True,
+            "prefix_exists": True,
+            "have": ".".join(map(str, have)) if have else "",
+            "newest": ".".join(map(str, src_ver)) if src_ver else "",
+            "outdated": bool(
+                src_ver and (not have or have < src_ver or missing_140_1)
+            ),
+        }
+
     async def _install_framework_inner(
         self,
         game_domain: str,
