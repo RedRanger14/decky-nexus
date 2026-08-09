@@ -48,12 +48,12 @@ export function maskCoopPassword(saved: string, revealed: boolean): boolean {
  * wait is unremarkable and a notice would just be noise. */
 export function launchWaitNotice(modCount: number): string | undefined {
   if (modCount < 50) return undefined;
-  const many = modCount >= 400;
-  return (
-    `With ${modCount.toLocaleString()} mods the screen can stay black for ` +
-    `${many ? "several minutes" : "a minute or so"}. That's normal — ` +
-    `don't quit, it's still loading.`
-  );
+  // Steam's toast truncates hard - on device the first wording was cut
+  // mid-sentence at "...can stay black for". So: the instruction first,
+  // because that is the only part that has to survive, and short enough
+  // that it does.
+  const wait = modCount >= 400 ? "a few minutes" : "a moment";
+  return `Don't quit — ${modCount.toLocaleString()} mods take ${wait} to load.`;
 }
 
 /** What is wrong with the load order, phrased for someone who has never

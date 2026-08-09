@@ -111,20 +111,31 @@ test("a light setup gets no notice - it would just be noise", () => {
 
 test("a middling setup is warned in the right order of magnitude", () => {
   const n = launchWaitNotice(120);
-  assert.match(n, /a minute or so/);
+  assert.match(n, /a moment/);
   assert.match(n, /120/);
 });
 
-test("a collection-sized setup says minutes, plural", () => {
+test("a collection-sized setup says minutes", () => {
   const n = launchWaitNotice(1954);
-  assert.match(n, /several minutes/);
+  assert.match(n, /a few minutes/);
   // Thousands separator: "1954 mods" reads like a typo at a glance.
   assert.match(n, /1,954/);
 });
 
+test("the notice fits in a Steam toast", () => {
+  // Device: the first wording was cut off mid-sentence at "black for".
+  // The instruction has to survive truncation, so it goes first and the
+  // whole thing stays short.
+  for (const count of [50, 400, 5000]) {
+    const n = launchWaitNotice(count);
+    assert.ok(n.length <= 56, `${count}: ${n.length} chars - "${n}"`);
+    assert.ok(n.startsWith("Don't quit"), `${count}: "${n}"`);
+  }
+});
+
 test("every notice says not to quit - that is the whole point", () => {
   for (const count of [50, 399, 400, 5000]) {
-    assert.match(launchWaitNotice(count), /don't quit/, `at ${count}`);
+    assert.match(launchWaitNotice(count), /don't quit/i, `at ${count}`);
   }
 });
 
