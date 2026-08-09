@@ -3171,6 +3171,34 @@ export default definePlugin(() => {
       )
   );
 
+  // The "this takes minutes, don't quit" notice has to hang off the game
+  // actually STARTING, not off our Launch button - almost nobody launches
+  // from the panel. Steam's own library button is the normal way in, and
+  // that path never touched our code.
+  const lifetime = (
+    (window as any).SteamClient as {
+      GameSessions?: {
+        RegisterForAppLifetimeNotifications?: (
+          cb: (e: { unAppID: number; bRunning: boolean }) => void
+        ) => { unregister: () => void };
+      };
+    }
+  ).GameSessions?.RegisterForAppLifetimeNotifications?.((e) => {
+    if (!e.bRunning) return;
+    const game = getSupportedGame(e.unAppID);
+    if (!game) return;
+    getInstalledCount(game.nexusDomain).then((r) => {
+      const wait = launchWaitNotice(r.ok ? r.mods ?? 0 : 0);
+      if (wait) {
+        toaster.toast({
+          title: `Starting ${game.displayName}`,
+          body: wait,
+          duration: 15000,
+        });
+      }
+    });
+  });
+
   // Verifies the backend -> frontend event channel via the Ping button.
   const listener = addEventListener<[message: string]>(
     "backend_event",
@@ -3194,6 +3222,7 @@ export default definePlugin(() => {
       routerHook.removeRoute(SETTINGS_ROUTE);
       removeEventListener("backend_event", listener);
       removeEventListener("install_progress", progressListener);
+      lifetime?.unregister();
     },
   };
 });
