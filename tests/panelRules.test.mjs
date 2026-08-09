@@ -128,7 +128,8 @@ test("the notice fits in a Steam toast", () => {
   // whole thing stays short.
   for (const count of [50, 400, 5000]) {
     const n = launchWaitNotice(count);
-    assert.ok(n.length <= 56, `${count}: ${n.length} chars - "${n}"`);
+    assert.ok(n.length <= 44, `${count}: ${n.length} chars - "${n}"`);
+    assert.ok(!n.includes("—"), `${count}: em dash eats width`);
     assert.ok(n.startsWith("Don't quit"), `${count}: "${n}"`);
   }
 });
