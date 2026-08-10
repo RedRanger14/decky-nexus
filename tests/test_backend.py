@@ -4087,6 +4087,92 @@ class TestLoadOrder(unittest.TestCase):
         self.assertFalse(s["supported"])
 
 
+class TestCrashBisectMachine(unittest.TestCase):
+    """The automated hunt's decision logic, tested without a game.
+
+    Doing this by hand on device found five culprits over two days, and
+    every wasted launch came from a human varying something between steps.
+    These tests pin the arithmetic so the machine cannot repeat that.
+    """
+
+    def _run(self, order, bad, limit=200):
+        """Drive the machine against a known-bad set; return what it found
+        and how many launches it took."""
+        state = {"order": list(order), "skipped": [], "lo": 0,
+                 "hi": len(order), "launches": 0, "found": None,
+                 "hi_verified": False}
+        launches = 0
+        while state["hi"] > state["lo"] and launches < limit:
+            mid = main._bisect_next_prefix(state)
+            state["testing"] = mid
+            live = set(order[:mid]) - set(state["skipped"])
+            crashed = bool(live & set(bad))
+            state = main._bisect_advance(state, crashed)
+            launches += 1
+        return state["skipped"], launches
+
+    def test_it_finds_a_single_culprit(self):
+        order = [f"m{i}.esp" for i in range(64)]
+        found, _ = self._run(order, {"m40.esp"})
+        self.assertEqual(found, ["m40.esp"])
+
+    def test_it_finds_every_culprit_not_just_the_first(self):
+        order = [f"m{i}.esp" for i in range(64)]
+        bad = {"m5.esp", "m30.esp", "m31.esp", "m63.esp"}
+        found, _ = self._run(order, bad)
+        self.assertEqual(set(found), bad)
+
+    def test_adjacent_culprits_are_both_found(self):
+        # Device: NJR - Bruma Patch and CC_MenagerieECSS sat at 1813 and
+        # 1814. An off-by-one when moving the known-good edge would skip
+        # the second one entirely.
+        order = [f"m{i}.esp" for i in range(32)]
+        found, _ = self._run(order, {"m10.esp", "m11.esp"})
+        self.assertEqual(found, ["m10.esp", "m11.esp"])
+
+    def test_the_first_and_last_plugin_are_both_reachable(self):
+        order = [f"m{i}.esp" for i in range(32)]
+        self.assertEqual(self._run(order, {"m0.esp"})[0], ["m0.esp"])
+        self.assertEqual(self._run(order, {"m31.esp"})[0], ["m31.esp"])
+
+    def test_a_clean_load_order_finds_nothing_and_stops(self):
+        order = [f"m{i}.esp" for i in range(64)]
+        found, launches = self._run(order, set())
+        self.assertEqual(found, [])
+        # One launch: it checks the full set, sees it boot, and stops.
+        self.assertEqual(launches, 1)
+
+    def test_it_costs_about_log2_launches_per_culprit(self):
+        # 1,960 plugins by hand took ~12 launches per culprit. The machine
+        # must not be worse, or automating it buys nothing.
+        #
+        # log2(2048) = 11 narrowing launches, plus one at the start to
+        # confirm the crash reproduces and one at the end to confirm
+        # nothing else is left. Both are launches a careful human would
+        # also spend - and twice this session I skipped the "is it still
+        # the same crash" check and paid for it.
+        order = [f"m{i}.esp" for i in range(2048)]
+        found, launches = self._run(order, {"m1500.esp"})
+        self.assertEqual(found, ["m1500.esp"])
+        self.assertLessEqual(launches, 13)
+
+    def test_every_plugin_being_broken_still_terminates(self):
+        order = [f"m{i}.esp" for i in range(16)]
+        found, launches = self._run(order, set(order))
+        self.assertEqual(set(found), set(order))
+        self.assertLess(launches, 200, "must not loop forever")
+
+    def test_a_result_arriving_with_nothing_under_test_is_ignored(self):
+        # Guards against a stray record() - e.g. the panel retrying after
+        # a Decky restart - corrupting the bounds.
+        state = {"order": ["a.esp", "b.esp"], "skipped": [], "lo": 0,
+                 "hi": 2, "launches": 0, "hi_verified": True}
+        after = main._bisect_advance(dict(state), True)
+        self.assertEqual(after["lo"], 0)
+        self.assertEqual(after["hi"], 2)
+        self.assertEqual(after.get("launches", 0), 0)
+
+
 class TestCrashCulprits(unittest.TestCase):
     """A plugin SKSE loads happily can still crash the game later, and
     that leaves nothing in skse64.log - the only record is the crash log.

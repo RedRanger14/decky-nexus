@@ -1157,6 +1157,86 @@ def _stagger_plugin_mtimes(
 
 LOAD_ORDER_BACKUP = ".decky-bak"
 
+# The automated crash hunt's state, kept on disk so it survives a Decky
+# restart mid-run (which happens - the plugin gets redeployed, the device
+# sleeps) rather than losing an hour of launches.
+BISECT_STATE = "crash_bisect.json"
+
+
+def _bisect_state_path() -> str:
+    return os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, BISECT_STATE)
+
+
+def _bisect_load() -> dict:
+    try:
+        with open(_bisect_state_path(), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _bisect_save(state: dict) -> None:
+    os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
+    with open(_bisect_state_path(), "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+
+def _bisect_next_prefix(state: dict) -> int:
+    """Which prefix length to test next.
+
+    The hunt walks the load order as PREFIXES, not halves. `lo` is the
+    longest prefix known to boot, `hi` the shortest known to crash; the
+    culprit is whatever sits at index `lo` once they meet. Prefixes work
+    where plain halving does not, for two reasons found the hard way on
+    device: the load order is topologically sorted, so any prefix is
+    dependency-complete and needs no masters invented for it; and a mod
+    that boots in a small isolated group can still break on top of the
+    full set, which a prefix test exposes and an isolated test misses.
+
+    `hi` is only trustworthy once measured. At the start the full set is
+    known bad - that is why anyone runs this - but after skipping a
+    culprit we do NOT know the rest still crashes, and assuming it does
+    makes the machine invent a culprit at the last index. So an unverified
+    `hi` is tested directly before any halving resumes.
+    """
+    if not state.get("hi_verified"):
+        return state["hi"]
+    return (state["lo"] + state["hi"]) // 2
+
+
+def _bisect_advance(state: dict, crashed: bool) -> dict:
+    """Fold one launch result in, and name a culprit if it is now pinned."""
+    mid = state.pop("testing", None)
+    if mid is None:
+        return state
+    state.setdefault("launches", 0)
+    state["launches"] += 1
+    state["found"] = None
+    if not state.get("hi_verified"):
+        # We were checking whether anything is still wrong at all.
+        if not crashed:
+            state["lo"] = state["hi"]      # nothing left to find; stop
+            return state
+        state["hi_verified"] = True
+        if state["hi"] > state["lo"] + 1:
+            return state                  # start halving next time
+    elif crashed:
+        state["hi"] = mid
+    else:
+        state["lo"] = mid
+    # lo boots, lo+1 crashes: index lo is the offender. Skipping it makes
+    # prefix lo+1 equivalent to prefix lo, so the known-good edge moves up
+    # by one and the search restarts - with hi unverified again, because
+    # the remaining mods may now be fine.
+    if state["hi"] == state["lo"] + 1:
+        culprit = state["order"][state["lo"]]
+        state.setdefault("skipped", []).append(culprit)
+        state["found"] = culprit
+        state["lo"] = state["lo"] + 1
+        state["hi"] = len(state["order"])
+        state["hi_verified"] = False
+    return state
+
 
 def _plugin_entries(lines: list) -> list:
     """(name, enabled) for the real entries, skipping comments/blanks."""
@@ -8348,6 +8428,160 @@ query Link($slug: String!, $domainName: String!) {
                 f"{r['violations_after']} violations over {r['sorted']} plugins"
             )
         return r
+
+    async def crash_bisect_start(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str, signature: str
+    ) -> dict:
+        """Begin an automated hunt for the plugins that crash the game.
+
+        Two days of doing this by hand on the device's 1,960-mod Skyrim
+        found five separate culprits, each a tiny ESL patch, at roughly a
+        dozen four-minute launches apiece. Every wrong turn came from ME
+        varying something between steps - restoring mod DLLs that then
+        crashed on absent forms, or reading a result without checking the
+        crash address. A machine does not get bored and does not forget
+        to check.
+        """
+        if not plugins_subpath or plugins_style == "listed":
+            return {"ok": False, "error": "This game's load order isn't a list"}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        entries = _plugin_entries(_read_plugins_txt(path))
+        order = [n for n, on in entries if on]
+        if len(order) < 4:
+            return {"ok": False, "error": "Not enough mods to search"}
+        try:
+            shutil.copy2(path, path + ".decky-bisect-orig")
+        except OSError:
+            pass
+        state = {
+            "app_id": app_id, "install_dir": install_dir,
+            "plugins_subpath": plugins_subpath, "plugins_style": plugins_style,
+            "game_domain": game_domain, "signature": signature,
+            "order": order, "skipped": [], "lo": 0, "hi": len(order),
+            "launches": 0, "found": None,
+        }
+        _bisect_save(state)
+        decky.logger.info(f"crash hunt started over {len(order)} plugins")
+        return {"ok": True, "total": len(order)}
+
+    async def crash_bisect_apply(self) -> dict:
+        """Write the load order for the next launch."""
+        state = _bisect_load()
+        if not state:
+            return {"ok": False, "error": "No hunt in progress"}
+        if state["hi"] <= state["lo"]:
+            return {"ok": True, "done": True, "skipped": state["skipped"]}
+        mid = _bisect_next_prefix(state)
+        state["testing"] = mid
+        _bisect_save(state)
+        keep = {n.lower() for n in state["order"][:mid]}
+        keep -= {n.lower() for n in state["skipped"]}
+        path = _plugins_txt_path(state["app_id"], state["plugins_subpath"])
+        lines = _read_plugins_txt(path)
+        header = [l for l in lines if l.strip().startswith("#")]
+        entries = _plugin_entries(lines)
+        _write_plugins_txt(path, header + [
+            ("*" + n if n.lower() in keep else n) for n, _ in entries
+        ])
+        # Pull in the masters the prefix needs and put it in load order -
+        # skipping this is how a "clean" test ends up crashing on missing
+        # content instead of on the thing being tested.
+        data_path = os.path.join(STEAM_COMMON, state["install_dir"], "Data")
+        _rewrite_load_order(
+            data_path, path, state["plugins_style"],
+            IMPLICIT_MASTERS_BY_DOMAIN.get(state["game_domain"], frozenset()),
+        )
+        enabled = len([1 for _, on in
+                       _plugin_entries(_read_plugins_txt(path)) if on])
+        return {
+            "ok": True, "done": False, "testing": mid, "enabled": enabled,
+            "remaining": state["hi"] - state["lo"],
+            "launches": state["launches"], "skipped": state["skipped"],
+        }
+
+    async def crash_bisect_record(self, crashed: bool) -> dict:
+        """Fold in one launch's outcome."""
+        state = _bisect_load()
+        if not state:
+            return {"ok": False, "error": "No hunt in progress"}
+        state = _bisect_advance(state, bool(crashed))
+        _bisect_save(state)
+        if state.get("found"):
+            decky.logger.info(f"crash hunt found {state['found']}")
+        return {
+            "ok": True, "found": state.get("found"),
+            "skipped": state["skipped"], "launches": state["launches"],
+            "remaining": max(0, state["hi"] - state["lo"]),
+            "done": state["hi"] <= state["lo"],
+        }
+
+    async def crash_bisect_finish(self, keep_skips: bool) -> dict:
+        """Put every mod back, minus the ones we found (or all of them)."""
+        state = _bisect_load()
+        if not state:
+            return {"ok": False, "error": "No hunt in progress"}
+        path = _plugins_txt_path(state["app_id"], state["plugins_subpath"])
+        lines = _read_plugins_txt(path)
+        header = [l for l in lines if l.strip().startswith("#")]
+        entries = _plugin_entries(lines)
+        off = {n.lower() for n in state["skipped"]} if keep_skips else set()
+        on = {n.lower() for n in state["order"]} - off
+        _write_plugins_txt(path, header + [
+            ("*" + n if n.lower() in on else n) for n, _ in entries
+        ])
+        data_path = os.path.join(STEAM_COMMON, state["install_dir"], "Data")
+        _rewrite_load_order(
+            data_path, path, state["plugins_style"],
+            IMPLICIT_MASTERS_BY_DOMAIN.get(state["game_domain"], frozenset()),
+        )
+        try:
+            os.remove(_bisect_state_path())
+        except OSError:
+            pass
+        return {"ok": True, "skipped": state["skipped"] if keep_skips else []}
+
+    async def crash_bisect_status(self) -> dict:
+        state = _bisect_load()
+        if not state:
+            return {"ok": True, "running": False}
+        return {
+            "ok": True, "running": True, "launches": state.get("launches", 0),
+            "skipped": state.get("skipped", []),
+            "remaining": max(0, state["hi"] - state["lo"]),
+            "total": len(state["order"]),
+        }
+
+    async def crash_since(self, app_id: int, log_subpath: str, after: float) -> dict:
+        """The newest crash report written after `after`, if any.
+
+        This is how the hunt reads its own results instead of asking the
+        user what they saw - and it checks the exception address, because
+        a mod dying on a form its own plugin no longer provides looks like
+        a crash but says nothing about the fault being hunted.
+        """
+        if not log_subpath:
+            return {"ok": True, "crash": None}
+        se_dir = os.path.dirname(_game_prefs_path(app_id, log_subpath))
+        newest = _newest_crash_log((se_dir, os.path.join(se_dir, "Crashlogs")))
+        if not newest or os.path.getmtime(newest) <= after:
+            return {"ok": True, "crash": None}
+        addr = ""
+        try:
+            with open(newest, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if "Unhandled exception" in line:
+                        m = re.search(r"at (0x[0-9A-Fa-f]+)\s+(\S+)", line)
+                        if m:
+                            addr = f"{m.group(2)} {m.group(1)}"
+                        break
+        except OSError:
+            pass
+        return {
+            "ok": True,
+            "crash": {"log": os.path.basename(newest), "address": addr,
+                      "at": int(os.path.getmtime(newest))},
+        }
 
     async def get_installed_count(self, game_domain: str) -> dict:
         """How many mods we have installed for a game.
