@@ -430,6 +430,74 @@ export const fixLoadOrder = callable<
   }
 >("fix_load_order");
 
+/** Automated hunt for the plugins that crash the game. Each cycle:
+ * apply -> launch -> watch for a crash log -> record -> repeat. */
+export const crashBisectStart = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string,
+    signature: string
+  ],
+  { ok: boolean; total?: number; error?: string }
+>("crash_bisect_start");
+
+export const crashBisectApply = callable<
+  [],
+  {
+    ok: boolean;
+    done?: boolean;
+    testing?: number;
+    enabled?: number;
+    remaining?: number;
+    launches?: number;
+    skipped?: string[];
+    error?: string;
+  }
+>("crash_bisect_apply");
+
+export const crashBisectRecord = callable<
+  [crashed: boolean],
+  {
+    ok: boolean;
+    found?: string | null;
+    skipped?: string[];
+    launches?: number;
+    remaining?: number;
+    done?: boolean;
+    error?: string;
+  }
+>("crash_bisect_record");
+
+export const crashBisectFinish = callable<
+  [keep_skips: boolean],
+  { ok: boolean; skipped?: string[]; error?: string }
+>("crash_bisect_finish");
+
+export const crashBisectStatus = callable<
+  [],
+  {
+    ok: boolean;
+    running?: boolean;
+    launches?: number;
+    skipped?: string[];
+    remaining?: number;
+    total?: number;
+  }
+>("crash_bisect_status");
+
+/** Newest crash report written after `after` (unix seconds), with the
+ * exception address so a different crash isn't mistaken for this one. */
+export const crashSince = callable<
+  [app_id: number, log_subpath: string, after: number],
+  {
+    ok: boolean;
+    crash?: { log: string; address: string; at: number } | null;
+  }
+>("crash_since");
+
 // Just the count, for sizing the "this will take a while" launch notice.
 export const getInstalledCount = callable<
   [game_domain: string],

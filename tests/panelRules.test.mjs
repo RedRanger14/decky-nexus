@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  crashHuntVerdict,
   crashSuspect,
   launchWaitNotice,
   loadOrderProblem,
@@ -179,4 +180,39 @@ test("singular reads correctly for one switched-off mod", () => {
   const n = loadOrderProblem(0, 1, ["Solo.esm"]);
   assert.match(n, /1 mod is installed but switched off/);
   assert.match(n, /depend on it/);
+});
+
+// The automated hunt reads its own launches. Both misreadings below cost
+// real launches when I was doing it by eye.
+test("no crash log before the crash window is not a boot", () => {
+  assert.equal(crashHuntVerdict(60_000, undefined, "01D74A0"), "waiting");
+  assert.equal(crashHuntVerdict(200_000, undefined, "01D74A0"), "waiting");
+});
+
+test("no crash log once the window has passed is a boot", () => {
+  assert.equal(crashHuntVerdict(330_000, undefined, "01D74A0"), "boot");
+});
+
+test("the hunted crash is recognised by address", () => {
+  assert.equal(
+    crashHuntVerdict(120_000, "SkyrimSE.exe 0x0001401D74A0", "01D74A0"),
+    "crash"
+  );
+});
+
+test("a different crash is not counted as the hunted one", () => {
+  // Device: BladeAndBlunt and DragonWar crash on forms their own plugins
+  // no longer provide once disabled. Reading those as "crash" corrupted
+  // two bisect steps.
+  assert.equal(
+    crashHuntVerdict(120_000, "BladeAndBlunt.dll 0x6FFFF9AB629D", "01D74A0"),
+    "other-crash"
+  );
+});
+
+test("a crash beats the clock - it does not wait out the window", () => {
+  assert.equal(
+    crashHuntVerdict(1_000, "SkyrimSE.exe 0x0001401D74A0", "01D74A0"),
+    "crash"
+  );
 });

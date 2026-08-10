@@ -79,6 +79,12 @@ export interface SupportedGame {
    * aside instead of stopping the game with a modal the user has to
    * guess at. */
   scriptExtenderLog?: string;
+  /** The exception address of a known, reproducible boot crash for this
+   * game, as it appears in the crash log (e.g. "01D74A0"). Enables the
+   * automated hunt: it has to know WHICH crash it is chasing, because
+   * mods also crash on forms their own disabled plugins used to provide
+   * and those say nothing about the fault. */
+  crashSignature?: string;
   /** RE Engine pak-patch chain (RE4 remake): every .pak in an archive
    * takes the next re_chunk_000.pak.patch_XXX.pak number in the game
    * root; uninstalls renumber survivors to close the gap. */
@@ -256,6 +262,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // vcruntime140_1.dll isn't in that redist at all.
     prefixRuntimeFix: true,
     scriptExtenderLog: "Skyrim Special Edition/SKSE/skse64.log",
+    // Device, 2026-08-08/09: SkyrimSE.exe+01D74A0, a null deref in
+    // InitTESThread that a bad ESL patch triggers during data load.
+    crashSignature: "01D74A0",
     framework: {
       name: "SKSE64",
       detectFile: "skse64_loader.exe",

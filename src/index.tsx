@@ -54,6 +54,11 @@ import {
   checkPluginMasters,
   disablePlugins,
   fixPrefixRuntime,
+  crashBisectApply,
+  crashBisectFinish,
+  crashBisectRecord,
+  crashBisectStart,
+  crashSince,
   fixLoadOrder,
   getInstalledCount,
   getLoadOrderState,
@@ -80,6 +85,7 @@ import {
   setModEnabled,
 } from "./api";
 import {
+  crashHuntVerdict,
   crashSuspect,
   launchWaitNotice,
   loadOrderProblem,
@@ -511,6 +517,19 @@ function CurrentGameSection() {
     | undefined
   >();
   const [loadOrderBusy, setLoadOrderBusy] = useState(false);
+  // The automated crash hunt: apply a load order, launch, read the crash
+  // log, repeat. Running it by hand took two days and five culprits.
+  const [hunt, setHunt] = useState<
+    | {
+        running: boolean;
+        launches: number;
+        remaining: number;
+        skipped: string[];
+        note: string;
+      }
+    | undefined
+  >();
+  const huntStop = useRef(false);
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
   // time against the tool's own budget - honest, and it always moves.
@@ -658,6 +677,108 @@ function CurrentGameSection() {
       });
     }
     Navigation.CloseSideMenus();
+  };
+
+  /** Drive the hunt: set a load order, launch, watch, record, repeat.
+   *
+   * Deliberately reads the crash log itself rather than asking what the
+   * user saw. Doing this by hand, two steps were corrupted by a mod dying
+   * on a form its own (now-disabled) plugin used to provide - a crash that
+   * looks identical from the outside and means nothing here. */
+  const runCrashHunt = async () => {
+    if (!game?.pluginsTxtSubpath || !game.scriptExtenderLog) return;
+    if (!game.crashSignature) return;
+    huntStop.current = false;
+    const style = game.pluginsTxtStyle ?? "starred";
+    const started = await crashBisectStart(
+      game.appId,
+      game.installDirName,
+      game.pluginsTxtSubpath,
+      style,
+      game.nexusDomain,
+      game.crashSignature!
+    );
+    if (!started.ok) {
+      toaster.toast({ title: "Couldn't start", body: started.error ?? "" });
+      return;
+    }
+    setHunt({
+      running: true,
+      launches: 0,
+      remaining: started.total ?? 0,
+      skipped: [],
+      note: "Setting up the first test…",
+    });
+    for (;;) {
+      if (huntStop.current) break;
+      const step = await crashBisectApply();
+      if (!step.ok || step.done) break;
+      setHunt((h) => ({
+        running: true,
+        launches: step.launches ?? h?.launches ?? 0,
+        remaining: step.remaining ?? 0,
+        skipped: step.skipped ?? h?.skipped ?? [],
+        note: `Launch ${(step.launches ?? 0) + 1}: trying ${(
+          step.enabled ?? 0
+        ).toLocaleString()} mods`,
+      }));
+      const launchedAt = Date.now() / 1000;
+      restartGame(game.appId);
+      let verdict: ReturnType<typeof crashHuntVerdict> = "waiting";
+      while (!huntStop.current) {
+        await new Promise((r) => setTimeout(r, 10_000));
+        const seen = await crashSince(
+          game.appId,
+          game.scriptExtenderLog,
+          launchedAt
+        );
+        verdict = crashHuntVerdict(
+          Date.now() - launchedAt * 1000,
+          seen.crash?.address,
+          game.crashSignature!
+        );
+        if (verdict !== "waiting") break;
+      }
+      if (huntStop.current) break;
+      // A different crash tells us nothing about the fault being hunted,
+      // so it is not folded in - the run is simply repeated.
+      if (verdict === "other-crash") {
+        setHunt((prev) => ({ ...prev!, note: "A different crash - retrying" }));
+        continue;
+      }
+      (window as any).SteamClient?.Apps?.TerminateApp?.(
+        String(game.appId),
+        false
+      );
+      const rec = await crashBisectRecord(verdict === "crash");
+      setHunt({
+        running: true,
+        launches: rec.launches ?? 0,
+        remaining: rec.remaining ?? 0,
+        skipped: rec.skipped ?? [],
+        note: rec.found ? `Found ${rec.found}` : "Narrowing…",
+      });
+      if (rec.found) {
+        toaster.toast({
+          title: "Found a broken mod",
+          body: rec.found.replace(/\.es[lmp]$/i, ""),
+          duration: 12000,
+        });
+      }
+      if (rec.done) break;
+    }
+    const end = await crashBisectFinish(true);
+    setHunt(undefined);
+    toaster.toast({
+      title: huntStop.current ? "Hunt stopped" : "Hunt finished",
+      body: (end.skipped?.length ?? 0) > 0
+        ? `Skipped ${end.skipped!.length} broken mod${
+            end.skipped!.length === 1 ? "" : "s"
+          } - everything else is back on`
+        : "Nothing found - all mods are back on",
+      duration: 15000,
+    });
+    refreshStatus();
   };
 
   const openLaunchOptionsModal = () => {
@@ -1146,6 +1267,47 @@ function CurrentGameSection() {
           ever appended to it - so it was whatever order things happened
           to install in. A plugin listed before a master it depends on
           crashes the game on the way into the world. */}
+      {/* Two days of hand-driving this on a 1,960-mod Skyrim found five
+          broken plugins at ~12 four-minute launches each, and every
+          wasted launch came from me varying something between steps. The
+          machine sets the load order, launches, reads the crash log and
+          repeats - unattended. */}
+      {game.crashSignature && status?.installed && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            label={
+              hunt?.running
+                ? `Hunting - launch ${hunt.launches + 1}`
+                : "Game crashes on startup?"
+            }
+            description={
+              hunt?.running
+                ? `${hunt.note}. ${hunt.remaining.toLocaleString()} mods left to rule out` +
+                  (hunt.skipped.length
+                    ? `. Found so far: ${hunt.skipped
+                        .map((n) => n.replace(/\.es[lmp]$/i, ""))
+                        .join(", ")}`
+                    : "")
+                : "Finds the mods responsible by launching repeatedly and " +
+                  "reading the crash log itself. Takes a few hours and the " +
+                  "game will start and close on its own - leave it alone. " +
+                  "Nothing is deleted and every mod comes back except the " +
+                  "ones it proves are broken."
+            }
+            onClick={() => {
+              if (hunt?.running) {
+                huntStop.current = true;
+                setHunt((prev) => ({ ...prev!, note: "Stopping after this launch…" }));
+              } else {
+                runCrashHunt();
+              }
+            }}
+          >
+            {hunt?.running ? "Stop the hunt" : "Find what's breaking it"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       {loadOrderIssue && status?.installed && (
         <PanelSectionRow>
           <ButtonItem

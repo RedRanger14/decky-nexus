@@ -90,6 +90,26 @@ export function loadOrderProblem(
   return `${parts.join(", and ")}. Either one crashes the game while it starts. Fixing this only turns mods on and reorders them — nothing is installed, removed or downloaded.`;
 }
 
+/** How the automated crash hunt reads one launch.
+ *
+ * "No crash log yet" is not the same as "it booted" - the crash we chased
+ * on device landed at 2:54-4:18, so a verdict before then is a guess. And
+ * a crash log at a DIFFERENT address is not our crash: mods die on forms
+ * their own plugin no longer provides once the hunt disables it, which
+ * looks identical from outside and wasted two steps when I read it by eye.
+ */
+export function crashHuntVerdict(
+  elapsedMs: number,
+  crashAddress: string | undefined,
+  signature: string,
+  patienceMs = 330_000
+): "crash" | "boot" | "other-crash" | "waiting" {
+  if (crashAddress) {
+    return crashAddress.includes(signature) ? "crash" : "other-crash";
+  }
+  return elapsedMs >= patienceMs ? "boot" : "waiting";
+}
+
 /** One crash-log call stack frame that names a mod DLL we could skip. */
 export interface CrashSuspect {
   name: string;
