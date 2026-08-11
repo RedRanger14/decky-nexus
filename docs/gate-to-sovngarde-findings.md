@@ -53,6 +53,34 @@ Only a handful are independent root causes; the rest are dependents that
 cannot load without them. `_dependents_closure` derives the full set from
 the roots, so a database entry only needs to record the roots.
 
+## Clean-install verification (2026-08-11)
+
+Skyrim deleted back to vanilla (20GB of orphaned mod files removed), then
+the collection reinstalled from scratch against v0.84.0. It reached the
+main menu.
+
+The known-bad table did its job unattended: **24 of the 25 required
+exclusions happened during install with no button and no user
+involvement** - 9 roots from the table, and 15 dependents derived from
+them as they were installed.
+
+Three gaps the clean run exposed, none of them guesses:
+
+1. **Skyrim rewrites Plugins.txt itself.** It re-enabled two of our skips
+   (GTS_Traits, GTS - New Armors) during the run. This file was being
+   treated as ours alone and it is not - it needs the read-only handling
+   every other mod manager uses.
+2. **The install-time dependent check only sees mods installed AFTER
+   their master.** `GTS - Orpheus Replacer` installed before the master
+   it needs was skipped, so nothing caught it. Needs a closure pass when
+   the collection finishes, not only per-mod.
+3. Two entries appear as dependents that are really something else -
+   `dyndolod.esp` and `occlusion.esp` are generated output, not
+   collection patches. Harmless here, worth understanding before the
+   table is published.
+
+Working set: 1,895 enabled of 2,337 listed, 25 skipped.
+
 ## Bugs in the plugin this exposed, all fixed
 
 These were ours, not the collection's, and every one would have hit any
