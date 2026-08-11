@@ -213,3 +213,29 @@ export function troubleshootingCount(
     (loadOrderIssue ? 1 : 0)
   );
 }
+
+/** Whether a download row offers a Cancel control, by phase.
+ *
+ * Only while bytes are still owed: cancelling mid-extraction would leave
+ * a half-merged mod, and cancelling a "queued" row (downloaded, waiting
+ * on the serial installer) deletes nothing the installer would not just
+ * fetch again. Paused rows stay cancellable - "stop this one for good"
+ * is a natural thing to decide while everything is stopped.  */
+export function cancellableDownload(phase: string): boolean {
+  return phase === "starting" || phase === "downloading" || phase === "paused";
+}
+
+/** The pause-all control: label and whether it is worth showing.
+ *
+ * Shown while anything is active OR while paused - a paused page with no
+ * visible resume control is a trap, because the rows themselves are
+ * parked and will never change state on their own. */
+export function pauseAllControl(
+  activeCount: number,
+  paused: boolean
+): { show: boolean; label: string } {
+  return {
+    show: paused || activeCount > 0,
+    label: paused ? "▶ Resume" : "⏸ Pause all",
+  };
+}

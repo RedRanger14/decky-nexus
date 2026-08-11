@@ -4185,6 +4185,113 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestDownloadResumePlan(unittest.TestCase):
+    """How a download continues from a .part after pause or failure.
+
+    Appending at the wrong offset corrupts an archive in a way nothing
+    notices until extraction fails - so every branch of this decision is
+    pinned, not sampled. The rest of pause/resume is I/O plumbing; this
+    is the part that must be exactly right.
+    """
+
+    def test_a_clean_range_resume_appends(self):
+        mode, offset, total = main._resume_plan(
+            100, 206, "bytes 100-999/1000", 900)
+        self.assertEqual((mode, offset, total), ("append", 100, 1000))
+
+    def test_a_server_resuming_from_the_wrong_place_forces_a_restart(self):
+        # We have 100 bytes; the server resumes from 50. Appending would
+        # interleave two different ranges of the file.
+        mode, offset, total = main._resume_plan(
+            100, 206, "bytes 50-999/1000", 950)
+        self.assertEqual(mode, "restart")
+
+    def test_a_206_with_unknown_total_still_appends(self):
+        mode, offset, total = main._resume_plan(
+            100, 206, "bytes 100-999/*", 900)
+        self.assertEqual((mode, offset), ("append", 100))
+        self.assertEqual(total, 0, "unknown total must not be invented")
+
+    def test_a_206_with_no_content_range_derives_the_total(self):
+        mode, offset, total = main._resume_plan(100, 206, "", 900)
+        self.assertEqual((mode, offset, total), ("append", 100, 1000))
+
+    def test_a_server_ignoring_range_restarts_from_zero(self):
+        # 200 means "here is the whole file" no matter what we asked for.
+        mode, offset, total = main._resume_plan(100, 200, "", 1000)
+        self.assertEqual((mode, offset, total), ("restart", 0, 1000))
+
+    def test_a_fresh_download_is_just_a_restart_at_zero(self):
+        mode, offset, total = main._resume_plan(0, 200, "", 1000)
+        self.assertEqual((mode, offset, total), ("restart", 0, 1000))
+
+    def test_garbled_content_range_falls_back_to_trusting_the_206(self):
+        mode, offset, total = main._resume_plan(
+            100, 206, "bytes=nonsense", 900)
+        self.assertEqual((mode, offset, total), ("append", 100, 1000))
+
+
+class TestDownloadControls(unittest.TestCase):
+    """Pause is global, cancel is per-download and only for downloads
+    actually in flight - a mark left on an idle mod would silently kill
+    its next retry."""
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        main._DL_PAUSED = False
+        main._DL_ACTIVE.clear()
+        main._DL_CANCEL.clear()
+
+    tearDown = setUp
+
+    def test_pause_and_resume_flip_the_global_gate(self):
+        r = run(self.plugin.set_downloads_paused(True))
+        self.assertTrue(r["paused"])
+        self.assertTrue(main._DL_PAUSED)
+        r = run(self.plugin.set_downloads_paused(False))
+        self.assertFalse(r["paused"])
+        self.assertFalse(main._DL_PAUSED)
+
+    def test_cancel_refuses_a_mod_that_is_not_downloading(self):
+        r = run(self.plugin.cancel_download(42))
+        self.assertFalse(r["ok"])
+        self.assertNotIn(42, main._DL_CANCEL,
+                         "no mark may be left to kill a later retry")
+
+    def test_cancel_marks_only_an_in_flight_download(self):
+        main._DL_ACTIVE.add(42)
+        r = run(self.plugin.cancel_download(42))
+        self.assertTrue(r["ok"])
+        self.assertIn(42, main._DL_CANCEL)
+
+    def test_the_paused_wait_releases_on_resume(self):
+        async def scenario():
+            main._DL_PAUSED = True
+            waiter = asyncio.create_task(main._wait_while_paused(1, 50))
+            await asyncio.sleep(0.05)
+            self.assertFalse(waiter.done(), "must hold while paused")
+            main._DL_PAUSED = False
+            await asyncio.wait_for(waiter, timeout=2)
+        run(scenario())
+
+    def test_the_paused_wait_releases_on_that_downloads_cancel(self):
+        # A cancel issued DURING a pause must not sit blocked behind the
+        # global gate until someone resumes everything.
+        async def scenario():
+            main._DL_PAUSED = True
+            waiter = asyncio.create_task(main._wait_while_paused(7, 10))
+            await asyncio.sleep(0.05)
+            main._DL_CANCEL.add(7)
+            await asyncio.wait_for(waiter, timeout=2)
+        run(scenario())
+
+    def test_control_state_reports_the_truth(self):
+        main._DL_ACTIVE.update({1, 2, 3})
+        main._DL_PAUSED = True
+        r = run(self.plugin.get_download_control())
+        self.assertEqual((r["paused"], r["in_flight"]), (True, 3))
+
+
 class TestResetVerifiesItsOwnWork(unittest.TestCase):
     """Reset must not report success it has not checked.
 

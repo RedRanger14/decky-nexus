@@ -4188,6 +4188,67 @@ async def _close_http_session() -> None:
     _HTTP_SESSION = None
 
 
+# ---- download control (pause / cancel / resume) -----------------------------
+# One GLOBAL pause gate rather than per-download switches. Pausing during
+# a collection run has to stall the whole prefetch pipeline, and a single
+# flag does that naturally: every in-flight download parks at its next
+# chunk, the pump's slots stay occupied, and resume releases everything at
+# once. Cancel is per-download, and only consumed by a download actually
+# in flight - a mark left on a mod that is not downloading would silently
+# kill the user's next retry of it.
+_DL_PAUSED = False
+_DL_ACTIVE: set = set()   # mod_ids currently inside _download_archive
+_DL_CANCEL: set = set()   # mod_ids to abort at their next chunk
+
+
+class _DownloadCancelled(Exception):
+    pass
+
+
+def _resume_plan(part_size: int, status: int, content_range: str,
+                 content_length: int) -> tuple:
+    """How to continue a download given what the server said to our Range
+    request. Returns (mode, offset, total): mode is 'append' or 'restart',
+    offset is where our progress counter starts, total is the full file
+    size (0 when unknown).
+
+    Pause works by closing the connection and keeping the .part - holding
+    a socket open across a pause measured in hours only invites the
+    server to drop it. So resuming correctly from a Range response is the
+    heart of the feature, and the part that must not be guessed at:
+    appending to the wrong offset corrupts an archive in a way nothing
+    notices until extraction fails.
+    """
+    if status == 206 and part_size > 0:
+        # "bytes 100-999/1000" - the server tells us both where it is
+        # resuming from and the full size.
+        m = re.match(r"bytes\s+(\d+)-\d*/(\d+|\*)", content_range or "")
+        if m:
+            start = int(m.group(1))
+            total = 0 if m.group(2) == "*" else int(m.group(2))
+            if start != part_size:
+                # Resuming from anywhere but the end of what we have
+                # would interleave two different byte ranges.
+                return "restart", 0, total
+            return "append", part_size, total
+        # 206 with no parseable Content-Range: trust the status, derive
+        # the total from what remains.
+        total = part_size + content_length if content_length else 0
+        return "append", part_size, total
+    # 200 means the server ignored the Range (or we never sent one):
+    # it is sending the whole file from byte zero.
+    return "restart", 0, content_length or 0
+
+
+async def _wait_while_paused(mod_id: int, pct: int) -> None:
+    """Park an in-flight download until resume (or its own cancel)."""
+    if not _DL_PAUSED:
+        return
+    await _emit_progress(mod_id, "paused", pct)
+    while _DL_PAUSED and mod_id not in _DL_CANCEL:
+        await asyncio.sleep(0.4)
+
+
 async def _download_archive(
     game_domain: str,
     mod_id: int,
@@ -4224,48 +4285,57 @@ async def _download_archive(
             f"&expires={urllib.parse.quote(str(dl_expires))}"
         )
     headers = _api_headers(api_key)
-    # Parallel prefetching bursts this endpoint - back off and retry on
-    # rate limits / transient 5xx instead of failing the mod's row.
-    links = None
-    last_err = "Download link error"
-    for attempt in range(3):
-        if attempt:
-            await asyncio.sleep(2 * attempt)
-        try:
-            session = await _http_session()
-            async with session.get(
-                link_url,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                if resp.status == 403:
-                    return (
-                        "Direct downloads need a Premium account "
-                        "(free-user flow not implemented yet)",
-                        "",
-                    )
-                if resp.status in (429, 500, 502, 503):
-                    last_err = f"Download link error (HTTP {resp.status})"
-                    decky.logger.warning(
-                        f"link fetch {game_domain}/{mod_id}: "
-                        f"HTTP {resp.status}, attempt {attempt + 1}/3"
-                    )
-                    continue
-                if resp.status != 200:
-                    return f"Download link error (HTTP {resp.status})", ""
-                links = await resp.json()
-                break
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            last_err = f"Network error: {type(e).__name__}"
-            continue
-    if links is None:
-        return last_err, ""
 
-    if not links or not isinstance(links, list):
-        return "Nexus Mods returned no download locations", ""
-    uri = links[0].get("URI") or links[0].get("uri")
-    if not uri:
-        return "Nexus Mods returned a malformed download link", ""
+    async def _resolve_uri() -> tuple:
+        """(err, uri). A function rather than straight-line code because
+        CDN links expire: a download resumed after a long pause needs a
+        fresh link, not the one minted an hour ago."""
+        # Parallel prefetching bursts this endpoint - back off and retry
+        # on rate limits / transient 5xx instead of failing the mod's row.
+        links = None
+        last_err = "Download link error"
+        for attempt in range(3):
+            if attempt:
+                await asyncio.sleep(2 * attempt)
+            try:
+                session = await _http_session()
+                async with session.get(
+                    link_url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status == 403:
+                        return (
+                            "Direct downloads need a Premium account "
+                            "(free-user flow not implemented yet)",
+                            "",
+                        )
+                    if resp.status in (429, 500, 502, 503):
+                        last_err = f"Download link error (HTTP {resp.status})"
+                        decky.logger.warning(
+                            f"link fetch {game_domain}/{mod_id}: "
+                            f"HTTP {resp.status}, attempt {attempt + 1}/3"
+                        )
+                        continue
+                    if resp.status != 200:
+                        return f"Download link error (HTTP {resp.status})", ""
+                    links = await resp.json()
+                    break
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_err = f"Network error: {type(e).__name__}"
+                continue
+        if links is None:
+            return last_err, ""
+        if not links or not isinstance(links, list):
+            return "Nexus Mods returned no download locations", ""
+        found = links[0].get("URI") or links[0].get("uri")
+        if not found:
+            return "Nexus Mods returned a malformed download link", ""
+        return "", found
+
+    err, uri = await _resolve_uri()
+    if err:
+        return err, ""
 
     prefs = _user_prefs()
     cap_bytes = prefs["speed_cap_mbps"] * (1 << 20)
@@ -4278,85 +4348,165 @@ async def _download_archive(
         )
 
     part_path = archive_path + ".part"
-    disk_low = False
     await _emit_progress(mod_id, "downloading", 0)
-    for cdn_attempt in range(2):
-      if cdn_attempt:
-        await asyncio.sleep(3)
-        decky.logger.warning(
-            f"CDN retry for {game_domain}/{mod_id} (attempt 2/2)"
-        )
-      try:
-        timeout = aiohttp.ClientTimeout(total=1800, sock_connect=30)
-        session = await _http_session()
-        async with session.get(_safe_uri(uri), timeout=timeout) as resp:
-            if resp.status in (429, 500, 502, 503) and cdn_attempt == 0:
-                continue
-            if resp.status != 200:
-                return f"CDN download failed (HTTP {resp.status})", ""
-            total = int(resp.headers.get("Content-Length") or 0)
-            done = 0
-            last_pct = -1
-            # Speed: EMA over inter-emit deltas, emitted at least
-            # every half-second so big files still tick.
-            last_t = time.monotonic()
-            last_done = 0
-            ema_bps = 0.0
-            chunk_count = 0
-            with open(part_path, "wb") as out:
-                async for chunk in resp.content.iter_chunked(1 << 20):
-                    out.write(chunk)
-                    done += len(chunk)
-                    await _throttle(len(chunk), cap_bytes)
-                    chunk_count += 1
-                    if chunk_count % 256 == 0 and (
-                        _free_disk_gb(DOWNLOADS_DIR) < min_free
-                    ):
-                        disk_low = True
-                        break
-                    now = time.monotonic()
-                    pct = int(done * 100 / total) if total else 0
-                    if pct > last_pct or now - last_t >= 0.5:
-                        dt = max(now - last_t, 1e-3)
-                        inst = (done - last_done) / dt
-                        ema_bps = (
-                            inst
-                            if ema_bps == 0
-                            else 0.6 * ema_bps + 0.4 * inst
-                        )
-                        last_pct = pct
-                        last_t = now
-                        last_done = done
-                        await _emit_progress(
-                            mod_id,
-                            "downloading",
-                            pct,
-                            bytes_done=done,
-                            bytes_total=total or None,
-                            bps=ema_bps,
-                        )
-        if disk_low:
+    # The whole transfer runs inside one control loop. Pause exits the
+    # connection cleanly (a socket held open across an hours-long pause
+    # just invites the server to drop it), parks at the gate, and resumes
+    # with a Range request from wherever the .part ends. Transport errors
+    # take the same path - which is why a failed download no longer
+    # deletes its .part: a dropped connection at 90% of 10GB used to cost
+    # all ten.
+    _DL_ACTIVE.add(mod_id)
+    known_total = 0
+    transport_failures = 0
+    try:
+        while True:
+            if mod_id in _DL_CANCEL:
+                raise _DownloadCancelled()
             try:
-                os.remove(part_path)
+                part_now = os.path.getsize(part_path)
             except OSError:
-                pass
-            return (
-                f"Low disk space (under {min_free} GB free) - download "
-                "stopped safely; free space or lower the minimum in "
-                "Settings",
-                "",
+                part_now = 0
+            await _wait_while_paused(
+                mod_id,
+                int(part_now * 100 / known_total) if known_total else 0,
             )
-        os.replace(part_path, archive_path)
-        return "", archive_path
-      except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if mod_id in _DL_CANCEL:
+                raise _DownloadCancelled()
+            req_headers = (
+                {"Range": f"bytes={part_now}-"} if part_now else {}
+            )
+            disk_low = False
+            paused = False
+            try:
+                timeout = aiohttp.ClientTimeout(total=1800, sock_connect=30)
+                session = await _http_session()
+                async with session.get(
+                    _safe_uri(uri), headers=req_headers, timeout=timeout
+                ) as resp:
+                    if resp.status == 403:
+                        # The CDN link outlived its welcome (long pause,
+                        # slow retry) - mint a fresh one and go again.
+                        err, uri = await _resolve_uri()
+                        if err:
+                            return err, ""
+                        continue
+                    if resp.status in (416,):
+                        # Range not satisfiable: our .part disagrees with
+                        # the file on the server. Start over.
+                        try:
+                            os.remove(part_path)
+                        except OSError:
+                            pass
+                        continue
+                    if resp.status in (429, 500, 502, 503):
+                        transport_failures += 1
+                        if transport_failures >= 3:
+                            return (
+                                f"CDN download failed (HTTP {resp.status})",
+                                "",
+                            )
+                        await asyncio.sleep(2 * transport_failures)
+                        continue
+                    if resp.status not in (200, 206):
+                        return f"CDN download failed (HTTP {resp.status})", ""
+                    mode, done, total = _resume_plan(
+                        part_now,
+                        resp.status,
+                        resp.headers.get("Content-Range") or "",
+                        int(resp.headers.get("Content-Length") or 0),
+                    )
+                    known_total = total or known_total
+                    last_pct = -1
+                    # Speed: EMA over inter-emit deltas, emitted at least
+                    # every half-second so big files still tick.
+                    last_t = time.monotonic()
+                    last_done = done
+                    ema_bps = 0.0
+                    chunk_count = 0
+                    with open(
+                        part_path, "ab" if mode == "append" else "wb"
+                    ) as out:
+                        async for chunk in resp.content.iter_chunked(1 << 20):
+                            if mod_id in _DL_CANCEL:
+                                raise _DownloadCancelled()
+                            if _DL_PAUSED:
+                                paused = True
+                                break
+                            out.write(chunk)
+                            done += len(chunk)
+                            await _throttle(len(chunk), cap_bytes)
+                            chunk_count += 1
+                            if chunk_count % 256 == 0 and (
+                                _free_disk_gb(DOWNLOADS_DIR) < min_free
+                            ):
+                                disk_low = True
+                                break
+                            now = time.monotonic()
+                            pct = int(done * 100 / total) if total else 0
+                            if pct > last_pct or now - last_t >= 0.5:
+                                dt = max(now - last_t, 1e-3)
+                                inst = (done - last_done) / dt
+                                ema_bps = (
+                                    inst
+                                    if ema_bps == 0
+                                    else 0.6 * ema_bps + 0.4 * inst
+                                )
+                                last_pct = pct
+                                last_t = now
+                                last_done = done
+                                await _emit_progress(
+                                    mod_id,
+                                    "downloading",
+                                    pct,
+                                    bytes_done=done,
+                                    bytes_total=total or None,
+                                    bps=ema_bps,
+                                )
+                if paused:
+                    continue
+                if disk_low:
+                    # Deleted rather than kept for resume: low disk is the
+                    # one failure where holding a multi-GB .part makes the
+                    # problem worse, and this path is self-healing.
+                    try:
+                        os.remove(part_path)
+                    except OSError:
+                        pass
+                    return (
+                        f"Low disk space (under {min_free} GB free) - "
+                        "download stopped safely; free space or lower the "
+                        "minimum in Settings",
+                        "",
+                    )
+                if total and done < total:
+                    # The server closed the stream early without an error
+                    # status. The .part is intact - resume, don't restart.
+                    transport_failures += 1
+                    if transport_failures >= 3:
+                        return "CDN connection kept dropping - try again", ""
+                    await asyncio.sleep(2)
+                    continue
+                os.replace(part_path, archive_path)
+                return "", archive_path
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                transport_failures += 1
+                if transport_failures >= 3:
+                    # The .part stays: the next attempt (tonight or next
+                    # week) resumes from it instead of starting over.
+                    return f"Download failed: {type(e).__name__}", ""
+                await asyncio.sleep(2)
+                continue
+    except _DownloadCancelled:
         try:
             os.remove(part_path)
         except OSError:
             pass
-        if cdn_attempt == 0:
-            continue
-        return f"Download failed: {type(e).__name__}", ""
-    return "CDN download failed after retry", ""
+        await _emit_progress(mod_id, "cancelled", 0)
+        return "Cancelled", ""
+    finally:
+        _DL_ACTIVE.discard(mod_id)
+        _DL_CANCEL.discard(mod_id)
 
 
 async def _validate_key(api_key: str) -> dict:
@@ -5440,6 +5590,42 @@ query Link($slug: String!, $domainName: String!) {
 
     async def get_user_prefs(self) -> dict:
         return {"ok": True, "prefs": _user_prefs()}
+
+    async def set_downloads_paused(self, paused: bool) -> dict:
+        """Pause or resume every download at once.
+
+        Global on purpose: mid-collection there can be eight transfers
+        and a prefetch pump feeding them, and "pause" means "stop using
+        my bandwidth", not "stop this one file". Each transfer closes its
+        connection at the next chunk and keeps its .part; resume picks
+        every one of them back up with a Range request.
+        """
+        global _DL_PAUSED
+        _DL_PAUSED = bool(paused)
+        decky.logger.info(
+            f"downloads {'paused' if _DL_PAUSED else 'resumed'} "
+            f"({len(_DL_ACTIVE)} in flight)"
+        )
+        return {"ok": True, "paused": _DL_PAUSED,
+                "in_flight": len(_DL_ACTIVE)}
+
+    async def cancel_download(self, mod_id: int) -> dict:
+        """Abort one in-flight download and delete its partial file.
+
+        Only downloads actually in flight can be cancelled: a mark left
+        on a mod that is not downloading would sit there and silently
+        kill the user's next retry of it.
+        """
+        if mod_id not in _DL_ACTIVE:
+            return {"ok": False, "error": "That download isn't running"}
+        _DL_CANCEL.add(mod_id)
+        return {"ok": True}
+
+    async def get_download_control(self) -> dict:
+        """Paused state + in-flight count, so a reopened Downloads page
+        shows the truth rather than whatever it last remembered."""
+        return {"ok": True, "paused": _DL_PAUSED,
+                "in_flight": len(_DL_ACTIVE)}
 
     async def get_disk_usage(self) -> dict:
         """Free/total space on the downloads volume - drives the Downloads

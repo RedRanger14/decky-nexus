@@ -5,12 +5,14 @@ import test from "node:test";
 
 import {
   crashHuntVerdict,
+  cancellableDownload,
   crashSuspect,
   huntProgressNote,
   launchWaitNotice,
   loadOrderProblem,
   saveLoadVerdict,
   maskCoopPassword,
+  pauseAllControl,
   showInstalledModsSection,
   showResetRow,
   troubleshootingCount,
@@ -314,4 +316,33 @@ test("many failed plugins are still one thing to look at", () => {
   // The user acts on the row, not on each plugin - counting 37 would
   // make one fixable problem look like a catastrophe.
   assert.equal(troubleshootingCount(false, 37, false, undefined), 1);
+});
+
+// Download rows: cancel only while bytes are still owed.
+test("downloading and paused rows can be cancelled", () => {
+  assert.equal(cancellableDownload("downloading"), true);
+  assert.equal(cancellableDownload("paused"), true);
+  assert.equal(cancellableDownload("starting"), true);
+});
+
+test("extracting and queued rows cannot - the bytes are already here", () => {
+  // Mid-extraction a cancel leaves a half-merged mod; a queued archive
+  // would just be re-downloaded by the installer anyway.
+  assert.equal(cancellableDownload("extracting"), false);
+  assert.equal(cancellableDownload("queued"), false);
+  assert.equal(cancellableDownload("done"), false);
+});
+
+test("the pause control shows whenever anything is active", () => {
+  assert.deepEqual(pauseAllControl(3, false), { show: true, label: "⏸ Pause all" });
+});
+
+test("a paused page always shows Resume even with zero rows", () => {
+  // Paused rows are parked and will never change state on their own -
+  // hiding the only way out would trap the user.
+  assert.deepEqual(pauseAllControl(0, true), { show: true, label: "▶ Resume" });
+});
+
+test("idle and unpaused shows nothing", () => {
+  assert.equal(pauseAllControl(0, false).show, false);
 });
