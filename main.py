@@ -1157,6 +1157,52 @@ def _stagger_plugin_mtimes(
 
 LOAD_ORDER_BACKUP = ".decky-bak"
 
+
+# Plugins proven to stop a game booting, keyed by Nexus domain. Only ROOT
+# causes are listed: everything that depends on one is derived, because a
+# mod cannot load without its master and listing the dependents by hand
+# would rot the moment a collection changed.
+#
+# Entries earn their place by evidence, not suspicion - each one below
+# either crashed the game on its own or survived a controlled A/B where
+# it was the single variable.
+KNOWN_BAD_PLUGINS = {
+    "skyrimspecialedition": {
+        # Gate To Sovngarde, verified on device 2026-08-08..11 across
+        # roughly 150 launches. All are the collection's own patch files;
+        # not one third-party mod was at fault.
+        "njr - bruma patch.esp": "crashes Skyrim during data load",
+        "gts - taliesin replacer.esp": "crashes Skyrim during data load",
+        "cc_menagerieecss.esp": "crashes Skyrim during data load",
+        "stendarrschosen - bruma spawns addon.esp":
+            "crashes Skyrim during data load",
+        "stendarrschosen - no skyrim spawns.esp":
+            "crashes Skyrim during data load",
+        "gts - vigilant.esp": "crashes Skyrim during data load",
+        "gts_traits.esp": "crashes Skyrim during data load",
+        "gts patches - scion.esp": "crashes Skyrim during data load",
+        "gts patches - landscapes part 2.esp":
+            "crashes Skyrim during cell setup",
+    },
+}
+
+
+def _load_skips(game_domain: str) -> dict:
+    """Plugins deliberately switched off, and why.
+
+    Without this the tool cannot tell "off because it breaks the game"
+    from "off by accident", so every routine that tidies the load order
+    undoes the user's decisions. On device that resurrected 8 skipped
+    plugins in one pass, because something still listed them as a master.
+    """
+    return _load_settings().get("skipped", {}).get(game_domain, {})
+
+
+def _save_skips(game_domain: str, skips: dict) -> None:
+    settings = _load_settings()
+    settings.setdefault("skipped", {})[game_domain] = skips
+    _save_settings(settings)
+
 # The automated crash hunt's state, kept on disk so it survives a Decky
 # restart mid-run (which happens - the plugin gets redeployed, the device
 # sleeps) rather than losing an hour of launches.
@@ -1320,7 +1366,8 @@ def _load_order_report(data_path: str, names: list, cache: dict = None) -> int:
 
 
 def _masters_to_enable(
-    data_path: str, entries: list, implicit: set = frozenset()
+    data_path: str, entries: list, implicit: set = frozenset(),
+    skipped: set = frozenset()
 ) -> list:
     """Installed plugins an enabled plugin needs as a master, but which
     are switched off.
@@ -1343,6 +1390,10 @@ def _masters_to_enable(
     # The game's own masters load whether or not anyone says so, so they
     # are never "missing" and must never be written into the list.
     on |= set(implicit)
+    # A deliberate skip is not a mistake to repair. Switching one back on
+    # because a dependent still names it as a master defeats the skip and
+    # puts the crash back - the dependent is the thing that has to go.
+    on |= set(skipped)
     add, frontier = set(), set(on)
     while frontier:
         nxt = set()
@@ -1399,7 +1450,8 @@ def _sort_load_order(data_path: str, names: list) -> list:
 
 
 def _rewrite_load_order(
-    data_path: str, path: str, style: str, implicit: set = frozenset()
+    data_path: str, path: str, style: str, implicit: set = frozenset(),
+    skipped: set = frozenset()
 ) -> dict:
     """Sort plugins.txt in place, keeping a copy of what was there.
 
@@ -1419,7 +1471,7 @@ def _rewrite_load_order(
     before = _load_order_report(data_path, [n for n, on in entries if on])
     # Switch on the masters that enabled plugins need before ordering -
     # they have to be in the list for the sort to place them at all.
-    turned_on = _masters_to_enable(data_path, entries, implicit)
+    turned_on = _masters_to_enable(data_path, entries, implicit, skipped)
     for name, already_listed in turned_on:
         if already_listed:
             entries = [(n, True if n.lower() == name.lower() else on)
@@ -1427,7 +1479,7 @@ def _rewrite_load_order(
         else:
             entries.append((name, True))
     names = [n for n, _ in entries]
-    enabled = {n.lower() for n, on in entries if on}
+    enabled = {n.lower() for n, on in entries if on} - set(skipped)
     ordered = _sort_load_order(data_path, names)
     after = _load_order_report(
         data_path, [n for n in ordered if n.lower() in enabled]
@@ -8451,11 +8503,12 @@ query Link($slug: String!, $domainName: String!) {
         if not os.path.isfile(path) or not os.path.isdir(data_path):
             return {"ok": True, "supported": False}
         implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())
+        skips = set(_load_skips(game_domain))
         entries = [(n, on) for n, on in
                    _plugin_entries(_read_plugins_txt(path), plugins_style)
                    if n.lower() not in implicit]
         enabled = [n for n, on in entries if on]
-        needed = _masters_to_enable(data_path, entries, implicit)
+        needed = _masters_to_enable(data_path, entries, implicit, skips)
         return {
             "ok": True,
             "supported": True,
@@ -8470,6 +8523,85 @@ query Link($slug: String!, $domainName: String!) {
             "examples": [n for n, _ in needed[:3]],
         }
 
+    async def get_known_bad_state(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str
+    ) -> dict:
+        """Installed plugins we already know break this game.
+
+        The point of the crash hunt was never to make every user run it.
+        Once a plugin is proven to stop the game booting, the next person
+        who installs the same collection should never see the crash at
+        all - so the finding is data, not a memory of a debugging session.
+        """
+        if not plugins_subpath:
+            return {"ok": True, "supported": False}
+        table = KNOWN_BAD_PLUGINS.get(game_domain) or {}
+        if not table:
+            return {"ok": True, "supported": True, "bad": [], "extra": 0}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        entries = _plugin_entries(_read_plugins_txt(path), plugins_style)
+        listed = [n for n, _ in entries]
+        on = {n.lower() for n, enabled in entries if enabled}
+        roots = [n for n in listed if n.lower() in table and n.lower() in on]
+        if not roots:
+            return {"ok": True, "supported": True, "bad": [], "extra": 0}
+        dependents = await asyncio.to_thread(
+            _dependents_closure, data_path, listed, set(roots))
+        live_deps = [n for n in dependents if n.lower() in on]
+        return {
+            "ok": True, "supported": True,
+            "bad": [{"name": n, "reason": table[n.lower()]} for n in roots],
+            "extra": len(live_deps),
+        }
+
+    async def apply_known_bad(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str
+    ) -> dict:
+        """Switch off the known-bad plugins and everything that needs
+        them, and record WHY so nothing switches them back on."""
+        if not plugins_subpath:
+            return {"ok": False, "error": "This game has no plugin list"}
+        table = KNOWN_BAD_PLUGINS.get(game_domain) or {}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        lines = _read_plugins_txt(path)
+        header = [l for l in lines if l.strip().startswith("#")]
+        entries = _plugin_entries(lines, plugins_style)
+        listed = [n for n, _ in entries]
+        roots = [n for n in listed if n.lower() in table]
+        if not roots:
+            return {"ok": True, "skipped": 0, "extra": 0}
+        dependents = await asyncio.to_thread(
+            _dependents_closure, data_path, listed, set(roots))
+        skips = _load_skips(game_domain)
+        for n in roots:
+            skips[n.lower()] = {"reason": table[n.lower()], "root": True}
+        for n in dependents:
+            skips.setdefault(
+                n.lower(),
+                {"reason": "needs a mod that breaks the game", "root": False},
+            )
+        _save_skips(game_domain, skips)
+        off = set(skips)
+        starred = plugins_style != "listed"
+        _write_plugins_txt(path, header + [
+            (n if n.lower() in off else ("*" + n if starred else n))
+            for n, _ in entries
+        ])
+        _rewrite_load_order(
+            data_path, path, plugins_style,
+            IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset()),
+            off,
+        )
+        decky.logger.info(
+            f"{game_domain}: skipped {len(roots)} known-bad plugin(s) "
+            f"and {len(dependents)} that depend on them"
+        )
+        return {"ok": True, "skipped": len(roots), "extra": len(dependents)}
+
     async def fix_load_order(
         self, app_id: int, install_dir: str, plugins_subpath: str,
         plugins_style: str, game_domain: str = ""
@@ -8483,6 +8615,7 @@ query Link($slug: String!, $domainName: String!) {
         r = _rewrite_load_order(
             data_path, path, plugins_style,
             IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset()),
+            set(_load_skips(game_domain)),
         )
         if r.get("ok"):
             # FO3/FNV load by file timestamp, so switching a master back on

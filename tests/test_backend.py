@@ -4185,6 +4185,100 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestKnownBadPlugins(unittest.TestCase):
+    """Plugins proven to break a game are switched off automatically, and
+    STAY off.
+
+    The crash hunt exists so that one person finds a fault, not so every
+    user reruns it. And a skip has to be sticky: on device, fix_load_order
+    switched 8 skipped plugins back on because something still named them
+    as a master, which put the crash straight back.
+    """
+
+    GAME = "Known Bad Test"
+    APP_ID = 489830
+    SUB = "Skyrim Special Edition/Plugins.txt"
+    DOMAIN = "knownbadtest"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(self.data)
+        _make_plugin(os.path.join(self.data, "Base.esm"), flags=1)
+        _make_plugin(os.path.join(self.data, "Bad.esp"), ["Base.esm"])
+        _make_plugin(os.path.join(self.data, "NeedsBad.esp"), ["Bad.esp"])
+        _make_plugin(os.path.join(self.data, "Deeper.esp"), ["NeedsBad.esp"])
+        _make_plugin(os.path.join(self.data, "Fine.esp"), ["Base.esm"])
+        self.path = main._plugins_txt_path(self.APP_ID, self.SUB)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        main._write_plugins_txt(self.path, [
+            "*Base.esm", "*Bad.esp", "*NeedsBad.esp", "*Deeper.esp", "*Fine.esp",
+        ])
+        main.KNOWN_BAD_PLUGINS[self.DOMAIN] = {"bad.esp": "crashes on load"}
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        main.KNOWN_BAD_PLUGINS.pop(self.DOMAIN, None)
+        settings = main._load_settings()
+        settings.get("skipped", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.path), ignore_errors=True)
+
+    def _args(self):
+        return (self.APP_ID, self.GAME, self.SUB, "starred", self.DOMAIN)
+
+    def _on(self):
+        return {n for n, o in main._plugin_entries(
+            main._read_plugins_txt(self.path), "starred") if o}
+
+    def test_it_reports_what_it_knows_is_broken(self):
+        s = run(self.plugin.get_known_bad_state(*self._args()))
+        self.assertEqual([b["name"] for b in s["bad"]], ["Bad.esp"])
+        self.assertEqual(s["extra"], 2, "NeedsBad and Deeper cannot load")
+        self.assertIn("crashes", s["bad"][0]["reason"])
+
+    def test_applying_it_takes_the_dependents_too(self):
+        r = run(self.plugin.apply_known_bad(*self._args()))
+        self.assertEqual((r["skipped"], r["extra"]), (1, 2))
+        self.assertEqual(self._on(), {"Base.esm", "Fine.esp"})
+
+    def test_a_skip_survives_a_load_order_repair(self):
+        # The device failure: NeedsBad still names Bad as a master, so the
+        # master repair helpfully switched Bad back on.
+        run(self.plugin.apply_known_bad(*self._args()))
+        run(self.plugin.fix_load_order(*self._args()))
+        self.assertNotIn("Bad.esp", self._on(), "the skip must be sticky")
+        self.assertNotIn("NeedsBad.esp", self._on())
+
+    def test_the_reason_is_recorded_not_just_the_fact(self):
+        run(self.plugin.apply_known_bad(*self._args()))
+        skips = main._load_skips(self.DOMAIN)
+        self.assertTrue(skips["bad.esp"]["root"])
+        self.assertFalse(skips["needsbad.esp"]["root"])
+        self.assertIn("crashes", skips["bad.esp"]["reason"])
+
+    def test_a_skipped_plugin_is_not_reported_as_a_missing_master(self):
+        run(self.plugin.apply_known_bad(*self._args()))
+        st = run(self.plugin.get_load_order_state(*self._args()))
+        self.assertEqual(st["disabled_masters"], 0,
+                         "a deliberate skip is not a fault to repair")
+
+    def test_applying_twice_changes_nothing(self):
+        run(self.plugin.apply_known_bad(*self._args()))
+        first = self._on()
+        run(self.plugin.apply_known_bad(*self._args()))
+        self.assertEqual(self._on(), first)
+
+    def test_a_game_with_nothing_known_is_left_alone(self):
+        main.KNOWN_BAD_PLUGINS.pop(self.DOMAIN, None)
+        s = run(self.plugin.get_known_bad_state(*self._args()))
+        self.assertEqual(s["bad"], [])
+        run(self.plugin.apply_known_bad(*self._args()))
+        self.assertEqual(len(self._on()), 5, "nothing switched off")
+
+
 class TestHuntStartsFromTheFullList(unittest.TestCase):
     """A hunt must search every mod, not the leftovers of the last one.
 
