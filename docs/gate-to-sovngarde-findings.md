@@ -1,0 +1,112 @@
+# Gate To Sovngarde: what it takes to boot on SteamOS
+
+The second most popular Skyrim collection (1,972 mods) booting on a
+Legion Go 2 running SteamOS, verified 2026-08-11: main menu, new game,
+world loads.
+
+This is the first real entry for the known-bad database. The point of
+recording it is that **nobody should have to repeat this**. Finding it
+took roughly 150 launches across three days, most of them four minutes
+each.
+
+## The working configuration
+
+- **1,945 plugins enabled**, 0 load-order violations, 0 disabled masters
+- **30 plugins skipped** (list below)
+- **2 SKSE DLLs skipped**: `LumaUtil.dll`, `BehaviorDataInjector.dll`
+- ~390 Creation Club patches disabled, correctly and unrelated - their
+  masters are CC content the account does not own
+
+Two crashes were involved, at different addresses, one hidden behind the
+other:
+
+| Address | Where | Found by |
+|---|---|---|
+| `SkyrimSE.exe+01D74A0` | data load, `InitTESThread` | manual bisect, then the automated hunt |
+| `SkyrimSE.exe+01D8845` | cell/worldspace init | crash-log suspect (`LumaUtil`) + the hunt |
+
+## Skipped plugins
+
+Every one is ESL-flagged, and every one is part of the collection's own
+patch layer rather than a third-party mod. Sizes range from 210 bytes to
+10 MB, so "tiny patch file" was a pattern in the first few, not a rule.
+
+```
+CC_Menagerie.esp                              CC_MenagerieECSS.esp
+CC_MenagerieMysticism.esp                     GTS - Dac0da.esp
+GTS - Dungeons Relocation.esp                 GTS - Easy Mode.esp
+GTS - Elder Scrolling.esp                     GTS - New Armors.esp
+GTS - Orpheus Replacer.esp                    GTS - Shortspears.esp
+GTS - Taliesin Replacer.esp                   GTS - Vigilant.esp
+GTS Patches - CC Stuff.esp                    GTS Patches - CC Stuff Part 2.esp
+GTS Patches - CC Stuff Part 3.esp             GTS Patches - CC Stuff Part 4.esp
+GTS Patches - Food.esp                        GTS Patches - Immersive Interactions.esp
+GTS Patches - Landscapes Part 2.esp           GTS Patches - Old Synthesis.esp
+GTS Patches - Quests.esp                      GTS Patches - Remove Rubble Hotfix.esp
+GTS Patches - Scion.esp                       GTS Patches - Smithing Clean Up.esp
+GTS_Traits.esp                                NJR - Bruma Patch.esp
+StendarrsChosen.esp                           StendarrsChosen - Bruma Spawns Addon.esp
+StendarrsChosen - No Skyrim Spawns.esp        StendarrsChosen - WyrmstoothSpawns Addon.esp
+```
+
+Only a handful are independent root causes; the rest are dependents that
+cannot load without them. `_dependents_closure` derives the full set from
+the roots, so a database entry only needs to record the roots.
+
+## Bugs in the plugin this exposed, all fixed
+
+These were ours, not the collection's, and every one would have hit any
+large Bethesda setup:
+
+1. **plugins.txt was install order, not load order.** 557 of 1,960
+   plugins were listed before a master they depend on. We only ever
+   appended. Fixed in v0.69.0 with a masters-first topological sort;
+   FO3/FNV order by timestamp and already had the equivalent.
+2. **13 masters installed but switched off**, with 139 plugins depending
+   on them - mostly the free Anniversary Edition Creation Club files that
+   Skyrim ships in Data but leaves out of the plugin list. Fixed in
+   v0.71.0, transitively.
+3. **Base masters written into plugins.txt.** The first cut of the master
+   repair enabled `Skyrim.esm` and the four DLC, which renumbers every
+   plugin after them - and the load index is what save files record.
+   Caught by a test, not on device.
+4. **`_plugin_entries` assumed the starred dialect**, so every plugin in
+   a `listed` file (FO3/FNV) parsed as disabled. Any check built on it
+   was a silent no-op on exactly the two games it was meant for.
+5. **The VC++ runtime in the prefix was 2016-era**, failing 37 SKSE
+   plugins with nothing but "fatal error occurred while loading".
+
+## What is still wrong, and matters before this ships
+
+**The tool does not record WHY a plugin is off.** A deliberate skip and
+an incidental one look identical in plugins.txt, so anything that tidies
+up undoes the user's decisions:
+
+- `fix_load_order` re-enabled 8 skipped plugins because something still
+  listed them as a master (fixed here by applying the dependents closure
+  by hand)
+- the crash hunt's `finish` restored `LumaUtil.dll` and
+  `BehaviorDataInjector.dll`, which the user had deliberately skipped,
+  because it could not tell them from DLLs it had parked itself
+
+A skip needs to be sticky and carry its dependents automatically. This is
+also what makes "do not download these" work: a download-time skip has to
+survive every later repair.
+
+**The hunt verifies with mod DLLs parked, then restores them.** So "done"
+means "boots without mod DLLs", not "boots in the real setup". It should
+re-verify after restoring.
+
+**The user is the integration layer.** Three separate mechanisms
+(crash-log suspect, script-extender skip, automated hunt) and the human
+decides between them. It should be one button that triages: park the
+DLLs named in the crash log, launch, bisect DLLs if that helps, bisect
+plugins if it does not, report once at the end.
+
+## Cosmetic, unfixed
+
+Community Shaders compiles none of its shaders: Wine's `d3dcompiler_47`
+does not support HLSL 2021 (`namespace`), so every shader fails with
+`E5000: syntax error, unexpected KW_NAMESPACE`. Not a crash, and the same
+shape as the VC++ runtime fix - drop a compiler that supports it into the
+prefix.
