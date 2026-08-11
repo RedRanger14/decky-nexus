@@ -1,6 +1,6 @@
 {
   "name": "decky-nexus",
-  "version": "0.83.0",
+  "version": "0.84.0",
   "description": "Browse, install, and manage Nexus Mods for the current game \u00e2\u20ac\u201d entirely from Gaming Mode. Decky Loader plugin.",
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "test:nav": "tsc src/navRules.ts --outDir .test-build --module es2020 --target es2020 --skipLibCheck --declaration false && node --test tests/nav.test.mjs",
     "test:proton": "tsc src/protonPick.ts --outDir .test-build --module es2020 --target es2020 --skipLibCheck --declaration false && node --test tests/proton.test.mjs",
     "test:panel": "tsc src/panelRules.ts --outDir .test-build --module es2020 --target es2020 --skipLibCheck --declaration false && node --test tests/panelRules.test.mjs",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run test:nav && pnpm run test:proton && pnpm run test:panel"
+    "check": "pnpm run typecheck && pnpm run lint:py && pnpm run test && pnpm run test:nav && pnpm run test:proton && pnpm run test:panel",
+    "lint:py": "python -m pyflakes main.py tests"
   },
   "keywords": [
     "decky",

@@ -6766,7 +6766,7 @@ query Link($slug: String!, $domainName: String!) {
             _, mods_path, _unused = _game_paths(
                 entry["install_dir"], entry["mods_subdir"]
             )
-            _record_vanilla_baseline(game_domain, mods_path)
+            _record_vanilla_baseline(entry.get("game_domain", ""), mods_path)
             os.makedirs(mods_path, exist_ok=True)
 
             repair_only = bool(entry.get("repair_only"))
