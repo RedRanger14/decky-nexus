@@ -4185,6 +4185,64 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestHuntSignatureDetection(unittest.TestCase):
+    """The hunt has to identify ONE fault, not a module.
+
+    First cut took the module name off the top call-stack frame, which
+    gave "SkyrimSE.exe" - and nearly every Skyrim crash is in
+    SkyrimSE.exe, so the data-load crash and the facegen crash would have
+    counted as the same thing. Caught by reading the state file on device
+    before it had run a single launch.
+    """
+
+    APP_ID = 489830
+    LOG = "Skyrim Special Edition/SKSE/skse64.log"
+
+    EXC = ('Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at '
+           "0x0001401D8845 SkyrimSE.exe+01D8845\tmov rax, [rcx+0x30]\n")
+
+    # The same pattern crash_bisect_start uses to read a fault's identity.
+    SIG_RE = r"at (0x[0-9A-Fa-f]+)\s+(\S+\+[0-9A-Fa-f]+)"
+
+    def setUp(self):
+        self.se_dir = os.path.dirname(main._game_prefs_path(self.APP_ID, self.LOG))
+        os.makedirs(self.se_dir, exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.se_dir, ignore_errors=True)
+
+    def _write(self, body, name="crash-2026-08-11-14-58-13.log"):
+        with open(os.path.join(self.se_dir, name), "w") as f:
+            f.write(body)
+
+    def test_the_offset_is_part_of_the_signature(self):
+        self._write(
+            "CRASH TIME: 2026-08-11 14:58:13\n" + self.EXC
+            + "CALL STACK ([P]robable / [S]tack scan):\n"
+            "\t[ 0][P] 0x0001401D8845 SkyrimSE.exe+01D8845 -> 1+0x1\n"
+        )
+        parsed = main._parse_crash_log(
+            os.path.join(self.se_dir, "crash-2026-08-11-14-58-13.log"))
+        import re as _re
+        m = _re.search(self.SIG_RE, parsed.get("exception") or "")
+        self.assertIsNotNone(m, "exception line must yield an address")
+        self.assertEqual(m.group(2), "SkyrimSE.exe+01D8845")
+        self.assertNotEqual(
+            m.group(2), "SkyrimSE.exe",
+            "the module alone matches every crash in the game")
+
+    def test_two_different_faults_in_the_same_module_differ(self):
+        # +01D74A0 (data load) vs +0CEC9C8 (facegen). Both "SkyrimSE.exe".
+        sigs = set()
+        for off in ("01D74A0", "0CEC9C8"):
+            line = ('Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at '
+                    f"0x00014{off} SkyrimSE.exe+{off}\n")
+            import re as _re
+            m = _re.search(self.SIG_RE, line)
+            sigs.add(m.group(2))
+        self.assertEqual(len(sigs), 2, "must tell the two faults apart")
+
+
 class TestDependentsClosure(unittest.TestCase):
     """Skipping a mod has to take everything built on it.
 

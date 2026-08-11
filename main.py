@@ -8537,11 +8537,17 @@ query Link($slug: String!, $domainName: String!) {
                 return {"ok": False, "error":
                         "No crash log to work from - launch the game once"}
             parsed = _parse_crash_log(newest)
-            frames = parsed.get("frames") or []
-            if not frames:
+            # The MODULE alone is far too broad - nearly every crash is
+            # "in SkyrimSE.exe", so that would count the facegen crash and
+            # the data-load crash as the same fault. The offset is what
+            # identifies one specific fault, so take it from the exception
+            # line the same way crash_since reports it.
+            m = re.search(r"at (0x[0-9A-Fa-f]+)\s+(\S+\+[0-9A-Fa-f]+)",
+                          parsed.get("exception") or "")
+            if not m:
                 return {"ok": False, "error":
-                        "That crash log has no readable call stack"}
-            signature = frames[0]["module"]
+                        "Could not read a crash address from the latest log"}
+            signature = m.group(2)
         try:
             shutil.copy2(path, path + ".decky-bisect-orig")
         except OSError:
@@ -8572,6 +8578,16 @@ query Link($slug: String!, $domainName: String!) {
                     parked.append(n)
                 except OSError:
                     pass
+            # A hunt restarted while a previous one's DLLs are still parked
+            # would otherwise record nothing to restore and leave 160-odd
+            # mods switched off for good.
+            already = {n for n in parked}
+            for n in sorted(os.listdir(se_dir)):
+                if not n.endswith(SE_DISABLED_SUFFIX):
+                    continue
+                live = n[: -len(SE_DISABLED_SUFFIX)]
+                if live.lower() not in keep and live not in already:
+                    parked.append(live)
         state = {
             "app_id": app_id, "install_dir": install_dir,
             "plugins_subpath": plugins_subpath, "plugins_style": plugins_style,
