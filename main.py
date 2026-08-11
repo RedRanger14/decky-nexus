@@ -8926,6 +8926,70 @@ query Link($slug: String!, $domainName: String!) {
         )
         return {"ok": True, "skipped": len(roots), "extra": len(dependents)}
 
+    async def enforce_skips(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str
+    ) -> dict:
+        """Make the load order match what we have decided is off, and take
+        the full dependency closure with it.
+
+        Run after a collection finishes and again when the game exits.
+        Two things make it necessary, both found on a clean install of a
+        1,972-mod collection:
+
+        The per-install dependent check can only see a mod's OWN masters
+        at the moment it installs, so a mod installed BEFORE its master
+        was skipped is never reconsidered - one slipped through exactly
+        that way. A pass over the finished set catches those.
+
+        And Skyrim rewrites Plugins.txt itself: two skips came back on
+        during a run. Re-asserting on exit means whatever the game did,
+        the next launch starts from our state rather than its.
+        """
+        if not plugins_subpath:
+            return {"ok": True, "changed": 0}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        if not os.path.isfile(path):
+            return {"ok": True, "changed": 0}
+        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        skips = _load_skips(game_domain)
+        if not skips:
+            return {"ok": True, "changed": 0}
+        lines = _read_plugins_txt(path)
+        header = [l for l in lines if l.strip().startswith("#")]
+        entries = _plugin_entries(lines, plugins_style)
+        listed = [n for n, _ in entries]
+        dependents = await asyncio.to_thread(
+            _dependents_closure, data_path, listed, set(skips))
+        for n in dependents:
+            skips.setdefault(
+                n.lower(),
+                {"reason": "needs a mod that breaks the game", "root": False},
+            )
+        off = set(skips)
+        # Only report a change when one was actually needed - this runs on
+        # every game exit and a log line per launch saying "0" is noise.
+        changed = [n for n, on in entries if on and n.lower() in off]
+        if changed or dependents:
+            _save_skips(game_domain, skips)
+            starred = plugins_style != "listed"
+            _write_plugins_txt(path, header + [
+                (n if n.lower() in off else ("*" + n if starred else n))
+                for n, on in entries
+                if not (plugins_style == "listed" and n.lower() in off)
+            ])
+            _rewrite_load_order(
+                data_path, path, plugins_style,
+                IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset()),
+                off,
+            )
+            decky.logger.info(
+                f"{game_domain}: enforced skips - {len(changed)} switched "
+                f"back off, {len(dependents)} dependent(s) newly caught"
+            )
+        return {"ok": True, "changed": len(changed),
+                "new_dependents": len(dependents)}
+
     async def fix_load_order(
         self, app_id: int, install_dir: str, plugins_subpath: str,
         plugins_style: str, game_domain: str = ""

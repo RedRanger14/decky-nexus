@@ -437,6 +437,24 @@ export const fixLoadOrder = callable<
   }
 >("fix_load_order");
 
+/** Re-assert the skip set with its full dependency closure.
+ *
+ * Run after a collection finishes and when the game exits. The
+ * per-install dependent check only sees a mod's own masters at install
+ * time, so a mod installed BEFORE its master was skipped is never
+ * reconsidered - and Skyrim rewrites Plugins.txt itself, which switched
+ * two skips back on mid-run on device. */
+export const enforceSkips = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string
+  ],
+  { ok: boolean; changed?: number; new_dependents?: number }
+>("enforce_skips");
+
 /** Plugins already proven to break this game, so nobody has to find
  * them twice. Roots only - dependents are derived. */
 export const getKnownBadState = callable<

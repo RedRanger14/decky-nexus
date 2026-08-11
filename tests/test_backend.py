@@ -4185,6 +4185,98 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestEnforceSkips(unittest.TestCase):
+    """Skips must survive both the install order and the game itself.
+
+    Clean install of a 1,972-mod collection, both found on device:
+    GTS - Orpheus Replacer installed BEFORE the master it needs was
+    skipped, so the per-install check never saw it; and Skyrim rewrote
+    Plugins.txt mid-run and switched two skips back on.
+    """
+
+    GAME = "Enforce Test"
+    DOMAIN = "enforcetest"
+    APP_ID = 489830
+    SUB = "Skyrim Special Edition/Plugins.txt"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(self.data)
+        _make_plugin(os.path.join(self.data, "Base.esm"), flags=1)
+        _make_plugin(os.path.join(self.data, "Bad.esp"), ["Base.esm"])
+        _make_plugin(os.path.join(self.data, "NeedsBad.esp"), ["Bad.esp"])
+        _make_plugin(os.path.join(self.data, "Fine.esp"), ["Base.esm"])
+        self.path = main._plugins_txt_path(self.APP_ID, self.SUB)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        settings = main._load_settings()
+        settings.setdefault("skipped", {})[self.DOMAIN] = {
+            "bad.esp": {"reason": "crashes", "root": True}
+        }
+        main._save_settings(settings)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("skipped", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.path), ignore_errors=True)
+
+    def _args(self):
+        return (self.APP_ID, self.GAME, self.SUB, "starred", self.DOMAIN)
+
+    def _on(self):
+        return {n for n, o in main._plugin_entries(
+            main._read_plugins_txt(self.path), "starred") if o}
+
+    def test_a_dependent_installed_before_its_master_is_caught(self):
+        # The install-time check could not see this one: NeedsBad was
+        # already installed and enabled when Bad was skipped.
+        main._write_plugins_txt(
+            self.path, ["*Base.esm", "Bad.esp", "*NeedsBad.esp", "*Fine.esp"])
+        r = run(self.plugin.enforce_skips(*self._args()))
+        self.assertEqual(r["new_dependents"], 1)
+        self.assertNotIn("NeedsBad.esp", self._on())
+        self.assertIn("Fine.esp", self._on(), "unrelated mods stay on")
+
+    def test_a_skip_the_game_switched_back_on_is_switched_off_again(self):
+        main._write_plugins_txt(
+            self.path, ["*Base.esm", "*Bad.esp", "*Fine.esp"])
+        r = run(self.plugin.enforce_skips(*self._args()))
+        self.assertEqual(r["changed"], 1)
+        self.assertNotIn("Bad.esp", self._on())
+
+    def test_it_is_idempotent(self):
+        main._write_plugins_txt(
+            self.path, ["*Base.esm", "*Bad.esp", "*NeedsBad.esp", "*Fine.esp"])
+        run(self.plugin.enforce_skips(*self._args()))
+        first = self._on()
+        second = run(self.plugin.enforce_skips(*self._args()))
+        self.assertEqual(self._on(), first)
+        self.assertEqual(second["changed"], 0,
+                         "runs on every game exit - must stay quiet")
+
+    def test_nothing_recorded_means_nothing_touched(self):
+        settings = main._load_settings()
+        settings.get("skipped", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        main._write_plugins_txt(self.path, ["*Base.esm", "*Bad.esp"])
+        run(self.plugin.enforce_skips(*self._args()))
+        self.assertEqual(self._on(), {"Base.esm", "Bad.esp"})
+
+    def test_listed_style_drops_the_line_rather_than_unstarring_it(self):
+        # FO3/FNV: presence IS activation, so the only way off is out.
+        main._write_plugins_txt(self.path, ["Base.esm", "Bad.esp", "Fine.esp"])
+        run(self.plugin.enforce_skips(
+            self.APP_ID, self.GAME, self.SUB, "listed", self.DOMAIN))
+        names = [n for n, _ in main._plugin_entries(
+            main._read_plugins_txt(self.path), "listed")]
+        self.assertNotIn("Bad.esp", names)
+        self.assertIn("Fine.esp", names)
+
+
 class TestDownloadResumePlan(unittest.TestCase):
     """How a download continues from a .part after pause or failure.
 
