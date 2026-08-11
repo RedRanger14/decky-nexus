@@ -122,7 +122,7 @@ export interface InstalledResult {
 
 export interface InstallProgress {
   mod_id: number;
-  phase: "downloading" | "extracting" | "done" | "error";
+  phase: "downloading" | "extracting" | "paused" | "cancelled" | "done" | "error";
   percent: number;
   message?: string;
   /** Exact transfer accounting (downloading phase only). */
@@ -559,6 +559,27 @@ export const crashSince = callable<
     crash?: { log: string; address: string; at: number } | null;
   }
 >("crash_since");
+
+/** Pause or resume EVERY download - "pause" means "stop using my
+ * bandwidth". Each transfer keeps its .part and resumes with an HTTP
+ * Range request, so nothing is lost across the gap. */
+export const setDownloadsPaused = callable<
+  [paused: boolean],
+  { ok: boolean; paused?: boolean; in_flight?: number }
+>("set_downloads_paused");
+
+/** Abort one in-flight download and delete its partial file. */
+export const cancelDownload = callable<
+  [mod_id: number],
+  { ok: boolean; error?: string }
+>("cancel_download");
+
+/** Paused state + in-flight count, so a reopened Downloads page shows
+ * the truth rather than whatever it last remembered. */
+export const getDownloadControl = callable<
+  [],
+  { ok: boolean; paused?: boolean; in_flight?: number }
+>("get_download_control");
 
 // Just the count, for sizing the "this will take a while" launch notice.
 export const getInstalledCount = callable<

@@ -174,7 +174,7 @@ export function updateDownload(
   bps?: number
 ): void {
   const existing = downloads.get(modId);
-  if (phase === "done" || phase === "error") {
+  if (phase === "done" || phase === "error" || phase === "cancelled") {
     // Move terminal states to the completed list (Downloads page shows
     // them until cleared).
     if (existing) {

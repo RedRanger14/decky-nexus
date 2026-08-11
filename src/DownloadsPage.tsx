@@ -24,7 +24,14 @@ import {
   subscribeCollectionRun,
   subscribeDownloads,
 } from "./state";
-import { getDiskUsage, getModDetails } from "./api";
+import {
+  cancelDownload,
+  getDiskUsage,
+  getDownloadControl,
+  getModDetails,
+  setDownloadsPaused,
+} from "./api";
+import { cancellableDownload, pauseAllControl } from "./panelRules";
 import { getSupportedGame } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
@@ -426,6 +433,9 @@ export function DownloadsPage() {
   const [disk, setDisk] = useState<
     { totalGb: number; freeGb: number; minFreeGb: number } | undefined
   >();
+  // Backend truth, not page memory: a reopened page must show a pause
+  // that was set an hour ago.
+  const [paused, setPaused] = useState(false);
   useEffect(() => {
     const un1 = subscribeDownloads(() => force((n) => n + 1));
     const un2 = subscribeCollectionRun(() => force((n) => n + 1));
@@ -439,6 +449,7 @@ export function DownloadsPage() {
           });
       });
     pollDisk();
+    getDownloadControl().then((r) => setPaused(Boolean(r.paused)));
     const diskTimer = setInterval(pollDisk, 3000);
     // 250ms tick: records idle samples (event-driven sampling only fires
     // while bytes flow) and keeps the graph/ETA visibly live.
@@ -525,8 +536,34 @@ export function DownloadsPage() {
           />
         )}
 
-        <div style={{ fontSize: "13px", fontWeight: 600, margin: "8px 0 6px" }}>
-          Active ({active.length})
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            margin: "8px 0 6px",
+          }}
+        >
+          <span style={{ fontSize: "13px", fontWeight: 600 }}>
+            Active ({active.length})
+          </span>
+          {pauseAllControl(active.length, paused).show && (
+            <DialogButton
+              onClick={async () => {
+                const next = !paused;
+                setPaused(next);
+                await setDownloadsPaused(next);
+              }}
+              style={{
+                minWidth: "0",
+                width: "auto",
+                padding: "4px 12px",
+                fontSize: "12px",
+              }}
+            >
+              {pauseAllControl(active.length, paused).label}
+            </DialogButton>
+          )}
         </div>
         <Focusable style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
           {active.length === 0 && (
@@ -535,31 +572,58 @@ export function DownloadsPage() {
             </div>
           )}
           {active.map((d) => (
-            <Row
+            <Focusable
               key={d.modId}
-              onActivate={() =>
-                openDownloadTarget(d.modId, d.gameAppId, d.collectionSlug, d.name)
-              }
-              name={d.name}
-              pct={d.phase === "extracting" ? 100 : d.percent}
-              pulse={d.phase === "extracting"}
-              status={
-                d.phase === "downloading"
-                  ? [
-                      d.bytesDone !== undefined && d.bytesTotal
-                        ? `${formatBytes(d.bytesDone)} / ${formatBytes(d.bytesTotal)}`
-                        : `${d.percent}%`,
-                      d.bps ? formatSpeed(d.bps) : undefined,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")
-                  : d.phase === "extracting"
-                  ? "⚙ Installing…"
-                  : d.phase === "queued"
-                  ? "✓ Downloaded · waiting to install"
-                  : "Starting…"
-              }
-            />
+              style={{ display: "flex", gap: "4px", alignItems: "stretch" }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Row
+                  onActivate={() =>
+                    openDownloadTarget(
+                      d.modId,
+                      d.gameAppId,
+                      d.collectionSlug,
+                      d.name
+                    )
+                  }
+                  name={d.name}
+                  pct={d.phase === "extracting" ? 100 : d.percent}
+                  pulse={d.phase === "extracting"}
+                  status={
+                    d.phase === "downloading"
+                      ? [
+                          d.bytesDone !== undefined && d.bytesTotal
+                            ? `${formatBytes(d.bytesDone)} / ${formatBytes(d.bytesTotal)}`
+                            : `${d.percent}%`,
+                          d.bps ? formatSpeed(d.bps) : undefined,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : d.phase === "extracting"
+                      ? "⚙ Installing…"
+                      : d.phase === "paused"
+                      ? "⏸ Paused"
+                      : d.phase === "queued"
+                      ? "✓ Downloaded · waiting to install"
+                      : "Starting…"
+                  }
+                />
+              </div>
+              {cancellableDownload(d.phase) && (
+                <DialogButton
+                  onClick={() => cancelDownload(d.modId)}
+                  style={{
+                    minWidth: "0",
+                    width: "36px",
+                    padding: "0",
+                    fontSize: "14px",
+                    flexShrink: 0,
+                  }}
+                >
+                  ✕
+                </DialogButton>
+              )}
+            </Focusable>
           ))}
         </Focusable>
 
@@ -596,7 +660,13 @@ export function DownloadsPage() {
                 openDownloadTarget(d.modId, d.gameAppId, d.collectionSlug, d.name)
               }
               name={d.name}
-              status={d.phase === "done" ? "Done ✓" : "Failed ⚠"}
+              status={
+                d.phase === "done"
+                  ? "Done ✓"
+                  : d.phase === "cancelled"
+                  ? "Cancelled"
+                  : "Failed ⚠"
+              }
               dim
             />
           ))}
