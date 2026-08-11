@@ -29,6 +29,7 @@ import {
   registerCollection,
   setCollectionAttention,
   uninstallCollection,
+  enforceSkips,
 } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
@@ -610,6 +611,19 @@ export function CollectionPage() {
             : `Done: ${bits.join(", ")}`,
       });
     } finally {
+      // The per-install check only sees a mod's own masters at the moment
+      // it installs, so a mod installed BEFORE its master was skipped is
+      // never reconsidered. One slipped through exactly that way on a
+      // clean 1,972-mod run, and the user had to be told to fix it.
+      if (game.pluginsTxtSubpath) {
+        await enforceSkips(
+          game.appId,
+          game.installDirName,
+          game.pluginsTxtSubpath,
+          game.pluginsTxtStyle ?? "starred",
+          game.nexusDomain
+        );
+      }
       endCollectionRun();
     }
   };

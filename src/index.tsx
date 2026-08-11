@@ -68,6 +68,7 @@ import {
   crashBisectRecord,
   crashBisectStart,
   crashSince,
+  enforceSkips,
   fixLoadOrder,
   getInstalledCount,
   getLoadOrderState,
@@ -3485,9 +3486,24 @@ export default definePlugin(() => {
       };
     }
   ).GameSessions?.RegisterForAppLifetimeNotifications?.((e) => {
-    if (!e.bRunning) return;
     const game = getSupportedGame(e.unAppID);
     if (!game) return;
+    if (!e.bRunning) {
+      // Bethesda games rewrite Plugins.txt themselves: Skyrim switched
+      // two deliberately-skipped mods back on mid-run and crashed on the
+      // next launch. Re-asserting on exit means whatever the game did to
+      // the file, the next launch starts from our state rather than its.
+      if (game.pluginsTxtSubpath) {
+        enforceSkips(
+          game.appId,
+          game.installDirName,
+          game.pluginsTxtSubpath,
+          game.pluginsTxtStyle ?? "starred",
+          game.nexusDomain
+        );
+      }
+      return;
+    }
     getInstalledCount(game.nexusDomain).then((r) => {
       const wait = launchWaitNotice(r.ok ? r.mods ?? 0 : 0);
       if (wait) {
