@@ -194,3 +194,22 @@ export function crashSuspect(
       a.frame - b.frame
   )[0];
 }
+
+/** How many distinct things are wrong, for the Troubleshooting header.
+ *
+ * Counted per FAULT, not per affected mod: 37 script-extender plugins
+ * failing is one thing the user can act on, and showing "37" would make a
+ * single fixable problem look like a catastrophe. */
+export function troubleshootingCount(
+  runtimeOutdated: boolean,
+  failedPlugins: number,
+  hasCrashSuspect: boolean,
+  loadOrderIssue: string | undefined
+): number {
+  return (
+    (runtimeOutdated ? 1 : 0) +
+    (failedPlugins > 0 ? 1 : 0) +
+    (hasCrashSuspect ? 1 : 0) +
+    (loadOrderIssue ? 1 : 0)
+  );
+}

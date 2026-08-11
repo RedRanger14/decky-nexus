@@ -13,6 +13,7 @@ import {
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
+  troubleshootingCount,
 } from "../.test-build/panelRules.js";
 
 test("reset is reachable with no mods installed", () => {
@@ -289,4 +290,28 @@ test("a crash outranks the in-game signal", () => {
     saveLoadVerdict(60_000, "SkyrimSE.exe 0x0001401D74A0", "01D74A0", true),
     "crash"
   );
+});
+
+// The troubleshooting section is collapsed by default and shows a count,
+// so a panel full of ways to disable mods does not read as "this is
+// fragile" to someone whose game is working fine.
+test("nothing wrong reads as nothing wrong", () => {
+  assert.equal(troubleshootingCount(false, 0, false, undefined), 0);
+});
+
+test("each distinct fault counts once", () => {
+  assert.equal(troubleshootingCount(true, 0, false, undefined), 1);
+  assert.equal(troubleshootingCount(false, 3, false, undefined), 1);
+  assert.equal(troubleshootingCount(false, 0, true, undefined), 1);
+  assert.equal(troubleshootingCount(false, 0, false, "load order"), 1);
+});
+
+test("several faults add up", () => {
+  assert.equal(troubleshootingCount(true, 2, true, "load order"), 4);
+});
+
+test("many failed plugins are still one thing to look at", () => {
+  // The user acts on the row, not on each plugin - counting 37 would
+  // make one fixable problem look like a catastrophe.
+  assert.equal(troubleshootingCount(false, 37, false, undefined), 1);
 });
