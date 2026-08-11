@@ -4185,6 +4185,79 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestHuntStartsFromTheFullList(unittest.TestCase):
+    """A hunt must search every mod, not the leftovers of the last one.
+
+    Device: an interrupted run left the load order halfway through a test.
+    Starting again snapshotted "whatever is enabled right now" as the
+    whole search space, quietly reducing 1,947 plugins to 968 - so a
+    culprit in the other half could never be found, and the game was
+    missing half its mods the entire time.
+    """
+
+    GAME = "Hunt Restore Test"
+    APP_ID = 489830
+    SUB = "Skyrim Special Edition/Plugins.txt"
+    LOG = "Skyrim Special Edition/SKSE/skse64.log"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(os.path.join(self.data, "SKSE", "Plugins"))
+        self.names = [f"m{i}.esp" for i in range(10)]
+        for n in self.names:
+            _make_plugin(os.path.join(self.data, n))
+        self.path = main._plugins_txt_path(self.APP_ID, self.SUB)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        # A crash log for the signature auto-detect to read.
+        se = os.path.dirname(main._game_prefs_path(self.APP_ID, self.LOG))
+        os.makedirs(se, exist_ok=True)
+        with open(os.path.join(se, "crash-2026-08-11-00-00-00.log"), "w") as f:
+            f.write('Unhandled exception "EXCEPTION_ACCESS_VIOLATION" at '
+                    "0x0001401D8845 SkyrimSE.exe+01D8845\n"
+                    "CALL STACK ([P]robable / [S]tack scan):\n"
+                    "\t[ 0][P] 0x0001401D8845 SkyrimSE.exe+01D8845 -> 1+0x1\n")
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.path), ignore_errors=True)
+
+    def _start(self):
+        return run(self.plugin.crash_bisect_start(
+            self.APP_ID, self.GAME, self.SUB, "starred",
+            "skyrimspecialedition", "", self.LOG, []))
+
+    def test_it_searches_every_enabled_mod(self):
+        main._write_plugins_txt(self.path, ["*" + n for n in self.names])
+        self.assertEqual(self._start()["total"], 10)
+
+    def test_a_half_disabled_list_from_an_interrupted_run_is_restored(self):
+        main._write_plugins_txt(self.path, ["*" + n for n in self.names])
+        r = self._start()
+        self.assertEqual(r["total"], 10)
+        # Simulate the interruption: a test applied, then Decky restarted.
+        main._write_plugins_txt(
+            self.path,
+            ["*" + n for n in self.names[:5]] + self.names[5:])
+        again = self._start()
+        self.assertEqual(again["total"], 10,
+                         "the second hunt must not inherit the first's cut")
+
+    def test_the_detected_signature_carries_its_offset(self):
+        main._write_plugins_txt(self.path, ["*" + n for n in self.names])
+        self.assertEqual(self._start()["signature"], "SkyrimSE.exe+01D8845")
+
+    def test_a_finished_hunt_leaves_no_stale_backup(self):
+        main._write_plugins_txt(self.path, ["*" + n for n in self.names])
+        self._start()
+        run(self.plugin.crash_bisect_finish(True))
+        self.assertFalse(
+            os.path.isfile(self.path + ".decky-bisect-orig"),
+            "a stale copy would restore a list predating later installs")
+
+
 class TestHuntSignatureDetection(unittest.TestCase):
     """The hunt has to identify ONE fault, not a module.
 

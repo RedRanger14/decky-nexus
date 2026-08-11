@@ -8520,6 +8520,23 @@ query Link($slug: String!, $domainName: String!) {
         if not plugins_subpath or plugins_style == "listed":
             return {"ok": False, "error": "This game's load order isn't a list"}
         path = _plugins_txt_path(app_id, plugins_subpath)
+        # A previous hunt that was interrupted leaves the load order
+        # halfway through a test. Snapshotting "whatever is enabled right
+        # now" as the search space then hunts inside a fraction of the
+        # mods and can never find a culprit outside it - on device that
+        # silently reduced 1,947 plugins to 968. So restore the pristine
+        # list first if one was kept, and only take a fresh backup when
+        # there is nothing to restore from.
+        pristine = path + ".decky-bisect-orig"
+        if os.path.isfile(pristine):
+            try:
+                shutil.copy2(pristine, path)
+                decky.logger.info(
+                    "crash hunt: restored the load order left by an "
+                    "interrupted run before starting"
+                )
+            except OSError:
+                pass
         entries = _plugin_entries(_read_plugins_txt(path), plugins_style)
         order = [n for n, on in entries if on]
         if len(order) < 4:
@@ -8548,10 +8565,11 @@ query Link($slug: String!, $domainName: String!) {
                 return {"ok": False, "error":
                         "Could not read a crash address from the latest log"}
             signature = m.group(2)
-        try:
-            shutil.copy2(path, path + ".decky-bisect-orig")
-        except OSError:
-            pass
+        if not os.path.isfile(pristine):
+            try:
+                shutil.copy2(path, pristine)
+            except OSError:
+                pass
         # Park every mod DLL except the few the game genuinely needs.
         #
         # This is the whole reason the first overnight run went nowhere. A
@@ -8703,10 +8721,14 @@ query Link($slug: String!, $domainName: String!) {
                 except OSError:
                     pass
         decky.logger.info(f"crash hunt over: restored {restored} mod DLL(s)")
-        try:
-            os.remove(_bisect_state_path())
-        except OSError:
-            pass
+        # Drop the pristine copy: a finished hunt has already put the load
+        # order back, and keeping it would make the NEXT hunt restore a
+        # list that predates whatever the user installed since.
+        for stale in (_bisect_state_path(), path + ".decky-bisect-orig"):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
         return {"ok": True, "skipped": state["skipped"] if keep_skips else [],
                 "restored_dlls": restored}
 
