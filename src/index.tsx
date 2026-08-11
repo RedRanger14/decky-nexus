@@ -413,16 +413,32 @@ function ResetGameRow({
       if (result.ok && result.use_steam_client) {
         setLaunchOptions(game.appId, "");
       }
+      // Reset used to report success it had not checked: on device it
+      // said "1543 mods removed, 0 errors" while 20GB of mod files stayed
+      // in Data, and the only clue was the main menu looking wrong. If
+      // files survive that no record covered, say so.
+      const left = result.leftovers ?? 0;
       toaster.toast(
         result.ok
-          ? {
-              title: `${game.displayName} reset to vanilla`,
-              body:
-                `${result.removed ?? 0} mods removed` +
-                ((result.errors?.length ?? 0) > 0
-                  ? ` · ${result.errors!.length} items need a look`
-                  : " · ready for a clean start"),
-            }
+          ? left > 0
+            ? {
+                title: `${game.displayName} is not fully vanilla`,
+                body:
+                  `${result.removed ?? 0} mods removed, but ${left} file` +
+                  `${left === 1 ? "" : "s"} could not be traced to a mod and ` +
+                  "are still there. Verify the game files in Steam to be sure.",
+                duration: 20000,
+              }
+            : {
+                title: `${game.displayName} reset to vanilla`,
+                body:
+                  `${result.removed ?? 0} mods removed` +
+                  ((result.errors?.length ?? 0) > 0
+                    ? ` · ${result.errors!.length} items need a look`
+                    : result.verified
+                    ? " · verified clean"
+                    : " · ready for a clean start"),
+              }
           : { title: "Reset failed", body: result.error ?? "" }
       );
     } catch (e) {
