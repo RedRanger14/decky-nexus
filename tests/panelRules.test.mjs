@@ -6,8 +6,10 @@ import test from "node:test";
 import {
   crashHuntVerdict,
   crashSuspect,
+  huntProgressNote,
   launchWaitNotice,
   loadOrderProblem,
+  saveLoadVerdict,
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
@@ -213,6 +215,78 @@ test("a different crash is not counted as the hunted one", () => {
 test("a crash beats the clock - it does not wait out the window", () => {
   assert.equal(
     crashHuntVerdict(1_000, "SkyrimSE.exe 0x0001401D74A0", "01D74A0"),
+    "crash"
+  );
+});
+
+// The hunt restarts the game for hours. Without a visible count that
+// looks like a boot loop, and quitting it is the rational response.
+test("every launch is numbered, and the number comes first", () => {
+  const t = huntProgressNote(3, 977, 977, 0);
+  assert.ok(t.title.startsWith("Attempt 3"), t.title);
+});
+
+test("it says how many launches are left, not just where it is", () => {
+  assert.match(huntProgressNote(1, 1955, 1955, 0).body, /About 12 more launches/);
+  assert.match(huntProgressNote(9, 8, 8, 2).body, /About 4 more launches/);
+});
+
+test("found culprits are reported once there are any", () => {
+  assert.match(huntProgressNote(5, 100, 100, 1).body, /1 broken mod found/);
+  assert.match(huntProgressNote(5, 100, 100, 3).body, /3 broken mods found/);
+});
+
+test("before anything is found it says to leave the game alone", () => {
+  assert.match(huntProgressNote(2, 500, 500, 0).body, /closes itself/);
+});
+
+test("the estimate never goes negative or NaN at the end", () => {
+  for (const remaining of [0, 1, 2]) {
+    const t = huntProgressNote(20, 1, remaining, 4);
+    assert.match(t.body, /About \d+ more launch/, `remaining=${remaining}`);
+  }
+});
+
+// The save-load hunt. Reaching the menu proves nothing; the world has to
+// load, and that needs the user to press Continue.
+test("a crash on load is the fault being hunted", () => {
+  assert.equal(
+    saveLoadVerdict(60_000, "SkyrimSE.exe 0x0001401D74A0", "01D74A0", false),
+    "crash"
+  );
+});
+
+test("the world loading is the pass condition, not the menu", () => {
+  assert.equal(saveLoadVerdict(60_000, undefined, "01D74A0", true), "loaded");
+  // Menu reached, nothing else: still waiting, NOT a pass.
+  assert.equal(saveLoadVerdict(60_000, undefined, "01D74A0", false), "waiting");
+});
+
+test("silence is never counted as success here", () => {
+  // The boot hunt treats "no crash by now" as a pass. This one cannot -
+  // nobody pressed Continue, so there is no result to record.
+  assert.equal(
+    saveLoadVerdict(600_000, undefined, "01D74A0", false),
+    "no-input"
+  );
+});
+
+test("a loaded world beats the clock", () => {
+  assert.equal(saveLoadVerdict(900_000, undefined, "01D74A0", true), "loaded");
+});
+
+test("a different crash is still not our crash", () => {
+  assert.equal(
+    saveLoadVerdict(60_000, "BladeAndBlunt.dll 0x6FFFF9AB629D", "01D74A0", false),
+    "other-crash"
+  );
+});
+
+test("a crash outranks the in-game signal", () => {
+  // Scripts can start and the game die a moment later; the crash is the
+  // more important fact.
+  assert.equal(
+    saveLoadVerdict(60_000, "SkyrimSE.exe 0x0001401D74A0", "01D74A0", true),
     "crash"
   );
 });

@@ -1238,15 +1238,24 @@ def _bisect_advance(state: dict, crashed: bool) -> dict:
     return state
 
 
-def _plugin_entries(lines: list) -> list:
-    """(name, enabled) for the real entries, skipping comments/blanks."""
+def _plugin_entries(lines: list, style: str = "starred") -> list:
+    """(name, enabled) for the real entries, skipping comments/blanks.
+
+    The two dialects disagree about what "enabled" means. Starred
+    (Skyrim/FO4) marks active plugins with a leading '*'. Listed
+    (FO3/FNV/Skyrim 2011) has no marker at all - being in the file IS
+    being enabled. Reading a listed file with the starred rule reports
+    every plugin as disabled, which silently turns any check built on
+    this into a no-op.
+    """
     out = []
     for line in lines:
         s = line.strip()
         if not s or s.startswith("#"):
             continue
-        out.append((s[1:].strip() if s.startswith("*") else s,
-                    s.startswith("*")))
+        starred = s.startswith("*")
+        name = s[1:].strip() if starred else s
+        out.append((name, True if style == "listed" else starred))
     return out
 
 
@@ -1364,7 +1373,7 @@ def _rewrite_load_order(
     if not lines:
         return {"ok": False, "error": "No plugins.txt to sort"}
     header = [l for l in lines if l.strip().startswith("#")]
-    entries = _plugin_entries(lines)
+    entries = _plugin_entries(lines, style)
     # Drop the game's own masters if anything ever wrote them in: they
     # load regardless, and their presence renumbers every other plugin.
     dropped = [n for n, _ in entries if n.lower() in implicit]
@@ -8379,23 +8388,33 @@ query Link($slug: String!, $domainName: String!) {
         self, app_id: int, install_dir: str, plugins_subpath: str,
         plugins_style: str, game_domain: str = ""
     ) -> dict:
-        """How many enabled plugins are listed before a master they need.
+        """What is wrong with the load order: ordering, dependencies, or both.
 
         Skyrim and Fallout 4 read plugins.txt as the load order, and we
         only ever appended to it - so the order was the order things
         happened to be installed in. On the device's 1,960-plugin
         collection that put 557 plugins ahead of a master they depend on,
         which is a crash on the way into the world, not a nuance.
+
+        FO3 and New Vegas order by file TIMESTAMP instead, so their file
+        order means nothing and the violations count is not reported for
+        them. The dependency half applies just as much though: the same
+        Skyrim install had 13 masters sitting installed-but-off with 139
+        plugins depending on them, and that fault has nothing to do with
+        which dialect of plugins.txt a game speaks. Bailing out on the
+        whole check because the ordering half is irrelevant left the two
+        Gamebryo games with no dependency check at all.
         """
-        if not plugins_subpath or plugins_style == "listed":
+        if not plugins_subpath:
             return {"ok": True, "supported": False}
+        timestamp_ordered = plugins_style == "listed"
         path = _plugins_txt_path(app_id, plugins_subpath)
         data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
         if not os.path.isfile(path) or not os.path.isdir(data_path):
             return {"ok": True, "supported": False}
         implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())
         entries = [(n, on) for n, on in
-                   _plugin_entries(_read_plugins_txt(path))
+                   _plugin_entries(_read_plugins_txt(path), plugins_style)
                    if n.lower() not in implicit]
         enabled = [n for n, on in entries if on]
         needed = _masters_to_enable(data_path, entries, implicit)
@@ -8403,7 +8422,12 @@ query Link($slug: String!, $domainName: String!) {
             "ok": True,
             "supported": True,
             "total": len(enabled),
-            "violations": _load_order_report(data_path, enabled),
+            # Meaningless where the engine orders by file timestamp -
+            # reporting a number the user cannot act on is worse than
+            # reporting none.
+            "violations": 0 if timestamp_ordered
+            else _load_order_report(data_path, enabled),
+            "timestamp_ordered": timestamp_ordered,
             "disabled_masters": len(needed),
             "examples": [n for n, _ in needed[:3]],
         }
@@ -8423,15 +8447,27 @@ query Link($slug: String!, $domainName: String!) {
             IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset()),
         )
         if r.get("ok"):
+            # FO3/FNV load by file timestamp, so switching a master back on
+            # is only half the job - it also has to be stamped earlier than
+            # everything that needs it, or it is enabled and still loading
+            # after its dependents.
+            if plugins_style == "listed":
+                r["restamped"] = await asyncio.to_thread(
+                    _stagger_plugin_mtimes, data_path, path,
+                    plugins_style, game_domain
+                )
             decky.logger.info(
-                f"load order sorted: {r['violations_before']} -> "
-                f"{r['violations_after']} violations over {r['sorted']} plugins"
+                f"load order fixed: {r['violations_before']} -> "
+                f"{r['violations_after']} violations, "
+                f"{r.get('enabled_masters', 0)} master(s) switched on, "
+                f"{r.get('restamped', 0)} restamped"
             )
         return r
 
     async def crash_bisect_start(
         self, app_id: int, install_dir: str, plugins_subpath: str,
-        plugins_style: str, game_domain: str, signature: str
+        plugins_style: str, game_domain: str, signature: str,
+        log_subpath: str, keep_dlls: list
     ) -> dict:
         """Begin an automated hunt for the plugins that crash the game.
 
@@ -8446,7 +8482,7 @@ query Link($slug: String!, $domainName: String!) {
         if not plugins_subpath or plugins_style == "listed":
             return {"ok": False, "error": "This game's load order isn't a list"}
         path = _plugins_txt_path(app_id, plugins_subpath)
-        entries = _plugin_entries(_read_plugins_txt(path))
+        entries = _plugin_entries(_read_plugins_txt(path), plugins_style)
         order = [n for n, on in entries if on]
         if len(order) < 4:
             return {"ok": False, "error": "Not enough mods to search"}
@@ -8454,16 +8490,46 @@ query Link($slug: String!, $domainName: String!) {
             shutil.copy2(path, path + ".decky-bisect-orig")
         except OSError:
             pass
+        # Park every mod DLL except the few the game genuinely needs.
+        #
+        # This is the whole reason the first overnight run went nowhere. A
+        # hunt turns half the plugins off; SKSE plugins that look up forms
+        # from their own plugin then die on a null, which is a crash the
+        # hunt correctly refuses to count - and then retries, forever,
+        # because that outcome is perfectly repeatable. BladeAndBlunt did
+        # exactly this 20 times in a row. Parking them removes the failure
+        # instead of politely declining to learn from it.
+        parked = []
+        se_dir = os.path.join(
+            STEAM_COMMON, install_dir,
+            *SE_PLUGIN_DIRS.get(log_subpath.split("/")[0],
+                                ("Data", "SKSE", "Plugins"))
+        )
+        keep = {str(n).lower() for n in (keep_dlls or [])}
+        if os.path.isdir(se_dir):
+            for n in sorted(os.listdir(se_dir)):
+                if not n.lower().endswith(".dll") or n.lower() in keep:
+                    continue
+                try:
+                    os.replace(os.path.join(se_dir, n),
+                               os.path.join(se_dir, n + SE_DISABLED_SUFFIX))
+                    parked.append(n)
+                except OSError:
+                    pass
         state = {
             "app_id": app_id, "install_dir": install_dir,
             "plugins_subpath": plugins_subpath, "plugins_style": plugins_style,
             "game_domain": game_domain, "signature": signature,
             "order": order, "skipped": [], "lo": 0, "hi": len(order),
             "launches": 0, "found": None,
+            "se_dir": se_dir, "parked_dlls": parked,
         }
         _bisect_save(state)
-        decky.logger.info(f"crash hunt started over {len(order)} plugins")
-        return {"ok": True, "total": len(order)}
+        decky.logger.info(
+            f"crash hunt started over {len(order)} plugins, "
+            f"{len(parked)} mod DLL(s) parked for the duration"
+        )
+        return {"ok": True, "total": len(order), "parked_dlls": len(parked)}
 
     async def crash_bisect_apply(self) -> dict:
         """Write the load order for the next launch."""
@@ -8480,9 +8546,11 @@ query Link($slug: String!, $domainName: String!) {
         path = _plugins_txt_path(state["app_id"], state["plugins_subpath"])
         lines = _read_plugins_txt(path)
         header = [l for l in lines if l.strip().startswith("#")]
-        entries = _plugin_entries(lines)
+        entries = _plugin_entries(lines, state["plugins_style"])
+        starred = state["plugins_style"] != "listed"
         _write_plugins_txt(path, header + [
-            ("*" + n if n.lower() in keep else n) for n, _ in entries
+            ("*" + n if starred and n.lower() in keep else n)
+            for n, _ in entries
         ])
         # Pull in the masters the prefix needs and put it in load order -
         # skipping this is how a "clean" test ends up crashing on missing
@@ -8493,7 +8561,8 @@ query Link($slug: String!, $domainName: String!) {
             IMPLICIT_MASTERS_BY_DOMAIN.get(state["game_domain"], frozenset()),
         )
         enabled = len([1 for _, on in
-                       _plugin_entries(_read_plugins_txt(path)) if on])
+                       _plugin_entries(_read_plugins_txt(path),
+                                       state["plugins_style"]) if on])
         return {
             "ok": True, "done": False, "testing": mid, "enabled": enabled,
             "remaining": state["hi"] - state["lo"],
@@ -8524,7 +8593,7 @@ query Link($slug: String!, $domainName: String!) {
         path = _plugins_txt_path(state["app_id"], state["plugins_subpath"])
         lines = _read_plugins_txt(path)
         header = [l for l in lines if l.strip().startswith("#")]
-        entries = _plugin_entries(lines)
+        entries = _plugin_entries(lines, state["plugins_style"])
         off = {n.lower() for n in state["skipped"]} if keep_skips else set()
         on = {n.lower() for n in state["order"]} - off
         _write_plugins_txt(path, header + [
@@ -8535,11 +8604,25 @@ query Link($slug: String!, $domainName: String!) {
             data_path, path, state["plugins_style"],
             IMPLICIT_MASTERS_BY_DOMAIN.get(state["game_domain"], frozenset()),
         )
+        # Put back every DLL the hunt parked. Leaving these off would end
+        # the hunt by quietly disabling 160 working mods.
+        restored = 0
+        se_dir = state.get("se_dir") or ""
+        for n in state.get("parked_dlls") or []:
+            src = os.path.join(se_dir, n + SE_DISABLED_SUFFIX)
+            if os.path.isfile(src):
+                try:
+                    os.replace(src, os.path.join(se_dir, n))
+                    restored += 1
+                except OSError:
+                    pass
+        decky.logger.info(f"crash hunt over: restored {restored} mod DLL(s)")
         try:
             os.remove(_bisect_state_path())
         except OSError:
             pass
-        return {"ok": True, "skipped": state["skipped"] if keep_skips else []}
+        return {"ok": True, "skipped": state["skipped"] if keep_skips else [],
+                "restored_dlls": restored}
 
     async def crash_bisect_status(self) -> dict:
         state = _bisect_load()
@@ -8582,6 +8665,49 @@ query Link($slug: String!, $domainName: String!) {
             "crash": {"log": os.path.basename(newest), "address": addr,
                       "at": int(os.path.getmtime(newest))},
         }
+
+    async def in_game_since(
+        self, app_id: int, marker_subpath: str, after: float
+    ) -> dict:
+        """Has the game actually reached the world since `after`?
+
+        Reaching the main menu is not the same as playing, and the whole
+        point of the save-load hunt is faults that only appear once the
+        world loads. Papyrus only logs when scripts run, and scripts run
+        in the world - so the log being written after launch is a real
+        "we are in" signal rather than "a window appeared".
+        """
+        if not marker_subpath:
+            return {"ok": True, "in_game": False}
+        path = _game_prefs_path(app_id, marker_subpath)
+        try:
+            return {
+                "ok": True,
+                "in_game": os.path.getmtime(path) > after,
+                "at": int(os.path.getmtime(path)),
+            }
+        except OSError:
+            # Not written yet, which is the normal state before loading.
+            return {"ok": True, "in_game": False}
+
+    async def enable_papyrus_logging(
+        self, app_id: int, prefs_subpath: str
+    ) -> dict:
+        """Turn on the script log the save-load hunt watches for.
+
+        Off by default in Skyrim, and without it the hunt has no way to
+        tell "the save loaded" from "the user never pressed Continue".
+        """
+        if not prefs_subpath:
+            return {"ok": False, "error": "This game has no ini to set"}
+        path = _game_prefs_path(app_id, prefs_subpath)
+        if not os.path.isfile(path):
+            return {"ok": False, "error": "Game ini not found"}
+        try:
+            _patch_ini_settings(path, "Papyrus", {"bEnableLogging": "1"})
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True}
 
     async def get_installed_count(self, game_domain: str) -> dict:
         """How many mods we have installed for a game.

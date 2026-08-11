@@ -110,6 +110,59 @@ export function crashHuntVerdict(
   return elapsedMs >= patienceMs ? "boot" : "waiting";
 }
 
+/** How the hunt reads a launch when the test is "does a save load?".
+ *
+ * Reaching the menu proves nothing here - the whole point of this mode is
+ * faults that only appear once the world loads. And unlike the boot hunt,
+ * silence is NOT success: the user has to press Continue, and if they
+ * walked away nothing happened at all. Calling that a pass would poison
+ * the search with a result nobody produced, so it is reported as
+ * "no-input" and the launch is repeated rather than counted.
+ *
+ * `inGame` comes from the Papyrus log being written after launch - scripts
+ * only run in the world, so it is a genuine "we are playing" signal rather
+ * than "a window appeared".
+ */
+export function saveLoadVerdict(
+  elapsedMs: number,
+  crashAddress: string | undefined,
+  signature: string,
+  inGame: boolean,
+  patienceMs = 600_000
+): "crash" | "loaded" | "other-crash" | "waiting" | "no-input" {
+  if (crashAddress) {
+    return crashAddress.includes(signature) ? "crash" : "other-crash";
+  }
+  if (inGame) return "loaded";
+  return elapsedMs >= patienceMs ? "no-input" : "waiting";
+}
+
+/** The toast shown as each hunt launch begins.
+ *
+ * The hunt starts and closes the game over and over for hours. Without a
+ * running count that is indistinguishable from a boot loop, and the
+ * rational thing for the user to do is pull the plug on something that
+ * was working. So every launch is numbered, and the number goes first.
+ */
+export function huntProgressNote(
+  attempt: number,
+  modsUnderTest: number,
+  remaining: number,
+  found: number
+): { title: string; body: string } {
+  // Halving: each launch removes half of what's left to rule out, plus a
+  // launch to confirm the crash and one to confirm the end.
+  const left = Math.max(0, Math.ceil(Math.log2(Math.max(2, remaining)))) + 1;
+  return {
+    title: `Attempt ${attempt} — testing ${modsUnderTest.toLocaleString()} mods`,
+    body:
+      `About ${left} more launch${left === 1 ? "" : "es"} to go` +
+      (found > 0
+        ? `. ${found} broken mod${found === 1 ? "" : "s"} found so far`
+        : ". Leave the game alone — it closes itself"),
+  };
+}
+
 /** One crash-log call stack frame that names a mod DLL we could skip. */
 export interface CrashSuspect {
   name: string;
