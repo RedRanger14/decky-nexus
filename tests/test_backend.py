@@ -4185,6 +4185,65 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestResetClearsOurOwnArtefacts(unittest.TestCase):
+    """Reset means vanilla, including the things this plugin renamed.
+
+    Device: after a reset the panel still offered to "restore 2 skipped
+    plugins" for mods that no longer existed, because parked DLLs keep
+    their file and only lose their extension. The recorded skips survived
+    too, so a fresh install would have inherited decisions about a setup
+    that was gone.
+    """
+
+    GAME = "Reset Artefact Test"
+    DOMAIN = "resetartefacttest"
+    APP_ID = 489830
+    SUB = "Skyrim Special Edition/Plugins.txt"
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.se = os.path.join(self.install, "Data", "SKSE", "Plugins")
+        os.makedirs(self.se)
+        with open(os.path.join(self.se, "Live.dll"), "w") as f:
+            f.write("x")
+        for n in ("Parked.dll", "AlsoParked.dll"):
+            with open(os.path.join(self.se, n + main.SE_DISABLED_SUFFIX),
+                      "w") as f:
+                f.write("x")
+        settings = main._load_settings()
+        settings.setdefault("skipped", {})[self.DOMAIN] = {
+            "bad.esp": {"reason": "crashes", "root": True}
+        }
+        main._save_settings(settings)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("skipped", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def _reset(self):
+        return run(self.plugin.reset_game_modding(
+            self.DOMAIN, self.GAME, "Data", "dataDir", self.APP_ID, self.SUB))
+
+    def test_parked_plugins_are_removed_not_left_orphaned(self):
+        r = self._reset()
+        self.assertTrue(r["ok"])
+        left = [n for n in os.listdir(self.se)
+                if n.endswith(main.SE_DISABLED_SUFFIX)]
+        self.assertEqual(left, [], "nothing to restore should remain")
+
+    def test_it_does_not_delete_plugins_it_never_parked(self):
+        self._reset()
+        self.assertIn("Live.dll", os.listdir(self.se))
+
+    def test_recorded_skips_go_with_the_mods_they_were_about(self):
+        self._reset()
+        self.assertEqual(main._load_skips(self.DOMAIN), {})
+
+
 class TestKnownBadPlugins(unittest.TestCase):
     """Plugins proven to break a game are switched off automatically, and
     STAY off.
