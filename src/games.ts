@@ -273,9 +273,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // vcruntime140_1.dll isn't in that redist at all.
     prefixRuntimeFix: true,
     scriptExtenderLog: "Skyrim Special Edition/SKSE/skse64.log",
-    // Device, 2026-08-08/09: SkyrimSE.exe+01D74A0, a null deref in
-    // InitTESThread that a bad ESL patch triggers during data load.
-    crashSignature: "01D74A0",
+    // Left empty on purpose: the hunt reads the target address out of the
+    // newest crash log. Hardcoding one meant it could only ever chase the
+    // crash we already knew about - the moment 19 bad plugins fixed
+    // SkyrimSE.exe+01D74A0 on device, a different crash surfaced at
+    // +01D8845 and a pinned signature was useless against it.
+    crashSignature: "",
     // Engine Fixes patches the memory manager - vanilla Skyrim will not
     // load 1,900 plugins without it. CrashLogger is how the hunt reads
     // its own results, so parking it blinds the search.

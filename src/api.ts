@@ -443,7 +443,15 @@ export const crashBisectStart = callable<
     log_subpath: string,
     keep_dlls: string[]
   ],
-  { ok: boolean; total?: number; parked_dlls?: number; error?: string }
+  {
+    ok: boolean;
+    total?: number;
+    parked_dlls?: number;
+    /** The address the hunt locked on to (auto-detected when the caller
+     * passes an empty signature). */
+    signature?: string;
+    error?: string;
+  }
 >("crash_bisect_start");
 
 export const crashBisectApply = callable<
@@ -465,6 +473,8 @@ export const crashBisectRecord = callable<
   {
     ok: boolean;
     found?: string | null;
+    /** Plugins skipped alongside `found` because they depend on it. */
+    collateral?: string[];
     skipped?: string[];
     launches?: number;
     remaining?: number;
