@@ -23,6 +23,15 @@ import {
   toaster,
 } from "@decky/api";
 import { Fragment, useEffect, useRef, useState } from "react";
+
+/** The hunt outlives the panel: closing the QAM unmounts the component
+ * but not the async loop driving it. Keeping the stop flag and the
+ * "is one running" fact outside React means reopening the panel shows the
+ * hunt again with a working Stop, instead of an inviting Start button and
+ * no way to halt what is already going - which is exactly what happened
+ * on the first overnight run. */
+let huntStopFlag = false;
+let huntActive = false;
 import { FaEye, FaEyeSlash, FaPuzzlePiece } from "react-icons/fa";
 
 import {
@@ -87,6 +96,7 @@ import {
 import {
   crashHuntVerdict,
   crashSuspect,
+  huntProgressNote,
   launchWaitNotice,
   loadOrderProblem,
   maskCoopPassword,
@@ -529,7 +539,7 @@ function CurrentGameSection() {
       }
     | undefined
   >();
-  const huntStop = useRef(false);
+
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
   // time against the tool's own budget - honest, and it always moves.
@@ -598,6 +608,15 @@ function CurrentGameSection() {
         getPrefixRuntimeState(game.appId).then((r) =>
           setRuntime(r.ok && r.prefix_exists ? r : undefined)
         );
+      }
+      if (huntActive && !hunt) {
+        setHunt({
+          running: true,
+          launches: 0,
+          remaining: 0,
+          skipped: [],
+          note: "Still running — reopened",
+        });
       }
       getInstalledCount(game.nexusDomain).then((r) =>
         setModCount(r.ok ? r.mods : undefined)
@@ -688,7 +707,8 @@ function CurrentGameSection() {
   const runCrashHunt = async () => {
     if (!game?.pluginsTxtSubpath || !game.scriptExtenderLog) return;
     if (!game.crashSignature) return;
-    huntStop.current = false;
+    huntStopFlag = false;
+    huntActive = true;
     const style = game.pluginsTxtStyle ?? "starred";
     const started = await crashBisectStart(
       game.appId,
@@ -696,7 +716,9 @@ function CurrentGameSection() {
       game.pluginsTxtSubpath,
       style,
       game.nexusDomain,
-      game.crashSignature!
+      game.crashSignature!,
+      game.scriptExtenderLog,
+      game.huntKeepDlls ?? []
     );
     if (!started.ok) {
       toaster.toast({ title: "Couldn't start", body: started.error ?? "" });
@@ -709,8 +731,9 @@ function CurrentGameSection() {
       skipped: [],
       note: "Setting up the first test…",
     });
+    let strayCrashes = 0;
     for (;;) {
-      if (huntStop.current) break;
+      if (huntStopFlag) break;
       const step = await crashBisectApply();
       if (!step.ok || step.done) break;
       setHunt((h) => ({
@@ -722,10 +745,19 @@ function CurrentGameSection() {
           step.enabled ?? 0
         ).toLocaleString()} mods`,
       }));
+      // Numbered every time: hours of the game opening and closing is
+      // indistinguishable from a boot loop without a running count.
+      const note = huntProgressNote(
+        (step.launches ?? 0) + 1,
+        step.enabled ?? 0,
+        step.remaining ?? 0,
+        (step.skipped ?? []).length
+      );
+      toaster.toast({ ...note, duration: 12000 });
       const launchedAt = Date.now() / 1000;
       restartGame(game.appId);
       let verdict: ReturnType<typeof crashHuntVerdict> = "waiting";
-      while (!huntStop.current) {
+      while (!huntStopFlag) {
         await new Promise((r) => setTimeout(r, 10_000));
         const seen = await crashSince(
           game.appId,
@@ -739,13 +771,34 @@ function CurrentGameSection() {
         );
         if (verdict !== "waiting") break;
       }
-      if (huntStop.current) break;
+      if (huntStopFlag) break;
       // A different crash tells us nothing about the fault being hunted,
       // so it is not folded in - the run is simply repeated.
       if (verdict === "other-crash") {
-        setHunt((prev) => ({ ...prev!, note: "A different crash - retrying" }));
+        // Bounded, because "retry" only helps if the outcome can change.
+        // A mod dying on a form its own disabled plugin used to provide
+        // does it every single time - that looped 20 times overnight.
+        strayCrashes += 1;
+        if (strayCrashes > 3) {
+          toaster.toast({
+            title: "Hunt stopped — something else keeps crashing",
+            body: "A different crash repeated, so the search can't tell mods apart. Nothing was changed.",
+            duration: 20000,
+          });
+          break;
+        }
+        setHunt((prev) => ({
+          ...prev!,
+          note: `A different crash (${strayCrashes}/3) - retrying`,
+        }));
+        toaster.toast({
+          title: `Different crash — retry ${strayCrashes} of 3`,
+          body: "That one wasn't the fault being hunted, so it doesn't count",
+          duration: 8000,
+        });
         continue;
       }
+      strayCrashes = 0;
       (window as any).SteamClient?.Apps?.TerminateApp?.(
         String(game.appId),
         false
@@ -767,10 +820,11 @@ function CurrentGameSection() {
       }
       if (rec.done) break;
     }
+    huntActive = false;
     const end = await crashBisectFinish(true);
     setHunt(undefined);
     toaster.toast({
-      title: huntStop.current ? "Hunt stopped" : "Hunt finished",
+      title: huntStopFlag ? "Hunt stopped" : "Hunt finished",
       body: (end.skipped?.length ?? 0) > 0
         ? `Skipped ${end.skipped!.length} broken mod${
             end.skipped!.length === 1 ? "" : "s"
@@ -1297,7 +1351,7 @@ function CurrentGameSection() {
             }
             onClick={() => {
               if (hunt?.running) {
-                huntStop.current = true;
+                huntStopFlag = true;
                 setHunt((prev) => ({ ...prev!, note: "Stopping after this launch…" }));
               } else {
                 runCrashHunt();

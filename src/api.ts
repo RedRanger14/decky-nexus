@@ -439,9 +439,11 @@ export const crashBisectStart = callable<
     plugins_subpath: string,
     plugins_style: "starred" | "listed",
     game_domain: string,
-    signature: string
+    signature: string,
+    log_subpath: string,
+    keep_dlls: string[]
   ],
-  { ok: boolean; total?: number; error?: string }
+  { ok: boolean; total?: number; parked_dlls?: number; error?: string }
 >("crash_bisect_start");
 
 export const crashBisectApply = callable<
@@ -473,7 +475,7 @@ export const crashBisectRecord = callable<
 
 export const crashBisectFinish = callable<
   [keep_skips: boolean],
-  { ok: boolean; skipped?: string[]; error?: string }
+  { ok: boolean; skipped?: string[]; restored_dlls?: number; error?: string }
 >("crash_bisect_finish");
 
 export const crashBisectStatus = callable<
@@ -487,6 +489,19 @@ export const crashBisectStatus = callable<
     total?: number;
   }
 >("crash_bisect_status");
+
+/** Has the game reached the WORLD (not just the menu) since `after`?
+ * Papyrus only logs when scripts run, and scripts run in the world. */
+export const inGameSince = callable<
+  [app_id: number, marker_subpath: string, after: number],
+  { ok: boolean; in_game?: boolean; at?: number }
+>("in_game_since");
+
+/** Switch on the script log the save-load hunt watches for. */
+export const enablePapyrusLogging = callable<
+  [app_id: number, prefs_subpath: string],
+  { ok: boolean; error?: string }
+>("enable_papyrus_logging");
 
 /** Newest crash report written after `after` (unix seconds), with the
  * exception address so a different crash isn't mistaken for this one. */

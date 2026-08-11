@@ -4079,12 +4079,110 @@ class TestLoadOrder(unittest.TestCase):
         r = self._fix("someothergame")
         self.assertEqual(r["removed_base_masters"], 0)
 
-    def test_timestamp_games_are_not_touched_here(self):
-        # FO3/FNV order by file mtime; rewriting their list would do
-        # nothing and imply a fix that had not happened.
+    def test_timestamp_games_still_get_the_dependency_check(self):
+        # FO3/FNV order by file mtime, so their file order is meaningless
+        # and no violation count is reported. But "a master is installed
+        # and switched off" is an engine-level fault with nothing to do
+        # with which plugins.txt dialect a game speaks - Skyrim had 13 of
+        # them breaking 139 plugins. Bailing out of the whole check
+        # because half of it did not apply left these two games with no
+        # dependency check at all.
+        main._write_plugins_txt(self.path, ["Town.esp"])   # listed: no stars
         s = run(self.plugin.get_load_order_state(
             self.APP_ID, self.GAME, self.SUB, "listed", ""))
-        self.assertFalse(s["supported"])
+        self.assertTrue(s["supported"])
+        self.assertTrue(s["timestamp_ordered"])
+        self.assertEqual(s["violations"], 0, "order is by mtime; do not guess")
+        self.assertEqual(s["disabled_masters"], 1)
+        self.assertEqual(s["examples"], ["Base.esm"])
+
+    def test_fixing_a_timestamp_game_switches_masters_on_without_stars(self):
+        main._write_plugins_txt(self.path, ["Town.esp"])
+        r = run(self.plugin.fix_load_order(
+            self.APP_ID, self.GAME, self.SUB, "listed", ""))
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["enabled_masters"], 1)
+        raw = main._read_plugins_txt(self.path)
+        self.assertNotIn("*Base.esm", raw, "listed style has no star prefix")
+        self.assertIn("Base.esm", [l.strip() for l in raw])
+
+    def test_a_master_switched_on_for_a_timestamp_game_is_restamped(self):
+        # Enabling it is half the job: if it keeps a later mtime than its
+        # dependents the engine still loads it after them.
+        main._write_plugins_txt(self.path, ["Town.esp"])
+        r = run(self.plugin.fix_load_order(
+            self.APP_ID, self.GAME, self.SUB, "listed", ""))
+        self.assertGreater(r.get("restamped", 0), 0)
+        base = os.path.getmtime(os.path.join(self.data, "Base.esm"))
+        town = os.path.getmtime(os.path.join(self.data, "Town.esp"))
+        self.assertLess(base, town, "master must load first")
+
+    def test_starred_games_are_unaffected_by_the_timestamp_path(self):
+        self._write(["TownPatch.esp", "Town.esp", "Base.esm"])
+        s = self._state()
+        self.assertFalse(s["timestamp_ordered"])
+        self.assertEqual(s["violations"], 3)
+
+
+class TestInGameSignal(unittest.TestCase):
+    """The save-load hunt needs to know the WORLD loaded, not that a menu
+    appeared. Papyrus only logs when scripts run, so the log being written
+    after launch is the signal."""
+
+    APP_ID = 489830
+    MARKER = "Skyrim Special Edition/Logs/Script/Papyrus.0.log"
+    INI = "Skyrim Special Edition/Skyrim.ini"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.marker = main._game_prefs_path(self.APP_ID, self.MARKER)
+        self.ini = main._game_prefs_path(self.APP_ID, self.INI)
+        os.makedirs(os.path.dirname(self.marker), exist_ok=True)
+        os.makedirs(os.path.dirname(self.ini), exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(os.path.dirname(self.ini), ignore_errors=True)
+
+    def test_no_log_yet_is_simply_not_in_game(self):
+        # The normal state before anything loads - not an error.
+        r = run(self.plugin.in_game_since(self.APP_ID, self.MARKER, 0))
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["in_game"])
+
+    def test_a_log_written_after_launch_means_the_world_loaded(self):
+        with open(self.marker, "w") as f:
+            f.write("[script] ok\n")
+        launched = os.path.getmtime(self.marker) - 60
+        self.assertTrue(
+            run(self.plugin.in_game_since(self.APP_ID, self.MARKER, launched))["in_game"]
+        )
+
+    def test_a_log_left_over_from_a_previous_session_does_not_count(self):
+        # Without the timestamp check, every launch would look successful
+        # forever after the first one that reached the world.
+        with open(self.marker, "w") as f:
+            f.write("[script] old\n")
+        launched = os.path.getmtime(self.marker) + 60
+        self.assertFalse(
+            run(self.plugin.in_game_since(self.APP_ID, self.MARKER, launched))["in_game"]
+        )
+
+    def test_switching_papyrus_logging_on_leaves_the_rest_of_the_ini_alone(self):
+        with open(self.ini, "w", newline="") as f:
+            f.write("[General]\r\nsLanguage=ENGLISH\r\n"
+                    "[Papyrus]\r\nbEnableLogging=0\r\nfPostLoadUpdateTimeMS=500.0\r\n")
+        r = run(self.plugin.enable_papyrus_logging(self.APP_ID, self.INI))
+        self.assertTrue(r["ok"])
+        with open(self.ini, "r", newline="") as f:
+            out = f.read()
+        self.assertIn("bEnableLogging=1", out)
+        self.assertIn("sLanguage=ENGLISH", out)
+        self.assertIn("fPostLoadUpdateTimeMS=500.0", out)
+        self.assertIn("\r\n", out, "must not rewrite line endings")
+
+    def test_a_missing_ini_is_reported_not_created(self):
+        r = run(self.plugin.enable_papyrus_logging(self.APP_ID, self.INI))
+        self.assertFalse(r["ok"])
 
 
 class TestCrashBisectMachine(unittest.TestCase):

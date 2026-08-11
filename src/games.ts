@@ -85,6 +85,17 @@ export interface SupportedGame {
    * mods also crash on forms their own disabled plugins used to provide
    * and those say nothing about the fault. */
   crashSignature?: string;
+  /** DLLs the automated hunt must NOT park. Everything else is set aside
+   * for the duration: with half the load order off, any SKSE plugin that
+   * looks up a form from its own plugin crashes, and the hunt cannot tell
+   * that apart from progress. These are the ones the game needs anyway. */
+  huntKeepDlls?: string[];
+  /** Written only once the game is in the world, not at the menu - the
+   * save-load hunt's pass condition. Papyrus for Bethesda games; needs
+   * bEnableLogging=1, which enablePapyrusLogging sets. */
+  inGameLog?: string;
+  /** The ini holding [Papyrus], so the log above can be switched on. */
+  inGameLogIni?: string;
   /** RE Engine pak-patch chain (RE4 remake): every .pak in an archive
    * takes the next re_chunk_000.pak.patch_XXX.pak number in the game
    * root; uninstalls renumber survivors to close the gap. */
@@ -265,6 +276,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // Device, 2026-08-08/09: SkyrimSE.exe+01D74A0, a null deref in
     // InitTESThread that a bad ESL patch triggers during data load.
     crashSignature: "01D74A0",
+    // Engine Fixes patches the memory manager - vanilla Skyrim will not
+    // load 1,900 plugins without it. CrashLogger is how the hunt reads
+    // its own results, so parking it blinds the search.
+    huntKeepDlls: ["EngineFixes.dll", "CrashLogger.dll"],
+    inGameLog: "Skyrim Special Edition/Logs/Script/Papyrus.0.log",
+    inGameLogIni: "Skyrim Special Edition/Skyrim.ini",
     framework: {
       name: "SKSE64",
       detectFile: "skse64_loader.exe",
