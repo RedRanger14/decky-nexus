@@ -1503,20 +1503,64 @@ def _rewrite_load_order(
             "removed_base_masters": len(dropped)}
 
 
-def _add_plugins(path: str, names: list, style: str = "starred") -> None:
+def _add_plugins(path: str, names: list, style: str = "starred",
+                 game_domain: str = "", data_path: str = "") -> None:
     """Activate plugins. 'starred' (SSE/FO4): '*Name.esp' lines; 'listed'
-    (FNV/FO3/Oldrim): a plugin's bare presence in the file activates it."""
+    (FNV/FO3/Oldrim): a plugin's bare presence in the file activates it.
+
+    A plugin already known to stop this game booting is listed but never
+    activated. Switching it on and asking the user to switch it off again
+    is a step we can simply not create - and on a listed-style game there
+    is no "listed but off", so it is left out of the file entirely.
+    """
+    bad = KNOWN_BAD_PLUGINS.get(game_domain) or {}
+    skips = _load_skips(game_domain) if game_domain else {}
+    off = set(bad) | set(skips)
     lines = _read_plugins_txt(path)
     existing = {
         l.lstrip("*").strip().lower()
         for l in lines
         if l.strip() and not l.startswith("#")
     }
+    newly_skipped = {}
     for name in names:
-        if name.lower() not in existing:
-            existing.add(name.lower())
-            lines.append(name if style == "listed" else "*" + name)
+        low = name.lower()
+        if low in existing:
+            continue
+        existing.add(low)
+        if low in off:
+            if low in bad and low not in skips:
+                newly_skipped[low] = {"reason": bad[low], "root": True}
+            if style != "listed":
+                lines.append(name)      # listed, switched off
+            continue
+        # A mod cannot load without its master. Activating one whose
+        # master we have deliberately switched off just moves the crash,
+        # so it is left off too - checked against this plugin's own
+        # header, which is one small read rather than a scan of the
+        # thousands already installed.
+        needs = set()
+        if data_path:
+            needs = {
+                m.lower()
+                for m in (_plugin_masters(os.path.join(data_path, name)) or [])
+            }
+        if needs & (off | set(newly_skipped)):
+            newly_skipped[low] = {
+                "reason": "needs a mod that breaks the game", "root": False,
+            }
+            if style != "listed":
+                lines.append(name)
+            continue
+        lines.append(name if style == "listed" else "*" + name)
     _write_plugins_txt(path, lines)
+    if newly_skipped:
+        skips.update(newly_skipped)
+        _save_skips(game_domain, skips)
+        decky.logger.info(
+            f"{game_domain}: installed but left off - "
+            + ", ".join(sorted(newly_skipped))
+        )
 
 
 def _set_plugins_active(
@@ -5899,7 +5943,8 @@ query Link($slug: String!, $domainName: String!) {
                 return {"ok": False, "error": "Archive contained no files"}
             if plugins and plugins_subpath:
                 ptxt = _plugins_txt_path(app_id, plugins_subpath)
-                _add_plugins(ptxt, plugins, plugins_style)
+                _add_plugins(ptxt, plugins, plugins_style,
+                             game_domain, mods_path)
                 # FO3/FNV: load order = file timestamps; restamp so a
                 # Jan-2000 archive mtime can't load before its master.
                 _stagger_plugin_mtimes(
@@ -6729,7 +6774,9 @@ query Link($slug: String!, $domainName: String!) {
                 ptxt = _plugins_txt_path(
                     entry["app_id"], entry["plugins_subpath"]
                 )
-                _add_plugins(ptxt, plugins, entry["plugins_style"])
+                _add_plugins(ptxt, plugins, entry["plugins_style"],
+                             entry.get("game_domain", ""),
+                             entry.get("mods_path", ""))
                 _stagger_plugin_mtimes(
                     mods_path, ptxt, entry["plugins_style"],
                     entry["game_domain"],
