@@ -4185,6 +4185,72 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestResetVerifiesItsOwnWork(unittest.TestCase):
+    """Reset must not report success it has not checked.
+
+    Device: "1543 mods removed, 0 errors" while 20GB and roughly 400 mods
+    stayed in Data, because an install that dies between copying files and
+    writing its record leaves nothing to remove them by. The only thing
+    that caught it was the main menu looking wrong.
+    """
+
+    GAME = "Reset Verify Test"
+    DOMAIN = "resetverifytest"
+    APP_ID = 489830
+
+    def setUp(self):
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.mods = os.path.join(self.install, "Data")
+        os.makedirs(self.mods)
+        for n in ("Skyrim.esm", "Skyrim - Misc.bsa"):
+            with open(os.path.join(self.mods, n), "w") as f:
+                f.write("vanilla")
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        settings = main._load_settings()
+        for sec in ("vanilla_baseline", "installed"):
+            settings.get(sec, {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def _reset(self):
+        return run(self.plugin.reset_game_modding(
+            self.DOMAIN, self.GAME, "Data", "dataDir", self.APP_ID))
+
+    def test_the_baseline_is_only_taken_once(self):
+        main._record_vanilla_baseline(self.DOMAIN, self.mods)
+        first = main._vanilla_baseline(self.DOMAIN)
+        with open(os.path.join(self.mods, "AMod.esp"), "w") as f:
+            f.write("x")
+        main._record_vanilla_baseline(self.DOMAIN, self.mods)
+        self.assertEqual(main._vanilla_baseline(self.DOMAIN), first,
+                         "a later snapshot would bless the mods as vanilla")
+
+    def test_a_clean_reset_reports_no_leftovers(self):
+        main._record_vanilla_baseline(self.DOMAIN, self.mods)
+        r = self._reset()
+        self.assertTrue(r["verified"])
+        self.assertEqual(r["leftovers"], 0)
+
+    def test_unrecorded_files_are_reported_not_hidden(self):
+        main._record_vanilla_baseline(self.DOMAIN, self.mods)
+        # The orphan case: files on disk that no record accounts for.
+        for n in ("Ghost.esp", "Ghost.bsa"):
+            with open(os.path.join(self.mods, n), "w") as f:
+                f.write("x")
+        r = self._reset()
+        self.assertEqual(r["leftovers"], 2)
+        self.assertIn("Ghost.esp", r["leftover_examples"])
+
+    def test_without_a_baseline_it_says_so_rather_than_claiming_clean(self):
+        # Games modded before this existed have no snapshot. Reporting
+        # zero leftovers there would be a guess dressed as a fact.
+        r = self._reset()
+        self.assertFalse(r["verified"])
+
+
 class TestKnownBadNeverSwitchedOn(unittest.TestCase):
     """A plugin known to break the game is never activated in the first
     place.

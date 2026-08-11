@@ -284,6 +284,13 @@ export const resetGameModding = callable<
     cleared_dlo?: boolean;
     use_steam_client?: boolean;
     errors?: string[];
+    /** Files left in the mods folder that no record accounted for. Zero
+     * means the reset is verified, not merely finished. */
+    leftovers?: number;
+    leftover_examples?: string[];
+    /** False for games modded before baselines existed - we cannot say
+     * whether it reached vanilla, so we must not claim it did. */
+    verified?: boolean;
     error?: string;
   }
 >("reset_game_modding");

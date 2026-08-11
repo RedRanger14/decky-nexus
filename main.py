@@ -337,6 +337,42 @@ def _game_paths(install_dir: str, mods_subdir: str):
     return install_path, mods_path, disabled_path
 
 
+def _vanilla_baseline(game_domain: str) -> list:
+    return _load_settings().get("vanilla_baseline", {}).get(game_domain) or []
+
+
+def _record_vanilla_baseline(game_domain: str, mods_path: str) -> None:
+    """Snapshot what the game's mod folder held before we touched it.
+
+    Reset can only remove mods it has records for, and a record is
+    written after the files are copied - so an install that dies in
+    between orphans its files invisibly. On device that left 20GB and
+    ~400 mods behind after a reset that reported "1543 mods removed, 0
+    errors", and the only reason anyone noticed was that the main menu
+    looked wrong.
+
+    A baseline costs one directory listing and lets reset say honestly
+    whether it actually got back to vanilla, without this file needing to
+    know what vanilla looks like for every game - which is exactly the
+    guess that let five mod files through the manual clean.
+    """
+    if not game_domain or not os.path.isdir(mods_path):
+        return
+    settings = _load_settings()
+    have = settings.setdefault("vanilla_baseline", {})
+    if game_domain in have:
+        return
+    try:
+        have[game_domain] = sorted(os.listdir(mods_path))
+    except OSError:
+        return
+    _save_settings(settings)
+    decky.logger.info(
+        f"{game_domain}: recorded a {len(have[game_domain])}-entry vanilla "
+        "baseline for the mods folder"
+    )
+
+
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._ -]", "", name).strip().strip(".")
     return cleaned or "mod"
@@ -5872,6 +5908,7 @@ query Link($slug: String!, $domainName: String!) {
                     "(FOMOD/optioned installers aren't supported yet). "
                     f"It contains: {tops}",
                 }
+            _record_vanilla_baseline(game_domain, mods_path)
             os.makedirs(mods_path, exist_ok=True)
 
             def _merge_data_payloads():
@@ -6193,6 +6230,7 @@ query Link($slug: String!, $domainName: String!) {
                 elif kind == "layout":
                     result["unsupported_layout"] = True
                 return result
+            _record_vanilla_baseline(game_domain, mods_path)
             os.makedirs(mods_path, exist_ok=True)
             settings = _load_settings()  # re-read: parallel installs
             installed = settings.setdefault("installed", {}).setdefault(
@@ -6525,6 +6563,7 @@ query Link($slug: String!, $domainName: String!) {
                     "error": "No loadable mod files found in this archive "
                     f"(expected {', '.join(flat_extensions)})",
                 }
+            _record_vanilla_baseline(game_domain, mods_path)
             os.makedirs(mods_path, exist_ok=True)
             moved = []
             for src in flat:
@@ -6569,6 +6608,7 @@ query Link($slug: String!, $domainName: String!) {
         # Archives that ship the mods DIRECTORY itself (Bannerlord zips
         # rooted at Modules/, Stardew at Mods/, BepInEx at plugins/):
         # unwrap it, or the mod nests invisibly (Modules/Modules/X).
+        _record_vanilla_baseline(game_domain, mods_path)
         os.makedirs(mods_path, exist_ok=True)
         target_name = os.path.basename(mods_subdir.rstrip("/")).lower()
         if (
@@ -6726,6 +6766,7 @@ query Link($slug: String!, $domainName: String!) {
             _, mods_path, _unused = _game_paths(
                 entry["install_dir"], entry["mods_subdir"]
             )
+            _record_vanilla_baseline(game_domain, mods_path)
             os.makedirs(mods_path, exist_ok=True)
 
             repair_only = bool(entry.get("repair_only"))
@@ -8326,6 +8367,22 @@ query Link($slug: String!, $domainName: String!) {
                     unparked += 1
                 except OSError as e:
                     errors.append(f"{name}: {e}")
+        # Check our own work. Reset removes what it has records for, and a
+        # record is written after the files are copied - so an interrupted
+        # install leaves files nothing knows about. On device that meant
+        # "1543 mods removed, 0 errors" while 20GB and ~400 mods stayed
+        # put, and the only thing that caught it was the main menu looking
+        # wrong. Reporting a success we have not verified is worse than
+        # reporting a partial failure.
+        baseline = settings.get("vanilla_baseline", {}).get(game_domain) or []
+        leftovers = []
+        if baseline and os.path.isdir(mods_path):
+            try:
+                leftovers = sorted(
+                    set(os.listdir(mods_path)) - set(baseline)
+                )
+            except OSError:
+                leftovers = []
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges", "skipped"):
             settings.get(section, {}).pop(game_domain, None)
@@ -8334,10 +8391,16 @@ query Link($slug: String!, $domainName: String!) {
         if app_id and _dlo_present():
             ok, _prev = _dlo_set_original(_dlo_settings_path(), app_id, "")
             cleared_dlo = ok
+        if leftovers:
+            decky.logger.warning(
+                f"reset {game_domain!r}: {len(leftovers)} file(s) remain that "
+                f"no record covered, e.g. {leftovers[:5]}"
+            )
         decky.logger.info(
             f"reset {game_domain!r}: {removed} mods removed, framework "
             f"files {framework_files}, {unparked} parked plugin(s) cleared, "
-            f"dlo cleared={cleared_dlo}, {len(errors)} errors"
+            f"dlo cleared={cleared_dlo}, {len(errors)} errors, "
+            f"{len(leftovers)} unrecorded leftovers"
         )
         return {
             "ok": True,
@@ -8346,6 +8409,12 @@ query Link($slug: String!, $domainName: String!) {
             "cleared_dlo": cleared_dlo,
             "use_steam_client": bool(app_id) and not cleared_dlo,
             "errors": errors,
+            # Files present that were not there before we started, and
+            # that no record accounted for. Zero means the reset is
+            # verified, not merely finished.
+            "leftovers": len(leftovers),
+            "leftover_examples": leftovers[:8],
+            "verified": bool(baseline),
         }
 
     async def uninstall_collection(
