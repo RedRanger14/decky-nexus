@@ -430,6 +430,36 @@ export const fixLoadOrder = callable<
   }
 >("fix_load_order");
 
+/** Plugins already proven to break this game, so nobody has to find
+ * them twice. Roots only - dependents are derived. */
+export const getKnownBadState = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string
+  ],
+  {
+    ok: boolean;
+    supported?: boolean;
+    bad?: { name: string; reason: string }[];
+    /** How many others cannot load without them. */
+    extra?: number;
+  }
+>("get_known_bad_state");
+
+export const applyKnownBad = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string
+  ],
+  { ok: boolean; skipped?: number; extra?: number; error?: string }
+>("apply_known_bad");
+
 /** Automated hunt for the plugins that crash the game. Each cycle:
  * apply -> launch -> watch for a crash log -> record -> repeat. */
 export const crashBisectStart = callable<
