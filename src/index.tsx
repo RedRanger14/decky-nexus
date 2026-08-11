@@ -63,7 +63,6 @@ import {
   checkPluginMasters,
   disablePlugins,
   fixPrefixRuntime,
-  applyKnownBad,
   crashBisectApply,
   crashBisectFinish,
   crashBisectRecord,
@@ -71,7 +70,6 @@ import {
   crashSince,
   fixLoadOrder,
   getInstalledCount,
-  getKnownBadState,
   getLoadOrderState,
   getPrefixRuntimeState,
   getScriptExtenderState,
@@ -529,11 +527,6 @@ function CurrentGameSection() {
     | undefined
   >();
   const [loadOrderBusy, setLoadOrderBusy] = useState(false);
-  // Plugins we already know break this game, so nobody finds them twice.
-  const [knownBad, setKnownBad] = useState<
-    { bad: { name: string; reason: string }[]; extra: number } | undefined
-  >();
-  const [knownBadBusy, setKnownBadBusy] = useState(false);
   // The automated crash hunt: apply a load order, launch, read the crash
   // log, repeat. Running it by hand took two days and five culprits.
   const [hunt, setHunt] = useState<
@@ -629,19 +622,6 @@ function CurrentGameSection() {
         setModCount(r.ok ? r.mods : undefined)
       );
       if (game.pluginsTxtSubpath) {
-        getKnownBadState(
-          game.appId,
-          game.installDirName,
-          game.pluginsTxtSubpath,
-          game.pluginsTxtStyle ?? "starred",
-          game.nexusDomain
-        ).then((r) =>
-          setKnownBad(
-            r.ok && (r.bad?.length ?? 0) > 0
-              ? { bad: r.bad!, extra: r.extra ?? 0 }
-              : undefined
-          )
-        );
         getLoadOrderState(
           game.appId,
           game.installDirName,
@@ -1380,67 +1360,6 @@ function CurrentGameSection() {
             }}
           >
             {hunt?.running ? "Stop the hunt" : "Find what's breaking it"}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-      {/* Someone already found these the hard way. The hunt exists so
-          one person pays that cost, not every user who installs the same
-          collection. */}
-      {knownBad && status?.installed && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            label={`${knownBad.bad.length} mod${
-              knownBad.bad.length === 1 ? "" : "s"
-            } known to break ${game.displayName}`}
-            disabled={knownBadBusy}
-            description={
-              `${knownBad.bad
-                .slice(0, 3)
-                .map((b) => b.name.replace(/\.es[lmp]$/i, ""))
-                .join(", ")}${
-                knownBad.bad.length > 3
-                  ? ` and ${knownBad.bad.length - 3} more`
-                  : ""
-              } stop the game starting. ` +
-              (knownBad.extra > 0
-                ? `${knownBad.extra} other mod${
-                    knownBad.extra === 1 ? "" : "s"
-                  } need them, so those go too. `
-                : "") +
-              "Nothing is deleted and the rest of your mods are untouched."
-            }
-            onClick={async () => {
-              setKnownBadBusy(true);
-              try {
-                const r = await applyKnownBad(
-                  game.appId,
-                  game.installDirName,
-                  game.pluginsTxtSubpath!,
-                  game.pluginsTxtStyle ?? "starred",
-                  game.nexusDomain
-                );
-                toaster.toast(
-                  r.ok
-                    ? {
-                        title: "Broken mods switched off",
-                        body: `${r.skipped} known bad${
-                          (r.extra ?? 0) > 0
-                            ? `, plus ${r.extra} that needed them`
-                            : ""
-                        }. ${game.displayName} should start now.`,
-                        duration: 12000,
-                      }
-                    : { title: "Could not apply", body: r.error ?? "" }
-                );
-                setKnownBad(undefined);
-                refreshStatus();
-              } finally {
-                setKnownBadBusy(false);
-              }
-            }}
-          >
-            {knownBadBusy ? "Switching off…" : "Switch them off"}
           </ButtonItem>
         </PanelSectionRow>
       )}

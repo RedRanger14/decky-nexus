@@ -4185,6 +4185,90 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestKnownBadNeverSwitchedOn(unittest.TestCase):
+    """A plugin known to break the game is never activated in the first
+    place.
+
+    Switching it on and then asking the user to switch it off is a step we
+    can simply not create. The console audience should never learn that
+    some of their mods are broken - the tool knows, so it handles it.
+    """
+
+    GAME = "Install Skip Test"
+    DOMAIN = "installskiptest"
+    APP_ID = 489830
+    SUB = "Skyrim Special Edition/Plugins.txt"
+
+    def setUp(self):
+        self.data = os.path.join(main.STEAM_COMMON, self.GAME, "Data")
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+        os.makedirs(self.data)
+        _make_plugin(os.path.join(self.data, "Bad.esp"))
+        _make_plugin(os.path.join(self.data, "NeedsBad.esp"), ["Bad.esp"])
+        _make_plugin(os.path.join(self.data, "Fine.esp"))
+        self.path = main._plugins_txt_path(self.APP_ID, self.SUB)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        main._write_plugins_txt(self.path, [])
+        main.KNOWN_BAD_PLUGINS[self.DOMAIN] = {"bad.esp": "crashes on load"}
+
+    def tearDown(self):
+        main.KNOWN_BAD_PLUGINS.pop(self.DOMAIN, None)
+        settings = main._load_settings()
+        settings.get("skipped", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.path), ignore_errors=True)
+
+    def _add(self, *names):
+        main._add_plugins(self.path, list(names), "starred",
+                          self.DOMAIN, self.data)
+
+    def _state(self):
+        return dict(main._plugin_entries(
+            main._read_plugins_txt(self.path), "starred"))
+
+    def test_a_known_bad_plugin_is_listed_but_off(self):
+        self._add("Fine.esp", "Bad.esp")
+        st = self._state()
+        self.assertTrue(st["Fine.esp"])
+        self.assertFalse(st["Bad.esp"], "never switched on in the first place")
+
+    def test_the_reason_is_recorded_at_install_time(self):
+        self._add("Bad.esp")
+        self.assertEqual(
+            main._load_skips(self.DOMAIN)["bad.esp"]["reason"],
+            "crashes on load")
+
+    def test_something_needing_it_is_left_off_too(self):
+        # Installed AFTER its master was skipped, which is the normal
+        # order - masters come first in a sorted collection install.
+        self._add("Bad.esp")
+        self._add("NeedsBad.esp")
+        self.assertFalse(self._state()["NeedsBad.esp"])
+        self.assertFalse(main._load_skips(self.DOMAIN)["needsbad.esp"]["root"])
+
+    def test_unrelated_mods_are_activated_normally(self):
+        self._add("Bad.esp", "NeedsBad.esp", "Fine.esp")
+        self.assertTrue(self._state()["Fine.esp"])
+
+    def test_a_game_with_no_known_bad_list_installs_everything(self):
+        main.KNOWN_BAD_PLUGINS.pop(self.DOMAIN, None)
+        self._add("Bad.esp", "NeedsBad.esp", "Fine.esp")
+        self.assertTrue(all(self._state().values()))
+
+    def test_a_listed_style_game_leaves_it_out_of_the_file(self):
+        # There is no "listed but off" in that dialect: presence IS
+        # activation, so the only way to skip is to not list it.
+        main._write_plugins_txt(self.path, [])
+        main._add_plugins(self.path, ["Bad.esp", "Fine.esp"], "listed",
+                          self.DOMAIN, self.data)
+        names = [n for n, _ in main._plugin_entries(
+            main._read_plugins_txt(self.path), "listed")]
+        self.assertEqual(names, ["Fine.esp"])
+
+
 class TestResetClearsOurOwnArtefacts(unittest.TestCase):
     """Reset means vanilla, including the things this plugin renamed.
 
