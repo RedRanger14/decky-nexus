@@ -1,5 +1,94 @@
 # 1.0 Game Support Roadmap
 
+## AGREED 1.0 SCOPE (2026-08-11)
+
+Ten games ship in 1.0. The rule is device-tested, not built — shipping a
+game nobody has run is how you collect bad reviews from people who cannot
+tell whose fault it is.
+
+| Game | Mode | Testing state |
+|---|---|---|
+| Stardew Valley | folder | tested |
+| Skyrim SE | dataDir | tested extensively (collection hunt, Aug 2026) |
+| Fallout 4 | dataDir | tested 2026-08-04, collection worked first time |
+| Fallout 3 | dataDir | tested, pre-adult-content |
+| Fallout: New Vegas | dataDir | tested, pre-adult-content |
+| Slay the Spire 2 | folder | tested, pre-adult-content |
+| The Witcher 3 | folder | tested 2026-07-24 (script-mod ceiling documented) |
+| Resident Evil 4 | folder | tested WITH adult content |
+| Cyberpunk 2077 | folder+frameworks | tested, pre-adult-content |
+| Elden Ring | me3 | boots; co-op session still unverified |
+
+**Moved to post-1.0** (built, never run on device): Hollow Knight
+Silksong, Palworld, Mount & Blade II: Bannerlord.
+
+**Post-1.0 queue**, cheapest first: the FromSoft family (Dark Souls 3,
+Sekiro, Armored Core 6, Nightreign) is one registry block each - the me3
+tier is game-agnostic and `ME3_GAMES` already maps all five domains - but
+it inherits whatever Elden Ring has not proven yet. Then Silksong,
+Palworld, Bannerlord (verify what exists), then Skyrim 2011, Balatro,
+RDR2, BG3.
+
+### Regression pass required before 1.0
+
+The adult-content gate became account-driven in v0.37.0 (site preference
++ age verification, both required). Every game tested before that saw a
+smaller catalogue than users will, so browse/search/install needs
+re-running on: Stardew, Fallout 3, Fallout NV, Slay the Spire 2,
+Cyberpunk 2077. RE4 was tested after the change and does not need it.
+
+### Known gap: Cyberpunk CET Lua mods
+
+`_route_cp77_payload` recognises game-root prefixes (archive/bin/red4ext/
+r6/engine) and bare `.archive` files. A CET mod that ships only a Lua
+folder - no `bin/` prefix, destined for
+`bin/x64/plugins/cyber_engine_tweaks/mods/<name>/` - matches none of
+those and is refused as "no Cyberpunk mod layout found". CET mods are a
+large Nexus category for this game; worth deciding before 1.0 whether to
+route them or keep refusing them with a clearer message.
+
+## Decky store submission: pre-PR checklist (researched 2026-08-11)
+
+Sources: decky-plugin-database README + `.github/PULL_REQUEST_TEMPLATE/
+plugin_addition.md`, wiki `plugin-dev/review-and-testing`.
+
+**Blocking decision.** The plugin-addition template requires the
+declaration *"Generative AI was NOT used to write a majority of the code
+I am submitting"*, and the template header warns PRs may be denied for
+suspected AI usage. This codebase is majority AI-written and every commit
+carries a `Co-Authored-By: Claude` trailer. Michael's call (2026-08-11):
+submit anyway with a written explanation to the Decky team, and look at
+alternative distribution if they decline.
+
+**Repo hygiene**
+- [ ] Delete `defaults/defaults.txt` (reviewers call this out explicitly)
+- [ ] Delete `assets/` unless it is an `icon.png` the plugin actually uses
+- [x] `pnpm-lock.yaml` on `lockfileVersion: 9.0` (CI requirement)
+- [x] LICENSE present (BSD 3-Clause)
+- [x] No unused `backend/` directory
+
+**plugin.json**
+- [ ] Remove the `debug` flag before submitting
+- [ ] Replace the store `image` - it currently points at Decky's own
+      PluginLoader OpenGraph placeholder. No dimensions are documented
+      anywhere in the wiki, templates or database; the template default
+      is a GitHub OpenGraph URL, which renders 1280x640 (2:1). A square
+      logo will letterbox.
+- [ ] Description should lead with the Gaming Mode differentiator
+
+**Testing burden - note the stricter path**
+We download me3 from `github.com/garyttierney/me3/releases`, a
+third-party pre-built binary. That moves us off the easy route (Stable
+*or* Beta) onto **SteamOS Preview channel testing required**. A reviewer
+will also follow that URL and assess it.
+- [ ] Third-party tester posts a report on the PR (required to merge)
+- [ ] Optionally test two other plugins' PRs - not required, but
+      deprioritised without it
+- [ ] Note the momentum rule: no visible testing progress for ~2 weeks
+      and the PR gets closed
+
+
+
 Target list from Nexus Mods internal analytics (unique users starting mod
 downloads). "Modding Tools" (7.5M uniques, #1) is the tools domain, not a
 game — excluded from plugin scope.
