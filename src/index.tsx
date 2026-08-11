@@ -102,6 +102,7 @@ import {
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
+  troubleshootingCount,
 } from "./panelRules";
 import {
   ALL_GAMES,
@@ -512,49 +513,8 @@ function CurrentGameSection() {
   // Steam batches its config writes, so the backend can't confirm a
   // just-set compat tool for a second or two - remember what we set.
   const [protonChosen, setProtonChosen] = useState<string | undefined>();
-  // Prefix VC++ runtime: mod binaries that link it dynamically won't
-  // load against the ancient one a game's install script leaves behind.
-  const [runtime, setRuntime] = useState<
-    { have?: string; newest?: string; outdated?: boolean } | undefined
-  >();
-  const [runtimeBusy, setRuntimeBusy] = useState(false);
-  // DLL plugins the script extender refused to load last launch, plus
-  // any implicated in a crash since.
-  const [sePlugins, setSePlugins] = useState<
-    | {
-        failed: ScriptExtenderPlugin[];
-        parked: string[];
-        dir: string;
-        crash?: CrashReport;
-      }
-    | undefined
-  >();
-  const [seBusy, setSeBusy] = useState(false);
   // Only used to size the launch notice, so undefined just means silent.
   const [modCount, setModCount] = useState<number | undefined>();
-  // Enabled plugins listed before a master they need - a boot crash.
-  const [loadOrder, setLoadOrder] = useState<
-    {
-      total: number;
-      violations: number;
-      disabledMasters: number;
-      examples: string[];
-    }
-    | undefined
-  >();
-  const [loadOrderBusy, setLoadOrderBusy] = useState(false);
-  // The automated crash hunt: apply a load order, launch, read the crash
-  // log, repeat. Running it by hand took two days and five culprits.
-  const [hunt, setHunt] = useState<
-    | {
-        running: boolean;
-        launches: number;
-        remaining: number;
-        skipped: string[];
-        note: string;
-      }
-    | undefined
-  >();
 
   // Same visual language as the download rows: the button FILLS orange.
   // No percentage exists for an exe patcher, so the fill tracks elapsed
@@ -620,61 +580,9 @@ function CurrentGameSection() {
           setToolsSkipped(r.skipped ?? {});
         });
       }
-      if (game.prefixRuntimeFix) {
-        getPrefixRuntimeState(game.appId).then((r) =>
-          setRuntime(r.ok && r.prefix_exists ? r : undefined)
-        );
-      }
-      if (huntActive && !hunt) {
-        setHunt({
-          running: true,
-          launches: 0,
-          remaining: 0,
-          skipped: [],
-          note: "Still running — reopened",
-        });
-      }
       getInstalledCount(game.nexusDomain).then((r) =>
         setModCount(r.ok ? r.mods : undefined)
       );
-      if (game.pluginsTxtSubpath) {
-        getLoadOrderState(
-          game.appId,
-          game.installDirName,
-          game.pluginsTxtSubpath,
-          game.pluginsTxtStyle ?? "starred",
-          game.nexusDomain
-        ).then((r) =>
-          setLoadOrder(
-            r.ok && r.supported
-              ? {
-                  total: r.total ?? 0,
-                  violations: r.violations ?? 0,
-                  disabledMasters: r.disabled_masters ?? 0,
-                  examples: r.examples ?? [],
-                }
-              : undefined
-          )
-        );
-      }
-      if (game.scriptExtenderLog) {
-        getScriptExtenderState(
-          game.appId,
-          game.installDirName,
-          game.scriptExtenderLog
-        ).then((r) =>
-          setSePlugins(
-            r.ok
-              ? {
-                  failed: r.failed ?? [],
-                  parked: r.parked ?? [],
-                  dir: r.plugins_dir ?? "",
-                  crash: r.crash,
-                }
-              : undefined
-          )
-        );
-      }
       if (game.me3) {
         getMe3State(game.nexusDomain, game.installDirName, game.appId).then(
           setMe3
@@ -712,144 +620,6 @@ function CurrentGameSection() {
       });
     }
     Navigation.CloseSideMenus();
-  };
-
-  /** Drive the hunt: set a load order, launch, watch, record, repeat.
-   *
-   * Deliberately reads the crash log itself rather than asking what the
-   * user saw. Doing this by hand, two steps were corrupted by a mod dying
-   * on a form its own (now-disabled) plugin used to provide - a crash that
-   * looks identical from the outside and means nothing here. */
-  const runCrashHunt = async () => {
-    if (!game?.pluginsTxtSubpath || !game.scriptExtenderLog) return;
-    if (game.crashSignature === undefined) return;
-    huntStopFlag = false;
-    huntActive = true;
-    const style = game.pluginsTxtStyle ?? "starred";
-    const started = await crashBisectStart(
-      game.appId,
-      game.installDirName,
-      game.pluginsTxtSubpath,
-      style,
-      game.nexusDomain,
-      game.crashSignature,
-      game.scriptExtenderLog,
-      game.huntKeepDlls ?? []
-    );
-    if (!started.ok) {
-      toaster.toast({ title: "Couldn't start", body: started.error ?? "" });
-      return;
-    }
-    const target = started.signature ?? game.crashSignature;
-    setHunt({
-      running: true,
-      launches: 0,
-      remaining: started.total ?? 0,
-      skipped: [],
-      note: `Chasing ${target}`,
-    });
-    let strayCrashes = 0;
-    for (;;) {
-      if (huntStopFlag) break;
-      const step = await crashBisectApply();
-      if (!step.ok || step.done) break;
-      setHunt((h) => ({
-        running: true,
-        launches: step.launches ?? h?.launches ?? 0,
-        remaining: step.remaining ?? 0,
-        skipped: step.skipped ?? h?.skipped ?? [],
-        note: `Launch ${(step.launches ?? 0) + 1}: trying ${(
-          step.enabled ?? 0
-        ).toLocaleString()} mods`,
-      }));
-      // Numbered every time: hours of the game opening and closing is
-      // indistinguishable from a boot loop without a running count.
-      const note = huntProgressNote(
-        (step.launches ?? 0) + 1,
-        step.enabled ?? 0,
-        step.remaining ?? 0,
-        (step.skipped ?? []).length
-      );
-      toaster.toast({ ...note, duration: 12000 });
-      const launchedAt = Date.now() / 1000;
-      restartGame(game.appId);
-      let verdict: ReturnType<typeof crashHuntVerdict> = "waiting";
-      while (!huntStopFlag) {
-        await new Promise((r) => setTimeout(r, 10_000));
-        const seen = await crashSince(
-          game.appId,
-          game.scriptExtenderLog,
-          launchedAt
-        );
-        verdict = crashHuntVerdict(
-          Date.now() - launchedAt * 1000,
-          seen.crash?.address,
-          game.crashSignature
-        );
-        if (verdict !== "waiting") break;
-      }
-      if (huntStopFlag) break;
-      // A different crash tells us nothing about the fault being hunted,
-      // so it is not folded in - the run is simply repeated.
-      if (verdict === "other-crash") {
-        // Bounded, because "retry" only helps if the outcome can change.
-        // A mod dying on a form its own disabled plugin used to provide
-        // does it every single time - that looped 20 times overnight.
-        strayCrashes += 1;
-        if (strayCrashes > 3) {
-          toaster.toast({
-            title: "Hunt stopped — something else keeps crashing",
-            body: "A different crash repeated, so the search can't tell mods apart. Nothing was changed.",
-            duration: 20000,
-          });
-          break;
-        }
-        setHunt((prev) => ({
-          ...prev!,
-          note: `A different crash (${strayCrashes}/3) - retrying`,
-        }));
-        toaster.toast({
-          title: `Different crash — retry ${strayCrashes} of 3`,
-          body: "That one wasn't the fault being hunted, so it doesn't count",
-          duration: 8000,
-        });
-        continue;
-      }
-      strayCrashes = 0;
-      (window as any).SteamClient?.Apps?.TerminateApp?.(
-        String(game.appId),
-        false
-      );
-      const rec = await crashBisectRecord(verdict === "crash");
-      setHunt({
-        running: true,
-        launches: rec.launches ?? 0,
-        remaining: rec.remaining ?? 0,
-        skipped: rec.skipped ?? [],
-        note: rec.found ? `Found ${rec.found}` : "Narrowing…",
-      });
-      if (rec.found) {
-        toaster.toast({
-          title: "Found a broken mod",
-          body: rec.found.replace(/\.es[lmp]$/i, ""),
-          duration: 12000,
-        });
-      }
-      if (rec.done) break;
-    }
-    huntActive = false;
-    const end = await crashBisectFinish(true);
-    setHunt(undefined);
-    toaster.toast({
-      title: huntStopFlag ? "Hunt stopped" : "Hunt finished",
-      body: (end.skipped?.length ?? 0) > 0
-        ? `Skipped ${end.skipped!.length} broken mod${
-            end.skipped!.length === 1 ? "" : "s"
-          } - everything else is back on`
-        : "Nothing found - all mods are back on",
-      duration: 15000,
-    });
-    refreshStatus();
   };
 
   const openLaunchOptionsModal = () => {
@@ -1003,16 +773,6 @@ function CurrentGameSection() {
     : [];
   const isMultiFw = (game?.extraFrameworks?.length ?? 0) > 0;
   const coopMasked = maskCoopPassword(coopSaved, coopShown);
-  // The one plugin worth offering to skip after a crash, if any.
-  const suspect = crashSuspect(sePlugins?.crash?.culprits);
-  // Two faults, one row: nothing loads if either is true.
-  const loadOrderIssue = loadOrder
-    ? loadOrderProblem(
-        loadOrder.violations,
-        loadOrder.disabledMasters,
-        loadOrder.examples
-      )
-    : undefined;
   const missingFrameworks = allFrameworks.filter((fw, i) =>
     i === 0 ? !status?.framework_installed : !extraFwInstalled[fw.name]
   );
@@ -1224,311 +984,6 @@ function CurrentGameSection() {
             }}
           >
             Switch to Proton (required)
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-      {/* The prefix's VC++ runtime falls behind on its own: a game's own
-          Steam install script writes an old one, and any mod binary that
-          links it dynamically then fails to load with nothing said
-          in-game. Sits outside the framework branches because it applies
-          to any game with a prefix, and long after setup is "done". */}
-      {runtime?.outdated && status?.installed && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            label="Mods not loading?"
-            disabled={runtimeBusy}
-            description={`${game.displayName}'s Windows runtime is ${
-              runtime.have || "very old"
-            } — mods built against ${
-              runtime.newest || "a newer one"
-            } can't load against it, and they fail silently. This copies the newer runtime out of Proton. Safe to run any time.`}
-            onClick={async () => {
-              setRuntimeBusy(true);
-              try {
-                const r = await fixPrefixRuntime(game.appId);
-                toaster.toast(
-                  r.ok
-                    ? {
-                        title: r.updated
-                          ? "Runtime updated"
-                          : "Runtime already current",
-                        body: r.updated
-                          ? `${r.previous ?? "old"} → ${r.version} — restart ${game.displayName} to load the mods that were failing`
-                          : `Already on ${r.version}`,
-                        duration: 10000,
-                      }
-                    : {
-                        title: "Could not update the runtime",
-                        body: r.error ?? "",
-                      }
-                );
-                refreshStatus();
-              } finally {
-                setRuntimeBusy(false);
-              }
-            }}
-          >
-            {runtimeBusy ? "Updating…" : "Update the Windows runtime"}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-      {/* Mods built for an older game than Steam ships will never load,
-          and the script extender stops the whole game with a modal
-          asking whether to continue - an impossible question, and a
-          rotten trade when it's one stale mod out of two thousand.
-          Setting it aside (renamed, not deleted) makes the game boot. */}
-      {(sePlugins?.failed.length ?? 0) > 0 && status?.installed && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            label={`${sePlugins!.failed.length} mod plugin${
-              sePlugins!.failed.length > 1 ? "s" : ""
-            } can't run`}
-            disabled={seBusy}
-            description={
-              `${sePlugins!.failed
-                .slice(0, 3)
-                .map((p) => p.name.replace(/\.dll$/i, ""))
-                .join(", ")}${
-                sePlugins!.failed.length > 3
-                  ? ` and ${sePlugins!.failed.length - 3} more`
-                  : ""
-              } failed to load last time` +
-              (sePlugins!.failed.some((p) => p.outdated)
-                ? " — they're built for an older version of the game, so only their authors can fix them. "
-                : ". ") +
-              "Skipping sets them aside so the game starts. They're renamed, not deleted."
-            }
-            onClick={async () => {
-              setSeBusy(true);
-              try {
-                const r = await setScriptExtenderPlugins(
-                  game.installDirName,
-                  sePlugins!.dir,
-                  sePlugins!.failed.map((p) => p.name),
-                  false
-                );
-                toaster.toast(
-                  r.ok
-                    ? {
-                        title: `Skipped ${r.changed ?? 0} mod plugin${
-                          (r.changed ?? 0) === 1 ? "" : "s"
-                        }`,
-                        body: `${game.displayName} should start now — the mods that needed them just won't do their thing`,
-                        duration: 10000,
-                      }
-                    : { title: "Could not skip them", body: r.error ?? "" }
-                );
-                refreshStatus();
-              } finally {
-                setSeBusy(false);
-              }
-            }}
-          >
-            {seBusy
-              ? "Skipping…"
-              : `Skip ${sePlugins!.failed.length} mod plugin${
-                  sePlugins!.failed.length > 1 ? "s" : ""
-                }`}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-      {/* Skyrim and FO4 read plugins.txt AS the load order, and we only
-          ever appended to it - so it was whatever order things happened
-          to install in. A plugin listed before a master it depends on
-          crashes the game on the way into the world. */}
-      {/* Two days of hand-driving this on a 1,960-mod Skyrim found five
-          broken plugins at ~12 four-minute launches each, and every
-          wasted launch came from me varying something between steps. The
-          machine sets the load order, launches, reads the crash log and
-          repeats - unattended. */}
-      {game.crashSignature !== undefined && status?.installed && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            label={
-              hunt?.running
-                ? `Hunting - launch ${hunt.launches + 1}`
-                : "Game crashes on startup?"
-            }
-            description={
-              hunt?.running
-                ? `${hunt.note}. ${hunt.remaining.toLocaleString()} mods left to rule out` +
-                  (hunt.skipped.length
-                    ? `. Found so far: ${hunt.skipped
-                        .map((n) => n.replace(/\.es[lmp]$/i, ""))
-                        .join(", ")}`
-                    : "")
-                : "Finds the mods responsible by launching repeatedly and " +
-                  "reading the crash log itself. Takes a few hours and the " +
-                  "game will start and close on its own - leave it alone. " +
-                  "Nothing is deleted and every mod comes back except the " +
-                  "ones it proves are broken."
-            }
-            onClick={() => {
-              if (hunt?.running) {
-                huntStopFlag = true;
-                setHunt((prev) => ({ ...prev!, note: "Stopping after this launch…" }));
-              } else {
-                runCrashHunt();
-              }
-            }}
-          >
-            {hunt?.running ? "Stop the hunt" : "Find what's breaking it"}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-      {loadOrderIssue && status?.installed && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            label={`${game.displayName} won't start?`}
-            disabled={loadOrderBusy}
-            description={loadOrderIssue}
-            onClick={async () => {
-              setLoadOrderBusy(true);
-              try {
-                const r = await fixLoadOrder(
-                  game.appId,
-                  game.installDirName,
-                  game.pluginsTxtSubpath!,
-                  game.pluginsTxtStyle ?? "starred",
-                  game.nexusDomain
-                );
-                toaster.toast(
-                  r.ok
-                    ? {
-                        title: "Load order fixed",
-                        body: [
-                          (r.enabled_masters ?? 0) > 0 &&
-                            `${r.enabled_masters} mod${
-                              r.enabled_masters === 1 ? "" : "s"
-                            } switched back on`,
-                          (r.violations_before ?? 0) > 0 &&
-                            `${(r.violations_before ?? 0).toLocaleString()} reordered`,
-                        ]
-                          .filter(Boolean)
-                          .join(", ") || "Nothing needed changing",
-                        duration: 10000,
-                      }
-                    : { title: "Could not fix it", body: r.error ?? "" }
-                );
-                const s = await getLoadOrderState(
-                  game.appId,
-                  game.installDirName,
-                  game.pluginsTxtSubpath!,
-                  game.pluginsTxtStyle ?? "starred",
-                  game.nexusDomain
-                );
-                setLoadOrder(
-                  s.ok && s.supported
-                    ? {
-                        total: s.total ?? 0,
-                        violations: s.violations ?? 0,
-                        disabledMasters: s.disabled_masters ?? 0,
-                        examples: s.examples ?? [],
-                      }
-                    : undefined
-                );
-              } finally {
-                setLoadOrderBusy(false);
-              }
-            }}
-          >
-            {loadOrderBusy ? "Fixing…" : "Fix load order"}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-      {/* A plugin the extender loaded happily can still crash the game
-          later, which leaves nothing in the extender's log - so this
-          reads the crash log instead. Only the frame nearest the crash
-          is offered: several mod DLLs can sit on one stack, and skipping
-          all of them would take out mods that were working fine. */}
-      {suspect && status?.installed && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            label={`${game.displayName} crashed last time`}
-            disabled={seBusy}
-            description={
-              `${suspect.name.replace(/\.dll$/i, "")} was ${
-                suspect.frame === 0
-                  ? "the code running when it crashed"
-                  : "on the stack when it crashed"
-              }, so it's the most likely cause${
-                suspect.probable ? "" : " (a weaker match)"
-              }. Skipping sets it aside so you can get back in — it's ` +
-              "renamed, not deleted, and the crash may still turn out to be something else."
-            }
-            onClick={async () => {
-              setSeBusy(true);
-              try {
-                const r = await setScriptExtenderPlugins(
-                  game.installDirName,
-                  sePlugins!.dir,
-                  [suspect.name],
-                  false
-                );
-                toaster.toast(
-                  r.ok
-                    ? {
-                        title: `Skipped ${suspect.name.replace(/\.dll$/i, "")}`,
-                        body: "Launch again — if it still crashes, the next suspect will show up here",
-                        duration: 10000,
-                      }
-                    : { title: "Could not skip it", body: r.error ?? "" }
-                );
-                refreshStatus();
-              } finally {
-                setSeBusy(false);
-              }
-            }}
-          >
-            {seBusy
-              ? "Skipping…"
-              : `Skip ${suspect.name.replace(/\.dll$/i, "")}`}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-      {(sePlugins?.parked.length ?? 0) > 0 && status?.installed && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            disabled={seBusy}
-            description={`${sePlugins!.parked
-              .slice(0, 3)
-              .map((n) => n.replace(/\.dll$/i, ""))
-              .join(", ")}${
-              sePlugins!.parked.length > 3
-                ? ` and ${sePlugins!.parked.length - 3} more`
-                : ""
-            } are set aside. Bring them back if their authors have since updated them.`}
-            onClick={async () => {
-              setSeBusy(true);
-              try {
-                const r = await setScriptExtenderPlugins(
-                  game.installDirName,
-                  sePlugins!.dir,
-                  sePlugins!.parked.map((n) => `${n}`),
-                  true
-                );
-                toaster.toast({
-                  title: r.ok
-                    ? `Restored ${r.changed ?? 0} mod plugin${
-                        (r.changed ?? 0) === 1 ? "" : "s"
-                      }`
-                    : "Could not restore them",
-                  body: r.ok ? "They'll be tried again next launch" : r.error ?? "",
-                });
-                refreshStatus();
-              } finally {
-                setSeBusy(false);
-              }
-            }}
-          >
-            Restore {sePlugins!.parked.length} skipped plugin
-            {sePlugins!.parked.length > 1 ? "s" : ""}
           </ButtonItem>
         </PanelSectionRow>
       )}
@@ -2834,6 +2289,618 @@ function InstalledModsSection() {
  * it sat with the bulk actions, running it removed the last mod, the
  * section returned null, and the button disappeared - unreachable for
  * anyone wanting to start over from a half-configured state. */
+/** Everything for when the game is misbehaving, kept out of the way.
+ *
+ * These rows are not setup: they only matter when something has already
+ * gone wrong, and a panel that leads with five ways to disable mods reads
+ * as "this is fragile". Collapsed by default, and sitting next to Reset
+ * because that is where someone looks when the game will not start.
+ *
+ * It lives in its own section rather than in the game panel so it can be
+ * placed at the bottom - the game panel renders first, above the mod
+ * list. */
+function TroubleshootingSection() {
+  const { game } = resolveGameContext();
+  const [open, setOpen] = useState(false);
+  const [installed, setInstalled] = useState(false);
+  // Prefix VC++ runtime: mod binaries that link it dynamically won't
+  // load against the ancient one a game's install script leaves behind.
+  const [runtime, setRuntime] = useState<
+    { have?: string; newest?: string; outdated?: boolean } | undefined
+  >();
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+  // DLL plugins the script extender refused to load last launch, plus
+  // any implicated in a crash since.
+  const [sePlugins, setSePlugins] = useState<
+    | {
+        failed: ScriptExtenderPlugin[];
+        parked: string[];
+        dir: string;
+        crash?: CrashReport;
+      }
+    | undefined
+  >();
+  const [seBusy, setSeBusy] = useState(false);
+  // Enabled plugins listed before a master they need - a boot crash.
+  const [loadOrder, setLoadOrder] = useState<
+    {
+      total: number;
+      violations: number;
+      disabledMasters: number;
+      examples: string[];
+    }
+    | undefined
+  >();
+  const [loadOrderBusy, setLoadOrderBusy] = useState(false);
+  // The automated crash hunt: apply a load order, launch, read the crash
+  // log, repeat. Running it by hand took two days and five culprits.
+  const [hunt, setHunt] = useState<
+    | {
+        running: boolean;
+        launches: number;
+        remaining: number;
+        skipped: string[];
+        note: string;
+      }
+    | undefined
+  >();
+
+  const refresh = () => {
+    if (!game) return;
+    getGameStatus(game.installDirName, game.modsSubdir, "").then((s) =>
+      setInstalled(Boolean(s.installed))
+    );
+    if (game.prefixRuntimeFix) {
+      getPrefixRuntimeState(game.appId).then((r) =>
+        setRuntime(r.ok && r.prefix_exists ? r : undefined)
+      );
+    }
+    if (game.scriptExtenderLog) {
+      getScriptExtenderState(
+        game.appId,
+        game.installDirName,
+        game.scriptExtenderLog
+      ).then((r) =>
+        setSePlugins(
+          r.ok
+            ? {
+                failed: r.failed ?? [],
+                parked: r.parked ?? [],
+                dir: r.plugins_dir ?? "",
+                crash: r.crash,
+              }
+            : undefined
+        )
+      );
+    }
+    if (game.pluginsTxtSubpath) {
+      getLoadOrderState(
+        game.appId,
+        game.installDirName,
+        game.pluginsTxtSubpath,
+        game.pluginsTxtStyle ?? "starred",
+        game.nexusDomain
+      ).then((r) =>
+        setLoadOrder(
+          r.ok && r.supported
+            ? {
+                total: r.total ?? 0,
+                violations: r.violations ?? 0,
+                disabledMasters: r.disabled_masters ?? 0,
+                examples: r.examples ?? [],
+              }
+            : undefined
+        )
+      );
+    }
+  };
+
+  useEffect(refresh, [game?.appId]);
+  // The one plugin worth offering to skip after a crash, if any.
+  const suspect = crashSuspect(sePlugins?.crash?.culprits);
+  // Two faults, one row: nothing loads if either is true.
+  const loadOrderIssue = loadOrder
+    ? loadOrderProblem(
+        loadOrder.violations,
+        loadOrder.disabledMasters,
+        loadOrder.examples
+      )
+    : undefined;
+
+  /** Drive the hunt: set a load order, launch, watch, record, repeat.
+   *
+   * Deliberately reads the crash log itself rather than asking what the
+   * user saw. Doing this by hand, two steps were corrupted by a mod dying
+   * on a form its own (now-disabled) plugin used to provide - a crash that
+   * looks identical from the outside and means nothing here. */
+  const runCrashHunt = async () => {
+    if (!game?.pluginsTxtSubpath || !game.scriptExtenderLog) return;
+    if (game.crashSignature === undefined) return;
+    huntStopFlag = false;
+    huntActive = true;
+    const style = game.pluginsTxtStyle ?? "starred";
+    const started = await crashBisectStart(
+      game.appId,
+      game.installDirName,
+      game.pluginsTxtSubpath,
+      style,
+      game.nexusDomain,
+      game.crashSignature,
+      game.scriptExtenderLog,
+      game.huntKeepDlls ?? []
+    );
+    if (!started.ok) {
+      toaster.toast({ title: "Couldn't start", body: started.error ?? "" });
+      return;
+    }
+    const target = started.signature ?? game.crashSignature;
+    setHunt({
+      running: true,
+      launches: 0,
+      remaining: started.total ?? 0,
+      skipped: [],
+      note: `Chasing ${target}`,
+    });
+    let strayCrashes = 0;
+    for (;;) {
+      if (huntStopFlag) break;
+      const step = await crashBisectApply();
+      if (!step.ok || step.done) break;
+      setHunt((h) => ({
+        running: true,
+        launches: step.launches ?? h?.launches ?? 0,
+        remaining: step.remaining ?? 0,
+        skipped: step.skipped ?? h?.skipped ?? [],
+        note: `Launch ${(step.launches ?? 0) + 1}: trying ${(
+          step.enabled ?? 0
+        ).toLocaleString()} mods`,
+      }));
+      // Numbered every time: hours of the game opening and closing is
+      // indistinguishable from a boot loop without a running count.
+      const note = huntProgressNote(
+        (step.launches ?? 0) + 1,
+        step.enabled ?? 0,
+        step.remaining ?? 0,
+        (step.skipped ?? []).length
+      );
+      toaster.toast({ ...note, duration: 12000 });
+      const launchedAt = Date.now() / 1000;
+      restartGame(game.appId);
+      let verdict: ReturnType<typeof crashHuntVerdict> = "waiting";
+      while (!huntStopFlag) {
+        await new Promise((r) => setTimeout(r, 10_000));
+        const seen = await crashSince(
+          game.appId,
+          game.scriptExtenderLog,
+          launchedAt
+        );
+        verdict = crashHuntVerdict(
+          Date.now() - launchedAt * 1000,
+          seen.crash?.address,
+          game.crashSignature
+        );
+        if (verdict !== "waiting") break;
+      }
+      if (huntStopFlag) break;
+      // A different crash tells us nothing about the fault being hunted,
+      // so it is not folded in - the run is simply repeated.
+      if (verdict === "other-crash") {
+        // Bounded, because "retry" only helps if the outcome can change.
+        // A mod dying on a form its own disabled plugin used to provide
+        // does it every single time - that looped 20 times overnight.
+        strayCrashes += 1;
+        if (strayCrashes > 3) {
+          toaster.toast({
+            title: "Hunt stopped — something else keeps crashing",
+            body: "A different crash repeated, so the search can't tell mods apart. Nothing was changed.",
+            duration: 20000,
+          });
+          break;
+        }
+        setHunt((prev) => ({
+          ...prev!,
+          note: `A different crash (${strayCrashes}/3) - retrying`,
+        }));
+        toaster.toast({
+          title: `Different crash — retry ${strayCrashes} of 3`,
+          body: "That one wasn't the fault being hunted, so it doesn't count",
+          duration: 8000,
+        });
+        continue;
+      }
+      strayCrashes = 0;
+      (window as any).SteamClient?.Apps?.TerminateApp?.(
+        String(game.appId),
+        false
+      );
+      const rec = await crashBisectRecord(verdict === "crash");
+      setHunt({
+        running: true,
+        launches: rec.launches ?? 0,
+        remaining: rec.remaining ?? 0,
+        skipped: rec.skipped ?? [],
+        note: rec.found ? `Found ${rec.found}` : "Narrowing…",
+      });
+      if (rec.found) {
+        toaster.toast({
+          title: "Found a broken mod",
+          body: rec.found.replace(/\.es[lmp]$/i, ""),
+          duration: 12000,
+        });
+      }
+      if (rec.done) break;
+    }
+    huntActive = false;
+    const end = await crashBisectFinish(true);
+    setHunt(undefined);
+    toaster.toast({
+      title: huntStopFlag ? "Hunt stopped" : "Hunt finished",
+      body: (end.skipped?.length ?? 0) > 0
+        ? `Skipped ${end.skipped!.length} broken mod${
+            end.skipped!.length === 1 ? "" : "s"
+          } - everything else is back on`
+        : "Nothing found - all mods are back on",
+      duration: 15000,
+    });
+    refresh();
+  };
+
+  // A hunt started before the panel was closed is still running: show it
+  // again with a working Stop, rather than an inviting Start button and
+  // no way to halt what is already going.
+  useEffect(() => {
+    if (huntActive && !hunt) {
+      setHunt({
+        running: true,
+        launches: 0,
+        remaining: 0,
+        skipped: [],
+        note: "Still running — reopened",
+      });
+    }
+  }, [game?.appId]);
+
+  if (!game || !installed) return null;
+
+  // How many things are actually wrong. Shown on the header so the row is
+  // worth opening - or worth ignoring.
+  const problems = troubleshootingCount(
+    Boolean(runtime?.outdated),
+    sePlugins?.failed.length ?? 0,
+    Boolean(suspect),
+    loadOrderIssue
+  );
+
+  return (
+    <PanelSection title="Troubleshooting">
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          onClick={() => setOpen((v) => !v)}
+          description={
+            open
+              ? undefined
+              : problems > 0
+              ? `${problems} thing${problems === 1 ? "" : "s"} to look at`
+              : "Nothing looks wrong. Open if the game won't start."
+          }
+        >
+          {open ? "Hide" : problems > 0 ? `Fixes (${problems})` : "Fixes"}
+        </ButtonItem>
+      </PanelSectionRow>
+      {open && (
+        <>
+        {/* The prefix's VC++ runtime falls behind on its own: a game's own
+            Steam install script writes an old one, and any mod binary that
+            links it dynamically then fails to load with nothing said
+            in-game. Sits outside the framework branches because it applies
+            to any game with a prefix, and long after setup is "done". */}
+        {runtime?.outdated && installed && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              label="Mods not loading?"
+              disabled={runtimeBusy}
+              description={`${game.displayName}'s Windows runtime is ${
+                runtime.have || "very old"
+              } — mods built against ${
+                runtime.newest || "a newer one"
+              } can't load against it, and they fail silently. This copies the newer runtime out of Proton. Safe to run any time.`}
+              onClick={async () => {
+                setRuntimeBusy(true);
+                try {
+                  const r = await fixPrefixRuntime(game.appId);
+                  toaster.toast(
+                    r.ok
+                      ? {
+                          title: r.updated
+                            ? "Runtime updated"
+                            : "Runtime already current",
+                          body: r.updated
+                            ? `${r.previous ?? "old"} → ${r.version} — restart ${game.displayName} to load the mods that were failing`
+                            : `Already on ${r.version}`,
+                          duration: 10000,
+                        }
+                      : {
+                          title: "Could not update the runtime",
+                          body: r.error ?? "",
+                        }
+                  );
+                  refresh();
+                } finally {
+                  setRuntimeBusy(false);
+                }
+              }}
+            >
+              {runtimeBusy ? "Updating…" : "Update the Windows runtime"}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {/* Mods built for an older game than Steam ships will never load,
+            and the script extender stops the whole game with a modal
+            asking whether to continue - an impossible question, and a
+            rotten trade when it's one stale mod out of two thousand.
+            Setting it aside (renamed, not deleted) makes the game boot. */}
+        {(sePlugins?.failed.length ?? 0) > 0 && installed && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              label={`${sePlugins!.failed.length} mod plugin${
+                sePlugins!.failed.length > 1 ? "s" : ""
+              } can't run`}
+              disabled={seBusy}
+              description={
+                `${sePlugins!.failed
+                  .slice(0, 3)
+                  .map((p) => p.name.replace(/\.dll$/i, ""))
+                  .join(", ")}${
+                  sePlugins!.failed.length > 3
+                    ? ` and ${sePlugins!.failed.length - 3} more`
+                    : ""
+                } failed to load last time` +
+                (sePlugins!.failed.some((p) => p.outdated)
+                  ? " — they're built for an older version of the game, so only their authors can fix them. "
+                  : ". ") +
+                "Skipping sets them aside so the game starts. They're renamed, not deleted."
+              }
+              onClick={async () => {
+                setSeBusy(true);
+                try {
+                  const r = await setScriptExtenderPlugins(
+                    game.installDirName,
+                    sePlugins!.dir,
+                    sePlugins!.failed.map((p) => p.name),
+                    false
+                  );
+                  toaster.toast(
+                    r.ok
+                      ? {
+                          title: `Skipped ${r.changed ?? 0} mod plugin${
+                            (r.changed ?? 0) === 1 ? "" : "s"
+                          }`,
+                          body: `${game.displayName} should start now — the mods that needed them just won't do their thing`,
+                          duration: 10000,
+                        }
+                      : { title: "Could not skip them", body: r.error ?? "" }
+                  );
+                  refresh();
+                } finally {
+                  setSeBusy(false);
+                }
+              }}
+            >
+              {seBusy
+                ? "Skipping…"
+                : `Skip ${sePlugins!.failed.length} mod plugin${
+                    sePlugins!.failed.length > 1 ? "s" : ""
+                  }`}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {/* Skyrim and FO4 read plugins.txt AS the load order, and we only
+            ever appended to it - so it was whatever order things happened
+            to install in. A plugin listed before a master it depends on
+            crashes the game on the way into the world. */}
+        {/* Two days of hand-driving this on a 1,960-mod Skyrim found five
+            broken plugins at ~12 four-minute launches each, and every
+            wasted launch came from me varying something between steps. The
+            machine sets the load order, launches, reads the crash log and
+            repeats - unattended. */}
+        {game.crashSignature !== undefined && installed && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              label={
+                hunt?.running
+                  ? `Hunting - launch ${hunt.launches + 1}`
+                  : "Game crashes on startup?"
+              }
+              description={
+                hunt?.running
+                  ? `${hunt.note}. ${hunt.remaining.toLocaleString()} mods left to rule out` +
+                    (hunt.skipped.length
+                      ? `. Found so far: ${hunt.skipped
+                          .map((n) => n.replace(/\.es[lmp]$/i, ""))
+                          .join(", ")}`
+                      : "")
+                  : "Finds the mods responsible by launching repeatedly and " +
+                    "reading the crash log itself. Takes a few hours and the " +
+                    "game will start and close on its own - leave it alone. " +
+                    "Nothing is deleted and every mod comes back except the " +
+                    "ones it proves are broken."
+              }
+              onClick={() => {
+                if (hunt?.running) {
+                  huntStopFlag = true;
+                  setHunt((prev) => ({ ...prev!, note: "Stopping after this launch…" }));
+                } else {
+                  runCrashHunt();
+                }
+              }}
+            >
+              {hunt?.running ? "Stop the hunt" : "Find what's breaking it"}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {loadOrderIssue && installed && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              label={`${game.displayName} won't start?`}
+              disabled={loadOrderBusy}
+              description={loadOrderIssue}
+              onClick={async () => {
+                setLoadOrderBusy(true);
+                try {
+                  const r = await fixLoadOrder(
+                    game.appId,
+                    game.installDirName,
+                    game.pluginsTxtSubpath!,
+                    game.pluginsTxtStyle ?? "starred",
+                    game.nexusDomain
+                  );
+                  toaster.toast(
+                    r.ok
+                      ? {
+                          title: "Load order fixed",
+                          body: [
+                            (r.enabled_masters ?? 0) > 0 &&
+                              `${r.enabled_masters} mod${
+                                r.enabled_masters === 1 ? "" : "s"
+                              } switched back on`,
+                            (r.violations_before ?? 0) > 0 &&
+                              `${(r.violations_before ?? 0).toLocaleString()} reordered`,
+                          ]
+                            .filter(Boolean)
+                            .join(", ") || "Nothing needed changing",
+                          duration: 10000,
+                        }
+                      : { title: "Could not fix it", body: r.error ?? "" }
+                  );
+                  const s = await getLoadOrderState(
+                    game.appId,
+                    game.installDirName,
+                    game.pluginsTxtSubpath!,
+                    game.pluginsTxtStyle ?? "starred",
+                    game.nexusDomain
+                  );
+                  setLoadOrder(
+                    s.ok && s.supported
+                      ? {
+                          total: s.total ?? 0,
+                          violations: s.violations ?? 0,
+                          disabledMasters: s.disabled_masters ?? 0,
+                          examples: s.examples ?? [],
+                        }
+                      : undefined
+                  );
+                } finally {
+                  setLoadOrderBusy(false);
+                }
+              }}
+            >
+              {loadOrderBusy ? "Fixing…" : "Fix load order"}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {/* A plugin the extender loaded happily can still crash the game
+            later, which leaves nothing in the extender's log - so this
+            reads the crash log instead. Only the frame nearest the crash
+            is offered: several mod DLLs can sit on one stack, and skipping
+            all of them would take out mods that were working fine. */}
+        {suspect && installed && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              label={`${game.displayName} crashed last time`}
+              disabled={seBusy}
+              description={
+                `${suspect.name.replace(/\.dll$/i, "")} was ${
+                  suspect.frame === 0
+                    ? "the code running when it crashed"
+                    : "on the stack when it crashed"
+                }, so it's the most likely cause${
+                  suspect.probable ? "" : " (a weaker match)"
+                }. Skipping sets it aside so you can get back in — it's ` +
+                "renamed, not deleted, and the crash may still turn out to be something else."
+              }
+              onClick={async () => {
+                setSeBusy(true);
+                try {
+                  const r = await setScriptExtenderPlugins(
+                    game.installDirName,
+                    sePlugins!.dir,
+                    [suspect.name],
+                    false
+                  );
+                  toaster.toast(
+                    r.ok
+                      ? {
+                          title: `Skipped ${suspect.name.replace(/\.dll$/i, "")}`,
+                          body: "Launch again — if it still crashes, the next suspect will show up here",
+                          duration: 10000,
+                        }
+                      : { title: "Could not skip it", body: r.error ?? "" }
+                  );
+                  refresh();
+                } finally {
+                  setSeBusy(false);
+                }
+              }}
+            >
+              {seBusy
+                ? "Skipping…"
+                : `Skip ${suspect.name.replace(/\.dll$/i, "")}`}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {(sePlugins?.parked.length ?? 0) > 0 && installed && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={seBusy}
+              description={`${sePlugins!.parked
+                .slice(0, 3)
+                .map((n) => n.replace(/\.dll$/i, ""))
+                .join(", ")}${
+                sePlugins!.parked.length > 3
+                  ? ` and ${sePlugins!.parked.length - 3} more`
+                  : ""
+              } are set aside. Bring them back if their authors have since updated them.`}
+              onClick={async () => {
+                setSeBusy(true);
+                try {
+                  const r = await setScriptExtenderPlugins(
+                    game.installDirName,
+                    sePlugins!.dir,
+                    sePlugins!.parked.map((n) => `${n}`),
+                    true
+                  );
+                  toaster.toast({
+                    title: r.ok
+                      ? `Restored ${r.changed ?? 0} mod plugin${
+                          (r.changed ?? 0) === 1 ? "" : "s"
+                        }`
+                      : "Could not restore them",
+                    body: r.ok ? "They'll be tried again next launch" : r.error ?? "",
+                  });
+                  refresh();
+                } finally {
+                  setSeBusy(false);
+                }
+              }}
+            >
+              Restore {sePlugins!.parked.length} skipped plugin
+              {sePlugins!.parked.length > 1 ? "s" : ""}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        </>
+      )}
+    </PanelSection>
+  );
+}
+
 function ResetSection() {
   const { game } = resolveGameContext();
   const [installed, setInstalled] = useState(false);
@@ -3353,6 +3420,7 @@ function Content() {
         <>
           <InstalledModsSection />
           <SavesSection />
+          <TroubleshootingSection />
           <ResetSection />
         </>
       ) : (
