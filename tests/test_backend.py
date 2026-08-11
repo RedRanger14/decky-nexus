@@ -4185,6 +4185,78 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestInstallRecordMerge(unittest.TestCase):
+    """Several files of one mod must not erase each other's file lists.
+
+    Records are keyed by mod NAME, and a collection routinely installs a
+    main file plus patches from the same mod. Each install replaced the
+    record outright, so every file but the last became untrackable and
+    reset could not remove them. On a 1,972-mod collection that orphaned
+    668 files and 20GB - twice - and both times it presented as "reset is
+    broken" rather than "install forgot".
+    """
+
+    def _rec(self, file_id, files, plugins=()):
+        return {"mod_id": 7, "file_id": file_id, "name": "A Mod",
+                "files": list(files), "plugins": list(plugins)}
+
+    def test_a_first_install_is_kept_as_is(self):
+        r = self._rec(1, ["a.esp"])
+        self.assertEqual(main._merge_install_record(None, r), r)
+
+    def test_a_second_file_of_the_same_mod_adds_to_the_list(self):
+        first = self._rec(1, ["main.esp", "main.bsa"])
+        second = self._rec(2, ["patch.esp"])
+        merged = main._merge_install_record(first, second)
+        self.assertEqual(
+            merged["files"], ["main.esp", "main.bsa", "patch.esp"],
+            "the first file's contents must remain removable")
+
+    def test_reinstalling_the_same_file_replaces_rather_than_grows(self):
+        # A repair pass: this file's list is already the whole truth for
+        # it, and accumulating would keep names it no longer installs.
+        first = self._rec(1, ["old.esp", "stale.esp"])
+        again = self._rec(1, ["old.esp"])
+        merged = main._merge_install_record(first, again)
+        self.assertEqual(merged["files"], ["old.esp"])
+
+    def test_duplicate_paths_across_files_are_not_doubled(self):
+        first = self._rec(1, ["shared.esp"])
+        second = self._rec(2, ["Shared.esp", "extra.esp"])
+        merged = main._merge_install_record(first, second)
+        self.assertEqual(len(merged["files"]), 2,
+                         "same path in two files is still one file on disk")
+
+    def test_plugins_merge_the_same_way(self):
+        first = self._rec(1, ["a"], ["Main.esp"])
+        second = self._rec(2, ["b"], ["Patch.esp"])
+        merged = main._merge_install_record(first, second)
+        self.assertEqual(merged["plugins"], ["Main.esp", "Patch.esp"])
+
+    def test_the_newest_metadata_wins(self):
+        first = self._rec(1, ["a"])
+        first["version"] = "1.0"
+        second = self._rec(2, ["b"])
+        second["version"] = "2.0"
+        merged = main._merge_install_record(first, second)
+        self.assertEqual(merged["version"], "2.0")
+
+    def test_every_contributing_file_id_is_remembered(self):
+        merged = main._merge_install_record(
+            self._rec(1, ["a"]), self._rec(2, ["b"]))
+        self.assertEqual(merged["file_ids"], [1, 2])
+        merged = main._merge_install_record(merged, self._rec(3, ["c"]))
+        self.assertEqual(merged["file_ids"], [1, 2, 3])
+
+    def test_three_files_of_one_mod_all_stay_removable(self):
+        # The exact device shape: CC Myrwatch installed three times.
+        rec = None
+        for fid, files in ((1, ["one.esp"]), (2, ["two.esp"]),
+                           (3, [f"f{i}" for i in range(42)])):
+            rec = main._merge_install_record(rec, self._rec(fid, files))
+        self.assertEqual(len(rec["files"]), 44)
+
+
 class TestEnforceSkips(unittest.TestCase):
     """Skips must survive both the install order and the game itself.
 

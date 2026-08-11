@@ -373,6 +373,53 @@ def _record_vanilla_baseline(game_domain: str, mods_path: str) -> None:
     )
 
 
+def _merge_install_record(existing: dict, new: dict) -> dict:
+    """Fold a new install into any record already under the same key.
+
+    Records are keyed by mod NAME, but a collection routinely installs
+    several FILES from one mod - a main file plus its patches. Each one
+    replaced the previous record outright, so every file but the last
+    became untrackable: reset could not remove what it had no record of.
+    On a 1,972-mod collection that orphaned 668 files and 20GB, twice,
+    and both times it looked like "reset is broken" rather than "install
+    forgot".
+
+    Re-keying by file id would fix it too, but the key is the mod's
+    identity everywhere else - the uninstall row, the toggle, the folder
+    shown to the user - so the file lists are merged instead and the mod
+    stays one thing.
+
+    A repeat of the SAME file (a repair pass) replaces rather than
+    accumulates: its file list is already the whole truth for that file.
+    """
+    if not existing:
+        return new
+    merged = dict(new)
+    same_file = existing.get("file_id") == new.get("file_id")
+    for field in ("files", "plugins"):
+        old_vals = existing.get(field) or []
+        new_vals = new.get(field) or []
+        if same_file:
+            merged[field] = new_vals
+            continue
+        seen, out = set(), []
+        for v in list(old_vals) + list(new_vals):
+            key = v.lower() if isinstance(v, str) else repr(v)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(v)
+        merged[field] = out
+    if not same_file:
+        # Which files of this mod are present, so a future uninstall or
+        # repair can tell how the record was assembled.
+        ids = list(existing.get("file_ids") or [existing.get("file_id")])
+        if new.get("file_id") not in ids:
+            ids.append(new.get("file_id"))
+        merged["file_ids"] = [i for i in ids if i is not None]
+    return merged
+
+
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._ -]", "", name).strip().strip(".")
     return cleaned or "mod"
@@ -5781,7 +5828,7 @@ query Link($slug: String!, $domainName: String!) {
             game_domain, {}
         )
         record_key = _safe_name(mod_name)
-        installed[record_key] = {
+        _new_record = {
             "mod_id": mod_id,
             "file_id": file_id,
             "name": mod_name,
@@ -5795,6 +5842,9 @@ query Link($slug: String!, $domainName: String!) {
             "target": ".",
             "files": installed_rel,
         }
+        installed[record_key] = _merge_install_record(
+            installed.get(record_key), _new_record
+        )
         _save_settings(settings)
         decky.logger.info(
             f"installed {mod_name!r} into game root "
@@ -6178,7 +6228,7 @@ query Link($slug: String!, $domainName: String!) {
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
             )
-            installed[record_key] = {
+            _new_record = {
                 "mod_id": mod_id,
                 "file_id": file_id,
                 "name": mod_name,
@@ -6192,6 +6242,9 @@ query Link($slug: String!, $domainName: String!) {
                 "files": files_rel,
                 "plugins": plugins,
             }
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key), _new_record
+            )
             _save_settings(settings)
             decky.logger.info(
                 f"{'repaired' if repair_only else 'installed'} {mod_name!r} "
@@ -6316,7 +6369,7 @@ query Link($slug: String!, $domainName: String!) {
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
             )
-            installed[record_key] = {
+            _new_record = {
                 "mod_id": mod_id,
                 "file_id": file_id,
                 "name": mod_name,
@@ -6328,6 +6381,9 @@ query Link($slug: String!, $domainName: String!) {
                 "collection_slug": collection_slug,
                 **route,
             }
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key), _new_record
+            )
             _save_settings(settings)
             decky.logger.info(
                 f"installed UE4SS mod {mod_name!r} -> {route.get('target')!r}"
@@ -6654,7 +6710,7 @@ query Link($slug: String!, $domainName: String!) {
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
             )
-            installed[record_key] = {
+            _new_record = {
                 "mod_id": mod_id,
                 "file_id": file_id,
                 "name": mod_name,
@@ -6667,6 +6723,9 @@ query Link($slug: String!, $domainName: String!) {
                 "source": record_source or "browse",
                 "collection_slug": collection_slug,
             }
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key), _new_record
+            )
             _save_settings(settings)
             decky.logger.info(
                 f"installed RE4 {mod_name!r}: {len(assigned)} pak(s), "
@@ -6709,7 +6768,7 @@ query Link($slug: String!, $domainName: String!) {
                 game_domain, {}
             )
             record_key = _safe_name(mod_name)
-            installed[record_key] = {
+            _new_record = {
                 "mod_id": mod_id,
                 "file_id": file_id,
                 "name": mod_name,
@@ -6723,6 +6782,9 @@ query Link($slug: String!, $domainName: String!) {
                 "target": ".",
                 "files": installed_rel,
             }
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key), _new_record
+            )
             _save_settings(settings)
             decky.logger.info(
                 f"installed CP77 {mod_name!r}: {len(installed_rel)} "
@@ -6769,7 +6831,7 @@ query Link($slug: String!, $domainName: String!) {
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
             )
-            installed[record_key] = {
+            _new_record = {
                 "mod_id": mod_id,
                 "file_id": file_id,
                 "name": mod_name,
@@ -6783,6 +6845,9 @@ query Link($slug: String!, $domainName: String!) {
                 "target": mods_subdir,
                 "files": moved,
             }
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key), _new_record
+            )
             _save_settings(settings)
             decky.logger.info(
                 f"installed {mod_name!r}: {len(moved)} flat files -> "
@@ -7013,7 +7078,7 @@ query Link($slug: String!, $domainName: String!) {
             installed = settings.setdefault("installed", {}).setdefault(
                 entry["game_domain"], {}
             )
-            installed[record_key] = {
+            _new_record = {
                 "mod_id": entry["mod_id"],
                 "file_id": entry["file_id"],
                 "name": entry["mod_name"],
@@ -7027,6 +7092,9 @@ query Link($slug: String!, $domainName: String!) {
                 "files": files_rel,
                 "plugins": plugins,
             }
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key), _new_record
+            )
             _save_settings(settings)
             decky.logger.info(
                 f"{'repaired' if repair_only else 'installed'} FOMOD "
