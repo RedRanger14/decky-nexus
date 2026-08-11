@@ -8257,8 +8257,30 @@ query Link($slug: String!, $domainName: String!) {
             ):
                 _force_rmtree(ME3_ROOT)
                 framework_files.append("me3 (mod loader)")
+        # Anything WE renamed is ours to undo. A parked script-extender
+        # plugin keeps its file and loses its extension, so a reset that
+        # ignores them leaves the panel offering to restore mods that no
+        # longer exist - and a reinstall inherits skips from a setup that
+        # is gone.
+        unparked = 0
+        se_dir = os.path.join(
+            install_path,
+            *SE_PLUGIN_DIRS.get(
+                (plugins_subpath or "").split("/")[0],
+                ("Data", "SKSE", "Plugins"),
+            ),
+        )
+        if os.path.isdir(se_dir):
+            for name in os.listdir(se_dir):
+                if not name.endswith(SE_DISABLED_SUFFIX):
+                    continue
+                try:
+                    os.remove(os.path.join(se_dir, name))
+                    unparked += 1
+                except OSError as e:
+                    errors.append(f"{name}: {e}")
         for section in ("installed", "collections", "framework_setup",
-                        "collection_attention", "w3_merges"):
+                        "collection_attention", "w3_merges", "skipped"):
             settings.get(section, {}).pop(game_domain, None)
         _save_settings(settings)
         cleared_dlo = False
@@ -8267,8 +8289,8 @@ query Link($slug: String!, $domainName: String!) {
             cleared_dlo = ok
         decky.logger.info(
             f"reset {game_domain!r}: {removed} mods removed, framework "
-            f"files {framework_files}, dlo cleared={cleared_dlo}, "
-            f"{len(errors)} errors"
+            f"files {framework_files}, {unparked} parked plugin(s) cleared, "
+            f"dlo cleared={cleared_dlo}, {len(errors)} errors"
         )
         return {
             "ok": True,
