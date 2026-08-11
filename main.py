@@ -1181,6 +1181,44 @@ def _bisect_save(state: dict) -> None:
         json.dump(state, f, indent=2)
 
 
+def _dependents_closure(data_path: str, names: list, targets: set) -> list:
+    """Everything in `names` that cannot work without something in
+    `targets`, transitively.
+
+    A mod is not optional to the mods built on it. Skipping one without
+    its dependents leaves them loading against a master that is no longer
+    there, which crashes in its own right - so the hunt then "finds" each
+    victim in turn. On the device's Gate To Sovngarde run that turned 3
+    real culprits into 14 findings and cost about three hours of launches
+    discovering consequences of its own first skip.
+    """
+    try:
+        real = {f.lower(): f for f in os.listdir(data_path)}
+    except OSError:
+        return []
+    masters = {}
+    for n in names:
+        f = real.get(n.lower())
+        masters[n.lower()] = {
+            m.lower()
+            for m in (_plugin_masters(os.path.join(data_path, f)) or [])
+        } if f else set()
+    doomed = {t.lower() for t in targets}
+    out = []
+    changed = True
+    while changed:
+        changed = False
+        for n in names:
+            low = n.lower()
+            if low in doomed:
+                continue
+            if masters[low] & doomed:
+                doomed.add(low)
+                out.append(n)
+                changed = True
+    return out
+
+
 def _bisect_next_prefix(state: dict) -> int:
     """Which prefix length to test next.
 
@@ -8486,6 +8524,24 @@ query Link($slug: String!, $domainName: String!) {
         order = [n for n, on in entries if on]
         if len(order) < 4:
             return {"ok": False, "error": "Not enough mods to search"}
+        # An empty signature means "chase whatever crash just happened".
+        # Hardcoding one per game in the registry meant the hunt could only
+        # ever chase the crash we happened to know about; the moment the
+        # first fault was fixed a second surfaced at a different address
+        # and the feature was useless against it.
+        if not signature:
+            se_dir = os.path.dirname(_game_prefs_path(app_id, log_subpath))
+            newest = _newest_crash_log(
+                (se_dir, os.path.join(se_dir, "Crashlogs")))
+            if not newest:
+                return {"ok": False, "error":
+                        "No crash log to work from - launch the game once"}
+            parsed = _parse_crash_log(newest)
+            frames = parsed.get("frames") or []
+            if not frames:
+                return {"ok": False, "error":
+                        "That crash log has no readable call stack"}
+            signature = frames[0]["module"]
         try:
             shutil.copy2(path, path + ".decky-bisect-orig")
         except OSError:
@@ -8529,7 +8585,8 @@ query Link($slug: String!, $domainName: String!) {
             f"crash hunt started over {len(order)} plugins, "
             f"{len(parked)} mod DLL(s) parked for the duration"
         )
-        return {"ok": True, "total": len(order), "parked_dlls": len(parked)}
+        return {"ok": True, "total": len(order), "parked_dlls": len(parked),
+                "signature": signature}
 
     async def crash_bisect_apply(self) -> dict:
         """Write the load order for the next launch."""
@@ -8575,11 +8632,24 @@ query Link($slug: String!, $domainName: String!) {
         if not state:
             return {"ok": False, "error": "No hunt in progress"}
         state = _bisect_advance(state, bool(crashed))
-        _bisect_save(state)
+        collateral = []
         if state.get("found"):
-            decky.logger.info(f"crash hunt found {state['found']}")
+            data_path = os.path.join(STEAM_COMMON, state["install_dir"], "Data")
+            collateral = await asyncio.to_thread(
+                _dependents_closure, data_path, state["order"],
+                set(state["skipped"]),
+            )
+            if collateral:
+                state["skipped"].extend(collateral)
+            decky.logger.info(
+                f"crash hunt found {state['found']}"
+                + (f" (+{len(collateral)} that depend on it)"
+                   if collateral else "")
+            )
+        _bisect_save(state)
         return {
             "ok": True, "found": state.get("found"),
+            "collateral": collateral,
             "skipped": state["skipped"], "launches": state["launches"],
             "remaining": max(0, state["hi"] - state["lo"]),
             "done": state["hi"] <= state["lo"],

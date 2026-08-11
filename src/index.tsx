@@ -706,7 +706,7 @@ function CurrentGameSection() {
    * looks identical from the outside and means nothing here. */
   const runCrashHunt = async () => {
     if (!game?.pluginsTxtSubpath || !game.scriptExtenderLog) return;
-    if (!game.crashSignature) return;
+    if (game.crashSignature === undefined) return;
     huntStopFlag = false;
     huntActive = true;
     const style = game.pluginsTxtStyle ?? "starred";
@@ -716,7 +716,7 @@ function CurrentGameSection() {
       game.pluginsTxtSubpath,
       style,
       game.nexusDomain,
-      game.crashSignature!,
+      game.crashSignature,
       game.scriptExtenderLog,
       game.huntKeepDlls ?? []
     );
@@ -724,12 +724,13 @@ function CurrentGameSection() {
       toaster.toast({ title: "Couldn't start", body: started.error ?? "" });
       return;
     }
+    const target = started.signature ?? game.crashSignature;
     setHunt({
       running: true,
       launches: 0,
       remaining: started.total ?? 0,
       skipped: [],
-      note: "Setting up the first test…",
+      note: `Chasing ${target}`,
     });
     let strayCrashes = 0;
     for (;;) {
@@ -767,7 +768,7 @@ function CurrentGameSection() {
         verdict = crashHuntVerdict(
           Date.now() - launchedAt * 1000,
           seen.crash?.address,
-          game.crashSignature!
+          game.crashSignature
         );
         if (verdict !== "waiting") break;
       }
@@ -1326,7 +1327,7 @@ function CurrentGameSection() {
           wasted launch came from me varying something between steps. The
           machine sets the load order, launches, reads the crash log and
           repeats - unattended. */}
-      {game.crashSignature && status?.installed && (
+      {game.crashSignature !== undefined && status?.installed && (
         <PanelSectionRow>
           <ButtonItem
             layout="below"

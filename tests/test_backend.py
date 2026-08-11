@@ -4185,6 +4185,87 @@ class TestInGameSignal(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestDependentsClosure(unittest.TestCase):
+    """Skipping a mod has to take everything built on it.
+
+    Device, Gate To Sovngarde: the hunt reported 14 broken plugins. Only
+    3 were independent - the other 11 each mastered one of those 3, so
+    they crashed because the hunt had disabled their master, and it spent
+    about three hours discovering the consequences of its own first skip.
+    """
+
+    GAME = "Closure Test"
+
+    def setUp(self):
+        self.data = os.path.join(main.STEAM_COMMON, self.GAME, "Data")
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+        os.makedirs(self.data)
+
+    def tearDown(self):
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+
+    def _mk(self, name, masters=()):
+        _make_plugin(os.path.join(self.data, name), masters)
+
+    def test_direct_dependents_come_too(self):
+        self._mk("Root.esp")
+        self._mk("Child.esp", ["Root.esp"])
+        self._mk("Unrelated.esp")
+        out = main._dependents_closure(
+            self.data, ["Root.esp", "Child.esp", "Unrelated.esp"], {"Root.esp"})
+        self.assertEqual(out, ["Child.esp"])
+
+    def test_the_chain_is_followed_all_the_way_down(self):
+        # GTS_Traits -> New Armors -> Orpheus Replacer was the real shape.
+        self._mk("A.esp")
+        self._mk("B.esp", ["A.esp"])
+        self._mk("C.esp", ["B.esp"])
+        self._mk("D.esp", ["C.esp"])
+        out = main._dependents_closure(
+            self.data, ["A.esp", "B.esp", "C.esp", "D.esp"], {"A.esp"})
+        self.assertEqual(set(out), {"B.esp", "C.esp", "D.esp"})
+
+    def test_a_plugin_needing_any_one_doomed_master_is_doomed(self):
+        self._mk("A.esp")
+        self._mk("Fine.esp")
+        self._mk("Both.esp", ["Fine.esp", "A.esp"])
+        out = main._dependents_closure(
+            self.data, ["A.esp", "Fine.esp", "Both.esp"], {"A.esp"})
+        self.assertEqual(out, ["Both.esp"])
+
+    def test_nothing_depending_on_it_means_nothing_extra(self):
+        self._mk("Lonely.esp")
+        self._mk("Other.esp")
+        self.assertEqual(
+            main._dependents_closure(
+                self.data, ["Lonely.esp", "Other.esp"], {"Lonely.esp"}),
+            [],
+        )
+
+    def test_the_targets_are_not_returned_as_their_own_dependents(self):
+        self._mk("A.esp")
+        self._mk("B.esp", ["A.esp"])
+        out = main._dependents_closure(
+            self.data, ["A.esp", "B.esp"], {"A.esp", "B.esp"})
+        self.assertEqual(out, [])
+
+    def test_a_master_cycle_terminates(self):
+        self._mk("X.esp", ["Y.esp"])
+        self._mk("Y.esp", ["X.esp"])
+        self._mk("Z.esp", ["X.esp"])
+        out = main._dependents_closure(
+            self.data, ["X.esp", "Y.esp", "Z.esp"], {"X.esp"})
+        self.assertEqual(set(out), {"Y.esp", "Z.esp"})
+
+    def test_a_plugin_missing_from_disk_is_skipped_not_crashed_on(self):
+        self._mk("A.esp")
+        out = main._dependents_closure(
+            self.data, ["A.esp", "Ghost.esp"], {"A.esp"})
+        self.assertEqual(out, [])
+
+
 class TestCrashBisectMachine(unittest.TestCase):
     """The automated hunt's decision logic, tested without a game.
 
