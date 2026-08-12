@@ -3954,6 +3954,38 @@ class TestFileConflicts(unittest.TestCase):
         }
         self.assertEqual(_wrong(records, {1: 0, 2: 1}), [])
 
+    def test_a_tie_is_reported_as_nothing_rather_than_guessed(self):
+        """installed_at has one-second resolution and 627 of the device's
+        764 records share a second with another. Resolving those by dict
+        order is what made the first version of this report fiction."""
+        records = {
+            "a": self._rec(1, ["textures/a.dds"], 100),
+            "b": self._rec(2, ["textures/a.dds"], 100),
+        }
+        self.assertEqual(_wrong(records, {2: 0, 1: 1}), [])
+
+    def test_the_sequence_breaks_a_same_second_tie(self):
+        records = {
+            "a": dict(self._rec(1, ["textures/a.dds"], 100), install_seq=9),
+            "b": dict(self._rec(2, ["textures/a.dds"], 100), install_seq=4),
+        }
+        # 'a' wrote last despite the identical second; the collection wants
+        # 'b' (position 1) to win, so this IS a conflict.
+        found = _wrong(records, {1: 0, 2: 1})
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["actual"], "a")
+        self.assertEqual(found[0]["intended"], "b")
+
+    def test_the_sequence_increases_and_survives_a_restart(self):
+        first = main._merge_install_record(None, {"mod_id": 1})["install_seq"]
+        second = main._merge_install_record(None, {"mod_id": 2})["install_seq"]
+        self.assertGreater(second, first)
+        # Reseeding reads the highest sequence already on disk, so a
+        # restart cannot hand out a number it has already used.
+        main._INSTALL_SEQ = None
+        third = main._merge_install_record(None, {"mod_id": 3})["install_seq"]
+        self.assertGreater(third, 0)
+
     def test_reports_a_mod_that_won_out_of_turn(self):
         # The FOMOD case: parked during the run, installed by Finish setup
         # afterwards, so it beat what the collection put above it.
@@ -4699,7 +4731,13 @@ class TestInstallRecordMerge(unittest.TestCase):
 
     def test_a_first_install_is_kept_as_is(self):
         r = self._rec(1, ["a.esp"])
-        self.assertEqual(main._merge_install_record(None, r), r)
+        merged = main._merge_install_record(None, r)
+        # Everything the caller passed survives, plus the ordering stamp
+        # this path adds so two mods installed in the same second can still
+        # be told apart. See _next_install_seq.
+        self.assertGreater(merged.pop("install_seq"), 0)
+        self.assertEqual(merged, r)
+        self.assertNotIn("install_seq", r, "must not mutate the caller's dict")
 
     def test_a_second_file_of_the_same_mod_adds_to_the_list(self):
         first = self._rec(1, ["main.esp", "main.bsa"])

@@ -191,6 +191,37 @@ def _save_settings(settings: dict) -> None:
     os.chmod(SETTINGS_PATH, 0o600)
 
 
+_INSTALL_SEQ = None
+
+
+def _next_install_seq() -> int:
+    """A strictly increasing number stamped on each install record.
+
+    `installed_at` is int(time.time()), and small mods install several per
+    second: on the device's New Vegas collection 627 of 764 records shared
+    a second with another record. A timestamp therefore cannot say which
+    of two mods wrote a shared file last, and every one of those ties was
+    resolved by dict iteration order rather than by what happened.
+
+    Seeded from the highest sequence already on disk rather than a counter
+    of its own, so it survives a restart without a second thing to keep in
+    step - and a settings file restored from backup carries its own
+    ordering with it.
+    """
+    global _INSTALL_SEQ
+    if _INSTALL_SEQ is None:
+        highest = 0
+        for records in (_load_settings().get("installed") or {}).values():
+            if not isinstance(records, dict):
+                continue
+            for rec in records.values():
+                if isinstance(rec, dict):
+                    highest = max(highest, int(rec.get("install_seq") or 0))
+        _INSTALL_SEQ = highest
+    _INSTALL_SEQ += 1
+    return _INSTALL_SEQ
+
+
 # ---- RE Engine pak-patch chain (RE4 remake) --------------------------------
 # The engine loads re_chunk_000.pak.patch_XXX.pak SEQUENTIALLY from the
 # game root - a gap breaks everything past it. Mods take the next number
@@ -392,6 +423,10 @@ def _merge_install_record(existing: dict, new: dict) -> dict:
     A repeat of the SAME file (a repair pass) replaces rather than
     accumulates: its file list is already the whole truth for that file.
     """
+    # Stamped here rather than at each of the eight call sites: this is
+    # the one path every install record passes through, so it cannot be
+    # forgotten when a ninth is added.
+    new = dict(new, install_seq=_next_install_seq())
     if not existing:
         return new
     merged = dict(new)
@@ -1578,7 +1613,11 @@ def _wrong_winners(records: dict, order: dict) -> list:
                 rec = records[k]
                 ranked_cache[k] = (
                     order.get(rec.get("mod_id"), -1),
-                    rec.get("installed_at") or 0,
+                    # Sequence first where we have it. Records written
+                    # before install_seq existed fall back to the second
+                    # they landed in, which ties - and a tie is reported
+                    # as no conflict rather than a guessed one.
+                    (rec.get("installed_at") or 0, rec.get("install_seq") or 0),
                     rec.get("mod_id"),
                 )
             ranked.append((k,) + ranked_cache[k])
@@ -1587,6 +1626,12 @@ def _wrong_winners(records: dict, order: dict) -> list:
         intended = max(ranked, key=lambda r: r[1])
         actual = max(ranked, key=lambda r: r[2])
         if intended[0] == actual[0]:
+            continue
+        # Two records claiming the same instant with no sequence between
+        # them: we genuinely do not know who wrote last, and inventing an
+        # answer from dict order is how this shipped wrong the first time.
+        top = max(r[2] for r in ranked)
+        if sum(1 for r in ranked if r[2] == top) > 1:
             continue
         slot = grouped.setdefault(
             (actual[0], intended[0]),
