@@ -3935,6 +3935,89 @@ def _make_plugin(path, masters=(), flags=0):
         f.write(head + data)
 
 
+class TestLegacyFomodPackage(unittest.TestCase):
+    """Before FOMOD became a folder convention, FOMM shipped installers as
+    a single `.fomod` file - an ordinary archive under another extension.
+    Much of the older New Vegas, FO3 and Oblivion catalogue is still
+    packaged that way, and layout detection called every one of them
+    unsupported. Found on device via Interior Lighting Overhaul
+    (newvegas/35794) during the FNV regression pass."""
+
+    def setUp(self):
+        self.scratch = os.path.join(TEST_ROOT, "fomodpkg")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+
+    def _package(self, into, name="Mod Installer.fomod", config=True):
+        """Write a .fomod (a zip by another name) into `into`."""
+        os.makedirs(into, exist_ok=True)
+        path = os.path.join(into, name)
+        with zipfile.ZipFile(path, "w") as zf:
+            if config:
+                zf.writestr("fomod/ModuleConfig.xml", "<config/>")
+            zf.writestr("core/Mod.esp", "plugin bytes")
+        return path
+
+    def test_unwraps_the_package_so_the_wizard_is_found(self):
+        wrapper = os.path.join(self.scratch, "Interior_Lighting_Overhaul-35794")
+        os.makedirs(wrapper)
+        with open(os.path.join(wrapper, "ChangeLog.txt"), "w") as f:
+            f.write("notes")
+        self._package(wrapper)
+
+        self.assertIsNone(main._fomod_config_path(self.scratch))
+        unwrapped = run(main._unwrap_fomod_package(self.scratch))
+        self.assertTrue(unwrapped)
+        # The wizard is now discoverable, and its base resolves to the
+        # folder the package sat in - which is what _parse_fomod uses.
+        cfg = main._fomod_config_path(self.scratch)
+        self.assertIsNotNone(cfg)
+        self.assertEqual(os.path.dirname(os.path.dirname(cfg)), wrapper)
+        self.assertTrue(os.path.isfile(os.path.join(wrapper, "core", "Mod.esp")))
+
+    def test_the_package_file_is_removed_once_unwrapped(self):
+        # Left behind it is 15MB of dead weight copied into the mod folder.
+        wrapper = os.path.join(self.scratch, "Mod")
+        self._package(wrapper)
+        run(main._unwrap_fomod_package(self.scratch))
+        self.assertEqual(
+            [n for n in os.listdir(wrapper) if n.endswith(".fomod")], []
+        )
+
+    def test_leaves_an_archive_that_already_has_a_wizard_alone(self):
+        # A normal FOMOD archive shipping a .fomod beside real content is
+        # not second-guessed.
+        os.makedirs(os.path.join(self.scratch, "fomod"))
+        with open(
+            os.path.join(self.scratch, "fomod", "ModuleConfig.xml"), "w"
+        ) as f:
+            f.write("<config/>")
+        self._package(self.scratch, name="Bundled.fomod")
+        self.assertEqual(run(main._unwrap_fomod_package(self.scratch)), "")
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.scratch, "Bundled.fomod"))
+        )
+
+    def test_leaves_ambiguous_archives_alone(self):
+        # Two packages: picking one would be a guess.
+        self._package(self.scratch, name="A.fomod")
+        self._package(self.scratch, name="B.fomod")
+        self.assertEqual(run(main._unwrap_fomod_package(self.scratch)), "")
+
+    def test_a_package_that_will_not_extract_is_left_in_place(self):
+        wrapper = os.path.join(self.scratch, "Mod")
+        os.makedirs(wrapper)
+        broken = os.path.join(wrapper, "Broken.fomod")
+        with open(broken, "wb") as f:
+            f.write(b"not an archive at all")
+        self.assertEqual(run(main._unwrap_fomod_package(self.scratch)), "")
+        self.assertTrue(os.path.isfile(broken))
+
+    def test_does_nothing_when_there_is_no_package(self):
+        os.makedirs(os.path.join(self.scratch, "Data"))
+        self.assertEqual(run(main._unwrap_fomod_package(self.scratch)), "")
+
+
 class TestSlotUsage(unittest.TestCase):
     """Plugin slots are addressed by one byte, and crossing the limit does
     not announce itself - the game stops loading plugins past it or dies on
