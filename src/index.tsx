@@ -205,6 +205,7 @@ function resolveGameContext(): GameContext {
 }
 import { resetTabStack } from "./Tabs";
 import { BrowsePage } from "./BrowsePage";
+import { EndorsableFrameworkRow } from "./EndorseButton";
 import { CollectionPage } from "./CollectionPage";
 import { DownloadsPage } from "./DownloadsPage";
 import { ModDetailPage } from "./ModDetailPage";
@@ -1026,9 +1027,19 @@ function CurrentGameSection() {
                Nexus Mods so every author gets the download credit. */
             <PanelSectionRow>
               {missingFrameworks.length === 0 ? (
-                <Field label="Step 1">
-                  All {allFrameworks.length} frameworks installed ✓ (
-                  {allFrameworks.map((f) => f.name).join(", ")})
+                <Field label="Step 1" childrenLayout="below">
+                  {/* One row each, not one line listing all of them: a
+                      single thumbs-up beside "4 frameworks installed"
+                      cannot say whose author it thanks. */}
+                  {allFrameworks.map((f) => (
+                    <EndorsableFrameworkRow
+                      key={f.nexusModId ?? f.name}
+                      text={`${f.name} installed ✓`}
+                      gameDomain={game.nexusDomain}
+                      modId={f.nexusModId}
+                      modName={f.name}
+                    />
+                  ))}
                 </Field>
               ) : (
                 <ButtonItem
@@ -1055,7 +1066,14 @@ function CurrentGameSection() {
           ) : (
             <PanelSectionRow>
               {status.framework_installed ? (
-                <Field label="Step 1">{game.framework.name} installed ✓</Field>
+                <Field label="Step 1" childrenLayout="below">
+                  <EndorsableFrameworkRow
+                    text={`${game.framework.name} installed ✓`}
+                    gameDomain={game.nexusDomain}
+                    modId={game.framework.nexusModId}
+                    modName={game.framework.name}
+                  />
+                </Field>
               ) : (
                 <ButtonItem
                   label="Step 1"

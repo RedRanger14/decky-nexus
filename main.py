@@ -4872,7 +4872,14 @@ class Plugin:
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return {"ok": True, "status": "unknown"}
         endorsement = body.get("endorsement") or {}
-        return {"ok": True, "status": endorsement.get("endorse_status") or "Undecided"}
+        return {
+            "ok": True,
+            "status": endorsement.get("endorse_status") or "Undecided",
+            # The QAM endorses framework mods (SKSE, SMAPI...) that were
+            # installed by a Step button, not browsed for, so nothing on
+            # that screen knows the version the endorse call requires.
+            "version": str(body.get("version") or ""),
+        }
 
     async def set_endorsement(
         self, game_domain: str, mod_id: int, version: str, endorse: bool
@@ -4885,6 +4892,13 @@ class Plugin:
         api_key = _load_settings().get("api_key")
         if not api_key:
             return {"ok": False, "error": "Not signed in"}
+        if not (version or "").strip():
+            # Endorsing from the QAM's Step 1 row: the framework was
+            # installed for the user rather than picked from a mod page,
+            # so look the version up instead of making every caller
+            # carry one. A wrong version is rejected outright.
+            state = await self.get_endorsement(game_domain, mod_id)
+            version = state.get("version") or ""
         action = "endorse" if endorse else "abstain"
         url = (
             f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{int(mod_id)}"
