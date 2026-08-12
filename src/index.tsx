@@ -2626,7 +2626,8 @@ function TroubleshootingSection() {
     Boolean(runtime?.outdated),
     sePlugins?.failed.length ?? 0,
     Boolean(suspect),
-    loadOrderIssue
+    loadOrderIssue,
+    missingMasters
   );
 
   return (

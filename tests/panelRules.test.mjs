@@ -601,3 +601,14 @@ test("offers it when DLC and missing mods are mixed", () => {
     true
   );
 });
+
+
+test("a missing master counts as something to look at", () => {
+  // It stops the game booting, and it was not counted - so the section
+  // said "Nothing looks wrong" while hiding the one-tap fix inside.
+  assert.equal(
+    troubleshootingCount(false, 0, false, undefined, "4 mods cannot load"),
+    1
+  );
+  assert.equal(troubleshootingCount(false, 0, false, undefined, undefined), 0);
+});
