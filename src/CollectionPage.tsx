@@ -12,10 +12,11 @@ import {
 } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
-import { FaArrowDown, FaEye, FaPuzzlePiece } from "react-icons/fa";
+import { FaArrowDown, FaEye, FaPuzzlePiece, FaThumbsUp } from "react-icons/fa";
 import { collectionOwnedCount, isRemaining } from "./panelRules";
 
 import {
+  endorseCollection,
   AttentionItem,
   CollectionDetail,
   CollectionFile,
@@ -106,6 +107,12 @@ export function CollectionPage() {
   // to do" in between, and the remaining count climbs while the user is
   // actively clearing it. See isRemaining in panelRules.
   const [justResolved, setJustResolved] = useState<Set<number>>(new Set());
+  // Endorsing a collection needs the download to be over 12 HOURS old,
+  // not the 15 minutes mods use - so the most likely first press is one
+  // Nexus refuses. The refusal is explained in words by the backend
+  // rather than left as an error code.
+  const [endorsing, setEndorsing] = useState(false);
+  const [endorsed, setEndorsed] = useState(false);
   // Records installed BY this collection (its slug) - drives Uninstall.
   const [ownedModIds, setOwnedModIds] = useState<Set<number>>(new Set());
   // Uninstalling unmounts the focused button; without a stand-in the
@@ -928,6 +935,64 @@ export function CollectionPage() {
               </StatChip>
               {installedRequiredCount > 0 && (
                 <StatChip>✓ {installedRequiredCount} installed</StatChip>
+              )}
+              {/* One-way on purpose. The API has no viewer-endorsement
+                  field for collections yet (PR open), so a toggle would
+                  be guesswork - and guessing wrong records an abstention
+                  over somebody's existing endorsement. Pressing this
+                  always endorses. */}
+              {ownedCount > 0 && detail && (
+                <Focusable
+                  onActivate={async () => {
+                    if (endorsing || endorsed) return;
+                    setEndorsing(true);
+                    try {
+                      const r = await endorseCollection(detail.id, true);
+                      if (r.ok) {
+                        setEndorsed(true);
+                        toaster.toast({
+                          title: "Collection endorsed!",
+                          body: `Thanks for supporting ${detail.author}`,
+                        });
+                      } else {
+                        toaster.toast({
+                          title: "Could not endorse",
+                          body: r.error ?? "",
+                        });
+                      }
+                    } finally {
+                      setEndorsing(false);
+                    }
+                  }}
+                  style={{
+                    padding: "3px 12px",
+                    borderRadius: "999px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                    opacity: endorsing ? 0.5 : 1,
+                    ...(endorsed
+                      ? {
+                          background: "rgba(143, 212, 143, 0.15)",
+                          border: "1px solid rgba(143, 212, 143, 0.5)",
+                        }
+                      : {
+                          background: "rgba(218, 142, 53, 0.15)",
+                          border: "1px solid #da8e3588",
+                        }),
+                  }}
+                >
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <FaThumbsUp size={11} />
+                    {endorsed ? "Endorsed" : "Endorse"}
+                  </span>
+                </Focusable>
               )}
             </Focusable>
             {(detail?.summary ?? collection.summary) && (

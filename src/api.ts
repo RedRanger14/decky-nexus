@@ -742,6 +742,8 @@ export interface CollectionFile {
 }
 
 export interface CollectionDetail {
+  /** Numeric collection id - the endorse mutation takes this, not the slug. */
+  id: number;
   name: string;
   summary: string;
   author: string;
@@ -782,6 +784,15 @@ export const setEndorsement = callable<
   [game_domain: string, mod_id: number, version: string, endorse: boolean],
   { ok: boolean; status?: string; error?: string }
 >("set_endorsement");
+
+// Collections have no viewer-endorsement field on the API yet (a PR is
+// open for it), so this is deliberately one-way: pressing Endorse always
+// records an endorsement. A toggle would be guesswork, and guessing wrong
+// turns somebody's existing endorsement OFF.
+export const endorseCollection = callable<
+  [collection_id: number, endorse: boolean],
+  { ok: boolean; status?: string; error?: string }
+>("endorse_collection");
 
 export const getModRequirements = callable<
   [game_domain: string, mod_id: number],
