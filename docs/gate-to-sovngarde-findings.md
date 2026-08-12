@@ -81,6 +81,32 @@ Three gaps the clean run exposed, none of them guesses:
 
 Working set: 1,895 enabled of 2,337 listed, 25 skipped.
 
+## Unattended verification (2026-08-12) - the standard met
+
+Reset to vanilla, collection reinstalled overnight, launched in the
+morning with nobody touching anything in between. It reached the main
+menu first time and a new game loaded. Download pause and resume were
+also exercised against the real CDN for the first time and behaved.
+
+Reset then returned the game to vanilla and said so honestly. Measured
+before the run: 1,543 records covering 222,047 file paths against
+222,219 files on disk - 174 untracked, of which 158 were vanilla and the
+remaining 16 were mod-written config and logs that no install had ever
+placed.
+
+That closes every Skyrim blocker. What made the difference over the
+attended run:
+
+- **v0.86.0** - several files of one mod no longer erase each other's
+  record. 212 of the 1,543 records are multi-file; before this, all but
+  the last file of each was untrackable, which is what left 668 files
+  and 26GB behind a "successful" reset. Twice.
+- **v0.85.0** - the skip set is re-asserted when a collection finishes
+  (catching a dependent installed before its master was skipped) and
+  when the game exits (undoing Skyrim's own rewrite of Plugins.txt).
+- **v0.87.0** - reset sweeps what no record could cover, guarded by a
+  baseline captured before the first mod was ever installed.
+
 ## Bugs in the plugin this exposed, all fixed
 
 These were ours, not the collection's, and every one would have hit any
