@@ -5068,7 +5068,7 @@ query GetCollection($slug: String!, $domainName: String!) {
     revisionNumber
     modCount
     totalSize
-    collection { name summary user { name } }
+    collection { id name summary user { name } }
     modFiles {
       fileId
       optional
@@ -5090,6 +5090,7 @@ query GetCollection($slug: String!, $domainName: String!) {
             )
             rev = data["collectionRevision"]
             coll = rev.get("collection") or {}
+            collection_id = int(coll.get("id") or 0)
             files = []
             for mf in rev.get("modFiles") or []:
                 f = mf.get("file") or {}
@@ -5133,6 +5134,7 @@ query GetCollection($slug: String!, $domainName: String!) {
             return {
                 "ok": True,
                 "collection": {
+                    "id": collection_id,
                     "name": coll.get("name") or slug,
                     "summary": coll.get("summary") or "",
                     "author": (coll.get("user") or {}).get("name") or "",
@@ -5145,6 +5147,68 @@ query GetCollection($slug: String!, $domainName: String!) {
             }
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def endorse_collection(
+        self, collection_id: int, endorse: bool = True
+    ) -> dict:
+        """Endorse a collection, or abstain.
+
+        Uses the generic `endorse` mutation rather than the mod-specific
+        pair: it is marked deprecated on the schema ("will be replaced
+        using Interfaces and Global IDs") but it is the only thing that
+        can endorse a collection, and its handler says outright it is
+        meant for exactly this.
+
+        The rules differ from mods in a way worth knowing: the collection
+        must have been first downloaded MORE THAN 12 HOURS ago, not 15
+        minutes. Someone who just finished installing one cannot endorse
+        it yet, so that refusal needs a real sentence rather than a code.
+        """
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            return {"ok": False, "error": "Not signed in"}
+        if not collection_id:
+            return {"ok": False, "error": "Unknown collection"}
+        mutation = """
+mutation EndorseCollection($modelId: Int!, $modelType: String!, $abstain: Boolean) {
+  endorse(modelId: $modelId, modelType: $modelType, abstain: $abstain) {
+    success
+  }
+}"""
+        try:
+            data = await _gql_query_vars(
+                mutation,
+                {
+                    "modelId": int(collection_id),
+                    "modelType": "Collection",
+                    "abstain": not endorse,
+                },
+                api_key,
+            )
+        except RuntimeError as e:
+            message = str(e)
+            friendly = {
+                "TOO_SOON_AFTER_DOWNLOAD": (
+                    "You can endorse a collection 12 hours after downloading it"
+                ),
+                "cannot endorse this content yet": (
+                    "You can endorse a collection 12 hours after downloading it"
+                ),
+                "Own Content": "You can't endorse your own collection",
+                "Endorsing Not Allowed": (
+                    "This curator has turned off endorsements"
+                ),
+                "NOT_ENDORSABLE": "This collection can't be endorsed",
+            }
+            for code, text in friendly.items():
+                if code.lower() in message.lower():
+                    return {"ok": False, "error": text}
+            return {"ok": False, "error": message}
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return {"ok": False, "error": f"Network error: {type(e).__name__}"}
+        if not ((data.get("endorse") or {}).get("success")):
+            return {"ok": False, "error": "Nexus Mods did not accept it"}
+        return {"ok": True, "status": "Endorsed" if endorse else "Abstained"}
 
     async def get_collection_manifest(
         self, slug: str, game_domain: str
