@@ -1193,23 +1193,6 @@ def _enabled_plugins(path: str, style: str) -> list:
 # load these implicitly and their launchers never write them into
 # plugins.txt - listing them there shifts every plugin's load index,
 # which is what save files record, so it is not a cosmetic difference.
-IMPLICIT_MASTERS_BY_DOMAIN = {
-    "skyrimspecialedition": {
-        "skyrim.esm", "update.esm", "dawnguard.esm", "hearthfires.esm",
-        "dragonborn.esm",
-    },
-    "skyrim": {
-        "skyrim.esm", "update.esm", "dawnguard.esm", "hearthfires.esm",
-        "dragonborn.esm",
-    },
-    "fallout4": {
-        "fallout4.esm", "dlcrobot.esm", "dlcworkshop01.esm", "dlccoast.esm",
-        "dlcworkshop02.esm", "dlcworkshop03.esm", "dlcnukaworld.esm",
-        "dlcultrahighresolution.esm",
-    },
-}
-
-
 # Timestamp-ordered games (FO3/FNV): the engine loads ESMs then ESPs by
 # file MTIME, not plugins.txt order. These must load first, in this order.
 VANILLA_MASTERS_BY_DOMAIN = {
@@ -1224,6 +1207,37 @@ VANILLA_MASTERS_BY_DOMAIN = {
         "CaravanPack.esm",
     ],
 }
+
+
+IMPLICIT_MASTERS_BY_DOMAIN = {
+    "skyrimspecialedition": {
+        "skyrim.esm", "update.esm", "dawnguard.esm", "hearthfires.esm",
+        "dragonborn.esm",
+    },
+    "skyrim": {
+        "skyrim.esm", "update.esm", "dawnguard.esm", "hearthfires.esm",
+        "dragonborn.esm",
+    },
+    "fallout4": {
+        "fallout4.esm", "dlcrobot.esm", "dlcworkshop01.esm", "dlccoast.esm",
+        "dlcworkshop02.esm", "dlcworkshop03.esm", "dlcnukaworld.esm",
+        "dlcultrahighresolution.esm",
+    },
+    # FO3/FNV load the base game and its DLC without being told, same as
+    # Skyrim - verified on device 2026-08-12 from the game's own log, where
+    # forms resolved against DLC indices (0500BA43 is Dead Money's 05)
+    # while not one DLC esm was listed in Plugins.txt.
+    #
+    # Left out until now, so the load-order check reported all ten as
+    # "installed but switched off" and offered to switch them on. Doing
+    # that renumbers every plugin after them, and the load index is what a
+    # save file records - the same save-breaking repair that was caught by
+    # a test on Skyrim in v0.71.0, still live here on two shipping games.
+    "newvegas": {m.lower() for m in VANILLA_MASTERS_BY_DOMAIN["newvegas"]},
+    "fallout3": {m.lower() for m in VANILLA_MASTERS_BY_DOMAIN["fallout3"]},
+}
+
+
 
 
 def _stagger_plugin_mtimes(

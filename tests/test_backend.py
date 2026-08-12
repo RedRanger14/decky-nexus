@@ -4132,6 +4132,50 @@ class TestResolveFileConflicts(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestImplicitMastersFO3FNV(unittest.TestCase):
+    """FO3 and FNV load the base game and its DLC without being told, so
+    those must never be written into Plugins.txt. Skyrim was guarded in
+    v0.71.0 after a test caught the same fault; these two shipped without
+    it, and on device the load-order check called all ten of New Vegas's
+    implicit masters "installed but switched off" and offered to enable
+    them - which renumbers every plugin after them, and the load index is
+    what a save file records."""
+
+    def test_new_vegas_covers_the_base_game_and_every_dlc(self):
+        implicit = main.IMPLICIT_MASTERS_BY_DOMAIN["newvegas"]
+        for esm in main.VANILLA_MASTERS_BY_DOMAIN["newvegas"]:
+            self.assertIn(esm.lower(), implicit, esm)
+
+    def test_fallout3_covers_the_base_game_and_every_dlc(self):
+        implicit = main.IMPLICIT_MASTERS_BY_DOMAIN["fallout3"]
+        for esm in main.VANILLA_MASTERS_BY_DOMAIN["fallout3"]:
+            self.assertIn(esm.lower(), implicit, esm)
+
+    def test_they_are_lowercased_like_every_other_domain(self):
+        # The lookups compare against name.lower(); a capital here would
+        # silently disable the guard.
+        for domain in ("newvegas", "fallout3"):
+            for name in main.IMPLICIT_MASTERS_BY_DOMAIN[domain]:
+                self.assertEqual(name, name.lower())
+
+    def test_an_implicit_master_is_never_offered_for_enabling(self):
+        data = os.path.join(TEST_ROOT, "implicitfnv")
+        shutil.rmtree(data, ignore_errors=True)
+        os.makedirs(data)
+        _make_plugin(os.path.join(data, "DeadMoney.esm"),
+                     flags=main.PLUGIN_FLAG_MASTER)
+        _make_plugin(os.path.join(data, "mod.esp"), masters=["DeadMoney.esm"])
+        entries = [("mod.esp", True)]
+        implicit = main.IMPLICIT_MASTERS_BY_DOMAIN["newvegas"]
+        self.assertEqual(
+            main._masters_to_enable(data, entries, implicit), []
+        )
+        # Without the guard it would be reported, which is the bug.
+        self.assertEqual(
+            len(main._masters_to_enable(data, entries, frozenset())), 1
+        )
+
+
 class TestGhostPlugins(unittest.TestCase):
     """Enabled but not installed. Harmless on Skyrim/FO4 where an entry is
     a line in a list; NOT harmless on FO3/FNV where presence in Plugins.txt
