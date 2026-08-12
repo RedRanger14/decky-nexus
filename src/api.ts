@@ -287,6 +287,9 @@ export const resetGameModding = callable<
     /** Files left in the mods folder that no record accounted for. Zero
      * means the reset is verified, not merely finished. */
     leftovers?: number;
+    /** Unrecorded files removed anyway - mod configs, logs and caches
+     * that were written at runtime rather than installed. */
+    swept?: number;
     leftover_examples?: string[];
     /** False for games modded before baselines existed - we cannot say
      * whether it reached vanilla, so we must not claim it did. */
