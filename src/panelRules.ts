@@ -316,18 +316,26 @@ export function crashSuspect(
  *
  * Counted per FAULT, not per affected mod: 37 script-extender plugins
  * failing is one thing the user can act on, and showing "37" would make a
- * single fixable problem look like a catastrophe. */
+ * single fixable problem look like a catastrophe.
+ *
+ * Every fault that can stop the game booting has to be in here. Missing
+ * masters were not, so the section offered "Nothing looks wrong. Open if
+ * the game won't start." to a user whose game had just refused to start
+ * over exactly that - and the fix was one tap inside, behind a button
+ * saying there was nothing to fix. */
 export function troubleshootingCount(
   runtimeOutdated: boolean,
   failedPlugins: number,
   hasCrashSuspect: boolean,
-  loadOrderIssue: string | undefined
+  loadOrderIssue: string | undefined,
+  missingMasters?: string
 ): number {
   return (
     (runtimeOutdated ? 1 : 0) +
     (failedPlugins > 0 ? 1 : 0) +
     (hasCrashSuspect ? 1 : 0) +
-    (loadOrderIssue ? 1 : 0)
+    (loadOrderIssue ? 1 : 0) +
+    (missingMasters ? 1 : 0)
   );
 }
 
