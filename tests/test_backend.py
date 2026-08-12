@@ -4268,11 +4268,13 @@ class TestFileConflicts(unittest.TestCase):
         try:
             r = run(plugin.get_file_conflicts("conflicttest", [7, 3]))
             self.assertTrue(r["ok"])
-            self.assertEqual(r["files"], 1)
-            # 7 sits first in the collection, so it must be reinstalled
-            # first and 3 last - reinstalling in this order lands each mod
-            # exactly where the curator put it.
-            self.assertEqual(r["resolve"], [7, 3])
+            # Reporting is off until it reads modRules. List order is not
+            # the curator's priority - the device's collection carries
+            # 1,442 explicit rules, and by them the HUD stack was already
+            # right while list order called it wrong.
+            self.assertEqual(r["files"], 0)
+            self.assertEqual(r["resolve"], [])
+            self.assertFalse(main.CONFLICTS_USE_MOD_RULES)
         finally:
             settings = main._load_settings()
             settings.get("installed", {}).pop("conflicttest", None)

@@ -1756,6 +1756,13 @@ NO_ESL_SLOT_LIMIT = 255
 # dialect, which correlates today by coincidence.
 ESL_DOMAINS = frozenset({"skyrimspecialedition", "fallout4"})
 
+# File-conflict reporting is off until it reads the collection's modRules.
+# List order is not intent: this device's collection ships 1,442 explicit
+# rules, and by them the HUD stack was already correct while list order
+# called 782 files misplaced. Flipping this on before the rules are read
+# would offer to rewrite correct files with the wrong mod's version.
+CONFLICTS_USE_MOD_RULES = False
+
 
 def _slot_usage(
     data_path: str, names: list, implicit: set = frozenset(), esl: bool = True
@@ -9531,6 +9538,20 @@ query Link($slug: String!, $domainName: String!) {
         """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
+        # DISABLED until it reads modRules. A collection's list order is
+        # NOT its statement of priority: this one ships 1,442 explicit
+        # modRules ("before"/"after" between named files), and by those
+        # rules the New Vegas HUD stack - oHUD, then Clean Vanilla Hud,
+        # then the patch - was already in the RIGHT order, while list
+        # order called it wrong. So the 782 files this reported as
+        # misplaced were largely correct, and the fix it offered would
+        # have rewritten them to the wrong owners.
+        #
+        # The detection machinery is sound; the intent it compares against
+        # was wrong. Rebuilt on modRules, not deleted.
+        if not CONFLICTS_USE_MOD_RULES:
+            return {"ok": True, "conflicts": [], "files": 0, "pairs": 0,
+                    "resolve": []}
         order = {
             int(m): i for i, m in enumerate(mod_order or []) if m is not None
         }
