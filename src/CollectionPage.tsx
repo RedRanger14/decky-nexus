@@ -312,6 +312,11 @@ export function CollectionPage() {
   );
   const actionableIds = new Set(actionable.map((a) => a.file_id));
   const toolSkips = attention.filter((a) => a.reason === "tool");
+  // Mods proven to stop THIS game booting on SteamOS. Not a failure to
+  // retry and not something Finish setup can resolve - the collection is
+  // usable without them and the page has to say which and why, or the
+  // user is left with mods that are simply, silently absent.
+  const brokenSkips = attention.filter((a) => a.reason === "incompatible");
   const conflictSkips = attention.filter((a) => a.reason === "conflict");
   const layoutSkips = attention.filter((a) => a.reason === "layout");
 
@@ -931,7 +936,8 @@ export function CollectionPage() {
     if (actionableIds.has(f.fileId)) return "⚙ ";
     if (attentionIds.has(f.fileId)) {
       const reason = attention.find((a) => a.file_id === f.fileId)?.reason;
-      return reason === "conflict" ? "🔒 " : "⏭ ";
+      if (reason === "conflict") return "🔒 ";
+      return reason === "incompatible" ? "⚠ " : "⏭ ";
     }
     const st = rowState[f.fileId];
     if (st === "installing") return "";
@@ -1242,6 +1248,26 @@ export function CollectionPage() {
               installed - only the missing ones will download.
             </div>
           )}
+        {brokenSkips.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              margin: "-6px 0 12px",
+              padding: "8px 10px",
+              borderRadius: "4px",
+              lineHeight: 1.45,
+              background: "rgba(218, 142, 53, 0.12)",
+              border: "1px solid rgba(218, 142, 53, 0.4)",
+            }}
+          >
+            ⏭ {brokenSkips.length} mod
+            {brokenSkips.length === 1 ? "" : "s"} left out because the game
+            will not start with {brokenSkips.length === 1 ? "it" : "them"}:{" "}
+            {brokenSkips.map((b) => b.mod_name).join(", ")}.
+            {brokenSkips[0]?.detail ? ` ${brokenSkips[0].detail}` : ""}{" "}
+            Everything else in the collection is installed and working.
+          </div>
+        )}
         {toolSkips.length > 0 && !installing && (
           <div
             style={{
