@@ -3935,6 +3935,126 @@ def _make_plugin(path, masters=(), flags=0):
         f.write(head + data)
 
 
+class TestResolveFileConflicts(unittest.TestCase):
+    """Per-PATH resolution. v0.97.0 reinstalled whole mods in collection
+    order, which rewrites files they were not contesting and leapfrogs
+    everything left alone - 47 wrong pairs became 92. Here each contested
+    file is written exactly once by its rightful owner and nothing else on
+    disk is touched, so no new conflict can be created."""
+
+    GAME = "Resolve Test"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.data = os.path.join(root, "Data")
+        os.makedirs(self.data)
+        settings = main._load_settings()
+        settings["api_key"] = "test-key"
+        settings.setdefault("installed", {})["resolvetest"] = {
+            "wanted": {
+                "mod_id": 10, "file_id": 100, "file_name": "wanted.zip",
+                "mode": "dataDir", "installed_at": 100, "install_seq": 1,
+                "files": ["menus/main/hud.xml", "textures/keep.dds"],
+            },
+            "grabbed": {
+                "mod_id": 20, "file_id": 200, "file_name": "grabbed.zip",
+                "mode": "dataDir", "installed_at": 100, "install_seq": 2,
+                "files": ["menus/main/hud.xml"],
+            },
+        }
+        settings.pop("file_owner", None)
+        main._save_settings(settings)
+        # The loser is on disk, as it would be after a real install.
+        main._makedirs_for(os.path.join(self.data, "menus", "main", "hud.xml"))
+        with open(os.path.join(self.data, "menus", "main", "hud.xml"), "w") as f:
+            f.write("GRABBED")
+        # Stand in for the download: the archive the rightful owner ships.
+        self.archive = os.path.join(TEST_ROOT, "wanted.zip")
+        with zipfile.ZipFile(self.archive, "w") as zf:
+            zf.writestr("Menus/main/hud.xml", "WANTED")
+            zf.writestr("textures/keep.dds", "SHOULD NOT BE COPIED")
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("resolvetest", None)
+        settings.pop("file_owner", None)
+        main._save_settings(settings)
+
+    def _run(self, files=None):
+        async def fake_download(domain, mod_id, file_id, file_name, key):
+            return "", self.archive
+        real = main._download_archive
+        main._download_archive = fake_download
+        try:
+            return run(self.plugin.resolve_file_conflicts(
+                "resolvetest", self.GAME, "Data", [20, 10], files))
+        finally:
+            main._download_archive = real
+
+    def _hud(self):
+        with open(os.path.join(self.data, "menus", "main", "hud.xml")) as f:
+            return f.read()
+
+    def test_rewrites_the_contested_file_from_the_rightful_owner(self):
+        # Collection order is [20, 10], so mod 10 ("wanted") is last and
+        # should own the file - even though "grabbed" installed later.
+        self.assertEqual(self._hud(), "GRABBED")
+        r = self._run()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["rewritten"], 1)
+        self.assertEqual(self._hud(), "WANTED")
+
+    def test_touches_nothing_it_was_not_asked_about(self):
+        """The whole point: an uncontested file the owner also ships must
+        NOT be written, or resolving one conflict creates others."""
+        self._run()
+        self.assertFalse(
+            os.path.exists(os.path.join(self.data, "textures", "keep.dds"))
+        )
+
+    def test_records_the_settled_owner(self):
+        self._run()
+        owners = main._file_owner_overrides("resolvetest")
+        self.assertEqual(owners.get("menus/main/hud.xml"), "wanted")
+
+    def test_a_second_run_has_nothing_left_to_do(self):
+        self.assertEqual(self._run()["rewritten"], 1)
+        self.assertEqual(self._run()["rewritten"], 0)
+
+    def test_can_be_narrowed_to_named_files(self):
+        # So somebody can fix the interface without re-fetching a 2GB
+        # texture pack.
+        r = self._run(files=["something/else.xml"])
+        self.assertEqual(r["rewritten"], 0)
+        self.assertEqual(self._hud(), "GRABBED")
+
+    def test_finds_the_file_however_the_author_nested_it(self):
+        with zipfile.ZipFile(self.archive, "w") as zf:
+            zf.writestr("Wrapper Folder/Menus/main/hud.xml", "WANTED")
+        self.assertEqual(self._run()["rewritten"], 1)
+        self.assertEqual(self._hud(), "WANTED")
+
+    def test_a_file_missing_from_the_archive_is_reported_not_silent(self):
+        with zipfile.ZipFile(self.archive, "w") as zf:
+            zf.writestr("readme.txt", "nothing useful")
+        r = self._run()
+        self.assertEqual(r["rewritten"], 0)
+        self.assertTrue(r["errors"])
+        self.assertEqual(self._hud(), "GRABBED")
+
+    def test_refuses_without_a_collection_order(self):
+        r = run(self.plugin.resolve_file_conflicts(
+            "resolvetest", self.GAME, "Data", []))
+        self.assertFalse(r["ok"])
+
+    def test_rejects_a_bad_domain(self):
+        r = run(self.plugin.resolve_file_conflicts(
+            "../evil", self.GAME, "Data", [1]))
+        self.assertFalse(r["ok"])
+
+
 class TestGhostPlugins(unittest.TestCase):
     """Enabled but not installed. Harmless on Skyrim/FO4 where an entry is
     a line in a list; NOT harmless on FO3/FNV where presence in Plugins.txt
@@ -4111,6 +4231,31 @@ class TestFileConflicts(unittest.TestCase):
         records = {"solo": self._rec(1, ["textures/a.dds"], 100)}
         self.assertEqual(_wrong(records, {1: 0}), [])
 
+    def test_a_settled_owner_stops_being_reported(self):
+        """After the fix rewrites a file from its rightful owner, the loser
+        still has the higher install_seq - deliberately, because the fix
+        does not reinstall it. Without honouring the settled owner the same
+        file reports as wrong forever."""
+        records = {
+            "wanted": dict(self._rec(1, ["textures/a.dds"], 100), install_seq=1),
+            "grabbed": dict(self._rec(2, ["textures/a.dds"], 100), install_seq=2),
+        }
+        order = {2: 0, 1: 1}
+        self.assertEqual(len(_wrong(records, order)), 1)
+        self.assertEqual(
+            _wrong(records, order, {"textures/a.dds": "wanted"}), []
+        )
+
+    def test_a_settled_owner_that_is_still_wrong_is_reported(self):
+        # Recording an override must not silence a genuine mismatch.
+        records = {
+            "wanted": dict(self._rec(1, ["textures/a.dds"], 100), install_seq=1),
+            "grabbed": dict(self._rec(2, ["textures/a.dds"], 100), install_seq=2),
+        }
+        found = _wrong(records, {2: 0, 1: 1}, {"textures/a.dds": "grabbed"})
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["intended"], "wanted")
+
     def test_resolve_list_is_in_collection_order(self):
         records = {
             "late": self._rec(7, ["a"], 999),
@@ -4144,8 +4289,8 @@ class TestFileConflicts(unittest.TestCase):
         self.assertFalse(run(plugin.get_file_conflicts("../evil", [1]))["ok"])
 
 
-def _wrong(records, order):
-    return main._wrong_winners(records, order)
+def _wrong(records, order, overrides=None):
+    return main._wrong_winners(records, order, overrides)
 
 
 class TestDisableBlockedPlugins(unittest.TestCase):

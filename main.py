@@ -1595,7 +1595,20 @@ def _file_owners(records: dict) -> dict:
     return owners
 
 
-def _wrong_winners(records: dict, order: dict) -> list:
+def _file_owner_overrides(game_domain: str, settings: dict = None) -> dict:
+    """Paths whose owner was settled by hand, path -> record key.
+
+    Written by resolve_file_conflicts after it rewrites a file from its
+    rightful owner. Without this the same file reports as wrong forever:
+    the losing mod still has the higher install_seq, because the fix
+    deliberately does NOT reinstall it - reinstalling is what took the
+    device from 47 bad pairs to 92.
+    """
+    settings = settings if settings is not None else _load_settings()
+    return (settings.get("file_owner") or {}).get(game_domain, {})
+
+
+def _wrong_winners(records: dict, order: dict, overrides: dict = None) -> list:
     """Files where the mod that actually landed last is NOT the one the
     collection wanted to.
 
@@ -1621,6 +1634,7 @@ def _wrong_winners(records: dict, order: dict) -> list:
     Returns [{actual, intended, files, example, mod_ids}] worst first.
     """
     owners = _file_owners(records)
+    overrides = overrides or {}
     ranked_cache = {}
     grouped = {}
     for path, keys in owners.items():
@@ -1644,7 +1658,12 @@ def _wrong_winners(records: dict, order: dict) -> list:
         if any(pos < 0 for _k, pos, _t, _m in ranked):
             continue
         intended = max(ranked, key=lambda r: r[1])
-        actual = max(ranked, key=lambda r: r[2])
+        settled = overrides.get(path)
+        actual = (
+            next((r for r in ranked if r[0] == settled), None)
+            if settled
+            else max(ranked, key=lambda r: r[2])
+        ) or max(ranked, key=lambda r: r[2])
         if intended[0] == actual[0]:
             continue
         # Two records claiming the same instant with no sequence between
@@ -9517,8 +9536,12 @@ query Link($slug: String!, $domainName: String!) {
         }
         if not order:
             return {"ok": True, "conflicts": [], "files": 0}
-        records = _load_settings().get("installed", {}).get(game_domain, {})
-        wrong = await asyncio.to_thread(_wrong_winners, records, order)
+        settings = _load_settings()
+        records = settings.get("installed", {}).get(game_domain, {})
+        wrong = await asyncio.to_thread(
+            _wrong_winners, records, order,
+            _file_owner_overrides(game_domain, settings),
+        )
         resolve = sorted(
             {m for g in wrong for m in g["mod_ids"] if m in order},
             key=lambda m: order[m],
@@ -9574,6 +9597,139 @@ query Link($slug: String!, $domainName: String!) {
             f"{', '.join(ghosts[:6])}"
         )
         return {"ok": True, "removed": len(ghosts), "names": ghosts}
+
+    async def resolve_file_conflicts(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        mod_order: list = None, files: list = None
+    ) -> dict:
+        """Rewrite each contested file from the mod the collection wanted
+        to own it, and nothing else.
+
+        This is the fix v0.97.0 got wrong. That version reinstalled whole
+        mods in collection order, which rewrites every file they own -
+        including files they were never contesting - so each reinstalled mod
+        leapfrogged everything after it that had been left alone. The device
+        went from 47 wrong pairs to 92, and doing it "properly" that way
+        needs the closure over shared files: 352 of 852 mods, 41% of the
+        collection.
+
+        Per PATH instead. Each contested file is written exactly once, by
+        its rightful owner, and every other file on disk is untouched - so
+        no new conflict can be created, and order stops mattering because
+        nothing is racing. One archive is fetched per owning mod rather than
+        one per mod in a closure.
+
+        `files` optionally narrows it to specific paths, so a user can fix
+        the interface without re-fetching a texture pack.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            return {"ok": False, "error": "Not signed in"}
+        order = {
+            int(m): i for i, m in enumerate(mod_order or []) if m is not None
+        }
+        if not order:
+            return {"ok": False, "error": "No collection order to work from"}
+        settings = _load_settings()
+        records = settings.get("installed", {}).get(game_domain, {})
+        _install_path, data_path, _unused = _game_paths(install_dir, mods_subdir)
+        wanted = {f.lower() for f in (files or [])}
+
+        owners = await asyncio.to_thread(_file_owners, records)
+        overrides = _file_owner_overrides(game_domain, settings)
+        # path -> record key that should own it, grouped by that owner so
+        # each archive is fetched once.
+        by_owner = {}
+        for path, keys in owners.items():
+            keys = list(dict.fromkeys(keys))
+            if len(keys) < 2:
+                continue
+            if wanted and path not in wanted:
+                continue
+            ranked = [
+                (k, order.get(records[k].get("mod_id"), -1))
+                for k in keys
+            ]
+            if any(pos < 0 for _k, pos in ranked):
+                continue
+            intended = max(ranked, key=lambda r: r[1])[0]
+            if overrides.get(path) == intended:
+                continue
+            by_owner.setdefault(intended, []).append(path)
+
+        if not by_owner:
+            return {"ok": True, "rewritten": 0, "mods": 0, "errors": []}
+
+        rewritten = 0
+        errors = []
+        settled = settings.setdefault("file_owner", {}).setdefault(
+            game_domain, {}
+        )
+        for key in sorted(by_owner, key=lambda k: order[records[k]["mod_id"]]):
+            rec = records[key]
+            paths = by_owner[key]
+            err, archive = await _download_archive(
+                game_domain, int(rec["mod_id"]), int(rec["file_id"]),
+                rec.get("file_name") or "", api_key,
+            )
+            if err:
+                errors.append(f"{key}: {err}")
+                continue
+            scratch = _extract_scratch(
+                int(rec["mod_id"]), int(rec["file_id"])
+            ) + "-owner"
+            _force_rmtree(scratch)
+            os.makedirs(scratch, exist_ok=True)
+            err = await _extract_archive(archive, scratch)
+            if err:
+                _force_rmtree(scratch)
+                errors.append(f"{key}: {err}")
+                continue
+            # The archive's own layout is not the game's: find each wanted
+            # path by its tail, wherever the author buried it.
+            index = {}
+            for root, _dirs, names in os.walk(scratch):
+                for n in names:
+                    full = os.path.join(root, n)
+                    rel = os.path.relpath(full, scratch).replace(os.sep, "/")
+                    index[rel.lower()] = full
+            for path in paths:
+                src = index.get(path)
+                if not src:
+                    src = next(
+                        (
+                            v
+                            for k2, v in index.items()
+                            if k2.endswith("/" + path)
+                        ),
+                        None,
+                    )
+                if not src:
+                    errors.append(f"{key}: {path} not in the archive")
+                    continue
+                dst = os.path.join(data_path, *path.split("/"))
+                try:
+                    _makedirs_for(dst)
+                    shutil.copy2(src, dst)
+                except OSError as e:
+                    errors.append(f"{key}: {path}: {e}")
+                    continue
+                settled[path] = key
+                rewritten += 1
+            _force_rmtree(scratch)
+        _save_settings(settings)
+        decky.logger.info(
+            f"resolved {rewritten} contested file(s) across {len(by_owner)} "
+            f"owning mod(s), {len(errors)} error(s)"
+        )
+        return {
+            "ok": True,
+            "rewritten": rewritten,
+            "mods": len(by_owner),
+            "errors": errors[:8],
+        }
 
     async def get_known_bad_state(
         self, app_id: int, install_dir: str, plugins_subpath: str,

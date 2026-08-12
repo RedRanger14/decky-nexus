@@ -22,6 +22,7 @@ import {
 import {
   endorseCollection,
   getFileConflicts,
+  resolveFileConflicts,
   AttentionItem,
   CollectionDetail,
   CollectionFile,
@@ -137,6 +138,7 @@ export function CollectionPage() {
       }
     | undefined
   >();
+  const [fixingFiles, setFixingFiles] = useState(false);
   // Batch state lives in a module store so navigating away and back
   // shows live progress instead of a stale page.
   const [, force] = useState(0);
@@ -210,6 +212,38 @@ export function CollectionPage() {
   };
 
   useEffect(refreshConflicts, [detail, sel?.collection.slug]);
+
+  /** Rewrite each contested file from the mod the collection wanted to
+   * own it. Per PATH: nothing uncontested is touched, so this cannot
+   * create the new conflicts that reinstalling whole mods did. */
+  const fixFileOwners = async () => {
+    if (!detail || !conflicts?.files || fixingFiles) return;
+    setFixingFiles(true);
+    try {
+      const r = await resolveFileConflicts(
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        detail.files.map((f) => f.modId),
+        []
+      );
+      if (r.ok) {
+        toaster.toast({
+          title: `Fixed ${r.rewritten ?? 0} file${
+            (r.rewritten ?? 0) === 1 ? "" : "s"
+          }`,
+          body: r.errors?.length
+            ? `${r.errors.length} could not be fixed`
+            : `From ${r.mods ?? 0} mod${(r.mods ?? 0) === 1 ? "" : "s"}`,
+        });
+      } else {
+        toaster.toast({ title: "Could not fix", body: r.error ?? "" });
+      }
+    } finally {
+      setFixingFiles(false);
+      refreshConflicts();
+    }
+  };
 
   const persistAttention = (items: AttentionItem[]) => {
     attentionRef.current = items;
@@ -315,6 +349,7 @@ export function CollectionPage() {
     2 + // Go to downloads, Back
     (actionable.length > 0 ? 1 : 0) +
     (optionalRemaining.length > 0 ? 1 : 0) +
+    (conflictIssue && !installing ? 1 : 0) + // Fix contested files
     (ownedCount > 0 && !installing ? 1 : 0) + // Repair
     ((ownedCount > 0 && !installing) || (justUninstalled && !installing)
       ? 1
@@ -1134,6 +1169,20 @@ export function CollectionPage() {
               {remaining.length === 0
                 ? `Install optional (${optionalRemaining.length})`
                 : `+ optional (${optionalRemaining.length})`}
+            </DialogButton>
+          )}
+          {conflictIssue && !installing && (
+            <DialogButton
+              className={BLUE_BUTTON_CLASS}
+              disabled={fixingFiles || finishingFileId !== undefined}
+              onClick={fixFileOwners}
+              style={ACTION_BUTTON}
+            >
+              {fixingFiles
+                ? "Fixing…"
+                : `Fix ${conflicts!.files.toLocaleString()} file${
+                    conflicts!.files === 1 ? "" : "s"
+                  }`}
             </DialogButton>
           )}
           {ownedCount > 0 && !installing && (

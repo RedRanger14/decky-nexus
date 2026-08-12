@@ -844,6 +844,26 @@ export const getFileConflicts = callable<
   }
 >("get_file_conflicts");
 
+// Rewrites each contested file from the mod the collection wanted to own
+// it, and nothing else. Per PATH, not per mod: reinstalling whole mods is
+// what took the device from 47 wrong pairs to 92.
+export const resolveFileConflicts = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    mod_order: number[],
+    files: string[]
+  ],
+  {
+    ok: boolean;
+    rewritten?: number;
+    mods?: number;
+    errors?: string[];
+    error?: string;
+  }
+>("resolve_file_conflicts");
+
 export const getModRequirements = callable<
   [game_domain: string, mod_id: number],
   { ok: boolean; requirements?: ModRequirement[]; error?: string }

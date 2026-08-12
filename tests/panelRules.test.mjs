@@ -645,16 +645,17 @@ test("explains the cause the user can recognise", () => {
   assert.match(msg, /needed your choices/);
 });
 
-test("does not promise a fix it cannot deliver", () => {
-  // v0.97.0 offered "reinstall the affected mods in collection order" and
-  // took the device from 47 wrong pairs to 92: reinstalling a subset makes
-  // those mods newer than everything after them that was left alone. The
-  // closure needed is 352 of 852 mods, so there is no small safe version.
+test("describes the fix as per-file, never as reinstalling mods", () => {
+  // v0.97.0 promised "reinstall the affected mods in collection order" and
+  // took the device from 47 wrong pairs to 92, because reinstalling a mod
+  // rewrites files it was not contesting. The wording has to keep the
+  // distinction the fix depends on.
   const msg = fileConflictProblem(2, 1, [
     { actual: "a", intended: "b", files: 2 },
   ]);
-  assert.match(msg, /no safe one-tap fix yet/);
-  assert.doesNotMatch(msg, /Fixing it reinstalls/);
+  assert.match(msg, /rewrites just those files/);
+  assert.match(msg, /leaving everything else alone/);
+  assert.doesNotMatch(msg, /reinstall/i);
 });
 
 test("gets the singulars right", () => {
