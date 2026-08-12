@@ -90,6 +90,47 @@ export function loadOrderProblem(
   return `${parts.join(", and ")}. Either one crashes the game while it starts. Fixing this only turns mods on and reorders them — nothing is installed, removed or downloaded.`;
 }
 
+/** Whether the load order has outgrown what the engine can address, and
+ * what to tell someone who has never heard of a plugin slot.
+ *
+ * Skyrim and FO4 address plugins with one byte: 254 ordinary slots plus
+ * one shared index that every ESL-flagged plugin lives behind. Going
+ * over does not announce itself - the game stops loading plugins past
+ * the limit or dies on the way in, and nothing says which of two
+ * thousand mods was the straw.
+ *
+ * Warned at 95% rather than only when broken: a collection sitting at
+ * 250 of 254 is one patch away from a crash nobody will be able to
+ * explain, and that is worth knowing before it happens. */
+export function slotPressure(
+  full: number,
+  fullLimit: number,
+  light: number,
+  lightLimit: number
+): { level: "ok" | "near" | "over"; message?: string } {
+  if (full > fullLimit || light > lightLimit) {
+    const which = full > fullLimit ? "full" : "light";
+    return {
+      level: "over",
+      message:
+        `Too many mods for the game to load: ${
+          which === "full" ? full : light
+        } ${which} plugins against a hard limit of ${
+          which === "full" ? fullLimit : lightLimit
+        }. Some will silently not load. Turning off a few mods is the only fix.`,
+    };
+  }
+  if (full >= fullLimit * 0.95 || light >= lightLimit * 0.95) {
+    return {
+      level: "near",
+      message:
+        `Close to the game's limit: ${full} of ${fullLimit} full plugin ` +
+        `slots used. A few more mods and the game stops loading them.`,
+    };
+  }
+  return { level: "ok" };
+}
+
 /** How the automated crash hunt reads one launch.
  *
  * "No crash log yet" is not the same as "it booted" - the crash we chased

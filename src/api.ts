@@ -418,6 +418,12 @@ export const getLoadOrderState = callable<
     /** Masters installed but switched off, that enabled plugins need. */
     disabled_masters?: number;
     examples?: string[];
+    /** Plugin slots consumed. The engine addresses plugins with one
+     * byte: 254 ordinary, plus one shared index for all light ones. */
+    full_slots?: number;
+    full_slot_limit?: number;
+    light_slots?: number;
+    light_slot_limit?: number;
   }
 >("get_load_order_state");
 

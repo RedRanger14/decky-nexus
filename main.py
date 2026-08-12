@@ -1501,6 +1501,41 @@ def _masters_to_enable(
     ]
 
 
+# Skyrim/FO4 address plugins with one byte: 0x00-0xFD are ordinary slots
+# and 0xFE is the shared index every ESL-flagged plugin lives behind. So
+# 254 full plugins, and up to 4096 light ones sharing that last slot.
+FULL_SLOT_LIMIT = 254
+LIGHT_SLOT_LIMIT = 4096
+
+
+def _slot_usage(data_path: str, names: list, implicit: set = frozenset()):
+    """(full, light) plugin slots the enabled set consumes.
+
+    Worth its own check because going over does not announce itself: the
+    game simply stops loading plugins past the limit, or dies on the way
+    in, and nothing in the interface says which of two thousand mods was
+    the straw. The device's 1,972-mod collection sat at 208 of 254, so a
+    larger one can plausibly cross it.
+    """
+    try:
+        real = {f.lower(): f for f in os.listdir(data_path)}
+    except OSError:
+        return 0, 0
+    full = light = 0
+    for n in set(list(names) + list(implicit)):
+        f = real.get(n.lower())
+        if not f:
+            continue
+        head = _plugin_header(os.path.join(data_path, f))
+        if head is None:
+            continue
+        if head[0] & PLUGIN_FLAG_LIGHT:
+            light += 1
+        else:
+            full += 1
+    return full, light
+
+
 def _sort_load_order(data_path: str, names: list) -> list:
     """Masters first, then everything else, each group in dependency
     order.
@@ -8926,6 +8961,8 @@ query Link($slug: String!, $domainName: String!) {
                    if n.lower() not in implicit]
         enabled = [n for n, on in entries if on]
         needed = _masters_to_enable(data_path, entries, implicit, skips)
+        full, light = await asyncio.to_thread(
+            _slot_usage, data_path, enabled, implicit)
         return {
             "ok": True,
             "supported": True,
@@ -8938,6 +8975,10 @@ query Link($slug: String!, $domainName: String!) {
             "timestamp_ordered": timestamp_ordered,
             "disabled_masters": len(needed),
             "examples": [n for n, _ in needed[:3]],
+            "full_slots": full,
+            "full_slot_limit": FULL_SLOT_LIMIT,
+            "light_slots": light,
+            "light_slot_limit": LIGHT_SLOT_LIMIT,
         }
 
     async def get_known_bad_state(
