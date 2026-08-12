@@ -17,6 +17,8 @@ import {
   showResetRow,
   slotPressure,
   isRemaining,
+  collectionOwnedCount,
+  endorseControl,
   troubleshootingCount,
 } from "../.test-build/panelRules.js";
 
@@ -406,4 +408,73 @@ test("a failed install IS still remaining", () => {
   // The stuck-on-Install mod. It has to keep counting, otherwise a
   // failure disappears from the tally and the collection looks complete.
   assert.equal(isRemaining(file, none, { 700: "failed" }, none), true);
+});
+
+
+// ---- uninstall count ---------------------------------------------------
+// Device: a 546-entry collection whose Uninstall button read 454. Nothing
+// had failed - 78 of its mods ship more than one file, and a mod is one
+// install record however many files it brought.
+
+const entries = [
+  { modId: 1 },
+  { modId: 1 }, // same mod, second file
+  { modId: 2 },
+  { modId: 3 },
+];
+
+test("counts collection entries, not install records", () => {
+  assert.equal(collectionOwnedCount(entries, new Set([1, 2])), 3);
+});
+
+test("mods installed outside this collection do not inflate it", () => {
+  assert.equal(collectionOwnedCount(entries, new Set([1, 99])), 2);
+});
+
+test("falls back to the record count before the detail loads", () => {
+  // Otherwise the Uninstall button vanishes on a slow page load and the
+  // mods cannot be removed at all.
+  assert.equal(collectionOwnedCount(undefined, new Set([1, 2])), 2);
+  assert.equal(collectionOwnedCount([], new Set([1, 2])), 2);
+});
+
+test("a revision that no longer lists our mods still offers uninstall", () => {
+  assert.equal(collectionOwnedCount(entries, new Set([77])), 1);
+});
+
+test("nothing owned means no button", () => {
+  assert.equal(collectionOwnedCount(entries, new Set()), 0);
+});
+
+
+// ---- QAM endorse button ------------------------------------------------
+
+test("no button when we cannot know the endorsement state", () => {
+  assert.equal(endorseControl(undefined).show, false);
+  assert.equal(endorseControl("unknown").show, false);
+});
+
+test("an endorsement made years ago on the website is respected", () => {
+  // Otherwise the button invites a press that toggles it back OFF.
+  const c = endorseControl("Endorsed");
+  assert.equal(c.endorsed, true);
+  assert.equal(c.label, "Endorsed");
+});
+
+test("abstained still offers the button, undecided is the ask", () => {
+  assert.equal(endorseControl("Abstained").endorsed, false);
+  assert.equal(endorseControl("Undecided").label, "Endorse");
+});
+
+test("explains the cooldown by default, and drops it once it cannot apply", () => {
+  // Unknown install time is the normal case - a framework installed on
+  // some previous day. Warning costs a line; not warning costs a press
+  // that looks like a broken button.
+  assert.match(endorseControl("Undecided").hint, /15 minutes/);
+  assert.match(endorseControl("Undecided", 2).hint, /15 minutes/);
+  assert.doesNotMatch(endorseControl("Undecided", 40).hint, /15 minutes/);
+});
+
+test("no hint clutters the already-endorsed state", () => {
+  assert.equal(endorseControl("Endorsed", 1).hint, undefined);
 });

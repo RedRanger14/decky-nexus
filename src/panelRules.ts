@@ -280,6 +280,75 @@ export function isRemaining(
   );
 }
 
+/** How many of a collection's entries the Uninstall button will remove.
+ *
+ * Counted in ENTRIES, not install records, because the rest of the page
+ * counts entries and two numbers that should agree must not disagree.
+ * A collection lists one entry per file, but a mod shipping a main file
+ * plus two patches is three entries and ONE install record - so on a
+ * 546-entry collection the record count is 454 and reads like 92 mods
+ * quietly failed. Nothing had failed: 78 mods supplied more than one
+ * file each.
+ *
+ * Falls back to the record count while the collection detail is still
+ * loading, or if a revision changed under us and no entry matches -
+ * losing the button would strand mods the user cannot then remove. */
+export function collectionOwnedCount(
+  entries: { modId: number }[] | undefined,
+  ownedModIds: Set<number>
+): number {
+  if (!entries?.length) return ownedModIds.size;
+  return (
+    entries.filter((e) => ownedModIds.has(e.modId)).length || ownedModIds.size
+  );
+}
+
+/** The QAM's thumbs-up on a framework row: is it shown, is it on, and
+ * what does the line under it say.
+ *
+ * Framework mods (SMAPI, SKSE, REFramework) are installed by a Step
+ * button, so nobody ever opens their mod page - which is the only place
+ * the plugin could endorse from. These are the mods every single user of
+ * a game depends on and the ones least likely to get thanked.
+ *
+ * Four states matter and only one is a plain button:
+ *  - `unknown`: no API key, or the lookup failed. Show nothing rather
+ *    than a control that cannot work.
+ *  - `Endorsed`: possibly from years ago on the website. Reflect that
+ *    instead of inviting a second endorsement that would toggle the
+ *    first one OFF.
+ *  - `Abstained`: they said no once. Still offer it, without nagging.
+ *  - `Undecided`: the ask.
+ *
+ * The cooldown gets its own line because Nexus rejects an endorsement in
+ * the first 15 minutes after download, and a Step 1 install is followed
+ * by pressing things immediately - so the most likely first attempt is
+ * the one that fails, and "TOO_SOON_AFTER_DOWNLOAD" explains nothing.
+ * Shown whenever the install time is unknown, which is the usual case:
+ * warning someone who does not need it costs a line of small grey text,
+ * while omitting it costs a press that looks like a broken button. */
+export function endorseControl(
+  status: string | undefined,
+  installedMinutesAgo?: number
+): { show: boolean; endorsed: boolean; label: string; hint?: string } {
+  if (!status || status === "unknown") {
+    return { show: false, endorsed: false, label: "" };
+  }
+  if (status === "Endorsed") {
+    return { show: true, endorsed: true, label: "Endorsed" };
+  }
+  const knownSettled =
+    installedMinutesAgo !== undefined && installedMinutesAgo >= 15;
+  return {
+    show: true,
+    endorsed: false,
+    label: "Endorse",
+    hint: knownSettled
+      ? "Endorsing tells the author their work is being used."
+      : "Nexus Mods only accepts an endorsement 15 minutes after the download, so this may not work straight away.",
+  };
+}
+
 /** Whether a download row offers a Cancel control, by phase.
  *
  * Only while bytes are still owed: cancelling mid-extraction would leave

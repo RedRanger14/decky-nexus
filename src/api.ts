@@ -775,7 +775,7 @@ export const getModDetails = callable<
 
 export const getEndorsement = callable<
   [game_domain: string, mod_id: number],
-  { ok: boolean; status?: string; error?: string }
+  { ok: boolean; status?: string; version?: string; error?: string }
 >("get_endorsement");
 
 export const setEndorsement = callable<

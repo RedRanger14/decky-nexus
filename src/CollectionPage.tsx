@@ -13,7 +13,7 @@ import {
 import { toaster } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 import { FaArrowDown, FaEye, FaPuzzlePiece } from "react-icons/fa";
-import { isRemaining } from "./panelRules";
+import { collectionOwnedCount, isRemaining } from "./panelRules";
 
 import {
   AttentionItem,
@@ -107,7 +107,7 @@ export function CollectionPage() {
   // actively clearing it. See isRemaining in panelRules.
   const [justResolved, setJustResolved] = useState<Set<number>>(new Set());
   // Records installed BY this collection (its slug) - drives Uninstall.
-  const [ownedCount, setOwnedCount] = useState(0);
+  const [ownedModIds, setOwnedModIds] = useState<Set<number>>(new Set());
   // Uninstalling unmounts the focused button; without a stand-in the
   // gamepad focus dies and the next press falls through to Steam's
   // back-chain (reported as "closed the page and went back to the game").
@@ -156,10 +156,13 @@ export function CollectionPage() {
       // Only records CARRYING this slug can be uninstalled by this
       // collection - shared/individual installs stay, so the button
       // must hide when none are left (it looked broken otherwise).
-      setOwnedCount(
-        (r.mods ?? []).filter(
-          (m) => m.collection_slug === sel.collection.slug
-        ).length
+      setOwnedModIds(
+        new Set(
+          (r.mods ?? [])
+            .filter((m) => m.collection_slug === sel.collection.slug)
+            .map((m) => m.mod_id)
+            .filter((id): id is number => id !== undefined)
+        )
       );
     });
   };
@@ -234,6 +237,9 @@ export function CollectionPage() {
   const conflictSkips = attention.filter((a) => a.reason === "conflict");
   const layoutSkips = attention.filter((a) => a.reason === "layout");
 
+  // Entries, to match every other number on this page - see
+  // collectionOwnedCount for why the record count read as 92 missing.
+  const ownedCount = collectionOwnedCount(detail?.files, ownedModIds);
   const required = detail?.files.filter((f) => !f.optional) ?? [];
   const optional = detail?.files.filter((f) => f.optional) ?? [];
   // Pending-attention mods are NOT "remaining": re-queueing them just
