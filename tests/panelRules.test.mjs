@@ -478,3 +478,24 @@ test("explains the cooldown by default, and drops it once it cannot apply", () =
 test("no hint clutters the already-endorsed state", () => {
   assert.equal(endorseControl("Endorsed", 1).hint, undefined);
 });
+
+
+// ---- engines with no light tier ----------------------------------------
+// FO3 and New Vegas predate ESL. lightLimit 0 says so, and comparing
+// against it naively puts every one of those load orders at 100% of its
+// limit - a permanent warning on two shipping games.
+
+test("a zero light limit never warns on its own", () => {
+  assert.equal(slotPressure(10, 255, 0, 0).level, "ok");
+});
+
+test("a no-ESL engine still warns on its own full slots", () => {
+  assert.equal(slotPressure(250, 255, 0, 0).level, "near");
+  assert.equal(slotPressure(256, 255, 0, 0).level, "over");
+});
+
+test("a no-ESL engine gets the extra slot ESL games give up to 0xFE", () => {
+  // 255 is not over for FO3/FNV; it is over for Skyrim SE.
+  assert.equal(slotPressure(255, 255, 0, 0).level, "near");
+  assert.equal(slotPressure(255, 254, 0, 4096).level, "over");
+});

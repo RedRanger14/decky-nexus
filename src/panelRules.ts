@@ -101,14 +101,20 @@ export function loadOrderProblem(
  *
  * Warned at 95% rather than only when broken: a collection sitting at
  * 250 of 254 is one patch away from a crash nobody will be able to
- * explain, and that is worth knowing before it happens. */
+ * explain, and that is worth knowing before it happens.
+ *
+ * A lightLimit of 0 means the engine has no light tier at all (FO3, New
+ * Vegas) and light must be ignored entirely - not merely "compared
+ * against zero", which would put every one of those load orders at 100%
+ * of its limit and warn on all of them forever. */
 export function slotPressure(
   full: number,
   fullLimit: number,
   light: number,
   lightLimit: number
 ): { level: "ok" | "near" | "over"; message?: string } {
-  if (full > fullLimit || light > lightLimit) {
+  const hasLight = lightLimit > 0;
+  if (full > fullLimit || (hasLight && light > lightLimit)) {
     const which = full > fullLimit ? "full" : "light";
     return {
       level: "over",
@@ -120,7 +126,7 @@ export function slotPressure(
         }. Some will silently not load. Turning off a few mods is the only fix.`,
     };
   }
-  if (full >= fullLimit * 0.95 || light >= lightLimit * 0.95) {
+  if (full >= fullLimit * 0.95 || (hasLight && light >= lightLimit * 0.95)) {
     return {
       level: "near",
       message:
