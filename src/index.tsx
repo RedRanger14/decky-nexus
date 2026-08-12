@@ -62,6 +62,7 @@ import {
   getSmapiLoadStatus,
   checkPluginMasters,
   disableBlockedPlugins,
+  removeGhostPlugins,
   disablePlugins,
   fixPrefixRuntime,
   crashBisectApply,
@@ -101,6 +102,7 @@ import {
   huntProgressNote,
   launchWaitNotice,
   loadOrderProblem,
+  ghostPluginProblem,
   missingMasterProblem,
   blockedPluginsAction,
   maskCoopPassword,
@@ -2350,6 +2352,7 @@ function TroubleshootingSection() {
   >();
   const [seBusy, setSeBusy] = useState(false);
   const [blockedBusy, setBlockedBusy] = useState(false);
+  const [ghostBusy, setGhostBusy] = useState(false);
   // Enabled plugins listed before a master they need - a boot crash.
   const [loadOrder, setLoadOrder] = useState<
     {
@@ -2363,6 +2366,8 @@ function TroubleshootingSection() {
       lightSlotLimit: number;
       missingMasters: { name: string; label?: string; needed_by: number }[];
       blockedPlugins: number;
+      ghostPlugins: number;
+      ghostExamples: string[];
     }
     | undefined
   >();
@@ -2429,6 +2434,8 @@ function TroubleshootingSection() {
                 lightSlotLimit: r.light_slot_limit ?? 4096,
                 missingMasters: r.missing_masters ?? [],
                 blockedPlugins: r.blocked_plugins ?? 0,
+                ghostPlugins: r.ghost_plugins ?? 0,
+                ghostExamples: r.ghost_examples ?? [],
               }
             : undefined
         )
@@ -2453,6 +2460,9 @@ function TroubleshootingSection() {
     ? missingMasterProblem(loadOrder.missingMasters, loadOrder.blockedPlugins)
     : undefined;
   const blockedAction = blockedPluginsAction(loadOrder?.missingMasters);
+  const ghostIssue = loadOrder
+    ? ghostPluginProblem(loadOrder.ghostPlugins, loadOrder.ghostExamples)
+    : undefined;
 
   /** Drive the hunt: set a load order, launch, watch, record, repeat.
    *
@@ -2627,7 +2637,7 @@ function TroubleshootingSection() {
     sePlugins?.failed.length ?? 0,
     Boolean(suspect),
     loadOrderIssue,
-    missingMasters
+    missingMasters || ghostIssue
   );
 
   return (
@@ -2801,7 +2811,40 @@ function TroubleshootingSection() {
             </ButtonItem>
           </PanelSectionRow>
         )}
-          {missingMasters && (
+          {ghostIssue && game && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              label="Mods switched on but not installed"
+              description={ghostIssue}
+              disabled={ghostBusy}
+              onClick={async () => {
+                setGhostBusy(true);
+                try {
+                  const r = await removeGhostPlugins(
+                    game.appId,
+                    game.installDirName,
+                    game.pluginsTxtSubpath ?? "",
+                    game.pluginsTxtStyle ?? "starred",
+                    game.nexusDomain
+                  );
+                  toaster.toast({
+                    title: r.ok
+                      ? `Cleared ${r.removed ?? 0}`
+                      : "Could not clear them",
+                    body: r.ok ? (r.names ?? []).slice(0, 3).join(", ") : r.error ?? "",
+                  });
+                  if (r.ok) refresh();
+                } finally {
+                  setGhostBusy(false);
+                }
+              }}
+            >
+              {ghostBusy ? "Clearing…" : "Clear them"}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {missingMasters && (
           <PanelSectionRow>
             <Field label="⚠ Missing game content" childrenLayout="below">
               {missingMasters}
@@ -2915,6 +2958,8 @@ function TroubleshootingSection() {
                           lightSlotLimit: s.light_slot_limit ?? 4096,
                           missingMasters: s.missing_masters ?? [],
                           blockedPlugins: s.blocked_plugins ?? 0,
+                          ghostPlugins: s.ghost_plugins ?? 0,
+                          ghostExamples: s.ghost_examples ?? [],
                         }
                       : undefined
                   );

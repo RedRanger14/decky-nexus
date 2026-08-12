@@ -1518,6 +1518,26 @@ DLC_MASTER_NAMES = {
 }
 
 
+def _ghost_plugins(data_path: str, names: list) -> list:
+    """Plugins the load order enables that are not on disk.
+
+    Harmless on Skyrim and FO4, where an entry is a line in a list. NOT
+    harmless on FO3 and New Vegas, where presence in Plugins.txt IS
+    activation - a leftover line is a phantom enabled plugin, and the count
+    the panel reports is then a count of something that cannot load.
+
+    Found by hand on device after uninstalling oHUD left `oHUD.esm` listed:
+    the uninstall delists correctly only when the record carries a plugins
+    list, and that one had lost its. Two lines here would have caught it
+    immediately, so here they are.
+    """
+    try:
+        real = {f.lower() for f in os.listdir(data_path)}
+    except OSError:
+        return []
+    return [n for n in names if n.lower() not in real]
+
+
 def _missing_masters(data_path: str, names: list, implicit: set = frozenset()):
     """Masters an enabled plugin needs that are not on disk AT ALL.
 
@@ -9383,6 +9403,7 @@ query Link($slug: String!, $domainName: String!) {
         enabled = [n for n, on in entries if on]
         needed = _masters_to_enable(data_path, entries, implicit, skips)
         absent = _missing_masters(data_path, enabled, implicit)
+        ghosts = await asyncio.to_thread(_ghost_plugins, data_path, enabled)
         esl = game_domain in ESL_DOMAINS
         full, light = await asyncio.to_thread(
             _slot_usage, data_path, enabled, implicit, esl)
@@ -9409,6 +9430,9 @@ query Link($slug: String!, $domainName: String!) {
                 for m, deps in absent[:12]
             ],
             "blocked_plugins": len({d for _m, deps in absent for d in deps}),
+            # Enabled but not on disk. Safe to delist: they cannot load.
+            "ghost_plugins": len(ghosts),
+            "ghost_examples": ghosts[:3],
             "full_slots": full,
             "full_slot_limit": FULL_SLOT_LIMIT if esl else NO_ESL_SLOT_LIMIT,
             "light_slots": light,
@@ -9520,6 +9544,36 @@ query Link($slug: String!, $domainName: String!) {
             # this sequence lands each one exactly where the curator put it.
             "resolve": resolve,
         }
+
+    async def remove_ghost_plugins(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str
+    ) -> dict:
+        """Delist plugins that are enabled but not installed.
+
+        Always safe, which is what separates this from the other repairs:
+        a plugin with no file cannot load whatever the list says, so
+        removing the line changes nothing about what the game does - it
+        only stops the tool counting and reporting something that is not
+        there.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not _safe_rel_path(plugins_subpath):
+            return {"ok": False, "error": "Invalid plugins path"}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        _, data_path, _unused = _game_paths(install_dir, "Data")
+        entries = _plugin_entries(_read_plugins_txt(path), plugins_style)
+        enabled = [n for n, on in entries if on]
+        ghosts = await asyncio.to_thread(_ghost_plugins, data_path, enabled)
+        if not ghosts:
+            return {"ok": True, "removed": 0, "names": []}
+        _remove_plugins(path, ghosts)
+        decky.logger.info(
+            f"delisted {len(ghosts)} plugin(s) that are not installed: "
+            f"{', '.join(ghosts[:6])}"
+        )
+        return {"ok": True, "removed": len(ghosts), "names": ghosts}
 
     async def get_known_bad_state(
         self, app_id: int, install_dir: str, plugins_subpath: str,

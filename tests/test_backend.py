@@ -3935,6 +3935,78 @@ def _make_plugin(path, masters=(), flags=0):
         f.write(head + data)
 
 
+class TestGhostPlugins(unittest.TestCase):
+    """Enabled but not installed. Harmless on Skyrim/FO4 where an entry is
+    a line in a list; NOT harmless on FO3/FNV where presence in Plugins.txt
+    IS activation. Found by hand on device when uninstalling oHUD left
+    oHUD.esm listed - the delist only happens when the record carries a
+    plugins list, and that one had lost its."""
+
+    GAME = "Ghost Test"
+    APP_ID = 22380
+    SUBPATH = "AppData/Local/FalloutNV/Plugins.txt"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.data = os.path.join(main.STEAM_COMMON, self.GAME, "Data")
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+        os.makedirs(self.data)
+        self.txt = main._plugins_txt_path(self.APP_ID, self.SUBPATH)
+        main._makedirs_for(self.txt)
+
+    def _write(self, names):
+        with open(self.txt, "w", encoding="utf-8") as f:
+            for n in names:
+                f.write(n + chr(10))
+
+    def _listed(self):
+        return [n for n, on in main._plugin_entries(
+            main._read_plugins_txt(self.txt), "listed") if on]
+
+    def _call(self):
+        return run(self.plugin.remove_ghost_plugins(
+            self.APP_ID, self.GAME, self.SUBPATH, "listed", "newvegas"))
+
+    def test_finds_a_plugin_that_is_not_on_disk(self):
+        _make_plugin(os.path.join(self.data, "real.esp"))
+        self.assertEqual(
+            main._ghost_plugins(self.data, ["real.esp", "gone.esm"]),
+            ["gone.esm"],
+        )
+
+    def test_case_differences_are_not_ghosts(self):
+        _make_plugin(os.path.join(self.data, "Real.esp"))
+        self.assertEqual(main._ghost_plugins(self.data, ["real.esp"]), [])
+
+    def test_delisting_leaves_the_real_plugins_alone(self):
+        _make_plugin(os.path.join(self.data, "real.esp"))
+        self._write(["real.esp", "oHUD.esm"])
+        r = self._call()
+        self.assertEqual(r["removed"], 1)
+        self.assertEqual(r["names"], ["oHUD.esm"])
+        self.assertEqual(self._listed(), ["real.esp"])
+
+    def test_nothing_to_do_is_not_an_error(self):
+        _make_plugin(os.path.join(self.data, "real.esp"))
+        self._write(["real.esp"])
+        r = self._call()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["removed"], 0)
+
+    def test_a_missing_data_dir_invents_nothing(self):
+        # Otherwise every plugin looks like a ghost and the "safe" repair
+        # would delist the entire load order.
+        self.assertEqual(
+            main._ghost_plugins(os.path.join(TEST_ROOT, "nope"), ["a.esp"]), []
+        )
+
+    def test_rejects_a_bad_domain(self):
+        result = run(self.plugin.remove_ghost_plugins(
+            self.APP_ID, self.GAME, self.SUBPATH, "listed", "../evil"))
+        self.assertFalse(result["ok"])
+
+
 class TestFileConflicts(unittest.TestCase):
     """Overwriting is how collections work - the device install has 10,362
     shared paths across 867 mod-sets, nearly all of them deliberate. What
