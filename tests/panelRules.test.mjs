@@ -15,6 +15,7 @@ import {
   pauseAllControl,
   showInstalledModsSection,
   showResetRow,
+  slotPressure,
   troubleshootingCount,
 } from "../.test-build/panelRules.js";
 
@@ -345,4 +346,33 @@ test("a paused page always shows Resume even with zero rows", () => {
 
 test("idle and unpaused shows nothing", () => {
   assert.equal(pauseAllControl(0, false).show, false);
+});
+
+// Plugin slots: 254 ordinary, one shared index for all the light ones.
+// Going over does not announce itself, which is the whole problem.
+test("a normal load order says nothing", () => {
+  assert.equal(slotPressure(208, 254, 1766, 4096).level, "ok");
+});
+
+test("over the full limit is called out with the numbers", () => {
+  const r = slotPressure(260, 254, 100, 4096);
+  assert.equal(r.level, "over");
+  assert.match(r.message, /260 full plugins/);
+  assert.match(r.message, /silently not load/);
+});
+
+test("over the light limit is caught too", () => {
+  assert.equal(slotPressure(10, 254, 4200, 4096).level, "over");
+});
+
+test("close to the limit warns before it breaks", () => {
+  // 250 of 254 is one patch away from a crash nobody can explain.
+  const r = slotPressure(250, 254, 100, 4096);
+  assert.equal(r.level, "near");
+  assert.match(r.message, /250 of 254/);
+});
+
+test("the boundary itself is not over", () => {
+  assert.equal(slotPressure(254, 254, 4096, 4096).level, "near");
+  assert.equal(slotPressure(255, 254, 0, 4096).level, "over");
 });

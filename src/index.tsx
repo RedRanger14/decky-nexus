@@ -103,6 +103,7 @@ import {
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
+  slotPressure,
   troubleshootingCount,
 } from "./panelRules";
 import {
@@ -2334,6 +2335,10 @@ function TroubleshootingSection() {
       violations: number;
       disabledMasters: number;
       examples: string[];
+      fullSlots: number;
+      fullSlotLimit: number;
+      lightSlots: number;
+      lightSlotLimit: number;
     }
     | undefined
   >();
@@ -2394,6 +2399,10 @@ function TroubleshootingSection() {
                 violations: r.violations ?? 0,
                 disabledMasters: r.disabled_masters ?? 0,
                 examples: r.examples ?? [],
+                fullSlots: r.full_slots ?? 0,
+                fullSlotLimit: r.full_slot_limit ?? 254,
+                lightSlots: r.light_slots ?? 0,
+                lightSlotLimit: r.light_slot_limit ?? 4096,
               }
             : undefined
         )
@@ -2570,6 +2579,17 @@ function TroubleshootingSection() {
 
   // How many things are actually wrong. Shown on the header so the row is
   // worth opening - or worth ignoring.
+  // Separate from loadOrderIssue on purpose: nothing the load-order
+  // repair does can free a plugin slot. The only fix is fewer mods.
+  const slots = loadOrder
+    ? slotPressure(
+        loadOrder.fullSlots,
+        loadOrder.fullSlotLimit,
+        loadOrder.lightSlots,
+        loadOrder.lightSlotLimit
+      )
+    : ({ level: "ok" } as ReturnType<typeof slotPressure>);
+
   const problems = troubleshootingCount(
     Boolean(runtime?.outdated),
     sePlugins?.failed.length ?? 0,
@@ -2748,7 +2768,21 @@ function TroubleshootingSection() {
             </ButtonItem>
           </PanelSectionRow>
         )}
-        {loadOrderIssue && installed && (
+          {slots.level !== "ok" && (
+          <PanelSectionRow>
+            <Field
+              label={
+                slots.level === "over"
+                  ? "⚠ Too many mods for the game"
+                  : "Close to the game's mod limit"
+              }
+              childrenLayout="below"
+            >
+              {slots.message}
+            </Field>
+          </PanelSectionRow>
+        )}
+      {loadOrderIssue && installed && (
           <PanelSectionRow>
             <ButtonItem
               layout="below"
@@ -2797,6 +2831,10 @@ function TroubleshootingSection() {
                           violations: s.violations ?? 0,
                           disabledMasters: s.disabled_masters ?? 0,
                           examples: s.examples ?? [],
+                          fullSlots: s.full_slots ?? 0,
+                          fullSlotLimit: s.full_slot_limit ?? 254,
+                          lightSlots: s.light_slots ?? 0,
+                          lightSlotLimit: s.light_slot_limit ?? 4096,
                         }
                       : undefined
                   );
