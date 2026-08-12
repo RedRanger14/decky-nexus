@@ -4012,6 +4012,39 @@ class TestCollectionExtras(unittest.TestCase):
         self.assertTrue(extras["browse"][0]["optional"])
 
 
+class TestBundleCaseMerge(unittest.TestCase):
+    """A bundled mod's paths must adopt the casing already on disk.
+
+    Device, 2026-08-12: the NVAO bundle ships NVSE/Plugins/Scripts with a
+    capital P while the install had Data/NVSE/plugins. Copying verbatim
+    created both. Wine resolves an exact-case match before scanning, so the
+    script extender's request for Plugins found the new EMPTY directory and
+    loaded none of its 56 plugins - the game died after the intro logos
+    with nothing in any log to explain it."""
+
+    def test_a_bundle_adopts_existing_directory_casing(self):
+        data = os.path.join(TEST_ROOT, "bundlecase")
+        shutil.rmtree(data, ignore_errors=True)
+        os.makedirs(os.path.join(data, "NVSE", "plugins"))
+        with open(os.path.join(data, "NVSE", "plugins", "real.dll"), "w") as f:
+            f.write("existing")
+        cache = {}
+        merged = main._case_merge_rel(
+            data, "NVSE/Plugins/Scripts/gr_Dynamite.txt", cache
+        )
+        self.assertTrue(
+            merged.startswith("NVSE/plugins/"),
+            f"expected the existing lowercase dir, got {merged!r}",
+        )
+
+    def test_the_installer_case_merges_every_bundled_file(self):
+        """Guards the fix itself: the loop must call _case_merge_rel, or a
+        bundle silently splits a directory in two again."""
+        import inspect
+        src = inspect.getsource(main.Plugin.install_collection_bundles)
+        self.assertIn("_case_merge_rel", src)
+
+
 class TestResolveFileConflicts(unittest.TestCase):
     """Per-PATH resolution. v0.97.0 reinstalled whole mods in collection
     order, which rewrites files they were not contesting and leapfrogs

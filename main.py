@@ -5859,12 +5859,22 @@ query Link($slug: String!, $domainName: String!) {
                     errors.append(f"{b['name']}: not in the archive")
                     continue
                 written, plugins = [], []
+                # Case-merged against what is already on disk, exactly as
+                # the normal dataDir install does. Skipping this created
+                # Data/NVSE/Plugins beside the existing Data/NVSE/plugins
+                # on device: the NVAO bundle ships a capital P, Wine then
+                # resolved NVSE's request to the new empty directory, and
+                # the script extender loaded NONE of its 56 plugins. The
+                # game died after the intro logos with nothing in any log
+                # to say why.
+                case_cache: dict = {}
                 for root, _dirs, names in os.walk(src):
                     for n in names:
                         full = os.path.join(root, n)
                         rel = os.path.relpath(full, src).replace(os.sep, "/")
                         if not _safe_rel_path(rel):
                             continue
+                        rel = _case_merge_rel(data_path, rel, case_cache)
                         dst = os.path.join(data_path, *rel.split("/"))
                         try:
                             _makedirs_for(dst)
