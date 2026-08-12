@@ -4748,19 +4748,84 @@ async def _extract_archive(archive_path: str, dest_dir: str) -> str:
             f"{name}: " + (err.decode(errors="replace").strip()[:200] or "failed")
         )
 
-    if archive_path.lower().endswith(".zip"):
-        import zipfile
+    # Tried whatever the extension claims: plenty of mod archives lie
+    # about it, and a legacy .fomod package is a zip under another name.
+    # ZipFile raises on anything that is not one, which is the only test
+    # that actually matters here.
+    import zipfile
 
-        try:
-            with zipfile.ZipFile(archive_path) as zf:
-                zf.extractall(dest_dir)
-            _strip_archive_junk(dest_dir)
-            return ""
-        except Exception as e:  # noqa: BLE001 - report to UI
-            errors.append(f"zipfile: {e}")
+    try:
+        with zipfile.ZipFile(archive_path) as zf:
+            zf.extractall(dest_dir)
+        _strip_archive_junk(dest_dir)
+        return ""
+    except Exception as e:  # noqa: BLE001 - report to UI
+        errors.append(f"zipfile: {e}")
     if not errors:
         return "no extractor available for this archive type"
     return " | ".join(errors)[:300]
+
+
+async def _unwrap_fomod_package(scratch: str) -> str:
+    """Extract a legacy `.fomod` package sitting inside an archive.
+
+    Before FOMOD became a folder convention, FOMM shipped installers as a
+    single `.fomod` file - an ordinary 7z/zip under a different extension,
+    holding the mod plus its `fomod/ModuleConfig.xml`. Plenty of the older
+    New Vegas, FO3 and Oblivion catalogue is still packaged that way, and
+    Interior Lighting Overhaul (newvegas/35794) is one: the download is a
+    folder containing a changelog and a 15 MB `.fomod`, so layout
+    detection found no Data payload and called the mod unsupported. The
+    wizard inside it is one we can already drive.
+
+    Only unwrapped when there is exactly one candidate and the tree has no
+    FOMOD config of its own - a normal archive that merely ships a .fomod
+    alongside real content is left alone rather than second-guessed.
+
+    Returns the package filename it unwrapped, or "".
+    """
+    if _fomod_config_path(scratch):
+        return ""
+    packages = [
+        os.path.join(root, n)
+        for root, _dirs, names in os.walk(scratch)
+        for n in names
+        if n.lower().endswith(".fomod")
+    ]
+    if len(packages) != 1:
+        return ""
+    package = packages[0]
+    # Extracted aside rather than in place: _extract_archive wipes the
+    # destination between failed extractors, which would take the package
+    # itself with it and leave nothing for the next one to try.
+    staging = os.path.join(os.path.dirname(scratch.rstrip(os.sep)),
+                           os.path.basename(scratch.rstrip(os.sep)) + "-fomod")
+    _force_rmtree(staging)
+    os.makedirs(staging, exist_ok=True)
+    err = await _extract_archive(package, staging)
+    if err:
+        _force_rmtree(staging)
+        decky.logger.info(
+            f"fomod package {os.path.basename(package)} would not extract: {err}"
+        )
+        return ""
+    dest = os.path.dirname(package)
+    for name in os.listdir(staging):
+        target = os.path.join(dest, name)
+        if os.path.isdir(target):
+            _force_rmtree(target)
+        elif os.path.isfile(target):
+            os.remove(target)
+        shutil.move(os.path.join(staging, name), target)
+    _force_rmtree(staging)
+    try:
+        os.remove(package)
+    except OSError:
+        pass
+    decky.logger.info(
+        f"unwrapped legacy fomod package {os.path.basename(package)}"
+    )
+    return os.path.basename(package)
 
 
 class Plugin:
@@ -4950,7 +5015,17 @@ class Plugin:
                         }
                     message = str(body.get("message") or body.get("error") or "")
                     friendly = {
-                        "NOT_DOWNLOADED_MOD": "You can only endorse mods you've downloaded",
+                        # Nexus registers a download some minutes after
+                        # it happens, so pressing endorse right after a
+                        # Step 1 install hits this - and telling someone
+                        # they have not downloaded a mod the plugin just
+                        # installed for them reads as a plain bug.
+                        # Verified on device 2026-08-12 with xNVSE: the
+                        # same call succeeded later, unchanged.
+                        "NOT_DOWNLOADED_MOD": (
+                            "Nexus Mods hasn't registered the download yet. "
+                            "If you just installed this, try again in a few minutes"
+                        ),
                         "TOO_SOON_AFTER_DOWNLOAD": "Wait 15 minutes after downloading to endorse",
                         "IS_OWN_MOD": "You can't endorse your own mod",
                     }
@@ -6136,6 +6211,11 @@ query Link($slug: String!, $domainName: String!) {
         if not entries:
             _force_rmtree(scratch)
             return {"ok": False, "error": "Archive was empty"}
+
+        # A legacy .fomod package is an archive in its own right; unwrap it
+        # so everything below sees the wizard rather than an opaque file.
+        if await _unwrap_fomod_package(scratch):
+            entries = os.listdir(scratch)
 
         if install_mode == "dataDir":
             # FOMOD wizard archives: parse the wizard, park the extraction,
