@@ -194,6 +194,36 @@ export function fileConflictProblem(
   );
 }
 
+/** Plugins the load order switches on that are not installed.
+ *
+ * The one repair here that is unconditionally safe, and worth saying so:
+ * a plugin with no file cannot load whatever the list says, so clearing
+ * the line changes nothing about what the game does. Every other fix in
+ * this section changes what loads; this one only stops us counting
+ * something that is not there.
+ *
+ * Found on device after an uninstall left `oHUD.esm` switched on. On
+ * Skyrim and FO4 that is a stray line; on FO3 and New Vegas, where being
+ * in the file IS being enabled, it is a phantom enabled mod - and it
+ * inflates the mod count the panel reports back at the user. */
+export function ghostPluginProblem(
+  count: number,
+  examples: string[] = []
+): string | undefined {
+  if (count <= 0) return undefined;
+  const shown = examples
+    .slice(0, 3)
+    .map((n) => n.replace(/\.es[lmp]$/i, ""))
+    .join(", ");
+  return (
+    `${count} mod${count === 1 ? " is" : "s are"} switched on but ` +
+    `${count === 1 ? "is" : "are"} not installed` +
+    (shown ? ` (${shown})` : "") +
+    `. Usually left behind by an uninstall. Clearing them is safe — they ` +
+    `cannot load either way, so nothing about the game changes.`
+  );
+}
+
 /** Whether the load order has outgrown what the engine can address, and
  * what to tell someone who has never heard of a plugin slot.
  *

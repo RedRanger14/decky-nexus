@@ -429,6 +429,9 @@ export const getLoadOrderState = callable<
     missing_masters?: { name: string; label?: string; needed_by: number }[];
     /** How many enabled plugins cannot load because of those. */
     blocked_plugins?: number;
+    /** Enabled but not on disk - safe to delist, they cannot load. */
+    ghost_plugins?: number;
+    ghost_examples?: string[];
   }
 >("get_load_order_state");
 
@@ -816,6 +819,18 @@ export const disableBlockedPlugins = callable<
 // Files where the wrong mod won, judged against the collection's own
 // order. Overwriting is normal - only disagreements with the curator's
 // intent are reported, and mod_order is what expresses that intent.
+// Always safe: a plugin with no file cannot load whatever the list says.
+export const removeGhostPlugins = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string
+  ],
+  { ok: boolean; removed?: number; names?: string[]; error?: string }
+>("remove_ghost_plugins");
+
 export const getFileConflicts = callable<
   [game_domain: string, mod_order: number[]],
   {

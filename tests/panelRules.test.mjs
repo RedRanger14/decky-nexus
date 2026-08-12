@@ -22,6 +22,7 @@ import {
   missingMasterProblem,
   blockedPluginsAction,
   fileConflictProblem,
+  ghostPluginProblem,
   troubleshootingCount,
 } from "../.test-build/panelRules.js";
 
@@ -662,4 +663,28 @@ test("gets the singulars right", () => {
   ]);
   assert.match(msg, /1 file belonging/);
   assert.match(msg, /1 pair/);
+});
+
+
+// ---- plugins enabled but not installed ---------------------------------
+
+test("nothing to say when every enabled plugin exists", () => {
+  assert.equal(ghostPluginProblem(0), undefined);
+});
+
+test("names them and says the fix is safe", () => {
+  const msg = ghostPluginProblem(1, ["oHUD.esm"]);
+  assert.match(msg, /oHUD/);
+  assert.doesNotMatch(msg, /\.esm/);
+  assert.match(msg, /safe/);
+  assert.match(msg, /1 mod is switched on/);
+});
+
+test("gets the plurals right", () => {
+  assert.match(ghostPluginProblem(3, ["a.esp", "b.esp"]), /3 mods are/);
+});
+
+test("explains where they come from", () => {
+  // The user did not do anything wrong - we left them behind.
+  assert.match(ghostPluginProblem(2, []), /left behind by an uninstall/);
 });
