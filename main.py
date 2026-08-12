@@ -1448,6 +1448,82 @@ def _load_order_report(data_path: str, names: list, cache: dict = None) -> int:
     return bad
 
 
+# Masters that are not a mod at all: paid content the account may simply
+# not own. Named so the panel can say "Dead Money" rather than
+# "DeadMoney.esm", which nobody can act on without already knowing it maps
+# to a Steam DLC.
+DLC_MASTER_NAMES = {
+    # Fallout: New Vegas
+    "deadmoney.esm": "Dead Money",
+    "honesthearts.esm": "Honest Hearts",
+    "oldworldblues.esm": "Old World Blues",
+    "lonesomeroad.esm": "Lonesome Road",
+    "gunrunnersarsenal.esm": "Gun Runners' Arsenal",
+    "classicpack.esm": "Classic Pack",
+    "mercenarypack.esm": "Mercenary Pack",
+    "tribalpack.esm": "Tribal Pack",
+    "caravanpack.esm": "Caravan Pack",
+    # Fallout 3
+    "anchorage.esm": "Operation: Anchorage",
+    "thepitt.esm": "The Pitt",
+    "brokensteel.esm": "Broken Steel",
+    "pointlookout.esm": "Point Lookout",
+    "zeta.esm": "Mothership Zeta",
+    # Skyrim SE
+    "dawnguard.esm": "Dawnguard",
+    "hearthfires.esm": "Hearthfires",
+    "dragonborn.esm": "Dragonborn",
+    # Fallout 4
+    "dlcrobot.esm": "Automatron",
+    "dlcworkshop01.esm": "Wasteland Workshop",
+    "dlccoast.esm": "Far Harbor",
+    "dlcworkshop02.esm": "Contraptions Workshop",
+    "dlcworkshop03.esm": "Vault-Tec Workshop",
+    "dlcnukaworld.esm": "Nuka-World",
+}
+
+
+def _missing_masters(data_path: str, names: list, implicit: set = frozenset()):
+    """Masters an enabled plugin needs that are not on disk AT ALL.
+
+    The third distinct load-order fault, and the only one the user cannot
+    fix by pressing a button here. `_masters_to_enable` covers a master
+    that is installed but switched off; `_load_order_report` covers one
+    that loads too late. This covers one that was never there - almost
+    always game DLC the account does not own, and occasionally a mod the
+    collection expected to be installed.
+
+    The game reports it as a modal naming a single plugin, then quits. On
+    device (New Vegas, 2026-08-12) that modal named `mil.esp` while 115 of
+    245 enabled plugins were unloadable for want of five DLC masters, so
+    what the game says is the tip of it.
+
+    Returns [(master, [dependent, ...])] worst first.
+    """
+    try:
+        real = {f.lower() for f in os.listdir(data_path)}
+    except OSError:
+        return []
+    real |= {m.lower() for m in implicit}
+    cache = {}
+    missing = {}
+    for n in names:
+        key = n.lower()
+        if key not in real:
+            continue
+        if key not in cache:
+            f = next(
+                (x for x in os.listdir(data_path) if x.lower() == key), None
+            )
+            head = _plugin_header(os.path.join(data_path, f)) if f else None
+            cache[key] = head[1] if head else []
+        for m in cache[key]:
+            if m.lower() in real:
+                continue
+            missing.setdefault(m, []).append(n)
+    return sorted(missing.items(), key=lambda kv: -len(kv[1]))
+
+
 def _masters_to_enable(
     data_path: str, entries: list, implicit: set = frozenset(),
     skipped: set = frozenset()
@@ -9183,6 +9259,7 @@ query Link($slug: String!, $domainName: String!) {
                    if n.lower() not in implicit]
         enabled = [n for n, on in entries if on]
         needed = _masters_to_enable(data_path, entries, implicit, skips)
+        absent = _missing_masters(data_path, enabled, implicit)
         esl = game_domain in ESL_DOMAINS
         full, light = await asyncio.to_thread(
             _slot_usage, data_path, enabled, implicit, esl)
@@ -9198,6 +9275,17 @@ query Link($slug: String!, $domainName: String!) {
             "timestamp_ordered": timestamp_ordered,
             "disabled_masters": len(needed),
             "examples": [n for n, _ in needed[:3]],
+            # Masters that are not installed at all - usually DLC the
+            # account does not own. Named for humans where we can.
+            "missing_masters": [
+                {
+                    "name": m,
+                    "label": DLC_MASTER_NAMES.get(m.lower(), ""),
+                    "needed_by": len(deps),
+                }
+                for m, deps in absent[:12]
+            ],
+            "blocked_plugins": len({d for _m, deps in absent for d in deps}),
             "full_slots": full,
             "full_slot_limit": FULL_SLOT_LIMIT if esl else NO_ESL_SLOT_LIMIT,
             "light_slots": light,

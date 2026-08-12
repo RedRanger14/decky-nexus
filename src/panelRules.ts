@@ -90,6 +90,55 @@ export function loadOrderProblem(
   return `${parts.join(", and ")}. Either one crashes the game while it starts. Fixing this only turns mods on and reorders them — nothing is installed, removed or downloaded.`;
 }
 
+/** Mods that cannot load because a master is not installed at all, said
+ * in terms of the thing the user has to go and buy or download.
+ *
+ * The third load-order fault and the only one no button here can fix.
+ * The other two are repairs: switch a master back on, or move it earlier.
+ * This one is "you do not have Dead Money", and pretending otherwise
+ * would offer a Fix button that cannot work.
+ *
+ * Leads with DLC names rather than filenames because `DeadMoney.esm`
+ * means nothing to someone who has never opened a mod manager, and the
+ * action - tick it in Steam's DLC tab - is invisible from the filename.
+ *
+ * Counted in blocked mods, not missing masters: five absent files sounds
+ * survivable, and on the device it meant 115 of 245 mods would not load.
+ * The game says none of this. It names one plugin in a modal and quits.
+ */
+export function missingMasterProblem(
+  missing: { name: string; label?: string; needed_by: number }[] | undefined,
+  blockedPlugins: number
+): string | undefined {
+  if (!missing?.length || blockedPlugins <= 0) return undefined;
+  const dlc = missing.filter((m) => m.label);
+  const mods = missing.filter((m) => !m.label);
+  const parts: string[] = [];
+  if (dlc.length) {
+    const names = dlc.map((m) => m.label).join(", ");
+    parts.push(
+      `you don't have ${dlc.length === 1 ? "this DLC" : "these DLC"} ` +
+        `installed: ${names}`
+    );
+  }
+  if (mods.length) {
+    const names = mods
+      .slice(0, 3)
+      .map((m) => m.name.replace(/\.es[lmp]$/i, ""))
+      .join(", ");
+    parts.push(
+      `${mods.length} mod${mods.length > 1 ? "s are" : " is"} missing that ` +
+        `others were built on (${names}${mods.length > 3 ? ", …" : ""})`
+    );
+  }
+  return (
+    `${blockedPlugins.toLocaleString()} mod${blockedPlugins > 1 ? "s" : ""} ` +
+    `cannot load because ${parts.join("; and ")}. The game shows one name ` +
+    `and closes, so this is the full list. Nothing here can fix it — DLC is ` +
+    `installed from Steam's DLC tab.`
+  );
+}
+
 /** Whether the load order has outgrown what the engine can address, and
  * what to tell someone who has never heard of a plugin slot.
  *

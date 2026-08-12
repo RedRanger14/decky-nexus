@@ -3935,6 +3935,77 @@ def _make_plugin(path, masters=(), flags=0):
         f.write(head + data)
 
 
+class TestMissingMasters(unittest.TestCase):
+    """The third load-order fault: a master that is not on disk at all.
+
+    Device, New Vegas 2026-08-12 - the game put up a modal naming one
+    plugin (mil.esp) and quit. In fact 115 of 245 enabled plugins could
+    not load, for want of five DLC the account did not own. The game
+    never says that, and neither did we."""
+
+    def setUp(self):
+        self.data = os.path.join(TEST_ROOT, "missingmasters")
+        shutil.rmtree(self.data, ignore_errors=True)
+        os.makedirs(self.data)
+
+    def _plugin(self, name, masters=()):
+        _make_plugin(os.path.join(self.data, name), masters=masters)
+        return name
+
+    def test_reports_a_master_that_is_not_installed(self):
+        self._plugin("mil.esp", masters=["DeadMoney.esm"])
+        found = main._missing_masters(self.data, ["mil.esp"])
+        self.assertEqual(found, [("DeadMoney.esm", ["mil.esp"])])
+
+    def test_orders_by_how_many_mods_each_one_blocks(self):
+        for n in ("a.esp", "b.esp", "c.esp"):
+            self._plugin(n, masters=["HonestHearts.esm"])
+        self._plugin("d.esp", masters=["CaravanPack.esm"])
+        found = main._missing_masters(
+            self.data, ["a.esp", "b.esp", "c.esp", "d.esp"]
+        )
+        self.assertEqual([m for m, _ in found],
+                         ["HonestHearts.esm", "CaravanPack.esm"])
+
+    def test_a_master_present_on_disk_is_not_missing(self):
+        self._plugin("DeadMoney.esm")
+        self._plugin("mil.esp", masters=["DeadMoney.esm"])
+        self.assertEqual(main._missing_masters(self.data, ["mil.esp"]), [])
+
+    def test_a_present_master_counts_even_when_switched_off(self):
+        # Installed-but-disabled is _masters_to_enable's job and has a
+        # working repair. Reporting it here too would tell the user to buy
+        # DLC they already own.
+        self._plugin("DeadMoney.esm")
+        self.assertEqual(main._missing_masters(self.data, ["DeadMoney.esm"]), [])
+
+    def test_implicit_masters_are_never_missing(self):
+        # Skyrim.esm is not in plugins.txt and often not enumerated, but
+        # the engine always loads it.
+        self._plugin("mod.esp", masters=["Skyrim.esm"])
+        self.assertEqual(
+            main._missing_masters(self.data, ["mod.esp"], implicit={"skyrim.esm"}),
+            [],
+        )
+
+    def test_case_differences_do_not_invent_a_missing_master(self):
+        self._plugin("deadmoney.esm")
+        self._plugin("mil.esp", masters=["DeadMoney.esm"])
+        self.assertEqual(main._missing_masters(self.data, ["mil.esp"]), [])
+
+    def test_a_plugin_not_on_disk_contributes_nothing(self):
+        self.assertEqual(main._missing_masters(self.data, ["ghost.esp"]), [])
+
+    def test_every_new_vegas_dlc_has_a_human_name(self):
+        # The whole point of the row: "DeadMoney.esm" is not an action.
+        for esm in main.VANILLA_MASTERS_BY_DOMAIN["newvegas"][1:]:
+            self.assertIn(esm.lower(), main.DLC_MASTER_NAMES, esm)
+
+    def test_every_fallout3_dlc_has_a_human_name(self):
+        for esm in main.VANILLA_MASTERS_BY_DOMAIN["fallout3"][1:]:
+            self.assertIn(esm.lower(), main.DLC_MASTER_NAMES, esm)
+
+
 class TestLegacyFomodPackage(unittest.TestCase):
     """Before FOMOD became a folder convention, FOMM shipped installers as
     a single `.fomod` file - an ordinary archive under another extension.

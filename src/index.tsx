@@ -100,6 +100,7 @@ import {
   huntProgressNote,
   launchWaitNotice,
   loadOrderProblem,
+  missingMasterProblem,
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
@@ -2357,6 +2358,8 @@ function TroubleshootingSection() {
       fullSlotLimit: number;
       lightSlots: number;
       lightSlotLimit: number;
+      missingMasters: { name: string; label?: string; needed_by: number }[];
+      blockedPlugins: number;
     }
     | undefined
   >();
@@ -2421,6 +2424,8 @@ function TroubleshootingSection() {
                 fullSlotLimit: r.full_slot_limit ?? 254,
                 lightSlots: r.light_slots ?? 0,
                 lightSlotLimit: r.light_slot_limit ?? 4096,
+                missingMasters: r.missing_masters ?? [],
+                blockedPlugins: r.blocked_plugins ?? 0,
               }
             : undefined
         )
@@ -2438,6 +2443,11 @@ function TroubleshootingSection() {
         loadOrder.disabledMasters,
         loadOrder.examples
       )
+    : undefined;
+  // Kept apart from loadOrderIssue: that one has a Fix button behind it,
+  // and no button here can install DLC the account does not own.
+  const missingMasters = loadOrder
+    ? missingMasterProblem(loadOrder.missingMasters, loadOrder.blockedPlugins)
     : undefined;
 
   /** Drive the hunt: set a load order, launch, watch, record, repeat.
@@ -2786,7 +2796,14 @@ function TroubleshootingSection() {
             </ButtonItem>
           </PanelSectionRow>
         )}
-          {slots.level !== "ok" && (
+          {missingMasters && (
+          <PanelSectionRow>
+            <Field label="⚠ Missing game content" childrenLayout="below">
+              {missingMasters}
+            </Field>
+          </PanelSectionRow>
+        )}
+        {slots.level !== "ok" && (
           <PanelSectionRow>
             <Field
               label={
@@ -2853,6 +2870,8 @@ function TroubleshootingSection() {
                           fullSlotLimit: s.full_slot_limit ?? 254,
                           lightSlots: s.light_slots ?? 0,
                           lightSlotLimit: s.light_slot_limit ?? 4096,
+                          missingMasters: s.missing_masters ?? [],
+                          blockedPlugins: s.blocked_plugins ?? 0,
                         }
                       : undefined
                   );
