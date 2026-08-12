@@ -13,6 +13,7 @@ import {
 import { toaster } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 import { FaArrowDown, FaEye, FaPuzzlePiece } from "react-icons/fa";
+import { isRemaining } from "./panelRules";
 
 import {
   AttentionItem,
@@ -99,6 +100,12 @@ export function CollectionPage() {
   const [finishProgress, setFinishProgress] = useState<
     { done: number; total: number; name: string } | undefined
   >();
+  // Mods installed via Finish setup this session. They leave the
+  // attention queue as soon as they install, but installedIds is only
+  // re-read at the end of the pass - without this they read as "still
+  // to do" in between, and the remaining count climbs while the user is
+  // actively clearing it. See isRemaining in panelRules.
+  const [justResolved, setJustResolved] = useState<Set<number>>(new Set());
   // Records installed BY this collection (its slug) - drives Uninstall.
   const [ownedCount, setOwnedCount] = useState(0);
   // Uninstalling unmounts the focused button; without a stand-in the
@@ -231,17 +238,11 @@ export function CollectionPage() {
   const optional = detail?.files.filter((f) => f.optional) ?? [];
   // Pending-attention mods are NOT "remaining": re-queueing them just
   // re-parks (or re-skips) them - they resolve via Finish setup instead.
-  const remaining = required.filter(
-    (f) =>
-      !installedIds.has(f.modId) &&
-      rowState[f.fileId] !== "done" &&
-      !attentionIds.has(f.fileId)
+  const remaining = required.filter((f) =>
+    isRemaining(f, installedIds, rowState, attentionIds, justResolved)
   );
-  const optionalRemaining = optional.filter(
-    (f) =>
-      !installedIds.has(f.modId) &&
-      rowState[f.fileId] !== "done" &&
-      !attentionIds.has(f.fileId)
+  const optionalRemaining = optional.filter((f) =>
+    isRemaining(f, installedIds, rowState, attentionIds, justResolved)
   );
   // "Resume" only makes sense for a run THIS page started - already
   // owning some of a collection's mods individually is not a resume.
@@ -249,7 +250,10 @@ export function CollectionPage() {
   // Actually-installed count (skipped tools are NOT installed - the old
   // required-minus-remaining math counted them and overstated).
   const installedRequiredCount = required.filter(
-    (f) => installedIds.has(f.modId) || rowState[f.fileId] === "done"
+    (f) =>
+      installedIds.has(f.modId) ||
+      rowState[f.fileId] === "done" ||
+      justResolved.has(f.fileId)
   ).length;
 
   // Secondary buttons actually rendered below the hero: the hero takes
@@ -738,6 +742,7 @@ export function CollectionPage() {
         if (outcome === "backout") break;
         done++;
         if (outcome === "installed") {
+          setJustResolved((prev) => new Set(prev).add(item.file_id));
           persistAttention(
             attentionRef.current.filter((a) => a.file_id !== item.file_id)
           );
@@ -755,6 +760,7 @@ export function CollectionPage() {
     if (finishingFileId !== undefined) return;
     const outcome = await resolveAttentionItem(item);
     if (outcome === "installed") {
+      setJustResolved((prev) => new Set(prev).add(item.file_id));
       persistAttention(
         attentionRef.current.filter((a) => a.file_id !== item.file_id)
       );
@@ -828,7 +834,11 @@ export function CollectionPage() {
   };
 
   const stateBadge = (f: CollectionFile): string => {
-    if (installedIds.has(f.modId) || rowState[f.fileId] === "done")
+    if (
+      installedIds.has(f.modId) ||
+      rowState[f.fileId] === "done" ||
+      justResolved.has(f.fileId)
+    )
       return "✓ ";
     if (actionableIds.has(f.fileId)) return "⚙ ";
     if (attentionIds.has(f.fileId)) {

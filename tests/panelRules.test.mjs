@@ -16,6 +16,7 @@ import {
   showInstalledModsSection,
   showResetRow,
   slotPressure,
+  isRemaining,
   troubleshootingCount,
 } from "../.test-build/panelRules.js";
 
@@ -375,4 +376,34 @@ test("close to the limit warns before it breaks", () => {
 test("the boundary itself is not over", () => {
   assert.equal(slotPressure(254, 254, 4096, 4096).level, "near");
   assert.equal(slotPressure(255, 254, 0, 4096).level, "over");
+});
+
+
+// ---- remaining count during Finish setup -------------------------------
+// Reported from device: 1 mod left, started Finish setup, the count went
+// UP to 2, then back to 1 when the pass ended.
+
+const file = { modId: 7, fileId: 700 };
+const none = new Set();
+
+test("an uninstalled file is remaining", () => {
+  assert.equal(isRemaining(file, none, {}, none), true);
+});
+
+test("installed, done, or parked for attention are all not remaining", () => {
+  assert.equal(isRemaining(file, new Set([7]), {}, none), false);
+  assert.equal(isRemaining(file, none, { 700: "done" }, none), false);
+  assert.equal(isRemaining(file, none, {}, new Set([700])), false);
+});
+
+test("a mod resolved by Finish setup does not bounce back to remaining", () => {
+  // The window that caused it: out of the attention queue already,
+  // but the installed-mods list has not been re-read yet.
+  assert.equal(isRemaining(file, none, {}, none, new Set([700])), false);
+});
+
+test("a failed install IS still remaining", () => {
+  // The stuck-on-Install mod. It has to keep counting, otherwise a
+  // failure disappears from the tally and the collection looks complete.
+  assert.equal(isRemaining(file, none, { 700: "failed" }, none), true);
 });
