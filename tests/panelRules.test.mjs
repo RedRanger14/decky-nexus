@@ -19,6 +19,7 @@ import {
   isRemaining,
   collectionOwnedCount,
   endorseControl,
+  missingMasterProblem,
   troubleshootingCount,
 } from "../.test-build/panelRules.js";
 
@@ -498,4 +499,67 @@ test("a no-ESL engine gets the extra slot ESL games give up to 0xFE", () => {
   // 255 is not over for FO3/FNV; it is over for Skyrim SE.
   assert.equal(slotPressure(255, 255, 0, 0).level, "near");
   assert.equal(slotPressure(255, 254, 0, 4096).level, "over");
+});
+
+
+// ---- masters that are not installed at all ------------------------------
+// Device, New Vegas 2026-08-12: the game put up a modal naming mil.esp and
+// quit. 115 of 245 enabled plugins could not load, for want of five DLC.
+
+test("nothing to say when every master is present", () => {
+  assert.equal(missingMasterProblem([], 0), undefined);
+  assert.equal(missingMasterProblem(undefined, 0), undefined);
+});
+
+test("names the DLC, not the esm filenames", () => {
+  const msg = missingMasterProblem(
+    [
+      { name: "HonestHearts.esm", label: "Honest Hearts", needed_by: 81 },
+      { name: "DeadMoney.esm", label: "Dead Money", needed_by: 79 },
+    ],
+    115
+  );
+  assert.match(msg, /Honest Hearts/);
+  assert.match(msg, /Dead Money/);
+  assert.doesNotMatch(msg, /\.esm/);
+});
+
+test("leads with how many mods are blocked, not how many files are absent", () => {
+  // Five missing files sounds survivable. 115 dead mods does not.
+  const msg = missingMasterProblem(
+    [{ name: "DeadMoney.esm", label: "Dead Money", needed_by: 79 }],
+    115
+  );
+  assert.match(msg, /^115 mods cannot load/);
+});
+
+test("a missing mod master is described as a mod, not as DLC", () => {
+  const msg = missingMasterProblem(
+    [{ name: "Project Nevada - Core.esm", needed_by: 2 }],
+    2
+  );
+  assert.match(msg, /Project Nevada - Core/);
+  assert.doesNotMatch(msg, /DLC installed/);
+});
+
+test("DLC and missing mods are reported together", () => {
+  const msg = missingMasterProblem(
+    [
+      { name: "DeadMoney.esm", label: "Dead Money", needed_by: 79 },
+      { name: "Project Nevada - Core.esm", needed_by: 2 },
+    ],
+    81
+  );
+  assert.match(msg, /Dead Money/);
+  assert.match(msg, /Project Nevada - Core/);
+});
+
+test("says plainly that no button here can fix it", () => {
+  // The other two load-order faults have a repair. This one does not, and
+  // offering one would be a button that cannot work.
+  const msg = missingMasterProblem(
+    [{ name: "DeadMoney.esm", label: "Dead Money", needed_by: 79 }],
+    79
+  );
+  assert.match(msg, /Steam's DLC tab/);
 });

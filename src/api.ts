@@ -424,6 +424,11 @@ export const getLoadOrderState = callable<
     full_slot_limit?: number;
     light_slots?: number;
     light_slot_limit?: number;
+    /** Masters not on disk at all - usually DLC the account doesn't own.
+     * `label` is the human name where we know it ("Dead Money"). */
+    missing_masters?: { name: string; label?: string; needed_by: number }[];
+    /** How many enabled plugins cannot load because of those. */
+    blocked_plugins?: number;
   }
 >("get_load_order_state");
 
