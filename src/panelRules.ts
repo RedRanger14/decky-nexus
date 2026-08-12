@@ -131,12 +131,33 @@ export function missingMasterProblem(
         `others were built on (${names}${mods.length > 3 ? ", …" : ""})`
     );
   }
+  // The advice differs by cause, and giving both would send someone to
+  // Steam looking for a DLC called Tale Of Two Wastelands.
+  const advice = dlc.length
+    ? `DLC is installed from Steam's DLC tab, not from here.`
+    : `These are usually patches the collection ships for a setup you don't ` +
+      `have, and switching them off is the normal fix.`;
   return (
     `${blockedPlugins.toLocaleString()} mod${blockedPlugins > 1 ? "s" : ""} ` +
     `cannot load because ${parts.join("; and ")}. The game shows one name ` +
-    `and closes, so this is the full list. Nothing here can fix it — DLC is ` +
-    `installed from Steam's DLC tab.`
+    `and closes, so this is the full list. ${advice}`
   );
+}
+
+/** Whether to offer "turn these off", and what to call it.
+ *
+ * Only for masters that are missing MODS. A missing DLC master has a
+ * better answer than switching mods off - buy it - and on the device that
+ * distinction was 115 mods against four. A button that treated them the
+ * same would have thrown away a collection somebody had every intention
+ * of running, one tap after they were told what was wrong. */
+export function blockedPluginsAction(
+  missing: { name: string; label?: string; needed_by: number }[] | undefined
+): { show: boolean; label: string } {
+  return {
+    show: (missing ?? []).some((m) => !m.label),
+    label: "Turn off the mods that can't load",
+  };
 }
 
 /** Whether the load order has outgrown what the engine can address, and

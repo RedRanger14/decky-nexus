@@ -61,6 +61,7 @@ import {
   getSaveStatus,
   getSmapiLoadStatus,
   checkPluginMasters,
+  disableBlockedPlugins,
   disablePlugins,
   fixPrefixRuntime,
   crashBisectApply,
@@ -101,6 +102,7 @@ import {
   launchWaitNotice,
   loadOrderProblem,
   missingMasterProblem,
+  blockedPluginsAction,
   maskCoopPassword,
   showInstalledModsSection,
   showResetRow,
@@ -2347,6 +2349,7 @@ function TroubleshootingSection() {
     | undefined
   >();
   const [seBusy, setSeBusy] = useState(false);
+  const [blockedBusy, setBlockedBusy] = useState(false);
   // Enabled plugins listed before a master they need - a boot crash.
   const [loadOrder, setLoadOrder] = useState<
     {
@@ -2449,6 +2452,7 @@ function TroubleshootingSection() {
   const missingMasters = loadOrder
     ? missingMasterProblem(loadOrder.missingMasters, loadOrder.blockedPlugins)
     : undefined;
+  const blockedAction = blockedPluginsAction(loadOrder?.missingMasters);
 
   /** Drive the hunt: set a load order, launch, watch, record, repeat.
    *
@@ -2801,6 +2805,44 @@ function TroubleshootingSection() {
             <Field label="⚠ Missing game content" childrenLayout="below">
               {missingMasters}
             </Field>
+          </PanelSectionRow>
+        )}
+        {missingMasters && blockedAction.show && game && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={blockedBusy}
+              onClick={async () => {
+                setBlockedBusy(true);
+                try {
+                  const r = await disableBlockedPlugins(
+                    game.appId,
+                    game.installDirName,
+                    game.pluginsTxtSubpath ?? "",
+                    game.pluginsTxtStyle ?? "starred",
+                    game.nexusDomain
+                  );
+                  if (r.ok) {
+                    toaster.toast({
+                      title: `${r.disabled ?? 0} mod${
+                        (r.disabled ?? 0) === 1 ? "" : "s"
+                      } switched off`,
+                      body: (r.names ?? []).slice(0, 3).join(", "),
+                    });
+                    refresh();
+                  } else {
+                    toaster.toast({
+                      title: "Could not switch them off",
+                      body: r.error ?? "",
+                    });
+                  }
+                } finally {
+                  setBlockedBusy(false);
+                }
+              }}
+            >
+              {blockedBusy ? "Switching off…" : blockedAction.label}
+            </ButtonItem>
           </PanelSectionRow>
         )}
         {slots.level !== "ok" && (
