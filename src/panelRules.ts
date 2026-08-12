@@ -160,6 +160,39 @@ export function blockedPluginsAction(
   };
 }
 
+/** Files where the wrong mod won, or undefined when the install matches
+ * what the collection asked for.
+ *
+ * Mods overwriting each other is not a fault - it is the entire mechanism
+ * a collection uses, and the device's New Vegas install shares 10,362
+ * paths across 867 mod-sets almost all deliberately. So this never
+ * mentions conflicts in general; only the ones where the result disagrees
+ * with the curator's order.
+ *
+ * Phrased around the consequence rather than the mechanism. "1,440 files
+ * were overwritten by the wrong mod" means nothing to someone whose
+ * actual experience is that the interface looks wrong and the game will
+ * not start, so the numbers come second and one real example comes first.
+ */
+export function fileConflictProblem(
+  files: number,
+  pairs: number,
+  conflicts: { actual: string; intended: string; files: number }[] = []
+): string | undefined {
+  if (files <= 0 || !conflicts.length) return undefined;
+  const worst = conflicts[0];
+  return (
+    `Some mods overwrote files they were meant to lose to — for example ` +
+    `"${worst.actual}" replaced ${worst.files.toLocaleString()} file` +
+    `${worst.files === 1 ? "" : "s"} belonging to "${worst.intended}". ` +
+    `${files.toLocaleString()} file${files === 1 ? "" : "s"} across ` +
+    `${pairs} pair${pairs === 1 ? "" : "s"} of mods ended up in the wrong ` +
+    `order. This usually happens to mods that needed your choices during ` +
+    `install, because they finish last. Fixing it reinstalls just those ` +
+    `mods, in the order the collection asks for.`
+  );
+}
+
 /** Whether the load order has outgrown what the engine can address, and
  * what to tell someone who has never heard of a plugin slot.
  *

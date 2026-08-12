@@ -3935,6 +3935,115 @@ def _make_plugin(path, masters=(), flags=0):
         f.write(head + data)
 
 
+class TestFileConflicts(unittest.TestCase):
+    """Overwriting is how collections work - the device install has 10,362
+    shared paths across 867 mod-sets, nearly all of them deliberate. What
+    matters is the 1,440 files where the mod that actually landed last was
+    NOT the one the collection wanted to win, which is invisible in-game
+    and cost a working HUD on New Vegas."""
+
+    def _rec(self, mod_id, files, at, mode="dataDir"):
+        return {"mod_id": mod_id, "files": files, "installed_at": at,
+                "mode": mode}
+
+    def test_deliberate_overrides_are_not_reported(self):
+        # Later in the collection AND installed later: exactly right.
+        records = {
+            "under": self._rec(1, ["textures/a.dds"], 100),
+            "over": self._rec(2, ["textures/a.dds"], 200),
+        }
+        self.assertEqual(_wrong(records, {1: 0, 2: 1}), [])
+
+    def test_reports_a_mod_that_won_out_of_turn(self):
+        # The FOMOD case: parked during the run, installed by Finish setup
+        # afterwards, so it beat what the collection put above it.
+        records = {
+            "hub": self._rec(1, ["config/a.ini", "config/b.ini"], 100),
+            "fomod": self._rec(2, ["config/a.ini", "config/b.ini"], 999),
+        }
+        found = _wrong(records, {2: 0, 1: 1})
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["actual"], "fomod")
+        self.assertEqual(found[0]["intended"], "hub")
+        self.assertEqual(found[0]["files"], 2)
+
+    def test_orders_by_how_many_files_are_wrong(self):
+        records = {
+            "a": self._rec(1, ["1", "2", "3"], 100),
+            "b": self._rec(2, ["1", "2", "3"], 999),
+            "c": self._rec(3, ["9"], 100),
+            "d": self._rec(4, ["9"], 999),
+        }
+        found = _wrong(records, {2: 0, 1: 1, 4: 2, 3: 3})
+        self.assertEqual([g["files"] for g in found], [3, 1])
+
+    def test_folder_mode_mods_never_conflict(self):
+        # Each owns its own directory, so two listing manifest.json is not
+        # a clash - counting it would invent conflicts on every game that
+        # installs per-mod folders.
+        records = {
+            "a": self._rec(1, ["manifest.json"], 100, mode="folder"),
+            "b": self._rec(2, ["manifest.json"], 999, mode="folder"),
+        }
+        self.assertEqual(_wrong(records, {2: 0, 1: 1}), [])
+
+    def test_a_mod_outside_the_collection_is_left_alone(self):
+        # Installed by hand: there is no curator intent to violate, and
+        # calling it wrong would nag about a deliberate personal choice.
+        records = {
+            "collection": self._rec(1, ["textures/a.dds"], 100),
+            "byhand": self._rec(2, ["textures/a.dds"], 999),
+        }
+        self.assertEqual(_wrong(records, {1: 0}), [])
+
+    def test_case_differences_are_the_same_file(self):
+        records = {
+            "a": self._rec(1, ["Textures/A.dds"], 100),
+            "b": self._rec(2, ["textures/a.dds"], 999),
+        }
+        self.assertEqual(len(_wrong(records, {2: 0, 1: 1})), 1)
+
+    def test_one_owner_is_never_a_conflict(self):
+        records = {"solo": self._rec(1, ["textures/a.dds"], 100)}
+        self.assertEqual(_wrong(records, {1: 0}), [])
+
+    def test_resolve_list_is_in_collection_order(self):
+        records = {
+            "late": self._rec(7, ["a"], 999),
+            "early": self._rec(3, ["a"], 100),
+        }
+        plugin = main.Plugin()
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["conflicttest"] = records
+        main._save_settings(settings)
+        try:
+            r = run(plugin.get_file_conflicts("conflicttest", [7, 3]))
+            self.assertTrue(r["ok"])
+            self.assertEqual(r["files"], 1)
+            # 7 sits first in the collection, so it must be reinstalled
+            # first and 3 last - reinstalling in this order lands each mod
+            # exactly where the curator put it.
+            self.assertEqual(r["resolve"], [7, 3])
+        finally:
+            settings = main._load_settings()
+            settings.get("installed", {}).pop("conflicttest", None)
+            main._save_settings(settings)
+
+    def test_no_order_means_no_opinion(self):
+        plugin = main.Plugin()
+        r = run(plugin.get_file_conflicts("newvegas", []))
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["conflicts"], [])
+
+    def test_rejects_a_bad_domain(self):
+        plugin = main.Plugin()
+        self.assertFalse(run(plugin.get_file_conflicts("../evil", [1]))["ok"])
+
+
+def _wrong(records, order):
+    return main._wrong_winners(records, order)
+
+
 class TestDisableBlockedPlugins(unittest.TestCase):
     """Switching off mods whose master is not installed - but never the
     ones a DLC purchase would fix. On device that distinction was 115 mods
