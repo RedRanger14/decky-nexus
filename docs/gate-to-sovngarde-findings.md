@@ -107,6 +107,39 @@ attended run:
 - **v0.87.0** - reset sweeps what no record could cover, guarded by a
   baseline captured before the first mod was ever installed.
 
+## Second collection: Immersive and Adult (2026-08-12)
+
+559 mods, the most popular Skyrim collection. Reset to vanilla, installed
+from scratch, booted - **no intervention at any point**.
+
+None of Gate To Sovngarde's nine known-bad entries applied; they are that
+collection's own patch files. What transferred was the machinery, not the
+data, which is the outcome the table was designed for.
+
+Two faults it exposed instead, both ours and both fixed:
+
+1. **7z had never run.** Decky Loader is a PyInstaller bundle, so plugins
+   inherit LD_LIBRARY_PATH pointing at its unpacked /tmp/_MEIxxxxxx
+   directory, whose libreadline is older than the system one. SteamOS
+   ships /usr/bin/7z as a /bin/sh wrapper, and /bin/sh links readline, so
+   it died on a symbol lookup before reaching the archive. The three-deep
+   extractor fallback had been two deep since the day it was written, and
+   the log blamed the archives. Surfaced by one mod shipping a Deflate64
+   zip - the one format where bsdtar, unrar and Python's zipfile all
+   refuse and only 7z can read it. Fixed in v0.89.0 for all six
+   subprocess spawns, with an AST test that fails on a spawn missing
+   `env=`.
+2. **The Uninstall count read as failure.** 546 collection entries, 454
+   install records, because 78 of its mods ship more than one file. Both
+   numbers were right and counting different units, which is worse than
+   one being wrong - it reads as 92 mods silently missing while every row
+   shows a tick. Fixed in v0.90.0.
+
+The plugin slot ceiling never came close: this collection is nowhere near
+the 254 full slots, same as Gate To Sovngarde at 208. The v0.89.0 warning
+exists for the 2,444-mod collection, which is the first plausible
+candidate to cross it.
+
 ## Bugs in the plugin this exposed, all fixed
 
 These were ours, not the collection's, and every one would have hit any
