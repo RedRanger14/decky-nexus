@@ -17,7 +17,7 @@ tell whose fault it is.
 | The Witcher 3 | folder | tested 2026-07-24 (script-mod ceiling documented) |
 | Resident Evil 4 | folder | tested WITH adult content |
 | Cyberpunk 2077 | folder+frameworks | tested, pre-adult-content |
-| Elden Ring | me3 | boots; co-op session still unverified |
+| Elden Ring | me3 | **verified 2026-08-12: Seamless Co-op session played, two players** |
 
 **Moved to post-1.0** (built, never run on device): Hollow Knight
 Silksong, Palworld, Mount & Blade II: Bannerlord.
@@ -610,9 +610,22 @@ unchanged. Tool names come from `GetAvailableCompatTools`, never derived
 from folder names: Valve's own Proton builds ship no
 `compatibilitytool.vdf` (verified on device).
 
-Still to verify on device: that Steam Input survives the wrapper and a
-real Seamless Co-op session. The DS3/Sekiro/AC6/Nightreign entries are one registry block
-each once ER is proven — the backend already maps all five domains.
+### VERIFIED on device (2026-08-12)
+
+A real Seamless Co-op session, two players, with a second QA on the other
+end - which is why this sat since 6 August: it cannot be tested alone.
+Steam Input survived the wrapper, so launching through Steam rather than
+calling me3 directly was the right call.
+
+That clears the whole me3 tier's unknowns. **DS3, Sekiro, AC6 and
+Nightreign are now one registry block each** - the backend already maps
+all five domains, the profile writer is shared, and the only
+game-specific parts are the app id, the domain and the detect file.
+
+What this proves beyond Elden Ring: the EAC bypass by launching
+Game/eldenring.exe, savefile isolation onto a separate .sl2, the
+password round-trip through ersc_settings.ini from the QAM, and natives
+declared with a path only (the v0.57.0 lesson).
 
 ### RESOLVED (v0.57.0): Seamless Co-op crashed Elden Ring on launch
 
