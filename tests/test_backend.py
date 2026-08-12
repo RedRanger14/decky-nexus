@@ -3935,6 +3935,83 @@ def _make_plugin(path, masters=(), flags=0):
         f.write(head + data)
 
 
+class TestCollectionExtras(unittest.TestCase):
+    """Every mod we install is source type "nexus". Two other types exist
+    and were dropped without a word - which is how New Vegas's most popular
+    collection installed "successfully" while missing Vanilla UI+, the base
+    layer its whole HUD is built on."""
+
+    def _manifest(self, mods):
+        return {"mods": mods}
+
+    def test_finds_a_browse_mod_with_everything_needed_to_fetch_it(self):
+        extras = main._collection_extras(self._manifest([
+            {
+                "name": "Vanilla UI+ (VUI+) v9.48",
+                "optional": False,
+                "source": {
+                    "type": "browse",
+                    "url": "https://www.moddb.com/mods/vanilla-ui-plus",
+                    "instructions": "Click the red Download Now button.",
+                    "fileSize": 760435,
+                    "md5": "984d63c6b39fdfe7990136fbfe502bdd",
+                },
+            },
+        ]))
+        self.assertEqual(len(extras["browse"]), 1)
+        b = extras["browse"][0]
+        self.assertIn("moddb.com", b["url"])
+        # The curator's own words: without them the user is told to go
+        # somewhere and not what to do when they get there.
+        self.assertIn("Download Now", b["instructions"])
+        self.assertEqual(b["size"], 760435)
+        self.assertFalse(b["optional"])
+
+    def test_finds_a_bundled_mod_and_where_it_lives(self):
+        extras = main._collection_extras(self._manifest([
+            {
+                "name": "OneTweak But Really Updated",
+                "optional": False,
+                "source": {
+                    "type": "bundle",
+                    "fileExpression": "Bundled - OneTweak (v2.1.0.4)",
+                    "fileSize": 180224,
+                },
+            },
+        ]))
+        self.assertEqual(len(extras["bundle"]), 1)
+        self.assertEqual(
+            extras["bundle"][0]["folder"], "Bundled - OneTweak (v2.1.0.4)"
+        )
+
+    def test_nexus_mods_are_not_extras(self):
+        extras = main._collection_extras(self._manifest([
+            {"name": "Ordinary", "source": {"type": "nexus", "modId": 1}},
+        ]))
+        self.assertEqual(extras["browse"], [])
+        self.assertEqual(extras["bundle"], [])
+
+    def test_an_empty_manifest_is_not_an_error(self):
+        self.assertEqual(
+            main._collection_extras({}), {"browse": [], "bundle": []}
+        )
+
+    def test_a_mod_with_no_source_is_ignored(self):
+        extras = main._collection_extras(self._manifest([{"name": "Broken"}]))
+        self.assertEqual(extras["browse"], [])
+        self.assertEqual(extras["bundle"], [])
+
+    def test_optional_is_carried_through(self):
+        # A required manual download stops the collection working; an
+        # optional one does not, and saying so is the difference between a
+        # warning worth reading and one worth ignoring.
+        extras = main._collection_extras(self._manifest([
+            {"name": "Nice to have", "optional": True,
+             "source": {"type": "browse", "url": "https://x"}},
+        ]))
+        self.assertTrue(extras["browse"][0]["optional"])
+
+
 class TestResolveFileConflicts(unittest.TestCase):
     """Per-PATH resolution. v0.97.0 reinstalled whole mods in collection
     order, which rewrites files they were not contesting and leapfrogs
