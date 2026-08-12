@@ -435,6 +435,11 @@ function ResetGameRow({
                 title: `${game.displayName} reset to vanilla`,
                 body:
                   `${result.removed ?? 0} mods removed` +
+                  ((result.swept ?? 0) > 0
+                    ? `, ${result.swept} leftover file${
+                        result.swept === 1 ? "" : "s"
+                      } swept`
+                    : "") +
                   ((result.errors?.length ?? 0) > 0
                     ? ` · ${result.errors!.length} items need a look`
                     : result.verified

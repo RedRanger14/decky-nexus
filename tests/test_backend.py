@@ -4505,15 +4505,38 @@ class TestResetVerifiesItsOwnWork(unittest.TestCase):
         self.assertTrue(r["verified"])
         self.assertEqual(r["leftovers"], 0)
 
-    def test_unrecorded_files_are_reported_not_hidden(self):
+    def test_unrecorded_files_are_swept_not_merely_reported(self):
         main._record_vanilla_baseline(self.DOMAIN, self.mods)
-        # The orphan case: files on disk that no record accounts for.
+        # Runtime droppings: config, logs and caches that mods WRITE
+        # while running. Nothing installed them, so nothing can uninstall
+        # them - a device reset left 16 in Data/SKSE and Data/seasons.
         for n in ("Ghost.esp", "Ghost.bsa"):
             with open(os.path.join(self.mods, n), "w") as f:
                 f.write("x")
+        os.makedirs(os.path.join(self.mods, "SKSE", "Plugins"))
+        with open(os.path.join(self.mods, "SKSE", "Plugins", "x.ini"), "w") as f:
+            f.write("x")
         r = self._reset()
-        self.assertEqual(r["leftovers"], 2)
-        self.assertIn("Ghost.esp", r["leftover_examples"])
+        self.assertEqual(r["swept"], 3)
+        self.assertEqual(r["leftovers"], 0, "vanilla means vanilla")
+        self.assertFalse(os.path.exists(os.path.join(self.mods, "SKSE")))
+
+    def test_the_sweep_never_touches_the_vanilla_baseline(self):
+        main._record_vanilla_baseline(self.DOMAIN, self.mods)
+        with open(os.path.join(self.mods, "Ghost.esp"), "w") as f:
+            f.write("x")
+        self._reset()
+        left = sorted(os.listdir(self.mods))
+        self.assertEqual(left, ["Skyrim - Misc.bsa", "Skyrim.esm"])
+
+    def test_without_a_baseline_nothing_is_swept(self):
+        # No snapshot means no idea what the user started with, and
+        # deleting on a guess is worse than leaving a mess.
+        with open(os.path.join(self.mods, "Ghost.esp"), "w") as f:
+            f.write("x")
+        r = self._reset()
+        self.assertEqual(r["swept"], 0)
+        self.assertTrue(os.path.exists(os.path.join(self.mods, "Ghost.esp")))
 
     def test_without_a_baseline_it_says_so_rather_than_claiming_clean(self):
         # Games modded before this existed have no snapshot. Reporting

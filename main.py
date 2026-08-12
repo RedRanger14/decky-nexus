@@ -8630,6 +8630,7 @@ query Link($slug: String!, $domainName: String!) {
         # reporting a partial failure.
         baseline = settings.get("vanilla_baseline", {}).get(game_domain) or []
         leftovers = []
+        removed_leftovers = 0
         if baseline and os.path.isdir(mods_path):
             try:
                 leftovers = sorted(
@@ -8637,6 +8638,28 @@ query Link($slug: String!, $domainName: String!) {
                 )
             except OSError:
                 leftovers = []
+            # Sweep what the records could never cover: config files, logs
+            # and caches that mods WRITE while running, in folders that
+            # only exist because of mods. Nothing installed them, so
+            # nothing can uninstall them - a device reset left 16 behind
+            # in Data/SKSE and Data/seasons, and a "vanilla" game with mod
+            # config in it is not vanilla.
+            #
+            # The baseline is the guard: it was captured before the first
+            # mod was ever installed, so anything outside it arrived with
+            # modding. Without a baseline nothing is swept, because then
+            # we would only be guessing at what the user started with.
+            for name in list(leftovers):
+                p = os.path.join(mods_path, name)
+                try:
+                    if os.path.isdir(p):
+                        shutil.rmtree(p)
+                    else:
+                        os.remove(p)
+                    leftovers.remove(name)
+                    removed_leftovers += 1
+                except OSError as e:
+                    errors.append(f"{name}: {e}")
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges", "skipped"):
             settings.get(section, {}).pop(game_domain, None)
@@ -8654,7 +8677,8 @@ query Link($slug: String!, $domainName: String!) {
             f"reset {game_domain!r}: {removed} mods removed, framework "
             f"files {framework_files}, {unparked} parked plugin(s) cleared, "
             f"dlo cleared={cleared_dlo}, {len(errors)} errors, "
-            f"{len(leftovers)} unrecorded leftovers"
+            f"{removed_leftovers} unrecorded leftovers swept, "
+            f"{len(leftovers)} still there"
         )
         return {
             "ok": True,
@@ -8667,6 +8691,7 @@ query Link($slug: String!, $domainName: String!) {
             # that no record accounted for. Zero means the reset is
             # verified, not merely finished.
             "leftovers": len(leftovers),
+            "swept": removed_leftovers,
             "leftover_examples": leftovers[:8],
             "verified": bool(baseline),
         }
