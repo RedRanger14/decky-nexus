@@ -1524,6 +1524,84 @@ def _missing_masters(data_path: str, names: list, implicit: set = frozenset()):
     return sorted(missing.items(), key=lambda kv: -len(kv[1]))
 
 
+def _file_owners(records: dict) -> dict:
+    """Lowercased relative path -> record keys that installed it.
+
+    Only dataDir mods share a namespace. Folder-mode mods each own a
+    directory, so two of them listing "manifest.json" is not a conflict,
+    and me3 packages live outside the game entirely.
+    """
+    owners = {}
+    for key, rec in records.items():
+        if rec.get("mode") != "dataDir":
+            continue
+        for rel in rec.get("files") or []:
+            owners.setdefault(rel.lower(), []).append(key)
+    return owners
+
+
+def _wrong_winners(records: dict, order: dict) -> list:
+    """Files where the mod that actually landed last is NOT the one the
+    collection wanted to.
+
+    Overwriting is how collections WORK - a texture pack is meant to beat
+    the mod under it, and this install has 10,362 shared paths across 867
+    mod-sets. Reporting those as problems would bury the real fault in
+    noise. The collection's own list order is the curator's statement of
+    who should win, so the only thing worth reporting is where the result
+    disagrees with it.
+
+    Install order drifts from collection order for a reason we built in:
+    a mod needing a FOMOD or a choice gets parked during the run and
+    installed afterwards through Finish setup, so it lands last and beats
+    everything it was supposed to lose to. On device that was Iron Sights
+    Aligned taking 319 files from the collection's own patch hub, and
+    Consistent Pip-Boy Icons v4 beating v5 in six separate pairs. Nothing
+    reported any of it; the game just looked wrong.
+
+    `order` maps mod_id -> position in the collection. Records whose mod
+    is not in it are skipped rather than guessed at - a mod installed by
+    hand has no curator intent to violate.
+
+    Returns [{actual, intended, files, example, mod_ids}] worst first.
+    """
+    owners = _file_owners(records)
+    ranked_cache = {}
+    grouped = {}
+    for path, keys in owners.items():
+        keys = list(dict.fromkeys(keys))
+        if len(keys) < 2:
+            continue
+        ranked = []
+        for k in keys:
+            if k not in ranked_cache:
+                rec = records[k]
+                ranked_cache[k] = (
+                    order.get(rec.get("mod_id"), -1),
+                    rec.get("installed_at") or 0,
+                    rec.get("mod_id"),
+                )
+            ranked.append((k,) + ranked_cache[k])
+        if any(pos < 0 for _k, pos, _t, _m in ranked):
+            continue
+        intended = max(ranked, key=lambda r: r[1])
+        actual = max(ranked, key=lambda r: r[2])
+        if intended[0] == actual[0]:
+            continue
+        slot = grouped.setdefault(
+            (actual[0], intended[0]),
+            {
+                "actual": actual[0],
+                "intended": intended[0],
+                "files": 0,
+                "example": path,
+                "mod_ids": sorted({actual[3], intended[3]} - {None}),
+            },
+        )
+        slot["files"] += 1
+    return sorted(grouped.values(), key=lambda g: -g["files"])
+
+
 def _masters_to_enable(
     data_path: str, entries: list, implicit: set = frozenset(),
     skipped: set = frozenset()
@@ -9352,6 +9430,51 @@ query Link($slug: String!, $domainName: String!) {
             f"{', '.join(names[:6])}"
         )
         return {"ok": True, "disabled": len(names), "names": names}
+
+    async def get_file_conflicts(
+        self, game_domain: str, mod_order: list = None
+    ) -> dict:
+        """Files where the wrong mod won, judged against collection order.
+
+        `mod_order` is the collection's mod ids in list order - the
+        curator's statement of who should overwrite whom. Without it there
+        is no intent to compare against and nothing is reported, which is
+        correct: mods installed individually have no agreed priority.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        order = {
+            int(m): i for i, m in enumerate(mod_order or []) if m is not None
+        }
+        if not order:
+            return {"ok": True, "conflicts": [], "files": 0}
+        records = _load_settings().get("installed", {}).get(game_domain, {})
+        wrong = await asyncio.to_thread(_wrong_winners, records, order)
+        resolve = sorted(
+            {m for g in wrong for m in g["mod_ids"] if m in order},
+            key=lambda m: order[m],
+        )
+        decky.logger.info(
+            f"file conflicts {game_domain}: {sum(g['files'] for g in wrong)} "
+            f"file(s) won by the wrong mod across {len(wrong)} pair(s)"
+        )
+        return {
+            "ok": True,
+            "conflicts": [
+                {
+                    "actual": g["actual"],
+                    "intended": g["intended"],
+                    "files": g["files"],
+                    "example": g["example"],
+                }
+                for g in wrong[:12]
+            ],
+            "files": sum(g["files"] for g in wrong),
+            "pairs": len(wrong),
+            # Every mod involved, in collection order: reinstalling them in
+            # this sequence lands each one exactly where the curator put it.
+            "resolve": resolve,
+        }
 
     async def get_known_bad_state(
         self, app_id: int, install_dir: str, plugins_subpath: str,

@@ -21,6 +21,7 @@ import {
   endorseControl,
   missingMasterProblem,
   blockedPluginsAction,
+  fileConflictProblem,
   troubleshootingCount,
 } from "../.test-build/panelRules.js";
 
@@ -611,4 +612,50 @@ test("a missing master counts as something to look at", () => {
     1
   );
   assert.equal(troubleshootingCount(false, 0, false, undefined, undefined), 0);
+});
+
+
+// ---- files won by the wrong mod ----------------------------------------
+// Device, New Vegas: 10,362 shared paths across 867 mod-sets, almost all
+// deliberate - and 1,440 files across 47 pairs where the wrong mod won.
+// Reporting the first number would bury the second.
+
+test("says nothing when the install matches the collection", () => {
+  assert.equal(fileConflictProblem(0, 0, []), undefined);
+  assert.equal(fileConflictProblem(5, 1, []), undefined);
+});
+
+test("leads with a real example, not the totals", () => {
+  const msg = fileConflictProblem(1440, 47, [
+    { actual: "Iron Sights Aligned", intended: "VeryLastKisss Collections Hub", files: 319 },
+  ]);
+  assert.match(msg, /Iron Sights Aligned/);
+  assert.match(msg, /VeryLastKisss Collections Hub/);
+  assert.match(msg, /319 files/);
+  assert.match(msg, /1,440 files/);
+  assert.match(msg, /47 pairs/);
+});
+
+test("explains the cause the user can recognise", () => {
+  // The mods that finish last are the ones that asked them questions.
+  const msg = fileConflictProblem(319, 1, [
+    { actual: "a", intended: "b", files: 319 },
+  ]);
+  assert.match(msg, /needed your choices/);
+});
+
+test("says the fix is limited to the mods involved", () => {
+  // Otherwise it reads like "reinstall 852 mods", which nobody will press.
+  const msg = fileConflictProblem(2, 1, [
+    { actual: "a", intended: "b", files: 2 },
+  ]);
+  assert.match(msg, /reinstalls just those mods/);
+});
+
+test("gets the singulars right", () => {
+  const msg = fileConflictProblem(1, 1, [
+    { actual: "a", intended: "b", files: 1 },
+  ]);
+  assert.match(msg, /1 file belonging/);
+  assert.match(msg, /1 pair/);
 });

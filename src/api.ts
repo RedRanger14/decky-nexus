@@ -813,6 +813,22 @@ export const disableBlockedPlugins = callable<
   { ok: boolean; disabled?: number; names?: string[]; error?: string }
 >("disable_blocked_plugins");
 
+// Files where the wrong mod won, judged against the collection's own
+// order. Overwriting is normal - only disagreements with the curator's
+// intent are reported, and mod_order is what expresses that intent.
+export const getFileConflicts = callable<
+  [game_domain: string, mod_order: number[]],
+  {
+    ok: boolean;
+    conflicts?: { actual: string; intended: string; files: number; example: string }[];
+    files?: number;
+    pairs?: number;
+    /** Mods to reinstall, already in collection order. */
+    resolve?: number[];
+    error?: string;
+  }
+>("get_file_conflicts");
+
 export const getModRequirements = callable<
   [game_domain: string, mod_id: number],
   { ok: boolean; requirements?: ModRequirement[]; error?: string }
