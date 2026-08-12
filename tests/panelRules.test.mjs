@@ -644,12 +644,16 @@ test("explains the cause the user can recognise", () => {
   assert.match(msg, /needed your choices/);
 });
 
-test("says the fix is limited to the mods involved", () => {
-  // Otherwise it reads like "reinstall 852 mods", which nobody will press.
+test("does not promise a fix it cannot deliver", () => {
+  // v0.97.0 offered "reinstall the affected mods in collection order" and
+  // took the device from 47 wrong pairs to 92: reinstalling a subset makes
+  // those mods newer than everything after them that was left alone. The
+  // closure needed is 352 of 852 mods, so there is no small safe version.
   const msg = fileConflictProblem(2, 1, [
     { actual: "a", intended: "b", files: 2 },
   ]);
-  assert.match(msg, /reinstalls just those mods/);
+  assert.match(msg, /no safe one-tap fix yet/);
+  assert.doesNotMatch(msg, /Fixing it reinstalls/);
 });
 
 test("gets the singulars right", () => {

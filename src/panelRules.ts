@@ -188,8 +188,9 @@ export function fileConflictProblem(
     `${files.toLocaleString()} file${files === 1 ? "" : "s"} across ` +
     `${pairs} pair${pairs === 1 ? "" : "s"} of mods ended up in the wrong ` +
     `order. This usually happens to mods that needed your choices during ` +
-    `install, because they finish last. Fixing it reinstalls just those ` +
-    `mods, in the order the collection asks for.`
+    `install, because they finish last. There is no safe one-tap fix yet — ` +
+    `reinstalling some of them moves the problem rather than solving it, ` +
+    `because 41% of this collection shares files with something else.`
   );
 }
 

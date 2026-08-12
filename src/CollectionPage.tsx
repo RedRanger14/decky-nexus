@@ -137,7 +137,6 @@ export function CollectionPage() {
       }
     | undefined
   >();
-  const [fixingOrder, setFixingOrder] = useState(false);
   // Batch state lives in a module store so navigating away and back
   // shows live progress instead of a stale page.
   const [, force] = useState(0);
@@ -211,79 +210,6 @@ export function CollectionPage() {
   };
 
   useEffect(refreshConflicts, [detail, sel?.collection.slug]);
-
-  /** Reinstall every mod caught in a wrong-order conflict, in the order
-   * the collection lists them - so each one lands exactly where the
-   * curator put it. NOT repair_only: repair restores missing files, and
-   * these files are present and simply belong to the wrong mod. */
-  const fixModOrder = async () => {
-    if (!detail || !conflicts?.resolve.length || installing || fixingOrder) return;
-    setFixingOrder(true);
-    let done = 0;
-    let failed = 0;
-    try {
-      const manifest = await getCollectionManifest(
-        collection.slug,
-        game.nexusDomain
-      );
-      const choices = (manifest.ok ? manifest.choices : {}) ?? {};
-      const byMod = new Map(detail.files.map((f) => [f.modId, f]));
-      const queue = conflicts.resolve
-        .map((id) => byMod.get(id))
-        .filter((f): f is CollectionFile => Boolean(f));
-      beginCollectionRun(collection.slug, queue.length, {
-        gameAppId: game.appId,
-        name: `Fixing mod order in ${collection.name}`,
-        thumbnailUrl: collection.thumbnailUrl,
-      });
-      for (const f of queue) {
-        if (f.domain && f.domain !== game.nexusDomain) continue;
-        setCollectionRow(f.fileId, "installing");
-        try {
-          let result = await installPinned(
-            game,
-            f.modId,
-            f.fileId,
-            f.fileName,
-            f.modName,
-            f.version,
-            collection.slug,
-            ""
-          );
-          if (result.needs_fomod && result.fomod_token) {
-            const picked = choices[String(f.fileId)];
-            if (picked !== undefined) {
-              result = await installFomodAuto(result.fomod_token, picked);
-            }
-          }
-          if (result.ok) {
-            done += 1;
-            setCollectionRow(f.fileId, "done");
-          } else {
-            failed += 1;
-            setCollectionRow(f.fileId, "failed");
-          }
-        } catch {
-          failed += 1;
-          setCollectionRow(f.fileId, "failed");
-        }
-        dropDownload(f.modId);
-      }
-    } finally {
-      endCollectionRun();
-      setFixingOrder(false);
-      refreshInstalled();
-      refreshConflicts();
-      toaster.toast({
-        title: failed
-          ? `Reordered ${done}, ${failed} failed`
-          : `Reordered ${done} mod${done === 1 ? "" : "s"}`,
-        body: failed
-          ? "Open Troubleshooting if the game still looks wrong"
-          : "Each mod now overwrites in the order the collection asks for",
-      });
-    }
-  };
 
   const persistAttention = (items: AttentionItem[]) => {
     attentionRef.current = items;
@@ -389,7 +315,6 @@ export function CollectionPage() {
     2 + // Go to downloads, Back
     (actionable.length > 0 ? 1 : 0) +
     (optionalRemaining.length > 0 ? 1 : 0) +
-    (conflictIssue && !installing ? 1 : 0) + // Fix mod order
     (ownedCount > 0 && !installing ? 1 : 0) + // Repair
     ((ownedCount > 0 && !installing) || (justUninstalled && !installing)
       ? 1
@@ -1209,18 +1134,6 @@ export function CollectionPage() {
               {remaining.length === 0
                 ? `Install optional (${optionalRemaining.length})`
                 : `+ optional (${optionalRemaining.length})`}
-            </DialogButton>
-          )}
-          {conflictIssue && !installing && (
-            <DialogButton
-              className={BLUE_BUTTON_CLASS}
-              disabled={fixingOrder || finishingFileId !== undefined}
-              onClick={fixModOrder}
-              style={ACTION_BUTTON}
-            >
-              {fixingOrder
-                ? "Reordering…"
-                : `Fix mod order (${conflicts!.resolve.length})`}
             </DialogButton>
           )}
           {ownedCount > 0 && !installing && (
