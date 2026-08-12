@@ -1761,7 +1761,10 @@ def _masters_to_enable(
 # ordinary slot and have no light tier at all.
 FULL_SLOT_LIMIT = 254
 LIGHT_SLOT_LIMIT = 4096
-NO_ESL_SLOT_LIMIT = 255
+# 254, not 255: New Vegas said so itself on device with 256 plugins in
+# the load order - "maximum plugin limit of 254". Trusting the engine
+# over my reading of how the index byte is carved up.
+NO_ESL_SLOT_LIMIT = 254
 
 # Reading the ESL flag on a game that has no ESLs is not harmless: bit
 # 0x200 means something else in the older engines, so a plugin carrying it
@@ -10030,6 +10033,110 @@ query Link($slug: String!, $domainName: String!) {
             "rewritten": rewritten,
             "mods": len(by_owner),
             "errors": errors[:8],
+        }
+
+    async def apply_collection_plugins(
+        self, slug: str, game_domain: str, install_dir: str,
+        mods_subdir: str = "Data", app_id: int = 0,
+        plugins_subpath: str = "", plugins_style: str = "starred",
+    ) -> dict:
+        """Enable exactly the plugins the collection's manifest lists.
+
+        We activate every plugin found in every archive. A curator picks
+        which ones should be ON, and a mod routinely ships several: LOD
+        generation helpers meant for xEdit rather than play, an "(alt)"
+        variant beside the normal one, per-DLC patches for DLC the setup
+        may not have. The manifest states the answer; we were deriving our
+        own and getting a different one.
+
+        On device that was 21 plugins the collection never asked for -
+        FNVLODGen, four separate LOD kits, a Dead Money "(alt)" patch
+        beside the plain one - taking the load order to 256 against an
+        engine limit of 254, so the game refused to start.
+
+        Only touches plugins belonging to mods THIS collection installed: a
+        mod the user added is their business. Implicit masters are never
+        written either way. A deliberate skip stays skipped, because those
+        are plugins whose masters are absent and the manifest cannot know
+        what this particular setup is missing.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        if not _safe_rel_path(plugins_subpath):
+            return {"ok": False, "error": "Invalid plugins path"}
+        api_key = _load_settings().get("api_key")
+        scratch = None
+        try:
+            scratch, manifest = await _fetch_collection_manifest(
+                slug, game_domain, api_key
+            )
+            wanted = {
+                (pl.get("name") or "").lower()
+                for pl in manifest.get("plugins") or []
+                if pl.get("enabled") and pl.get("name")
+            }
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                KeyError, ValueError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        finally:
+            if scratch:
+                _force_rmtree(scratch)
+        if not wanted:
+            return {"ok": False, "error": "The manifest lists no plugins"}
+
+        settings = _load_settings()
+        records = settings.get("installed", {}).get(game_domain, {})
+        ours = {
+            pl.lower()
+            for rec in records.values()
+            if (rec.get("collection_slug") or "") == slug
+            for pl in rec.get("plugins") or []
+        }
+        implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())
+        skips = set(_load_skips(game_domain))
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        _install_path, data_path, _unused = _game_paths(
+            install_dir, mods_subdir
+        )
+        enabled = _enabled_plugins(path, plugins_style)
+        low = {n.lower(): n for n in enabled}
+
+        turn_off = [
+            low[n] for n in low
+            if n not in wanted and n in ours and n not in implicit
+        ]
+        turn_on = [
+            n for n in wanted
+            if n not in low and n not in skips and n not in implicit
+            and os.path.isfile(os.path.join(data_path, n))
+        ]
+        if turn_off:
+            _set_plugins_active(path, turn_off, False, plugins_style)
+        if turn_on:
+            _add_plugins(path, turn_on, plugins_style, game_domain, data_path)
+        if (turn_off or turn_on) and plugins_style == "listed":
+            await asyncio.to_thread(
+                _stagger_plugin_mtimes, data_path, path, plugins_style,
+                game_domain,
+            )
+        limit = (
+            FULL_SLOT_LIMIT if game_domain in ESL_DOMAINS
+            else NO_ESL_SLOT_LIMIT
+        )
+        after = len(_enabled_plugins(path, plugins_style)) + len(implicit)
+        decky.logger.info(
+            f"collection plugins {slug!r}: switched off {len(turn_off)}, on "
+            f"{len(turn_on)}; load order now {after} of {limit}"
+        )
+        return {
+            "ok": True,
+            "disabled": len(turn_off),
+            "enabled": len(turn_on),
+            "names_off": sorted(turn_off)[:12],
+            "total": after,
+            "limit": limit,
         }
 
     async def get_known_bad_state(

@@ -320,6 +320,8 @@ export interface AttentionItem {
   version: string;
   reason: string;
   options: string[];
+  /** Free text explaining a skip the user cannot act on. */
+  detail?: string;
 }
 
 export const setCollectionAttention = callable<

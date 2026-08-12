@@ -4753,10 +4753,13 @@ class TestSlotUsage(unittest.TestCase):
         self.assertEqual(main._slot_usage(os.path.join(TEST_ROOT, "nope"), ["a.esp"]),
                          (0, 0))
 
-    def test_the_two_limits_differ_by_the_slot_esl_games_give_up(self):
-        # 0xFE is an ordinary slot on FO3/FNV and the shared ESL index on
-        # SSE/FO4, which is the whole difference between 255 and 254.
-        self.assertEqual(main.NO_ESL_SLOT_LIMIT - main.FULL_SLOT_LIMIT, 1)
+    def test_only_esl_games_have_a_light_tier(self):
+        # The two ceilings are the same number - New Vegas reported
+        # "maximum plugin limit of 254" on device, so the extra slot I had
+        # reasoned it should get does not exist. What genuinely differs is
+        # the light tier, which is what the panel must not mention on a
+        # game that has none.
+        self.assertEqual(main.NO_ESL_SLOT_LIMIT, main.FULL_SLOT_LIMIT)
         self.assertNotIn("fallout3", main.ESL_DOMAINS)
         self.assertNotIn("newvegas", main.ESL_DOMAINS)
         self.assertIn("skyrimspecialedition", main.ESL_DOMAINS)
