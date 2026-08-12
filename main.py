@@ -4075,6 +4075,7 @@ async def _is_process_running(name: str) -> bool:
             name,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
+            env=_host_env(),
         )
         return (await proc.wait()) == 0
     except OSError:
@@ -4639,6 +4640,41 @@ def _strip_archive_junk(root: str) -> None:
                     pass
 
 
+def _host_env(extra: dict = None) -> dict:
+    """The environment external tools must run in.
+
+    Decky Loader ships as a PyInstaller bundle, so every plugin inherits
+    LD_LIBRARY_PATH pointing at its unpacked /tmp/_MEIxxxxxx directory.
+    That directory carries its own libreadline, older than the system
+    one, and /bin/sh links against readline - so ANY subprocess that
+    happens to be a shell script dies before its real program is even
+    reached:
+
+        /bin/sh: symbol lookup error: /bin/sh: undefined symbol:
+        rl_trim_arg_from_keyseq
+
+    On SteamOS /usr/bin/7z is exactly that kind of wrapper, two lines
+    that exec /usr/lib/7zip/7z. So 7z has never once run from inside
+    this plugin: every "7z: failed" in the log was this, not the
+    archive, and the fallback chain has quietly been two extractors
+    deep instead of three since the day it was written.
+
+    PyInstaller stashes the real value in LD_LIBRARY_PATH_ORIG, so put
+    that back - or drop the variable entirely when there was nothing
+    there to begin with, which is the case on a normal Deck.
+    """
+    env = dict(os.environ)
+    for var in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
+        original = env.pop(f"{var}_ORIG", None)
+        if original:
+            env[var] = original
+        else:
+            env.pop(var, None)
+    if extra:
+        env.update(extra)
+    return env
+
+
 # Extractors in preference order. bsdtar reads nearly everything and is
 # always present on SteamOS, but libarchive refuses two RAR variants that
 # Nexus is full of - RAR3 with a VM program filter, and RAR5 with a large
@@ -4669,6 +4705,7 @@ async def _extract_archive(archive_path: str, dest_dir: str) -> str:
                 *build(archive_path, dest_dir),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
+                env=_host_env(),
             )
             _, err = await proc.communicate()
         except OSError as e:
@@ -5363,6 +5400,7 @@ query Link($slug: String!, $domainName: String!) {
                         *cmd,
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.DEVNULL,
+                        env=_host_env(),
                     )
                     tools[cmd[0]] = (await proc.wait()) == 0
                 else:
@@ -5387,6 +5425,7 @@ query Link($slug: String!, $domainName: String!) {
                     "update-desktop-database", apps_dir,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    env=_host_env(),
                 )
                 await proc.wait()
             return {"ok": True, "removed": removed}
@@ -7398,11 +7437,10 @@ query Link($slug: String!, $domainName: String!) {
         # (runuser refused with "may not be used by non-root users" on
         # device) - only drop privileges when actually root.
         exe_abs = os.path.join(install_path, *exe_rel.split("/"))
-        run_env = {
-            **os.environ,
+        run_env = _host_env({
             "STEAM_COMPAT_CLIENT_INSTALL_PATH": steam_root,
             "STEAM_COMPAT_DATA_PATH": compat,
-        }
+        })
         if getattr(os, "geteuid", lambda: 1000)() == 0:
             cmd = [
                 "runuser", "-u", "deck", "--", "env",
@@ -7516,6 +7554,7 @@ query Link($slug: String!, $domainName: String!) {
                 ME3_BIN, *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=_host_env(),
             )
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
             return out.decode(errors="replace")

@@ -255,6 +255,31 @@ export function troubleshootingCount(
   );
 }
 
+/** Whether one collection file still counts as "remaining to install".
+ *
+ * Four ways a file stops being remaining, and the fourth is the one that
+ * bit: a mod resolved through Finish setup leaves the attention queue the
+ * moment it installs, but the installed-mods list is only re-read when
+ * the whole pass ends. In that window it belongs to neither set, so it
+ * reappears as work still to do - the remaining count goes UP as the user
+ * works through the queue, which reads as "the tool is going backwards".
+ * `justResolved` covers the gap with what the page already knows.
+ */
+export function isRemaining(
+  file: { modId: number; fileId: number },
+  installedModIds: Set<number>,
+  rowState: Record<number, string>,
+  pendingAttentionFileIds: Set<number>,
+  justResolvedFileIds: Set<number> = new Set()
+): boolean {
+  return (
+    !installedModIds.has(file.modId) &&
+    rowState[file.fileId] !== "done" &&
+    !pendingAttentionFileIds.has(file.fileId) &&
+    !justResolvedFileIds.has(file.fileId)
+  );
+}
+
 /** Whether a download row offers a Cancel control, by phase.
  *
  * Only while bytes are still owed: cancelling mid-extraction would leave

@@ -1,3 +1,4 @@
+import ast
 """Backend tests. Stdlib-only (unittest) so they run anywhere Python does:
 
     python -m unittest discover -s tests -v
@@ -2188,6 +2189,79 @@ class TestExtractZipFallback(unittest.TestCase):
         self.assertTrue(
             os.path.isfile(os.path.join(dest, "ModFolder", "manifest.json"))
         )
+
+
+class TestHostEnv(unittest.TestCase):
+    """Decky Loader is a PyInstaller bundle, so plugins inherit an
+    LD_LIBRARY_PATH aimed at its unpacked /tmp/_MEIxxxxxx directory. The
+    older libreadline in there kills /bin/sh outright, and SteamOS ships
+    7z as a /bin/sh wrapper - which is why 7z never ran and the
+    three-deep extractor fallback was really two deep."""
+
+    def setUp(self):
+        self._saved = {
+            k: os.environ.get(k)
+            for k in (
+                "LD_LIBRARY_PATH",
+                "LD_LIBRARY_PATH_ORIG",
+                "LD_PRELOAD",
+                "LD_PRELOAD_ORIG",
+            )
+        }
+        for k in self._saved:
+            os.environ.pop(k, None)
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_drops_pyinstaller_library_path(self):
+        os.environ["LD_LIBRARY_PATH"] = "/tmp/_MEIabc123"
+        self.assertNotIn("LD_LIBRARY_PATH", main._host_env())
+
+    def test_restores_the_original_when_there_was_one(self):
+        # Only PyInstaller's own addition goes; a value the system had
+        # set before must survive, or we break tools that needed it.
+        os.environ["LD_LIBRARY_PATH"] = "/tmp/_MEIabc123"
+        os.environ["LD_LIBRARY_PATH_ORIG"] = "/opt/real/lib"
+        env = main._host_env()
+        self.assertEqual(env["LD_LIBRARY_PATH"], "/opt/real/lib")
+        self.assertNotIn("LD_LIBRARY_PATH_ORIG", env)
+
+    def test_drops_ld_preload_too(self):
+        os.environ["LD_PRELOAD"] = "/tmp/_MEIabc123/libsomething.so"
+        self.assertNotIn("LD_PRELOAD", main._host_env())
+
+    def test_keeps_the_rest_of_the_environment(self):
+        os.environ["LD_LIBRARY_PATH"] = "/tmp/_MEIabc123"
+        env = main._host_env()
+        self.assertEqual(env.get("PATH"), os.environ.get("PATH"))
+
+    def test_extra_values_are_added(self):
+        env = main._host_env({"STEAM_COMPAT_DATA_PATH": "/x"})
+        self.assertEqual(env["STEAM_COMPAT_DATA_PATH"], "/x")
+
+    def test_every_subprocess_passes_an_env(self):
+        """A spawn without env= inherits the poisoned one. This is the
+        test that stops the fix rotting the next time a tool is added -
+        the failure mode is silent and looks like the tool's fault."""
+        path = os.path.join(os.path.dirname(__file__), "..", "main.py")
+        with open(path, encoding="utf-8") as fh:
+            source = fh.read()
+        tree = ast.parse(source)
+        bad = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "attr", None)
+            if name not in ("create_subprocess_exec", "create_subprocess_shell"):
+                continue
+            if not any(kw.arg == "env" for kw in node.keywords):
+                bad.append(node.lineno)
+        self.assertEqual(bad, [], f"subprocess spawn without env= at lines {bad}")
 
 
 class TestModLoadStatusEndToEnd(unittest.TestCase):
