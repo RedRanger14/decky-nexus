@@ -3935,6 +3935,74 @@ def _make_plugin(path, masters=(), flags=0):
         f.write(head + data)
 
 
+class TestSlotUsage(unittest.TestCase):
+    """Plugin slots are addressed by one byte, and crossing the limit does
+    not announce itself - the game stops loading plugins past it or dies on
+    the way in, and nothing says which of two thousand mods was the straw.
+
+    The engine-dependent half matters most: bit 0x200 is the ESL flag on
+    Skyrim SE and FO4 only. FO3 and New Vegas predate ESL, so honouring it
+    there would count a plugin as costing nothing when it really occupies a
+    slot - and the warning would never fire on a genuine overflow."""
+
+    def setUp(self):
+        self.data = os.path.join(TEST_ROOT, "slots")
+        shutil.rmtree(self.data, ignore_errors=True)
+        os.makedirs(self.data)
+
+    def _plugin(self, name, flags=0):
+        _make_plugin(os.path.join(self.data, name), flags=flags)
+        return name
+
+    def test_counts_full_and_light_separately(self):
+        names = [
+            self._plugin("a.esp"),
+            self._plugin("b.esp"),
+            self._plugin("light.esp", flags=main.PLUGIN_FLAG_LIGHT),
+        ]
+        self.assertEqual(main._slot_usage(self.data, names), (2, 1))
+
+    def test_no_esl_engine_counts_every_plugin_as_a_full_slot(self):
+        # The whole point: an FNV plugin carrying 0x200 for some other
+        # reason must still be seen to occupy a slot.
+        names = [
+            self._plugin("a.esp"),
+            self._plugin("looks_light.esp", flags=main.PLUGIN_FLAG_LIGHT),
+        ]
+        self.assertEqual(main._slot_usage(self.data, names, esl=False), (2, 0))
+
+    def test_implicit_masters_still_occupy_slots(self):
+        # Skyrim.esm and the DLC are never written to plugins.txt, but the
+        # engine still gives them indices - leaving them out would report
+        # five free slots that do not exist.
+        self._plugin("skyrim.esm", flags=main.PLUGIN_FLAG_MASTER)
+        names = [self._plugin("mod.esp")]
+        self.assertEqual(
+            main._slot_usage(self.data, names, implicit={"skyrim.esm"}), (2, 0)
+        )
+
+    def test_plugins_listed_but_not_on_disk_cost_nothing(self):
+        names = [self._plugin("real.esp"), "ghost.esp"]
+        self.assertEqual(main._slot_usage(self.data, names), (1, 0))
+
+    def test_case_differences_do_not_double_count(self):
+        self._plugin("Mod.esp")
+        self.assertEqual(main._slot_usage(self.data, ["mod.esp", "MOD.ESP"]), (1, 0))
+
+    def test_missing_data_directory_reports_nothing(self):
+        self.assertEqual(main._slot_usage(os.path.join(TEST_ROOT, "nope"), ["a.esp"]),
+                         (0, 0))
+
+    def test_the_two_limits_differ_by_the_slot_esl_games_give_up(self):
+        # 0xFE is an ordinary slot on FO3/FNV and the shared ESL index on
+        # SSE/FO4, which is the whole difference between 255 and 254.
+        self.assertEqual(main.NO_ESL_SLOT_LIMIT - main.FULL_SLOT_LIMIT, 1)
+        self.assertNotIn("fallout3", main.ESL_DOMAINS)
+        self.assertNotIn("newvegas", main.ESL_DOMAINS)
+        self.assertIn("skyrimspecialedition", main.ESL_DOMAINS)
+        self.assertIn("fallout4", main.ESL_DOMAINS)
+
+
 class TestLoadOrder(unittest.TestCase):
     """Skyrim/FO4 read plugins.txt AS the load order, and we only ever
     appended to it - so it was install order. On the device's Gate To

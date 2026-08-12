@@ -1501,15 +1501,32 @@ def _masters_to_enable(
     ]
 
 
-# Skyrim/FO4 address plugins with one byte: 0x00-0xFD are ordinary slots
-# and 0xFE is the shared index every ESL-flagged plugin lives behind. So
-# 254 full plugins, and up to 4096 light ones sharing that last slot.
+# Every one of these engines addresses plugins with a single byte, and
+# 0xFF is reserved for objects a save file creates - so 255 slots, not
+# 256. Skyrim SE and FO4 then give up 0xFE as the shared index that every
+# ESL-flagged plugin lives behind, leaving 254 ordinary ones and up to
+# 4096 light. FO3 and New Vegas predate ESL entirely: they keep 0xFE as an
+# ordinary slot and have no light tier at all.
 FULL_SLOT_LIMIT = 254
 LIGHT_SLOT_LIMIT = 4096
+NO_ESL_SLOT_LIMIT = 255
+
+# Reading the ESL flag on a game that has no ESLs is not harmless: bit
+# 0x200 means something else in the older engines, so a plugin carrying it
+# would be counted as costing no slot and a real overflow would go
+# unwarned. Keyed by domain rather than inferred from the plugins.txt
+# dialect, which correlates today by coincidence.
+ESL_DOMAINS = frozenset({"skyrimspecialedition", "fallout4"})
 
 
-def _slot_usage(data_path: str, names: list, implicit: set = frozenset()):
+def _slot_usage(
+    data_path: str, names: list, implicit: set = frozenset(), esl: bool = True
+):
     """(full, light) plugin slots the enabled set consumes.
+
+    `esl` False (FO3, New Vegas) counts every plugin as a full slot: those
+    engines have no light tier, and honouring a 0x200 bit there would
+    quietly discount plugins that really do occupy a slot.
 
     Worth its own check because going over does not announce itself: the
     game simply stops loading plugins past the limit, or dies on the way
@@ -1522,14 +1539,22 @@ def _slot_usage(data_path: str, names: list, implicit: set = frozenset()):
     except OSError:
         return 0, 0
     full = light = 0
-    for n in set(list(names) + list(implicit)):
-        f = real.get(n.lower())
+    seen = set()
+    for n in list(names) + list(implicit):
+        # Deduplicated case-insensitively, because that is how the lookup
+        # below resolves: a plugins.txt listing the same plugin under two
+        # spellings would otherwise be charged for two slots and warn early.
+        key = n.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        f = real.get(key)
         if not f:
             continue
         head = _plugin_header(os.path.join(data_path, f))
         if head is None:
             continue
-        if head[0] & PLUGIN_FLAG_LIGHT:
+        if esl and head[0] & PLUGIN_FLAG_LIGHT:
             light += 1
         else:
             full += 1
@@ -9078,8 +9103,9 @@ query Link($slug: String!, $domainName: String!) {
                    if n.lower() not in implicit]
         enabled = [n for n, on in entries if on]
         needed = _masters_to_enable(data_path, entries, implicit, skips)
+        esl = game_domain in ESL_DOMAINS
         full, light = await asyncio.to_thread(
-            _slot_usage, data_path, enabled, implicit)
+            _slot_usage, data_path, enabled, implicit, esl)
         return {
             "ok": True,
             "supported": True,
@@ -9093,9 +9119,11 @@ query Link($slug: String!, $domainName: String!) {
             "disabled_masters": len(needed),
             "examples": [n for n, _ in needed[:3]],
             "full_slots": full,
-            "full_slot_limit": FULL_SLOT_LIMIT,
+            "full_slot_limit": FULL_SLOT_LIMIT if esl else NO_ESL_SLOT_LIMIT,
             "light_slots": light,
-            "light_slot_limit": LIGHT_SLOT_LIMIT,
+            # 0 says "this engine has no light tier", which the panel reads
+            # as "do not mention light slots at all".
+            "light_slot_limit": LIGHT_SLOT_LIMIT if esl else 0,
         }
 
     async def get_known_bad_state(
