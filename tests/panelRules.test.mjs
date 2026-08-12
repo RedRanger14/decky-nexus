@@ -20,6 +20,7 @@ import {
   collectionOwnedCount,
   endorseControl,
   missingMasterProblem,
+  blockedPluginsAction,
   troubleshootingCount,
 } from "../.test-build/panelRules.js";
 
@@ -554,12 +555,49 @@ test("DLC and missing mods are reported together", () => {
   assert.match(msg, /Project Nevada - Core/);
 });
 
-test("says plainly that no button here can fix it", () => {
-  // The other two load-order faults have a repair. This one does not, and
-  // offering one would be a button that cannot work.
-  const msg = missingMasterProblem(
+test("sends you to Steam only when DLC is actually involved", () => {
+  // Otherwise someone goes looking for a DLC called Tale Of Two Wastelands.
+  const dlc = missingMasterProblem(
     [{ name: "DeadMoney.esm", label: "Dead Money", needed_by: 79 }],
     79
   );
-  assert.match(msg, /Steam's DLC tab/);
+  assert.match(dlc, /Steam's DLC tab/);
+
+  const mods = missingMasterProblem(
+    [{ name: "TaleOfTwoWastelands.esm", needed_by: 1 }],
+    1
+  );
+  assert.doesNotMatch(mods, /Steam/);
+  assert.match(mods, /switching them off/);
+});
+
+test("offers to turn off mods blocked by a missing MOD", () => {
+  const a = blockedPluginsAction([
+    { name: "TaleOfTwoWastelands.esm", needed_by: 1 },
+  ]);
+  assert.equal(a.show, true);
+});
+
+test("never offers it for DLC alone", () => {
+  // Device: DLC blocked 115 mods and missing mods blocked 4. A button
+  // that treated those the same would bin the collection one tap after
+  // telling the user what was wrong, when the real fix cost a few pounds.
+  assert.equal(
+    blockedPluginsAction([
+      { name: "DeadMoney.esm", label: "Dead Money", needed_by: 79 },
+    ]).show,
+    false
+  );
+  assert.equal(blockedPluginsAction([]).show, false);
+  assert.equal(blockedPluginsAction(undefined).show, false);
+});
+
+test("offers it when DLC and missing mods are mixed", () => {
+  assert.equal(
+    blockedPluginsAction([
+      { name: "DeadMoney.esm", label: "Dead Money", needed_by: 79 },
+      { name: "TaleOfTwoWastelands.esm", needed_by: 1 },
+    ]).show,
+    true
+  );
 });

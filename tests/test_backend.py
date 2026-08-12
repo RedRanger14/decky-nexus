@@ -3935,6 +3935,98 @@ def _make_plugin(path, masters=(), flags=0):
         f.write(head + data)
 
 
+class TestDisableBlockedPlugins(unittest.TestCase):
+    """Switching off mods whose master is not installed - but never the
+    ones a DLC purchase would fix. On device that distinction was 115 mods
+    against 4: a button treating them the same would have binned most of a
+    collection one tap after telling the user what was wrong."""
+
+    GAME = "Blocked Test"
+    APP_ID = 22380
+    SUBPATH = "AppData/Local/FalloutNV/Plugins.txt"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.data = os.path.join(
+            main.STEAM_COMMON, self.GAME, "Data"
+        )
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+        os.makedirs(self.data)
+        self.txt = main._plugins_txt_path(self.APP_ID, self.SUBPATH)
+        main._makedirs_for(self.txt)
+        settings = main._load_settings()
+        settings.pop("skipped", None)
+        main._save_settings(settings)
+
+    def _plugin(self, name, masters=()):
+        _make_plugin(os.path.join(self.data, name), masters=masters)
+        return name
+
+    def _write(self, names):
+        with open(self.txt, "w", encoding="utf-8") as f:
+            for n in names:
+                f.write(n + chr(10))
+
+    def _call(self):
+        return run(self.plugin.disable_blocked_plugins(
+            self.APP_ID, self.GAME, self.SUBPATH, "listed", "newvegas"
+        ))
+
+    def _listed(self):
+        return [n for n, on in main._plugin_entries(
+            main._read_plugins_txt(self.txt), "listed") if on]
+
+    def test_switches_off_a_mod_whose_mod_master_is_absent(self):
+        self._plugin("TTWLods.esp", masters=["TaleOfTwoWastelands.esm"])
+        self._plugin("fine.esp")
+        self._write(["TTWLods.esp", "fine.esp"])
+        r = self._call()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["names"], ["TTWLods.esp"])
+        self.assertEqual(self._listed(), ["fine.esp"])
+
+    def test_leaves_mods_blocked_only_by_DLC_alone(self):
+        # The user can buy Dead Money. Turning the mods off instead would
+        # be throwing away what they came for.
+        self._plugin("mil.esp", masters=["DeadMoney.esm"])
+        self._write(["mil.esp"])
+        r = self._call()
+        self.assertEqual(r["disabled"], 0)
+        self.assertEqual(self._listed(), ["mil.esp"])
+
+    def test_a_mod_blocked_by_both_is_still_switched_off(self):
+        # It cannot load even after the DLC purchase, so it is the second
+        # master that decides.
+        self._plugin(
+            "both.esp", masters=["DeadMoney.esm", "TaleOfTwoWastelands.esm"]
+        )
+        self._write(["both.esp"])
+        self.assertEqual(self._call()["disabled"], 1)
+
+    def test_records_the_reason_so_a_repair_does_not_undo_it(self):
+        self._plugin("TTWLods.esp", masters=["TaleOfTwoWastelands.esm"])
+        self._write(["TTWLods.esp"])
+        self._call()
+        skips = main._load_skips("newvegas")
+        self.assertIn("ttwlods.esp", skips)
+        self.assertIn("TaleOfTwoWastelands.esm", skips["ttwlods.esp"]["reason"])
+        self.assertFalse(skips["ttwlods.esp"]["root"])
+
+    def test_nothing_to_do_is_not_an_error(self):
+        self._plugin("fine.esp")
+        self._write(["fine.esp"])
+        r = self._call()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["disabled"], 0)
+
+    def test_rejects_a_bad_domain(self):
+        result = run(self.plugin.disable_blocked_plugins(
+            self.APP_ID, self.GAME, self.SUBPATH, "listed", "../evil"
+        ))
+        self.assertFalse(result["ok"])
+
+
 class TestMissingMasters(unittest.TestCase):
     """The third load-order fault: a master that is not on disk at all.
 

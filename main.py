@@ -9294,6 +9294,65 @@ query Link($slug: String!, $domainName: String!) {
             "light_slot_limit": LIGHT_SLOT_LIMIT if esl else 0,
         }
 
+    async def disable_blocked_plugins(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str
+    ) -> dict:
+        """Switch off mods that name a master which is not installed.
+
+        Deliberately excludes DLC masters. "Turn off 115 mods" and "buy
+        Dead Money for three pounds" are not equivalent answers, and a
+        button that quietly picks the first would throw away most of a
+        collection the user had every intention of running.
+
+        What is left after DLC is the honest case for this: variant
+        patches a collection ships for setups you may not have - a Project
+        Nevada version of a tweak, a Tale of Two Wastelands LOD patch.
+        They cannot load, the game refuses to start because of them, and
+        no download here can help since TTW is a desktop conversion that
+        is not even on Nexus.
+
+        Recorded as skips with the reason, so a later load-order repair
+        does not switch them back on and put the modal back.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not _safe_rel_path(plugins_subpath):
+            return {"ok": False, "error": "Invalid plugins path"}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        _, data_path, _unused = _game_paths(install_dir, "Data")
+        implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())
+        entries = _plugin_entries(_read_plugins_txt(path), plugins_style)
+        enabled = [n for n, on in entries if on and n.lower() not in implicit]
+        absent = await asyncio.to_thread(
+            _missing_masters, data_path, enabled, implicit
+        )
+        blocked = {}
+        for master, deps in absent:
+            if master.lower() in DLC_MASTER_NAMES:
+                continue
+            for d in deps:
+                blocked.setdefault(d, set()).add(master)
+        if not blocked:
+            return {"ok": True, "disabled": 0, "names": []}
+        _set_plugins_active(path, list(blocked), False, plugins_style)
+        skips = _load_skips(game_domain)
+        for name, masters in blocked.items():
+            skips[name.lower()] = {
+                "reason": (
+                    f"needs {', '.join(sorted(masters))}, which "
+                    f"{'is' if len(masters) == 1 else 'are'} not installed"
+                ),
+                "root": False,
+            }
+        _save_skips(game_domain, skips)
+        names = sorted(blocked)
+        decky.logger.info(
+            f"disabled {len(names)} plugin(s) blocked by absent masters: "
+            f"{', '.join(names[:6])}"
+        )
+        return {"ok": True, "disabled": len(names), "names": names}
+
     async def get_known_bad_state(
         self, app_id: int, install_dir: str, plugins_subpath: str,
         plugins_style: str, game_domain: str

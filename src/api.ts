@@ -799,6 +799,20 @@ export const endorseCollection = callable<
   { ok: boolean; status?: string; error?: string }
 >("endorse_collection");
 
+// Switches off mods whose master is not installed. DLC masters are
+// excluded backend-side: buying the DLC is the better answer and the
+// difference on device was 115 mods against 4.
+export const disableBlockedPlugins = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string
+  ],
+  { ok: boolean; disabled?: number; names?: string[]; error?: string }
+>("disable_blocked_plugins");
+
 export const getModRequirements = callable<
   [game_domain: string, mod_id: number],
   { ok: boolean; requirements?: ModRequirement[]; error?: string }
