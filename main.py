@@ -5073,6 +5073,120 @@ async def _unwrap_fomod_package(scratch: str) -> str:
     return os.path.basename(package)
 
 
+async def _fetch_collection_manifest(slug: str, game_domain: str, api_key):
+    """Download and extract a collection's own archive.
+
+    Returns (scratch_dir, manifest_dict). The CALLER removes the scratch
+    dir - the archive holds more than the manifest (bundled mods, INI
+    patches), and every use of it so far threw those away unread.
+    """
+    data = await _gql_query_vars(
+        """
+query Link($slug: String!, $domainName: String!) {
+  collectionRevision(slug: $slug, domainName: $domainName) { downloadLink }
+}""",
+        {"slug": slug, "domainName": game_domain},
+        api_key,
+    )
+    link_path = data["collectionRevision"]["downloadLink"]
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=180)
+    ) as session:
+        async with session.get(
+            f"{NEXUS_API_BASE}{link_path}",
+            headers=_api_headers(api_key),
+            ssl=SSL_CONTEXT,
+        ) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Manifest link HTTP {resp.status}")
+            body = await resp.json()
+        uri = None
+        if isinstance(body, dict):
+            uri = body.get("download_url") or body.get("uri")
+            if not uri and isinstance(body.get("download_links"), list):
+                links = body["download_links"]
+                uri = links[0].get("URI") if links else None
+        elif isinstance(body, list) and body:
+            uri = body[0].get("URI")
+        if not uri:
+            raise RuntimeError("No manifest download link")
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+        arc = os.path.join(DOWNLOADS_DIR, f"collection-{slug}.arc")
+        async with session.get(_safe_uri(uri), ssl=SSL_CONTEXT) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Manifest download HTTP {resp.status}")
+            with open(arc, "wb") as out:
+                while True:
+                    chunk = await resp.content.read(262144)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+    scratch = os.path.join(DOWNLOADS_DIR, f"collection-{slug}")
+    _force_rmtree(scratch)
+    os.makedirs(scratch)
+    err = await _extract_archive(arc, scratch)
+    try:
+        os.remove(arc)
+    except OSError:
+        pass
+    if err:
+        _force_rmtree(scratch)
+        raise RuntimeError(err)
+    manifest_path = None
+    for root, _dirs, names in os.walk(scratch):
+        for n in names:
+            if n.lower() == "collection.json":
+                manifest_path = os.path.join(root, n)
+                break
+    if not manifest_path:
+        _force_rmtree(scratch)
+        raise RuntimeError("collection.json not found")
+    with open(manifest_path, "r", encoding="utf-8-sig") as f:
+        return scratch, json.load(f)
+
+
+def _collection_extras(manifest: dict) -> dict:
+    """The parts of a collection that are not a Nexus download.
+
+    Every mod we install comes from source type "nexus". Two other types
+    exist and were being dropped without a word:
+
+    - "browse": hosted somewhere else entirely, so no API can fetch it.
+      Vortex opens the page and the user downloads it by hand. This
+      collection has one, Vanilla UI+, and it is the base layer the whole
+      HUD stack is built on - so skipping it silently produced a game that
+      booted to an error nobody could explain.
+    - "bundle": shipped INSIDE the collection archive, already downloaded
+      by the time we read the manifest. Nothing needed fetching and we
+      still did not install them.
+    """
+    browse, bundle = [], []
+    for mod in manifest.get("mods") or []:
+        source = mod.get("source") or {}
+        kind = source.get("type")
+        if kind == "browse":
+            browse.append(
+                {
+                    "name": mod.get("name") or "",
+                    "url": source.get("url") or "",
+                    "instructions": source.get("instructions") or "",
+                    "size": int(source.get("fileSize") or 0),
+                    "md5": source.get("md5") or "",
+                    "optional": bool(mod.get("optional")),
+                }
+            )
+        elif kind == "bundle":
+            bundle.append(
+                {
+                    "name": mod.get("name") or "",
+                    "folder": source.get("fileExpression") or "",
+                    "size": int(source.get("fileSize") or 0),
+                    "optional": bool(mod.get("optional")),
+                }
+            )
+    return {"browse": browse, "bundle": bundle}
+
+
 class Plugin:
     # ---- Nexus account -----------------------------------------------------
 
@@ -5650,6 +5764,148 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": True, "choices": choices}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def get_collection_extras(
+        self, slug: str, game_domain: str
+    ) -> dict:
+        """The mods in a collection that are not ordinary Nexus downloads.
+
+        Reported BEFORE an install rather than discovered afterwards. On
+        device the one browse-type mod in New Vegas's most popular
+        collection was Vanilla UI+, the base layer the HUD is built on -
+        skipped silently, so the collection installed "successfully" and
+        then failed at boot with an error about XML not matching code.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        api_key = _load_settings().get("api_key")
+        scratch = None
+        try:
+            scratch, manifest = await _fetch_collection_manifest(
+                slug, game_domain, api_key
+            )
+            extras = _collection_extras(manifest)
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                KeyError, ValueError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        finally:
+            if scratch:
+                _force_rmtree(scratch)
+        decky.logger.info(
+            f"collection extras {slug!r}: {len(extras['browse'])} manual "
+            f"download(s), {len(extras['bundle'])} bundled mod(s)"
+        )
+        return {"ok": True, **extras}
+
+    async def install_collection_bundles(
+        self, slug: str, game_domain: str, install_dir: str,
+        mods_subdir: str = "Data", app_id: int = 0,
+        plugins_subpath: str = "", plugins_style: str = "starred",
+    ) -> dict:
+        """Install the mods a collection ships inside its own archive.
+
+        Nothing here needs fetching from Nexus - the files arrive with the
+        manifest we already download for its FOMOD choices, and were being
+        thrown away with the rest of it. On device that was OneTweak and an
+        NVAO animation pack, both non-optional, in the collection every
+        other mod was installed from.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        api_key = _load_settings().get("api_key")
+        _install_path, data_path, _unused = _game_paths(install_dir, mods_subdir)
+        if not os.path.isdir(data_path):
+            return {"ok": False, "error": f"{mods_subdir} not found"}
+        scratch = None
+        try:
+            scratch, manifest = await _fetch_collection_manifest(
+                slug, game_domain, api_key
+            )
+            bundles = _collection_extras(manifest)["bundle"]
+            if not bundles:
+                return {"ok": True, "installed": 0, "mods": [], "errors": []}
+            # The archive lays them out under bundled/<fileExpression>/.
+            roots = {}
+            for root, dirs, _names in os.walk(scratch):
+                if os.path.basename(root).lower() == "bundled":
+                    for d in dirs:
+                        roots[d.lower()] = os.path.join(root, d)
+            settings = _load_settings()
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            done, errors, plugins_added = [], [], []
+            for b in bundles:
+                src = roots.get((b["folder"] or "").lower())
+                if not src:
+                    errors.append(f"{b['name']}: not in the archive")
+                    continue
+                written, plugins = [], []
+                for root, _dirs, names in os.walk(src):
+                    for n in names:
+                        full = os.path.join(root, n)
+                        rel = os.path.relpath(full, src).replace(os.sep, "/")
+                        if not _safe_rel_path(rel):
+                            continue
+                        dst = os.path.join(data_path, *rel.split("/"))
+                        try:
+                            _makedirs_for(dst)
+                            shutil.copy2(full, dst)
+                        except OSError as e:
+                            errors.append(f"{b['name']}: {rel}: {e}")
+                            continue
+                        written.append(rel)
+                        if "/" not in rel and rel.lower().endswith(
+                            (".esp", ".esm", ".esl")
+                        ):
+                            plugins.append(rel)
+                if not written:
+                    errors.append(f"{b['name']}: nothing to install")
+                    continue
+                record = {
+                    "mod_id": None,
+                    "file_id": None,
+                    "name": b["name"],
+                    "version": "",
+                    "file_name": b["folder"],
+                    "installed_at": int(time.time()),
+                    "source": "collection-bundle",
+                    "collection_slug": slug,
+                    "mode": "dataDir",
+                    "files": written,
+                    "plugins": plugins,
+                }
+                installed[b["name"]] = _merge_install_record(
+                    installed.get(b["name"]), record
+                )
+                plugins_added.extend(plugins)
+                done.append(b["name"])
+            _save_settings(settings)
+            if plugins_added and plugins_subpath:
+                _add_plugins(
+                    _plugins_txt_path(app_id, plugins_subpath),
+                    plugins_added, plugins_style, game_domain, data_path,
+                )
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                KeyError, ValueError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        finally:
+            if scratch:
+                _force_rmtree(scratch)
+        decky.logger.info(
+            f"collection bundles {slug!r}: installed {len(done)} "
+            f"({', '.join(done)}), {len(errors)} error(s)"
+        )
+        return {
+            "ok": True,
+            "installed": len(done),
+            "mods": done,
+            "errors": errors[:8],
+        }
 
     async def get_mod_details(self, game_domain: str, mod_id: int) -> dict:
         """Single mod with full description - used by the detail page and for
