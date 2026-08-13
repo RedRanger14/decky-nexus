@@ -5055,6 +5055,60 @@ class TestApplyKnownVerdicts(unittest.TestCase):
         )
 
 
+class TestDownloadForbiddenReason(unittest.TestCase):
+    """A 403 from the download-link endpoint is not automatically a Premium
+    problem.
+
+    Michael installed Slay the Spire 2's most popular collection on a
+    Premium account and was told twice that direct downloads need Premium.
+    One mod had been deleted by its author, the other taken down by Nexus
+    for review - and the endpoint says which, in the body, which this code
+    was throwing away. Bodies below are verbatim from the API."""
+
+    DELETED = '{"code":403,"message":"Mod not available: 502"}'
+    MODERATED = ('{"code":403,"message":"File currently not available. '
+                 'Library of Ruina (Mod ID: 368) is under moderation"}')
+
+    def test_a_mod_under_moderation_says_so(self):
+        msg = main._download_forbidden_reason(self.MODERATED, True)
+        self.assertIn("taken this mod down while it is reviewed", msg)
+        self.assertNotIn("Premium", msg)
+
+    def test_a_deleted_mod_says_so(self):
+        msg = main._download_forbidden_reason(self.DELETED, True)
+        self.assertIn("author has removed this mod", msg)
+        self.assertNotIn("Premium", msg)
+
+    def test_the_reason_does_not_depend_on_the_account(self):
+        # A free user hitting a deleted mod is not a Premium problem
+        # either, and telling them to buy an account would not help.
+        for premium in (True, False, None):
+            self.assertIn(
+                "author has removed",
+                main._download_forbidden_reason(self.DELETED, premium),
+            )
+
+    def test_a_free_account_still_gets_the_premium_message(self):
+        # The original message was right for the case it was written for.
+        msg = main._download_forbidden_reason('{"code":403}', False)
+        self.assertIn("Premium account", msg)
+
+    def test_a_premium_account_is_never_told_to_get_premium(self):
+        # The bug, stated as a test. Whatever an unrecognised 403 means on
+        # a Premium account, it is not the account.
+        msg = main._download_forbidden_reason('{"code":403}', True)
+        self.assertNotIn("Premium", msg)
+
+    def test_an_unparseable_body_does_not_crash(self):
+        for body in ("", "<html>502 Bad Gateway</html>", None):
+            self.assertTrue(main._download_forbidden_reason(body, False))
+
+    def test_an_unknown_message_is_passed_through_for_premium(self):
+        msg = main._download_forbidden_reason(
+            '{"code":403,"message":"Rate limit exceeded"}', True)
+        self.assertEqual(msg, "Rate limit exceeded")
+
+
 class TestGodotModManifests(unittest.TestCase):
     """Reading each mod's own manifest, which is what makes matching a log
     tag to an installed mod possible at all.

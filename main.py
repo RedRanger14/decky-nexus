@@ -721,6 +721,52 @@ async def _resolve_game_id(game_domain: str, api_key=None) -> int:
     return int(game_id)
 
 
+def _download_forbidden_reason(body: str, is_premium=None) -> str:
+    """Turn a 403 from the download-link endpoint into the truth.
+
+    This used to say "Direct downloads need a Premium account" for every
+    403, which was a guess dressed as a diagnosis. Michael installed Slay
+    the Spire 2's most popular collection on a Premium account and got it
+    twice - for a mod its author had deleted, and one Nexus had taken down
+    for review. Both are ordinary things to happen to a collection, and
+    telling someone to buy an account they already have is the worst
+    possible answer.
+
+    The endpoint says which it is, in the body:
+
+        {"code":403,"message":"Mod not available: 502"}
+        {"code":403,"message":"File currently not available. Library of
+         Ruina (Mod ID: 368) is under moderation"}
+    """
+    message = ""
+    try:
+        parsed = json.loads(body or "{}")
+        if isinstance(parsed, dict):
+            message = str(parsed.get("message") or "")
+    except (ValueError, TypeError):
+        message = ""
+    low = message.lower()
+    if "under moderation" in low:
+        return (
+            "Nexus has taken this mod down while it is reviewed. Nothing "
+            "you can do - it will come back, or it will not, and that is "
+            "up to Nexus and the author."
+        )
+    if "not available" in low or "deleted" in low or "hidden" in low:
+        return (
+            "The author has removed this mod from Nexus, so it cannot be "
+            "downloaded any more."
+        )
+    if is_premium:
+        # Premium and still refused: whatever this is, it is not the
+        # account, and guessing again would repeat the original mistake.
+        return message or "Nexus refused the download for this file"
+    return (
+        "Direct downloads need a Premium account "
+        "(free-user flow not implemented yet)"
+    )
+
+
 def _norm_version(version) -> str:
     return (version or "").strip().lstrip("vV")
 
@@ -5209,9 +5255,11 @@ async def _download_archive(
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status == 403:
+                        body = await resp.text()
                         return (
-                            "Direct downloads need a Premium account "
-                            "(free-user flow not implemented yet)",
+                            _download_forbidden_reason(
+                                body, _load_settings().get("is_premium")
+                            ),
                             "",
                         )
                     if resp.status in (429, 500, 502, 503):
@@ -5755,6 +5803,10 @@ class Plugin:
         result = await _validate_key(api_key)
         if result.get("ok"):
             settings["api_key"] = api_key
+            # Kept so a refused download can be diagnosed honestly. A 403
+            # used to be reported as "you need Premium" on an account that
+            # already had it, because nothing on this side knew.
+            settings["is_premium"] = bool(result.get("is_premium"))
             _save_settings(settings)
             decky.logger.info(
                 f"API key saved for user {result.get('name')} "
@@ -5771,10 +5823,17 @@ class Plugin:
         return result
 
     async def get_auth_status(self) -> dict:
-        api_key = _load_settings().get("api_key")
+        settings = _load_settings()
+        api_key = settings.get("api_key")
         if not api_key:
             return {"ok": False, "error": "No API key set"}
-        return await _validate_key(api_key)
+        result = await _validate_key(api_key)
+        if result.get("ok") and bool(
+            settings.get("is_premium")
+        ) != bool(result.get("is_premium")):
+            settings["is_premium"] = bool(result.get("is_premium"))
+            _save_settings(settings)
+        return result
 
     # ---- Mod browsing (GraphQL v2) ------------------------------------------
 
