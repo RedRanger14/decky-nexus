@@ -4608,6 +4608,98 @@ class TestAutoRepairFailingMods(unittest.TestCase):
         self.assertFalse(run(self.plugin.repair_failing_mods(
             "../evil", self.GAME, "mods", self.USER_DIR))["ok"])
 
+    # --- updating what cannot be switched off ----------------------------
+    # Verified on device: the collection pinned BaseLib 3.1.2 and RitsuLib
+    # 0.2.30 against a build wanting 3.3.8 and 0.5.11. Updating those two
+    # took the blamed count from 5 to 1 and the error lines from 182 to 3 -
+    # it fixed the two mods that DEPEND on RitsuLib as well.
+
+    def _library_setup(self, latest="3.3.8"):
+        """Grumpy is a library RouteSuggest needs, so it can only be fixed
+        by updating it."""
+        for folder, mod_id, deps in (
+            ("Grumpy", 103, []), ("RouteSuggest", 55, ["Grumpy"]),
+        ):
+            os.makedirs(os.path.join(self.mods, folder), exist_ok=True)
+            with open(os.path.join(self.mods, folder, "mod_manifest.json"),
+                      "w", encoding="utf-8") as f:
+                json.dump({"id": folder, "name": folder,
+                           "dependencies": deps}, f)
+        settings = main._load_settings()
+        settings["installed"]["repairtest"]["Grumpy"] = {
+            "mode": "folder", "folder": "Grumpy", "name": "Grumpy",
+            "mod_id": 103, "version": "3.1.2", "files": [],
+        }
+        settings["installed"]["repairtest"]["RouteSuggest"] = {
+            "mode": "folder", "folder": "RouteSuggest",
+            "name": "RouteSuggest", "mod_id": 55, "version": "1.0",
+            "files": [],
+        }
+        main._save_settings(settings)
+        self._log("[ERROR] [Grumpy] HarmonyLib.HarmonyException: "
+                  "Patching exception in method null")
+        self.calls = []
+
+        async def fake_files(game_domain, mod_id):
+            return {"ok": True, "files": [
+                {"file_id": 99, "file_name": "grumpy.zip", "version": latest}]}
+
+        async def fake_install(*a, **k):
+            self.calls.append(a[:6])
+            settings = main._load_settings()
+            settings["installed"]["repairtest"]["Grumpy"]["version"] = latest
+            main._save_settings(settings)
+            return {"ok": True}
+
+        self.plugin.get_mod_files = fake_files
+        self.plugin.install_mod = fake_install
+
+    def test_a_held_back_library_is_updated_instead(self):
+        self._library_setup()
+        r = self._repair()
+        self.assertEqual(r["held"], ["Grumpy"])
+        self.assertEqual(
+            r["updated"], [{"name": "Grumpy", "from": "3.1.2", "to": "3.3.8"}])
+        self.assertTrue(os.path.isdir(os.path.join(self.mods, "Grumpy")))
+
+    def test_no_update_available_means_no_download(self):
+        # Already newest: touching it would be churn for nothing.
+        self._library_setup(latest="3.1.2")
+        r = self._repair()
+        self.assertEqual(r["updated"], [])
+        self.assertEqual(self.calls, [])
+
+    def test_an_older_published_version_is_not_installed(self):
+        # ModConfig's page version was genuinely LOWER than what the
+        # collection installed. Downgrading it would be a regression.
+        self._library_setup(latest="0.1.3")
+        self.assertEqual(self._repair()["updated"], [])
+
+    def test_a_failed_update_is_not_fatal(self):
+        self._library_setup()
+
+        async def boom(*a, **k):
+            raise RuntimeError("network down")
+
+        self.plugin.install_mod = boom
+        r = self._repair()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["updated"], [])
+
+    def test_it_does_not_re_download_on_every_panel_open(self):
+        self._library_setup()
+        self._repair()
+        before = len(self.calls)
+        self._repair()
+        self.assertEqual(len(self.calls), before)
+
+    def test_a_switchable_mod_is_switched_off_not_downloaded(self):
+        # Everything with a cheaper remedy already took it, so this never
+        # downloads for a mod that could simply be turned off.
+        self._library_setup()
+        self._repair()
+        self.assertEqual([c[4] for c in self.calls], ["Grumpy"])
+
 
 class TestLegacyModsBatching(unittest.TestCase):
     """The Nexus v2 legacyMods(ids:) response caps at 20 nodes and says

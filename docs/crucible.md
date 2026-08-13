@@ -233,6 +233,31 @@ First real contents, Slay the Spire 2 build 23811903:
 | 107 | Campfire Trading | 1.0 | failed to load |
 | 468 | Refresh Ancient | 1.3.3 | failed to load |
 
+### What the first verdicts immediately taught us
+
+Investigating why the game still printed *"Loaded 23 mods WITH ERRORS"* after
+it stopped crashing turned up something the harness will meet constantly:
+
+**Collections pin library versions, and stale libraries break their
+dependents.** The collection pinned BaseLib 3.1.2 and RitsuLib 0.2.30 against
+a game build wanting 3.3.8 and 0.5.11. Updating those two:
+
+| | before | after |
+|---|---|---|
+| mods blamed | 5 | 1 |
+| error lines | 182 | 3 |
+
+Two mods that merely *depend* on RitsuLib were repaired without being touched.
+So a blamed library is never a candidate for switching off - its dependents go
+with it - and updating it can fix several mods at once. The plugin now does
+that automatically for blamed mods it cannot switch off.
+
+For Crucible this means a per-mod verdict is not enough on its own: **testing a
+mod against a stale library records the library's failure as the mod's.** The
+harness has to resolve dependencies to their newest compatible version before
+judging anything, or it will publish a great many false "broken" verdicts and
+cost authors downloads for someone else's pin.
+
 That table is what Crucible would produce at scale, and it is already the
 right shape to publish. Which means the harness's job is narrower than it
 first looked: **not designing the verdict format, but filling this table in

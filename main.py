@@ -11280,6 +11280,58 @@ query Link($slug: String!, $domainName: String!) {
             return result
         return {"ok": True, "folders": result.get("blamed_folders") or []}
 
+    async def _update_held_mods(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        install_mode: str, app_id: int, plugins_subpath: str,
+        plugins_style: str, held_names: list,
+    ) -> list:
+        """Install the newest version of each blamed mod that cannot be
+        switched off. Returns [{name, from, to}] for what actually changed.
+
+        Never raises: this is a best-effort repair running behind a panel
+        open, and a failed update has to leave the mod exactly as it was.
+        """
+        if not held_names:
+            return []
+        records = _load_settings().get("installed", {}).get(game_domain, {})
+        wanted = {n for n in held_names if n}
+        done = []
+        for key, rec in list(records.items()):
+            name = rec.get("name") or key
+            if name not in wanted or not rec.get("mod_id"):
+                continue
+            try:
+                files = await self.get_mod_files(
+                    game_domain, int(rec["mod_id"])
+                )
+                newest = (files.get("files") or [None])[0]
+                if not newest:
+                    continue
+                have = _norm_version(rec.get("version"))
+                latest = _norm_version(newest.get("version"))
+                if not latest or not _is_newer_version(latest, have):
+                    continue
+                result = await self.install_mod(
+                    game_domain, int(rec["mod_id"]), newest["file_id"],
+                    newest["file_name"], name, newest.get("version") or "",
+                    install_dir, mods_subdir, "", "", install_mode, app_id,
+                    plugins_subpath, plugins_style,
+                )
+                if result.get("ok"):
+                    done.append({"name": name, "from": rec.get("version") or "",
+                                 "to": newest.get("version") or ""})
+                    decky.logger.info(
+                        f"updated {name!r} {rec.get('version')} -> "
+                        f"{newest.get('version')} because the game blamed it "
+                        f"and it cannot be switched off"
+                    )
+            except Exception as e:  # noqa: BLE001 - best effort, never fatal
+                decky.logger.warning(
+                    f"could not update blamed mod {name!r}: "
+                    f"{type(e).__name__}: {e}"
+                )
+        return done
+
     async def repair_failing_mods(
         self, game_domain: str, install_dir: str, mods_subdir: str,
         game_user_dir: str, install_mode: str = "folder", app_id: int = 0,
@@ -11353,7 +11405,19 @@ query Link($slug: String!, $domainName: String!) {
                 )
         else:
             repaired = {"disabled": 0, "names": seen.get("names") or [],
-                        "details": [], "held": []}
+                        "details": [], "held": [], "ok": True}
+        # A blamed mod that CANNOT be switched off - because other mods
+        # depend on it - has exactly one remedy left: a newer version.
+        #
+        # Verified on device, 2026-08-13. The collection pinned BaseLib 3.1.2
+        # and RitsuLib 0.2.30 against a build wanting 3.3.8 and 0.5.11.
+        # Updating those two took the blamed count from 5 to 1 and the error
+        # lines from 182 to 3 - it fixed the two mods that DEPEND on RitsuLib
+        # as well, which is why switching a library off is never the answer.
+        #
+        # Bounded on purpose: only held-back mods, and only when a newer
+        # version exists. Everything switchable is already switched off, so
+        # this never downloads for a mod that had a cheaper remedy.
         # Whatever is still blamed after that is a judgement call, so it
         # stays on the button rather than being decided for the user.
         rest = await self.disable_failing_mods(
@@ -11361,10 +11425,21 @@ query Link($slug: String!, $domainName: String!) {
             install_mode, app_id, plugins_subpath, plugins_style,
             protected_ids, True, False,
         )
+        # Held-back mods only show up in the FULL pass: they are ambiguous by
+        # construction - a library erroring while other mods depend on it is
+        # exactly the case the auto pass refuses to touch. Which is why the
+        # update has to come from here rather than from the auto result.
+        updated = []
+        if not already and rest.get("ok"):
+            updated = await self._update_held_mods(
+                game_domain, install_dir, mods_subdir, install_mode, app_id,
+                plugins_subpath, plugins_style, rest.get("held") or [],
+            )
         return {
             "ok": True,
             "repaired": len(repaired.get("names") or []),
             "names": repaired.get("names") or [],
+            "updated": updated,
             "held": rest.get("held") or [],
             "remaining": rest.get("details") or [],
             # Every mod the log blamed, whether acted on, held back or left

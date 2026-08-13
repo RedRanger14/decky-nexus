@@ -112,6 +112,7 @@ import {
   blockedPluginsAction,
   maskCoopPassword,
   repairedNote,
+  updatedNote,
   showInstalledModsSection,
   showResetRow,
   slotPressure,
@@ -2386,7 +2387,8 @@ function TroubleshootingSection() {
     details: { name: string; why: string }[];
     held: string[];
     repaired: string[];
-  }>({ names: [], details: [], held: [], repaired: [] });
+    updated: { name: string; from: string; to: string }[];
+  }>({ names: [], details: [], held: [], repaired: [], updated: [] });
   const [failingBusy, setFailingBusy] = useState(false);
   // Enabled plugins listed before a master they need - a boot crash.
   const [loadOrder, setLoadOrder] = useState<
@@ -2469,10 +2471,17 @@ function TroubleshootingSection() {
           details: r.ok ? r.remaining ?? [] : [],
           held: r.ok ? r.held ?? [] : [],
           repaired: r.ok ? r.names ?? [] : [],
+          updated: r.ok ? r.updated ?? [] : [],
         })
       );
     } else {
-      setFailing({ names: [], details: [], held: [], repaired: [] });
+      setFailing({
+        names: [],
+        details: [],
+        held: [],
+        repaired: [],
+        updated: [],
+      });
     }
     if (game.pluginsTxtSubpath) {
       getLoadOrderState(
@@ -2870,6 +2879,13 @@ function TroubleshootingSection() {
             >
               {hunt?.running ? "Stop the hunt" : "Find what's breaking it"}
             </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {failing.updated.length > 0 && (
+          <PanelSectionRow>
+            <Field label="✓ Mods updated to match your game" childrenLayout="below">
+              {updatedNote(failing.updated)}
+            </Field>
           </PanelSectionRow>
         )}
         {failing.repaired.length > 0 && (

@@ -277,6 +277,34 @@ export function knownBrokenNote(version: string): string {
   );
 }
 
+/** What the panel says about blamed mods it updated rather than switched
+ * off.
+ *
+ * On device this was the whole fix: the collection pinned BaseLib 3.1.2 and
+ * RitsuLib 0.2.30 against a game build wanting 3.3.8 and 0.5.11, and
+ * updating those two took the erroring mods from 5 to 1 - it repaired the
+ * two mods that depend on RitsuLib as well. Switching a library off would
+ * have taken them down instead.
+ */
+export function updatedNote(
+  updated: { name: string; from: string; to: string }[]
+): string {
+  const kept = updated.filter((u) => u.name);
+  if (!kept.length) return "";
+  const one = kept.length === 1;
+  const shown = kept
+    .slice(0, 2)
+    .map((u) => `${u.name} to ${u.to || "the newest version"}`)
+    .join(", ");
+  const rest = kept.length - 2;
+  return (
+    `Updated ${shown}${rest > 0 ? ` and ${rest} more` : ""}. ` +
+    `${one ? "It was" : "They were"} out of date for the version of the ` +
+    `game you have, and other mods need ${one ? "it" : "them"}, so ` +
+    `updating was the fix rather than switching ${one ? "it" : "them"} off.`
+  );
+}
+
 /** What the collection page says about mods it switched off before the
  * first launch, because this game build has already been seen to fail on
  * them.

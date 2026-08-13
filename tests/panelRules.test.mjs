@@ -11,6 +11,7 @@ import {
   knownBrokenNote,
   preDisabledNote,
   repairedNote,
+  updatedNote,
   crashSuspect,
   huntProgressNote,
   launchWaitNotice,
@@ -903,4 +904,47 @@ test("the mod page names the version it watched fail", () => {
 
 test("the mod page copes with no version recorded", () => {
   assert.match(knownBrokenNote(""), /This mod stopped the game running/);
+});
+
+// --- updatedNote ----------------------------------------------------------
+// The device result that justified building this at all: updating BaseLib
+// 3.1.2 -> 3.3.8 and RitsuLib 0.2.30 -> 0.5.11 took the erroring mods from
+// 5 to 1, repairing the two mods that depend on RitsuLib as a side effect.
+
+test("nothing updated says nothing", () => {
+  assert.equal(updatedNote([]), "");
+  assert.equal(updatedNote([{ name: "", from: "1", to: "2" }]), "");
+});
+
+test("one update names the version it moved to", () => {
+  const msg = updatedNote([{ name: "BaseLib", from: "3.1.2", to: "3.3.8" }]);
+  assert.match(msg, /Updated BaseLib to 3\.3\.8\./);
+  assert.match(msg, /It was out of date/);
+  // The justification, because updating a mod unasked needs one.
+  assert.match(msg, /other mods need it/);
+  assert.match(msg, /rather than switching it off/);
+});
+
+test("two updates read in the plural", () => {
+  const msg = updatedNote([
+    { name: "BaseLib", from: "3.1.2", to: "3.3.8" },
+    { name: "RitsuLib", from: "0.2.30", to: "0.5.11" },
+  ]);
+  assert.match(msg, /BaseLib to 3\.3\.8, RitsuLib to 0\.5\.11/);
+  assert.match(msg, /They were out of date/);
+  assert.match(msg, /need them/);
+});
+
+test("a long list names two and counts the rest", () => {
+  const msg = updatedNote(
+    ["A", "B", "C"].map((name) => ({ name, from: "1", to: "2" }))
+  );
+  assert.match(msg, /and 1 more/);
+});
+
+test("a missing target version still reads", () => {
+  assert.match(
+    updatedNote([{ name: "A", from: "1", to: "" }]),
+    /A to the newest version/
+  );
 });
