@@ -315,6 +315,31 @@ export function unavailableNote(names: string[]): string {
   );
 }
 
+/** Numbers for the framework setup steps, given which of them exist.
+ *
+ * The step labels were hardcoded 1, 2, 3, 4 with step 2 rendered only when
+ * the framework needs a launch command. Slay the Spire 2's BaseLib does not
+ * - the game loads mods by itself - so the panel read "Step 1" then
+ * "Step 3", which looks like a missing step rather than a step that was
+ * never needed.
+ *
+ * Returned rather than hardcoded so adding another optional step cannot
+ * reintroduce the gap.
+ */
+export function frameworkStepNumbers(hasLaunchCommand: boolean): {
+  install: number;
+  launch: number;
+  browse: number;
+  play: number;
+} {
+  let n = 1;
+  const install = n++;
+  const launch = hasLaunchCommand ? n++ : 0;
+  const browse = n++;
+  const play = n++;
+  return { install, launch, browse, play };
+}
+
 /** A plain readout of what the game itself reported last run.
  *
  * Michael, 2026-08-13: "it doesnt say there are 23 errors, just 23 mods

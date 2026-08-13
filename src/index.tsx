@@ -118,7 +118,8 @@ import {
   showResetRow,
   slotPressure,
   troubleshootingCount,
-} from "./panelRules";
+
+  frameworkStepNumbers,} from "./panelRules";
 import {
   ALL_GAMES,
   DEFAULT_GAME,
@@ -811,6 +812,11 @@ function CurrentGameSection() {
     ? [game.framework, ...(game.extraFrameworks ?? [])]
     : [];
   const isMultiFw = (game?.extraFrameworks?.length ?? 0) > 0;
+  // Step numbers follow what renders. BaseLib needs no launch command, so
+  // hardcoded labels produced "Step 1" followed by "Step 3".
+  const fwSteps = frameworkStepNumbers(
+    Boolean(game?.framework?.launchOptionsTemplate)
+  );
   const coopMasked = maskCoopPassword(coopSaved, coopShown);
   const missingFrameworks = allFrameworks.filter((fw, i) =>
     i === 0 ? !status?.framework_installed : !extraFwInstalled[fw.name]
@@ -1052,6 +1058,8 @@ function CurrentGameSection() {
             </>
           )}
 
+          {/* Numbered from what actually renders: BaseLib needs no launch
+              command, so the panel used to read "Step 1" then "Step 3". */}
           {isMultiFw ? (
             /* Multi-framework games (CP77): one button installs the whole
                stack; each framework still downloads individually from
@@ -1097,7 +1105,7 @@ function CurrentGameSection() {
           ) : (
             <PanelSectionRow>
               {status.framework_installed ? (
-                <Field label="Step 1" childrenLayout="below">
+                <Field label={`Step ${fwSteps.install}`} childrenLayout="below">
                   <EndorsableFrameworkRow
                     text={`${game.framework.name} installed ✓`}
                     gameDomain={game.nexusDomain}
@@ -1107,7 +1115,7 @@ function CurrentGameSection() {
                 </Field>
               ) : (
                 <ButtonItem
-                  label="Step 1"
+                  label={`Step ${fwSteps.install}`}
                   layout="below"
                   disabled={frameworkBusy || !game.framework.nexusModId}
                   description={`Most ${game.displayName} mods require ${game.framework.name}. Downloads from Nexus Mods (author gets the credit).`}
@@ -1123,10 +1131,12 @@ function CurrentGameSection() {
           {game.framework.launchOptionsTemplate && (
             <PanelSectionRow>
               {launchOptionsSet ? (
-                <Field label="Step 2">Launch command set ✓</Field>
+                <Field label={`Step ${fwSteps.launch}`}>
+                  Launch command set ✓
+                </Field>
               ) : (
                 <ButtonItem
-                  label="Step 2"
+                  label={`Step ${fwSteps.launch}`}
                   layout="below"
                   disabled={!status.framework_installed}
                   description={`Needed for ${game.framework.name} to load mods`}
@@ -1138,7 +1148,7 @@ function CurrentGameSection() {
             </PanelSectionRow>
           )}
           <PanelSectionRow>
-            <Field label="Step 3" childrenLayout="below">
+            <Field label={`Step ${fwSteps.browse}`} childrenLayout="below">
               <OrangeActionButton
                 onClick={() => {
                   setBrowseGame(game);
@@ -1153,7 +1163,7 @@ function CurrentGameSection() {
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
-              label="Step 4"
+              label={`Step ${fwSteps.play}`}
               layout="below"
               description="Restarts are required for mods to take effect"
               onClick={launchGame}
