@@ -4538,6 +4538,16 @@ def _smapi_log_path(config_dir_name: str) -> str:
     )
 
 
+# Failures a mod's own log marks as expected and handled. Not blame: the
+# mod said out loud that it carried on. Verified against Slay the Spire 2
+# 2026-08-13, where treating these as errors accused two working
+# ecosystem libraries.
+_OPTIONAL_FAILURE_RE = re.compile(
+    r"\[Optional\]|Optional patch class failed and was skipped",
+    re.IGNORECASE,
+)
+
+
 def _parse_mod_load_log(lines: list):
     """Turn a game session log into per-mod load outcomes. Returns
     (status dict keyed by normalized mod id, modded_session bool)."""
@@ -4570,6 +4580,13 @@ def _parse_mod_load_log(lines: list):
             continue
         m = re.match(r"\[ERROR\] \[([^\]]+)\] (.*)", line)
         if m:
+            # The mod's own patcher saying it planned for this. RitsuLib
+            # logs two "[Optional] ... Failed" lines out of 163 patches and
+            # then "161 applied, 2 failed" - it is working. Blaming it read
+            # as broken, and it is a library 21 other mods sit on, so
+            # switching it off would have taken all of them down.
+            if _OPTIONAL_FAILURE_RE.search(m.group(2)):
+                continue
             errors.setdefault(norm(m.group(1)), m.group(2)[:160])
             continue
         # A .NET mod loader names the mod it could not load.
@@ -10717,6 +10734,7 @@ query Link($slug: String!, $domainName: String!) {
         self, game_domain: str, install_dir: str, mods_subdir: str,
         game_user_dir: str, install_mode: str = "folder", app_id: int = 0,
         plugins_subpath: str = "", plugins_style: str = "starred",
+        protected_ids: list = None,
     ) -> dict:
         """Switch off the mods the last session blamed for errors.
 
@@ -10730,6 +10748,11 @@ query Link($slug: String!, $domainName: String!) {
         exception to the first stack frame, not to the libraries beneath it,
         because a shared dependency appears in every trace as a victim and
         disabling it would take the working mods with it.
+
+        `protected_ids` is the game's ecosystem libraries, from its own
+        config. Those get named as still-erroring rather than switched off:
+        BaseLib genuinely threw a HarmonyException in that session, but 21
+        mods sit on it, so switching it off would break the ones that work.
         """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
@@ -10754,7 +10777,8 @@ query Link($slug: String!, $domainName: String!) {
         if not blamed:
             return {"ok": True, "disabled": 0, "names": []}
         records = _load_settings().get("installed", {}).get(game_domain, {})
-        off, errors = [], []
+        keep = {int(m) for m in (protected_ids or []) if m is not None}
+        off, held, errors = [], [], []
         for key, rec in list(records.items()):
             hit = (
                 blamed.get(_norm_mod_id(key))
@@ -10762,6 +10786,9 @@ query Link($slug: String!, $domainName: String!) {
                 or blamed.get(_norm_mod_id(rec.get("folder") or ""))
             )
             if not hit:
+                continue
+            if rec.get("mod_id") in keep:
+                held.append(rec.get("name") or key)
                 continue
             try:
                 result = await self.set_mod_enabled(
@@ -10779,12 +10806,15 @@ query Link($slug: String!, $domainName: String!) {
         decky.logger.info(
             f"disabled {len(off)} mod(s) the last session blamed: "
             f"{', '.join(m['name'] for m in off[:6])}"
+            + (f"; left {len(held)} other mods depend on: "
+               f"{', '.join(held[:4])}" if held else "")
         )
         return {
             "ok": True,
             "disabled": len(off),
             "names": [m["name"] for m in off],
             "details": off[:12],
+            "held": held[:6],
             "errors": errors[:6],
         }
 

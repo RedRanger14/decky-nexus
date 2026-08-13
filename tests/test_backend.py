@@ -1,4 +1,3 @@
-import ast
 """Backend tests. Stdlib-only (unittest) so they run anywhere Python does:
 
     python -m unittest discover -s tests -v
@@ -8,9 +7,11 @@ filesystem paths point into a per-run temp directory. Network is disabled -
 anything that would hit the Nexus Mods API raises immediately.
 """
 
+import ast
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -797,6 +798,11 @@ class TestCallableArity(unittest.TestCase):
 
     @staticmethod
     def _count_ts_args(blob: str) -> int:
+        # Comments first: a parameter worth documenting often needs a comma
+        # to document it, and "Reported, never switched off" counted as an
+        # extra argument.
+        blob = re.sub(r"/\*.*?\*/", "", blob, flags=re.DOTALL)
+        blob = re.sub(r"//.*", "", blob)
         depth = 0
         count = 0
         for ch in blob:
@@ -4335,6 +4341,97 @@ class TestDisableFailingMods(unittest.TestCase):
         r = run(self.plugin.disable_failing_mods(
             "../evil", self.GAME, "mods", self.USER_DIR))
         self.assertFalse(r["ok"])
+
+    # --- the two safety rules, from the real device logs -----------------
+
+    def test_a_libraries_own_error_never_switches_it_off(self):
+        # Verified on device: BaseLib really did throw a HarmonyException,
+        # and 21 mods sat on it. Switching it off cures nothing and breaks
+        # everything, so protected_ids holds it back and says so.
+        settings = main._load_settings()
+        settings["installed"]["blametest"]["STS2RitsuLib"]["mod_id"] = 137
+        main._save_settings(settings)
+        os.makedirs(os.path.join(self.mods, "BaseLib"), exist_ok=True)
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write(chr(10).join([
+                "[ERROR] [STS2RitsuLib] HarmonyLib.HarmonyException: "
+                "Patching exception in method null",
+            ]) + chr(10))
+        r = run(self.plugin.disable_failing_mods(
+            "blametest", self.GAME, "mods", self.USER_DIR, "folder", 0,
+            "", "starred", [137]))
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("STS2RitsuLib", r["names"])
+        self.assertIn("STS2RitsuLib", r["held"])
+
+    def test_without_protection_a_blamed_library_does_go_off(self):
+        # Proves the guard is what saved it, not an accident of matching.
+        settings = main._load_settings()
+        settings["installed"]["blametest"]["STS2RitsuLib"]["mod_id"] = 137
+        main._save_settings(settings)
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write("[ERROR] [STS2RitsuLib] HarmonyLib.HarmonyException: "
+                    "Patching exception in method null" + chr(10))
+        r = run(self.plugin.disable_failing_mods(
+            "blametest", self.GAME, "mods", self.USER_DIR, "folder", 0,
+            "", "starred", []))
+        self.assertIn("STS2RitsuLib", r["names"])
+
+    def test_a_failure_the_mod_calls_optional_is_not_blame(self):
+        # RitsuLib logs 2 "[Optional] ... Failed" out of 163 patches and
+        # then "161 applied" - it is working. Same for a mod that says it
+        # skipped an optional patch class. Blaming either accused two
+        # working libraries on the device.
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write(chr(10).join([
+                "[ERROR] [STS2RitsuLib] [Patcher - framework core] "
+                "[Optional] combat_hook_lifecycle - Failed",
+                "[ERROR] [RouteSuggest] Optional patch class failed and "
+                "was skipped: type=RouteSuggest.Patches.Nav, error=x",
+            ]) + chr(10))
+        r = self._run()
+        self.assertEqual(r["disabled"], 0, r["names"])
+
+    def test_a_real_error_alongside_an_optional_one_still_counts(self):
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write(chr(10).join([
+                "[ERROR] [STS2RitsuLib] [Optional] hook - Failed",
+                "[ERROR] [RelicsReminder] while loading mod RelicsReminder",
+            ]) + chr(10))
+        r = self._run()
+        self.assertEqual(r["names"], ["RelicsReminder"])
+
+
+class TestCallableArityCounter(unittest.TestCase):
+    """The arity check is only a safety net if its own counter is right.
+    It miscounted a documented parameter because the doc comment contained
+    a comma."""
+
+    count = staticmethod(TestCallableArity._count_ts_args)
+
+    def test_counts_plain_arguments(self):
+        self.assertEqual(self.count("a: string, b: number"), 2)
+
+    def test_a_comma_inside_a_comment_is_not_an_argument(self):
+        self.assertEqual(
+            self.count(
+                "a: string,"
+                + chr(10)
+                + "/** Reported, never switched off. */"
+                + chr(10)
+                + "b: number[]"
+            ),
+            2,
+        )
+
+    def test_a_line_comment_comma_is_not_an_argument(self):
+        self.assertEqual(self.count("a: string // one, two" + chr(10)), 1)
+
+    def test_nested_generics_are_still_one_argument(self):
+        self.assertEqual(self.count("a: Record<string, number>"), 1)
+
+    def test_empty_is_zero(self):
+        self.assertEqual(self.count("   "), 0)
 
 
 class TestPerModSupport(unittest.TestCase):

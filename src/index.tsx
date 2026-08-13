@@ -100,6 +100,7 @@ import {
 import {
   crashHuntVerdict,
   crashSuspect,
+  disableFailingOutcome,
   failingProblem,
   huntProgressNote,
   launchWaitNotice,
@@ -2855,16 +2856,19 @@ function TroubleshootingSection() {
                     game.installMode ?? "folder",
                     game.appId,
                     game.pluginsTxtSubpath ?? "",
-                    game.pluginsTxtStyle ?? "starred"
+                    game.pluginsTxtStyle ?? "starred",
+                    game.recommendedModIds ?? []
                   );
                   toaster.toast({
                     title: r.ok
                       ? `Switched off ${r.disabled ?? 0}`
                       : "Could not switch them off",
                     body: r.ok
-                      ? (r.names ?? []).slice(0, 3).join(", ") ||
-                        r.error ||
-                        "Nothing matched an installed mod"
+                      ? disableFailingOutcome(
+                          r.names ?? [],
+                          r.held ?? [],
+                          r.error
+                        )
                       : r.error ?? "",
                   });
                   if (r.ok && (r.disabled ?? 0) > 0) {

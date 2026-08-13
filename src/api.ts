@@ -969,13 +969,17 @@ export const disableFailingMods = callable<
     install_mode: InstallMode,
     app_id: number,
     plugins_subpath: string,
-    plugins_style: "starred" | "listed"
+    plugins_style: "starred" | "listed",
+    /** Ecosystem libraries other mods sit on. Reported, never switched
+     * off - taking BaseLib down takes 21 working mods with it. */
+    protected_ids: number[]
   ],
   {
     ok: boolean;
     disabled?: number;
     names?: string[];
     details?: { name: string; why: string }[];
+    held?: string[];
     errors?: string[];
     error?: string;
   }
