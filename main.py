@@ -4689,6 +4689,12 @@ def _is_unambiguously_broken(info: dict) -> bool:
     that state did no visible harm - the game reached the menu and stayed
     there. Switching those off is a decision, so it stays on the button.
     """
+    # A mod the game also reported as loaded is running. Whatever failed
+    # inside it, switching the whole mod off is a bigger change than the
+    # problem - and on device the one mod in this state was providing the
+    # config screens for two others.
+    if info.get("state") == "degraded":
+        return False
     if int(info.get("errors") or 0) >= _AUTO_DISABLE_FLOOD:
         return True
     return "failed to load" in (info.get("detail") or "").lower()
@@ -4869,7 +4875,12 @@ def _parse_mod_load_log(lines: list):
     status = {key: {"state": "loaded", "detail": ""} for key in loaded}
     for key, detail in errors.items():
         status[key] = {
-            "state": "error",
+            # A mod can be BOTH. ModConfig 0.2.3 announced "initialized!",
+            # registered 16 config entries across two other mods and reported
+            # state=Loaded - and also failed to inject one duplicate tab. It
+            # is running and degraded, not broken, and calling that "error"
+            # made a working mod look like the reason the game was unhappy.
+            "state": "degraded" if key in loaded else "error",
             "detail": detail,
             "errors": blamed_counts.get(key, 0),
             "tag": raw_tags.get(key, key),
@@ -11041,7 +11052,7 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": str(e)}
         blamed = {
             key: info for key, info in status.items()
-            if info.get("state") == "error"
+            if info.get("state") in ("error", "degraded")
             and (not auto_only or _is_unambiguously_broken(info))
         }
         if not blamed:
@@ -11335,6 +11346,7 @@ query Link($slug: String!, $domainName: String!) {
         records = _load_settings().get("installed", {}).get(game_domain, {})
         wanted = {n for n in held_names if n}
         done = []
+        self._no_update_for = []
         for key, rec in list(records.items()):
             name = rec.get("name") or key
             if name not in wanted or not rec.get("mod_id"):
@@ -11349,6 +11361,12 @@ query Link($slug: String!, $domainName: String!) {
                 have = _norm_version(rec.get("version"))
                 latest = _norm_version(newest.get("version"))
                 if not latest or not _is_newer_version(latest, have):
+                    # Nothing newer exists. Worth saying out loud rather
+                    # than leaving the user to chase it: ModConfig 0.2.3 is
+                    # the newest file on its page (19 April 2026) and the
+                    # game has moved on since, so only its author can fix
+                    # it.
+                    self._no_update_for.append(rec.get("name") or key)
                     continue
                 result = await self.install_mod(
                     game_domain, int(rec["mod_id"]), newest["file_id"],
@@ -11476,17 +11494,21 @@ query Link($slug: String!, $domainName: String!) {
                 game_domain, _steam_build_id(app_id),
                 rest["held_details"], "stale",
             )
-        updated = []
+        updated, no_update = [], []
         if not already and rest.get("ok"):
             updated = await self._update_held_mods(
                 game_domain, install_dir, mods_subdir, install_mode, app_id,
                 plugins_subpath, plugins_style, rest.get("held") or [],
             )
+            no_update = list(getattr(self, "_no_update_for", []))
         return {
             "ok": True,
             "repaired": len(repaired.get("names") or []),
             "names": repaired.get("names") or [],
             "updated": updated,
+            # Blamed, cannot be switched off, and nothing newer to move to -
+            # a dead end that only the mod's author can clear.
+            "no_update": no_update,
             "held": rest.get("held") or [],
             "remaining": rest.get("details") or [],
             # Every mod the log blamed, whether acted on, held back or left

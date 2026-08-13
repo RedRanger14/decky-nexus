@@ -977,3 +977,36 @@ test("several are counted, because the banner never counts", () => {
   assert.match(msg, /^5 mods are still reporting errors: A, B, C and 2 more\./);
   assert.match(msg, /looks the same whether that is one or twenty/);
 });
+
+// --- lastRunSummary: the dead end -----------------------------------------
+// ModConfig 0.2.3 is the newest file on its page (19 April 2026) and the game
+// has moved past it. Nothing to chase, so the panel has to say so.
+
+test("a single mod with no update is named as a dead end", () => {
+  const msg = lastRunSummary(["ModConfig"], 6, ["ModConfig"]);
+  assert.match(msg, /1 mod is still reporting errors: ModConfig\./);
+  assert.match(msg, /It is running — only part of it failed/);
+  assert.match(msg, /no newer version to move to/);
+  assert.match(msg, /only the mod author can clear this/);
+  assert.match(msg, /Nothing else to do/);
+});
+
+test("several dead ends read in the plural", () => {
+  const msg = lastRunSummary(["A", "B"], 0, ["A", "B"]);
+  assert.match(msg, /They are running/);
+  assert.match(msg, /only the mod authors can clear this/);
+});
+
+test("a mix keeps the generic wording, because something may still be fixable",
+  () => {
+    const msg = lastRunSummary(["A", "B"], 0, ["A"]);
+    assert.match(msg, /looks the same whether that is one or twenty/);
+    assert.doesNotMatch(msg, /Nothing else to do/);
+  });
+
+test("no dead ends behaves exactly as before", () => {
+  assert.match(
+    lastRunSummary(["A"], 0, []),
+    /looks the same whether that is one or twenty/
+  );
+});

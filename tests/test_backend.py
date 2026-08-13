@@ -269,10 +269,26 @@ class TestModLoadLogParsing(unittest.TestCase):
         self.assertTrue(modded)
         self.assertEqual(status["baselib"]["state"], "loaded")
         self.assertEqual(status["watcher"]["state"], "loaded")
-        # errors override 'finished initialization', and the [ATA-IronClad]
-        # log tag must map onto the ATA_IronClad folder id
-        self.assertEqual(status["ataironclad"]["state"], "error")
+        # A mod that finished initialization AND logged an error is
+        # DEGRADED, not broken. This used to read "error", on the theory that
+        # an error overrides a successful init - until ModConfig 0.2.3 on
+        # device announced "initialized!", registered 16 config entries for
+        # two other mods, reported state=Loaded, and also failed to inject
+        # one duplicate tab. Calling that "error" made a working mod look
+        # like the reason the game was unhappy.
+        #
+        # The [ATA-IronClad] log tag must still map onto the ATA_IronClad
+        # folder id.
+        self.assertEqual(status["ataironclad"]["state"], "degraded")
         self.assertIn("Patching exception", status["ataironclad"]["detail"])
+
+    def test_a_mod_that_never_loaded_is_still_an_error(self):
+        status, _modded = main._parse_mod_load_log([
+            "[INFO] RUNNING MODDED",
+            "[ERROR] Exception thrown while loading mod Doomed: "
+            "System.Reflection.ReflectionTypeLoadException: nope",
+        ])
+        self.assertEqual(status["doomed"]["state"], "error")
 
     def test_no_modded_session(self):
         status, modded = main._parse_mod_load_log(
