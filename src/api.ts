@@ -972,7 +972,10 @@ export const disableFailingMods = callable<
     plugins_style: "starred" | "listed",
     /** Ecosystem libraries other mods sit on. Reported, never switched
      * off - taking BaseLib down takes 21 working mods with it. */
-    protected_ids: number[]
+    protected_ids: number[],
+    /** Same answer without touching anything. The panel row is built from
+     * this so it cannot disagree with what the button does. */
+    dry_run: boolean
   ],
   {
     ok: boolean;

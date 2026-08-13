@@ -4401,6 +4401,219 @@ class TestDisableFailingMods(unittest.TestCase):
         r = self._run()
         self.assertEqual(r["names"], ["RelicsReminder"])
 
+    # --- matching a logger name back to an installed mod -----------------
+
+    def _manifest(self, folder: str, mod_id: str, deps=()):
+        os.makedirs(os.path.join(self.mods, folder), exist_ok=True)
+        with open(os.path.join(self.mods, folder, "mod_manifest.json"),
+                  "w", encoding="utf-8") as f:
+            json.dump({"id": mod_id, "name": folder,
+                       "dependencies": list(deps)}, f)
+
+    def test_a_namespaced_logger_name_finds_its_mod(self):
+        # The gap that made this button miss five of nine blamed mods on
+        # device: RitsuLib logs as "com.ritsukage.sts2-RitsuLib", which
+        # looks nothing like the folder it is installed in.
+        self._manifest("STS2RitsuLib", "STS2-RitsuLib")
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write("[ERROR] [com.ritsukage.sts2-RitsuLib] [Patcher] "
+                    "[Critical] archaic_tooth - Failed" + chr(10))
+        self.assertEqual(self._run()["names"], ["STS2RitsuLib"])
+
+    def test_a_mod_others_depend_on_is_held_back(self):
+        # No hardcoded list: RouteSuggest's own manifest says it needs
+        # STS2RitsuLib, so switching RitsuLib off would break it.
+        self._manifest("STS2RitsuLib", "STS2-RitsuLib")
+        self._manifest("RouteSuggest", "RouteSuggest", ["STS2-RitsuLib"])
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write("[ERROR] [STS2-RitsuLib] HarmonyLib.HarmonyException: "
+                    "Patching exception in method null" + chr(10))
+        r = self._run()
+        self.assertEqual(r["names"], [])
+        self.assertEqual(r["held"], ["STS2RitsuLib"])
+
+    def test_a_library_whose_only_dependent_is_also_going_goes_too(self):
+        # RouteSuggest is being switched off in this same pass, so nothing
+        # is left that needs RitsuLib and holding it back protects nobody.
+        self._manifest("STS2RitsuLib", "STS2-RitsuLib")
+        self._manifest("RouteSuggest", "RouteSuggest", ["STS2-RitsuLib"])
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write(chr(10).join([
+                "[ERROR] [STS2-RitsuLib] HarmonyLib.HarmonyException: x",
+                "[ERROR] [RouteSuggest] while loading mod RouteSuggest",
+            ]) + chr(10))
+        r = self._run()
+        self.assertEqual(sorted(r["names"]), ["RouteSuggest", "STS2RitsuLib"])
+        self.assertEqual(r["held"], [])
+
+    # --- dry run ---------------------------------------------------------
+
+    def _dry(self):
+        return run(self.plugin.disable_failing_mods(
+            "blametest", self.GAME, "mods", self.USER_DIR, "folder", 0,
+            "", "starred", None, True))
+
+    def test_a_dry_run_answers_the_same_but_changes_nothing(self):
+        # The panel row is built from this. It saying "9 mods broke" while
+        # the button switched off 3 was a bug in its own right.
+        dry = self._dry()
+        self.assertEqual(dry["names"], ["RelicsReminder"])
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.mods, "RelicsReminder")))
+        wet = self._run()
+        self.assertEqual(wet["names"], dry["names"])
+        self.assertFalse(os.path.isdir(
+            os.path.join(self.mods, "RelicsReminder")))
+
+    def test_a_dry_run_holds_back_the_same_mods(self):
+        self._manifest("STS2RitsuLib", "STS2-RitsuLib")
+        self._manifest("RouteSuggest", "RouteSuggest", ["STS2-RitsuLib"])
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write("[ERROR] [STS2-RitsuLib] HarmonyLib.HarmonyException: x"
+                    + chr(10))
+        self.assertEqual(self._dry()["held"], ["STS2RitsuLib"])
+
+
+class TestGodotModManifests(unittest.TestCase):
+    """Reading each mod's own manifest, which is what makes matching a log
+    tag to an installed mod possible at all.
+
+    All of this is shaped by the real Slay the Spire 2 mods dir on device,
+    2026-08-13: 27 mods, ids that do not match their folder names, two
+    files written with a UTF-8 BOM, and dependency lists that say which
+    mods are libraries so the plugin does not have to guess."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _mod(self, folder: str, filename: str, body: str, bom=False):
+        os.makedirs(os.path.join(self.root, folder), exist_ok=True)
+        path = os.path.join(self.root, folder, filename)
+        with open(path, "w", encoding="utf-8-sig" if bom else "utf-8") as f:
+            f.write(body)
+
+    def test_reads_id_name_and_dependencies(self):
+        self._mod("RitsuLib", "mod_manifest.json", json.dumps(
+            {"id": "STS2-RitsuLib", "name": "RitsuLib", "dependencies": []}))
+        got = main._godot_mod_manifests(self.root)
+        self.assertEqual(got["RitsuLib"]["id"], "STS2-RitsuLib")
+        self.assertEqual(got["RitsuLib"]["name"], "RitsuLib")
+        self.assertEqual(got["RitsuLib"]["deps"], [])
+
+    def test_a_bom_does_not_hide_the_manifest(self):
+        # BaseLib and TransformOrBanish are both written with a BOM on
+        # device. Read as plain utf-8 they raise, and both mods vanish -
+        # which is how BaseLib came to look like it had no manifest.
+        self._mod("BaseLib", "BaseLib.json",
+                  json.dumps({"id": "BaseLib", "name": "BaseLib"}), bom=True)
+        self.assertEqual(
+            main._godot_mod_manifests(self.root)["BaseLib"]["id"], "BaseLib")
+
+    def test_finds_a_manifest_named_after_the_mod(self):
+        self._mod("Campfire Trading", "STS2Trade.json", json.dumps(
+            {"id": "STS2Trade", "name": "Campfire Trading",
+             "dependencies": ["BaseLib"]}))
+        got = main._godot_mod_manifests(self.root)["Campfire Trading"]
+        self.assertEqual(got["id"], "STS2Trade")
+        self.assertEqual(got["deps"], ["BaseLib"])
+
+    def test_prefers_mod_manifest_json_over_another_json(self):
+        self._mod("Both", "aaa-data.json", json.dumps({"id": "WRONG"}))
+        self._mod("Both", "mod_manifest.json", json.dumps({"id": "RIGHT"}))
+        self.assertEqual(
+            main._godot_mod_manifests(self.root)["Both"]["id"], "RIGHT")
+
+    def test_missing_dependencies_key_is_an_empty_list(self):
+        # Several mods write "dependencies": null or omit it entirely.
+        self._mod("A", "A.json", json.dumps({"id": "A", "dependencies": None}))
+        self._mod("B", "B.json", json.dumps({"id": "B"}))
+        got = main._godot_mod_manifests(self.root)
+        self.assertEqual(got["A"]["deps"], [])
+        self.assertEqual(got["B"]["deps"], [])
+
+    def test_unreadable_or_idless_json_is_skipped_not_fatal(self):
+        self._mod("Broken", "x.json", "{ not json")
+        self._mod("NoId", "y.json", json.dumps({"name": "no id here"}))
+        self._mod("Fine", "z.json", json.dumps({"id": "Fine"}))
+        got = main._godot_mod_manifests(self.root)
+        self.assertNotIn("Broken", got)
+        self.assertNotIn("NoId", got)
+        self.assertIn("Fine", got)
+
+    def test_a_missing_mods_dir_is_empty_not_an_error(self):
+        self.assertEqual(
+            main._godot_mod_manifests(os.path.join(self.root, "nope")), {})
+
+
+class TestLogTagMatching(unittest.TestCase):
+    """Mods log under a logger name they chose, not their id. Five of the
+    nine blamed tags in the real crash log matched nothing until this."""
+
+    def test_an_exact_id_matches(self):
+        self.assertTrue(main._tag_names_mod("BaseLib", "BaseLib"))
+        self.assertTrue(main._tag_names_mod("RelicsReminder",
+                                            "relicsreminder"))
+
+    def test_a_namespaced_tag_matches_its_id(self):
+        self.assertTrue(main._tag_names_mod(
+            "com.ritsukage.sts2-RitsuLib", "STS2-RitsuLib"))
+        self.assertTrue(main._tag_names_mod(
+            "sts2.piyixiajiuhenfen.modconfig", "ModConfig"))
+        self.assertTrue(main._tag_names_mod(
+            "com.ritsukage.sts2-multiplayerpotionview",
+            "STS2-MultiPlayerPotionView"))
+
+    def test_a_partial_word_does_not_match(self):
+        # The danger of suffix matching: "Lib" must not claim "BaseLib",
+        # because BaseLib is the library everything else depends on.
+        self.assertFalse(main._tag_names_mod("BaseLib", "Lib"))
+        self.assertFalse(main._tag_names_mod("SuperRelicsReminder",
+                                             "RelicsReminder"))
+
+    def test_a_very_short_id_only_matches_exactly(self):
+        self.assertTrue(main._tag_names_mod("ab", "ab"))
+        self.assertFalse(main._tag_names_mod("x.ab", "ab"))
+
+    def test_blanks_never_match(self):
+        self.assertFalse(main._tag_names_mod("", "BaseLib"))
+        self.assertFalse(main._tag_names_mod("BaseLib", ""))
+        self.assertFalse(main._tag_names_mod("BaseLib", "   "))
+
+
+class TestDependencyProtection(unittest.TestCase):
+    """Which mods are libraries, taken from the manifests rather than a
+    hand-written list. Five installed mods declared BaseLib."""
+
+    MANIFESTS = {
+        "BaseLib": {"id": "BaseLib", "name": "BaseLib", "deps": []},
+        "RitsuLib": {"id": "STS2-RitsuLib", "name": "RitsuLib", "deps": []},
+        "Campfire Trading": {"id": "STS2Trade", "name": "Campfire Trading",
+                             "deps": ["BaseLib"]},
+        "Show Player Hand Cards": {"id": "STS2-ShowPlayerHandCards",
+                                   "name": "Show Player Hand Cards",
+                                   "deps": ["STS2-RitsuLib"]},
+    }
+
+    def test_a_library_something_still_needs_is_reported(self):
+        keeping = {"BaseLib", "RitsuLib", "Campfire Trading"}
+        needed = main._mods_needed_by_others(self.MANIFESTS, keeping)
+        self.assertEqual(needed["baselib"], ["Campfire Trading"])
+
+    def test_a_library_nothing_needs_any_more_is_free(self):
+        # Its only dependent is being switched off in this same pass.
+        keeping = {"BaseLib", "RitsuLib"}
+        needed = main._mods_needed_by_others(self.MANIFESTS, keeping)
+        self.assertNotIn("sts2-ritsulib", needed)
+        self.assertNotIn("baselib", needed)
+
+    def test_dependency_ids_are_matched_case_insensitively(self):
+        needed = main._mods_needed_by_others(
+            self.MANIFESTS, {"Show Player Hand Cards"})
+        self.assertIn("sts2-ritsulib", needed)
+
 
 class TestCallableArityCounter(unittest.TestCase):
     """The arity check is only a safety net if its own counter is right.
