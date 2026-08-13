@@ -1025,6 +1025,9 @@ export const getHealthCheck = callable<
       files?: { name: string; url: string }[];
     }[];
     owned_dlc?: string[];
+    /** Libraries the plugin installed on a mod's behalf before you asked.
+     * Shown so a clean report cannot be mistaken for a broken check. */
+    already_fixed?: { name: string; for: string }[];
     errors?: string[];
     error?: string;
   }
