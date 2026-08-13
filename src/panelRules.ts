@@ -224,6 +224,37 @@ export function ghostPluginProblem(
   );
 }
 
+/** What to say about mods the game's own log blamed for errors last run.
+ *
+ * Slay the Spire 2, 2026-08-13: a collection threw 1,078 exceptions and
+ * killed the game five seconds into the menu. Every one of them named the
+ * mod it came from, so "which ones are out of date" is answerable - and
+ * the answer is worth spending a sentence on, because from the outside a
+ * collection that closes the game looks like the plugin's fault.
+ *
+ * Names the first two mods. A list of nine reads as a wall and gets
+ * skipped; two plus a count is enough to recognise what is going.
+ */
+export function failingProblem(details: string[]): string | undefined {
+  const kept = details.filter((d) => d && d.trim());
+  if (!kept.length) return undefined;
+  const names = kept.map((d) => d.split(":")[0].trim()).filter(Boolean);
+  const shown = names.slice(0, 2).join(", ");
+  const rest = names.length - 2;
+  const who = shown
+    ? `${shown}${rest > 0 ? ` and ${rest} more` : ""}`
+    : `${kept.length} mod${kept.length === 1 ? "" : "s"}`;
+  return (
+    `The game reported errors from ${who}. That normally means ` +
+    `${names.length === 1 ? "it has" : "they have"} not been updated for ` +
+    `this version of the game. Switching ${
+      names.length === 1 ? "it" : "them"
+    } off leaves the rest of your mods alone, and you can switch ` +
+    `${names.length === 1 ? "it" : "them"} back on once ` +
+    `${names.length === 1 ? "an update arrives" : "updates arrive"}.`
+  );
+}
+
 /** Whether the load order has outgrown what the engine can address, and
  * what to tell someone who has never heard of a plugin slot.
  *

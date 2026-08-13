@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   crashHuntVerdict,
   cancellableDownload,
+  failingProblem,
   crashSuspect,
   huntProgressNote,
   launchWaitNotice,
@@ -748,4 +749,48 @@ test("permanent skips are never actionable", () => {
       reason
     );
   }
+});
+
+// --- failingProblem -------------------------------------------------------
+// The Slay the Spire 2 case: the log names every mod it threw from, so the
+// panel can name them back instead of saying "something crashed".
+
+test("nothing blamed says nothing", () => {
+  assert.equal(failingProblem([]), undefined);
+  assert.equal(failingProblem(["", "  "]), undefined);
+});
+
+test("one failing mod reads in the singular", () => {
+  const msg = failingProblem(["Friedslop: MissingMethodException"]);
+  assert.match(msg, /Friedslop/);
+  assert.match(msg, /it has not been updated/);
+  assert.match(msg, /switch it back on/);
+  assert.doesNotMatch(msg, /and \d+ more/);
+});
+
+test("two failing mods are both named", () => {
+  const msg = failingProblem(["Alpha: boom", "Beta: boom"]);
+  assert.match(msg, /Alpha, Beta/);
+  assert.match(msg, /they have not been updated/);
+  assert.doesNotMatch(msg, /more/);
+});
+
+test("a long list names two and counts the rest", () => {
+  const msg = failingProblem(
+    ["A: x", "B: x", "C: x", "D: x", "E: x"].slice()
+  );
+  assert.match(msg, /A, B and 3 more/);
+});
+
+test("says switching them off leaves the others alone", () => {
+  // The whole point of the button: it is not "disable all mods".
+  assert.match(
+    failingProblem(["A: x", "B: x"]),
+    /leaves the rest of your mods alone/
+  );
+});
+
+test("a detail with no mod name still counts", () => {
+  const msg = failingProblem([":  ", "A: x"]);
+  assert.match(msg, /A/);
 });

@@ -4176,6 +4176,167 @@ class TestCancelCollectionInstall(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestBlameFailingMods(unittest.TestCase):
+    """Name the mod that BROKE, not the library it called through.
+
+    Slay the Spire 2, 2026-08-13: a collection produced 1,078
+    MissingMethodExceptions and crashed the game five seconds into the main
+    menu. The stack traces name several mods per exception - the one that
+    threw, then the libraries beneath it. STS2RitsuLib appeared in 853
+    frames as a victim; blaming it would switch off a shared dependency and
+    take working mods with it."""
+
+    LOG = [
+        "[WARN] [2026-08-13 15:24:04.238] RouteSuggest: Mod loaded",
+        "[ERROR] Exception thrown while loading mod STS2Trade: "
+        "System.Reflection.ReflectionTypeLoadException: Unable to load",
+        "ERROR: System.MissingMethodException: Method not found: "
+        "'Boolean MegaCrit.Sts2.Core.Combat.CombatManager.get_IsPlayPhase()'.",
+        "   at RelicsReminder.UnceasingTopLastCardIcon._Process(Double delta)",
+        "   at STS2RitsuLib.Helper.Invoke()",
+        "   at HarmonyLib.Patch.Call()",
+        "   at Godot.Node.InvokeGodotClassMethod(godot_string_name& method)",
+        "ERROR: System.MissingMethodException: Method not found: "
+        "'MegaCrit.Sts2.Core.Combat.CombatState Creature.get_CombatState()'.",
+        "   at RelicsReminder.ArtOfWarFootIcon._Process(Double delta)",
+        "   at Godot.Node.InvokeGodotClassMethod(godot_string_name& method)",
+    ]
+
+    def _parse(self):
+        return main._parse_mod_load_log(self.LOG)
+
+    def test_blames_the_mod_that_threw(self):
+        status, _ = self._parse()
+        self.assertEqual(status["relicsreminder"]["state"], "error")
+        self.assertEqual(status["relicsreminder"]["errors"], 2)
+
+    def test_does_not_blame_the_library_it_called_through(self):
+        # STS2RitsuLib is beneath RelicsReminder in the same trace.
+        status, _ = self._parse()
+        self.assertNotIn("sts2ritsulib", status)
+
+    def test_never_blames_the_engine_or_the_game(self):
+        status, _ = self._parse()
+        for innocent in ("godot", "harmonylib", "megacrit", "system"):
+            self.assertNotIn(innocent, status)
+
+    def test_catches_a_mod_that_failed_to_load_outright(self):
+        status, _ = self._parse()
+        self.assertEqual(status["sts2trade"]["detail"], "failed to load")
+
+    def test_explains_a_version_mismatch_in_plain_words(self):
+        status, _ = self._parse()
+        detail = status["relicsreminder"]["detail"]
+        self.assertIn("different game build", detail)
+        # No exception class names - the user cannot act on those.
+        self.assertNotIn("Exception", detail)
+
+    def test_a_working_mod_is_still_reported_loaded(self):
+        status, modded = self._parse()
+        self.assertTrue(modded is False or modded is True)
+        self.assertEqual(status["routesuggest"]["state"], "loaded")
+
+    def test_a_clean_log_blames_nobody(self):
+        status, _ = main._parse_mod_load_log([
+            "[WARN] [2026-08-13 16:00:00.000] RouteSuggest: Mod loaded",
+        ])
+        self.assertEqual(
+            [k for k, v in status.items() if v["state"] == "error"], []
+        )
+
+
+class TestDisableFailingMods(unittest.TestCase):
+    """One tap for "switch off the outdated ones", using the game's own log
+    to decide which. Michael asked for it after a Slay the Spire 2
+    collection crashed the game with 1,078 exceptions from mods built for a
+    different game build."""
+
+    GAME = "Blame Test"
+    USER_DIR = "BlameTestUser"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.mods = os.path.join(root, "mods")
+        for name in ("RelicsReminder", "STS2RitsuLib", "RouteSuggest"):
+            os.makedirs(os.path.join(self.mods, name))
+            with open(os.path.join(self.mods, name, "mod.dll"), "w") as f:
+                f.write(name)
+        self.logdir = os.path.join(
+            main.decky.DECKY_USER_HOME, ".local", "share", self.USER_DIR,
+            "logs",
+        )
+        os.makedirs(self.logdir, exist_ok=True)
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write(chr(10).join([
+                "[WARN] [2026-08-13 15:24:04.238] RouteSuggest: Mod loaded",
+                "ERROR: System.MissingMethodException: Method not found: "
+                "'Boolean CombatManager.get_IsPlayPhase()'.",
+                "   at RelicsReminder.Icon._Process(Double delta)",
+                "   at STS2RitsuLib.Helper.Invoke()",
+            ]) + chr(10))
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["blametest"] = {
+            "RelicsReminder": {"mode": "folder", "folder": "RelicsReminder",
+                               "name": "RelicsReminder", "files": []},
+            "STS2RitsuLib": {"mode": "folder", "folder": "STS2RitsuLib",
+                             "name": "STS2RitsuLib", "files": []},
+            "RouteSuggest": {"mode": "folder", "folder": "RouteSuggest",
+                             "name": "RouteSuggest", "files": []},
+        }
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("blametest", None)
+        main._save_settings(settings)
+        shutil.rmtree(
+            os.path.join(main.decky.DECKY_USER_HOME, ".local", "share",
+                         self.USER_DIR),
+            ignore_errors=True,
+        )
+
+    def _run(self):
+        return run(self.plugin.disable_failing_mods(
+            "blametest", self.GAME, "mods", self.USER_DIR, "folder"))
+
+    def test_disables_the_mod_the_log_blames(self):
+        r = self._run()
+        self.assertTrue(r["ok"], r)
+        self.assertIn("RelicsReminder", r["names"])
+
+    def test_leaves_the_library_it_called_through_alone(self):
+        # Disabling a shared dependency takes working mods with it.
+        r = self._run()
+        self.assertNotIn("STS2RitsuLib", r["names"])
+
+    def test_leaves_a_working_mod_alone(self):
+        r = self._run()
+        self.assertNotIn("RouteSuggest", r["names"])
+
+    def test_says_why_each_one_went_off(self):
+        r = self._run()
+        why = {d["name"]: d["why"] for d in r["details"]}
+        self.assertIn("different game build", why["RelicsReminder"])
+
+    def test_a_clean_log_disables_nothing(self):
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write("[WARN] [ts] RouteSuggest: Mod loaded" + chr(10))
+        self.assertEqual(self._run()["disabled"], 0)
+
+    def test_no_log_is_not_an_error(self):
+        os.remove(os.path.join(self.logdir, "godot.log"))
+        r = self._run()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["disabled"], 0)
+
+    def test_rejects_a_bad_domain(self):
+        r = run(self.plugin.disable_failing_mods(
+            "../evil", self.GAME, "mods", self.USER_DIR))
+        self.assertFalse(r["ok"])
+
+
 class TestPerModSupport(unittest.TestCase):
     """The same warning has to reach someone who found the mod by
     browsing, not only someone installing the collection it came from.
