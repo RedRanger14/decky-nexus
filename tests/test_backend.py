@@ -5595,6 +5595,51 @@ class TestHealthCheck(unittest.TestCase):
         self.assertFalse(run(self.plugin.get_health_check(
             "../evil", self.GAME, "Data"))["ok"])
 
+    # --- the two halves must never contradict each other -----------------
+
+    def test_a_fix_for_a_mod_that_is_gone_is_not_reported(self):
+        # Michael: KitLib and RitsuLib listed under "sorted out already"
+        # while the findings above said LustTravel2 still needed them. A
+        # stale line contradicting the findings is worse than no line.
+        settings = main._load_settings()
+        settings.setdefault("auto_fixed", {})["newvegas"] = [
+            {"name": "Ghost Mod", "for": "One HUD"},
+            {"name": "One HUD", "for": "Rigged Odds"},
+        ]
+        main._save_settings(settings)
+        try:
+            names = [e["name"] for e in self._check()["already_fixed"]]
+            self.assertNotIn("Ghost Mod", names)
+            self.assertIn("One HUD", names)
+        finally:
+            settings = main._load_settings()
+            settings.get("auto_fixed", {}).pop("newvegas", None)
+            main._save_settings(settings)
+
+    def test_reset_forgets_what_it_fixed_but_keeps_what_it_learned(self):
+        # The distinction that got confused: a verdict is knowledge about a
+        # game build and a mod version, true whatever is installed. A fix
+        # log is a list of things done to THIS install, and reset destroys
+        # the install.
+        settings = main._load_settings()
+        settings.setdefault("auto_fixed", {})["newvegas"] = [
+            {"name": "RitsuLib", "for": "LustTravel2"}]
+        main._save_settings(settings)
+        main._record_mod_verdicts("newvegas", "b1", [
+            {"mod_id": 284, "version": "1.0", "name": "X", "why": "y"}])
+        try:
+            run(self.plugin.reset_game_modding(
+                "newvegas", self.GAME, "Data", "dataDir", 1))
+            after = main._load_settings()
+            self.assertEqual(
+                (after.get("auto_fixed") or {}).get("newvegas"), None)
+            self.assertIn(284, main._known_broken_mods("newvegas", "b1"))
+        finally:
+            settings = main._load_settings()
+            settings.get("auto_fixed", {}).pop("newvegas", None)
+            settings.get("mod_verdicts", {}).pop("newvegas", None)
+            main._save_settings(settings)
+
 
 class TestLogTagMatching(unittest.TestCase):
     """Mods log under a logger name they chose, not their id. Five of the
