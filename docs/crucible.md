@@ -1,6 +1,17 @@
-# A harness that finds out which mods work, so users don't have to
+# Crucible
+
+**A harness that finds out which mods work, so users don't have to.**
 
 **Date:** 13 August 2026
+**Name:** Crucible — Michael's pick, 13 August 2026. Anvil was the
+alternative and was dropped for a good reason: CurseForge has built its
+brand around forge and anvil imagery, so borrowing it would read as
+following them. A crucible is where something is tested to destruction,
+which is the job.
+
+If the results ever become a public feed, that feed is the **Compatibility
+Index** — the tool's name should not be the data's name.
+
 **Status:** idea, not scheduled. Nothing here is built.
 **Origin:** Michael, after a Slay the Spire 2 collection closed the game
 twice: *"there are so many mods for so many games and testing them all
@@ -188,6 +199,44 @@ failing to load - or the oracle is not as good as it looks.
 
 That is a day of work and it settles whether any of the rest is worth
 building.
+
+## A local seed already runs
+
+Added 13 August 2026, in the plugin rather than the harness, because the
+same gap kept biting: every fix only worked *after* a crash had produced a
+log to read, so a reset and reinstall put the broken mod back and the game
+died on it again.
+
+The plugin now keeps its own verdict store — the same shape this document
+proposes, filled in from one device instead of a fleet:
+
+```
+mod_verdicts[domain][mod_id] = {build, version, state, why, name}
+```
+
+- **Written** when a session log blames a mod unambiguously (a flood of
+  attributed exceptions, or "failed to load").
+- **Scoped to the game build and the mod version.** A build change retires
+  the verdict, because a game update is the most likely thing to have fixed
+  or broken a mod. A different installed version starts from innocent.
+- **Survives `reset_game_modding`** — deliberately, with a test that fails if
+  someone adds `mod_verdicts` to the sections reset clears.
+- **Applied at collection finish-setup**, before the first launch, and
+  surfaced on the mod's own page.
+
+First real contents, Slay the Spire 2 build 23811903:
+
+| mod id | mod | version | verdict |
+|---|---|---|---|
+| 284 | Relics Reminder | 1.1.0 | 1,056 MissingMethodExceptions from `_Process` |
+| 21 | Remove Multiplayer Player Limit | 0.1.6 | failed to load |
+| 107 | Campfire Trading | 1.0 | failed to load |
+| 468 | Refresh Ancient | 1.3.3 | failed to load |
+
+That table is what Crucible would produce at scale, and it is already the
+right shape to publish. Which means the harness's job is narrower than it
+first looked: **not designing the verdict format, but filling this table in
+without a human having to crash a game to add a row.**
 
 ## What already exists to build on
 

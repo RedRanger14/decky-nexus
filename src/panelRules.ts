@@ -260,6 +260,47 @@ export function failingProblem(
   );
 }
 
+/** The warning on a mod's own page when we have watched that exact version
+ * fail on the game build installed now.
+ *
+ * Says what was seen rather than passing judgement on the mod. It failed
+ * against this build - which is usually the game moving, not the mod being
+ * bad - and the author may already have shipped the fix.
+ */
+export function knownBrokenNote(version: string): string {
+  const v = (version || "").trim();
+  return (
+    `This ${v ? `version (${v})` : "mod"} stopped the game running the ` +
+    `last time it was installed — it needs an update for the version of the ` +
+    `game you have. You can still install it; it will be switched off until ` +
+    `you turn it on.`
+  );
+}
+
+/** What the collection page says about mods it switched off before the
+ * first launch, because this game build has already been seen to fail on
+ * them.
+ *
+ * Framed as the collection being ready rather than as damage. Somebody who
+ * just installed 27 mods and is told 4 are off wants to know the game will
+ * start, not to read an incident report.
+ */
+export function preDisabledNote(names: string[]): string {
+  const off = names.filter(Boolean);
+  if (!off.length) return "";
+  const one = off.length === 1;
+  const shown = off.slice(0, 3).join(", ");
+  const rest = off.length - 3;
+  return (
+    `Ready to play. ${shown}${rest > 0 ? ` and ${rest} more` : ""} ` +
+    `${one ? "was" : "were"} left switched off — ${one ? "it does" : "they do"} ` +
+    `not work with the version of the game you have, and the game will not ` +
+    `start with ${one ? "it" : "them"} on. ${one ? "It is" : "They are"} ` +
+    `still installed, so ${one ? "it" : "they"} can be switched on in ` +
+    `Installed mods when ${one ? "an update arrives" : "updates arrive"}.`
+  );
+}
+
 /** What the panel says about mods it switched off without being asked.
  *
  * Silence would be worse than a button. Somebody who installed a

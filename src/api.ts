@@ -966,6 +966,41 @@ export const getModSupport = callable<
   }
 >("get_mod_support");
 
+// Switch off mods already known not to run on the installed game build,
+// before the user ever launches. The step that stops the first crash.
+export const applyKnownVerdicts = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    install_mode: InstallMode,
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    protected_ids: number[]
+  ],
+  {
+    ok: boolean;
+    disabled?: number;
+    names?: string[];
+    held?: string[];
+    error?: string;
+  }
+>("apply_known_verdicts");
+
+// Whether we have watched this mod fail on the build installed right now.
+// Unlike the hand-written table next door, this one fills itself in.
+export const getKnownModVerdict = callable<
+  [game_domain: string, mod_id: number, app_id: number],
+  {
+    ok: boolean;
+    known?: boolean;
+    version?: string;
+    why?: string;
+    error?: string;
+  }
+>("get_known_mod_verdict");
+
 // The installed mods the game's last session blamed. Reads only - its job
 // is to tell checkUpdates which collection-pinned mods have earned a look.
 export const getBlamedFolders = callable<

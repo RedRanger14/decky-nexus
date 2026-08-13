@@ -20,11 +20,13 @@ import {
   isActionableAttention,
   fileConflictProblem,
   isRemaining,
-} from "./panelRules";
+
+  preDisabledNote,} from "./panelRules";
 
 import {
   endorseCollection,
   applyKnownPrerequisites,
+  applyKnownVerdicts,
   getCollectionExtras,
   getCollectionSupport,
   disableBlockedPlugins,
@@ -155,6 +157,9 @@ export function CollectionPage() {
   // silent for a long time after Finish setup with no hint that anything
   // was happening, or that waiting was the right thing to do.
   const [finalising, setFinalising] = useState("");
+  // Mods switched off before the first launch because this game build has
+  // already been seen to fail on them.
+  const [preDisabled, setPreDisabled] = useState<string[]>([]);
   // Known not to work here. Said before the download, not after - the TTW
   // collection is 42 GB and needs a conversion Gaming Mode cannot build.
   const [unsupported, setUnsupported] = useState("");
@@ -396,6 +401,28 @@ export function CollectionPage() {
       } catch {
         /* the load-order row still offers it manually */
       }
+    }
+    // Anything we have already watched fail on this exact game build goes
+    // off now, before the first launch. Every earlier fix only worked AFTER
+    // a crash had produced a log to read, so a reset and reinstall put the
+    // same mod back and the game died on it again.
+    try {
+      setFinalising("Switching off mods this game version can't run…");
+      const known = await applyKnownVerdicts(
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        game.installMode ?? "folder",
+        game.appId,
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred",
+        game.recommendedModIds ?? []
+      );
+      if (known.ok && (known.disabled ?? 0) > 0) {
+        setPreDisabled(known.names ?? []);
+      }
+    } catch {
+      /* the panel still repairs it after the first launch */
     }
     try {
       const extras = await getCollectionExtras(
@@ -1464,6 +1491,21 @@ export function CollectionPage() {
               installed - only the missing ones will download.
             </div>
           )}
+        {preDisabled.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              margin: "-6px 0 12px",
+              padding: "8px 10px",
+              borderRadius: "4px",
+              background: "rgba(143, 212, 143, 0.10)",
+              border: "1px solid rgba(143, 212, 143, 0.35)",
+              lineHeight: 1.45,
+            }}
+          >
+            {preDisabledNote(preDisabled)}
+          </div>
+        )}
         {(manualMods.length > 0 ||
           (detail?.externals.length ?? 0) > 0) &&
           !installing && (

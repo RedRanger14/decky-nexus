@@ -4725,6 +4725,182 @@ class TestCollectionPinnedUpdates(unittest.TestCase):
         self.assertNotIn("Quiet", r["updates"])
 
 
+class TestModVerdictMemory(unittest.TestCase):
+    """Remembering that a mod could not run, so a reset and reinstall does
+    not have to crash the game to find out again.
+
+    Michael reset game modding, reinstalled the Slay the Spire 2 collection
+    and the game died on exactly the mod the plugin had already watched kill
+    it twice. Every fix up to that point only worked after a crash had
+    produced a log to read."""
+
+    def setUp(self):
+        settings = main._load_settings()
+        settings.pop("mod_verdicts", None)
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.pop("mod_verdicts", None)
+        settings.get("installed", {}).pop("verdicttest", None)
+        main._save_settings(settings)
+
+    def _note(self, build="100", mod_id=284, version="1.2.0"):
+        return main._record_mod_verdicts("verdicttest", build, [
+            {"mod_id": mod_id, "version": version, "name": "Relics Reminder",
+             "why": "calls something this version of the game does not have"},
+        ])
+
+    def test_a_verdict_survives_being_written_and_read(self):
+        self._note()
+        known = main._known_broken_mods("verdicttest", "100")
+        self.assertEqual(known[284]["state"], "broken")
+        self.assertIn("does not have", known[284]["why"])
+
+    def test_a_game_update_retires_the_verdict(self):
+        # A build change is the single most likely thing to have fixed or
+        # broken a mod, so afterwards the honest answer is "unknown".
+        self._note(build="100")
+        self.assertEqual(main._known_broken_mods("verdicttest", "101"), {})
+
+    def test_an_unknown_build_is_not_a_verdict(self):
+        self._note()
+        self.assertEqual(main._known_broken_mods("verdicttest", ""), {})
+
+    def test_a_verdict_with_no_build_is_not_recorded(self):
+        # Better to know nothing than to record a fact with no scope.
+        self.assertEqual(self._note(build=""), 0)
+        self.assertEqual(main._known_broken_mods("verdicttest", "100"), {})
+
+    def test_writing_the_same_verdict_twice_changes_nothing(self):
+        self.assertEqual(self._note(), 1)
+        self.assertEqual(self._note(), 0)
+
+    def test_a_verdict_needs_a_mod_id(self):
+        self.assertEqual(main._record_mod_verdicts("verdicttest", "100", [
+            {"name": "no id", "why": "x"}]), 0)
+
+
+class TestApplyKnownVerdicts(unittest.TestCase):
+    """Switching off what is already known not to run, BEFORE the first
+    launch. This is the step that stops the first crash."""
+
+    GAME = "Verdict Test"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.mods = os.path.join(root, "mods")
+        for name in ("RelicsReminder", "BaseLib", "Fine"):
+            os.makedirs(os.path.join(self.mods, name))
+        self.build = "555"
+        self._orig_build = main._steam_build_id
+        main._steam_build_id = lambda app_id: self.build
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["verdicttest"] = {
+            "RelicsReminder": {"mod_id": 284, "version": "1.2.0",
+                               "mode": "folder", "name": "Relics Reminder"},
+            "BaseLib": {"mod_id": 103, "version": "3.1.2",
+                        "mode": "folder", "name": "BaseLib"},
+            "Fine": {"mod_id": 999, "version": "1.0.0",
+                     "mode": "folder", "name": "Fine"},
+        }
+        settings.pop("mod_verdicts", None)
+        main._save_settings(settings)
+
+    def tearDown(self):
+        main._steam_build_id = self._orig_build
+        settings = main._load_settings()
+        settings.pop("mod_verdicts", None)
+        settings.get("installed", {}).pop("verdicttest", None)
+        main._save_settings(settings)
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+
+    def _note(self, mod_id=284, version="1.2.0", build=None):
+        main._record_mod_verdicts("verdicttest", build or self.build, [
+            {"mod_id": mod_id, "version": version, "name": "x", "why": "y"}])
+
+    def _apply(self):
+        return run(self.plugin.apply_known_verdicts(
+            "verdicttest", self.GAME, "mods", "folder", 1))
+
+    def test_a_known_broken_mod_is_off_before_the_first_launch(self):
+        self._note()
+        r = self._apply()
+        self.assertEqual(r["names"], ["Relics Reminder"])
+        self.assertFalse(os.path.isdir(
+            os.path.join(self.mods, "RelicsReminder")))
+
+    def test_a_mod_with_no_verdict_is_untouched(self):
+        self._note()
+        self._apply()
+        self.assertTrue(os.path.isdir(os.path.join(self.mods, "Fine")))
+
+    def test_a_newer_version_starts_from_innocent(self):
+        # The verdict was against 1.2.0. Assuming 1.3.0 is still broken
+        # would hold a user back from a fix that has already shipped.
+        self._note(version="1.1.0")
+        r = self._apply()
+        self.assertEqual(r["disabled"], 0)
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.mods, "RelicsReminder")))
+
+    def test_a_verdict_from_an_older_build_does_not_apply(self):
+        self._note(build="554")
+        self.assertEqual(self._apply()["disabled"], 0)
+
+    def test_a_library_other_mods_need_is_held_back(self):
+        # Same rule as everywhere else: never take the working mods down
+        # with the broken one.
+        with open(os.path.join(self.mods, "BaseLib", "mod_manifest.json"),
+                  "w") as f:
+            json.dump({"id": "BaseLib", "name": "BaseLib"}, f)
+        with open(os.path.join(self.mods, "Fine", "mod_manifest.json"),
+                  "w") as f:
+            json.dump({"id": "Fine", "dependencies": ["BaseLib"]}, f)
+        self._note(mod_id=103, version="3.1.2")
+        r = self._apply()
+        self.assertEqual(r["names"], [])
+        self.assertEqual(r["held"], ["BaseLib"])
+
+    def test_no_verdicts_is_a_no_op(self):
+        self.assertEqual(self._apply()["disabled"], 0)
+
+    def test_it_does_not_switch_off_what_is_already_off(self):
+        self._note()
+        self._apply()
+        self.assertEqual(self._apply()["disabled"], 0)
+
+    def test_the_mod_page_can_ask_about_one_mod(self):
+        self._note()
+        r = run(self.plugin.get_known_mod_verdict("verdicttest", 284, 1))
+        self.assertTrue(r["known"])
+        self.assertEqual(r["version"], "1.2.0")
+        clean = run(self.plugin.get_known_mod_verdict("verdicttest", 999, 1))
+        self.assertFalse(clean["known"])
+
+    def test_rejects_a_bad_domain(self):
+        self.assertFalse(run(self.plugin.apply_known_verdicts(
+            "../evil", self.GAME, "mods"))["ok"])
+        self.assertFalse(run(self.plugin.get_known_mod_verdict(
+            "../evil", 1, 1))["ok"])
+
+    def test_reset_game_modding_does_not_forget_the_verdicts(self):
+        # The exact moment the feature has to survive. Reset means start the
+        # mods clean, not relearn from a third crash which mod kills the
+        # game - so if a future change adds "mod_verdicts" to the list of
+        # sections reset clears, this fails.
+        self._note()
+        run(self.plugin.reset_game_modding(
+            "verdicttest", self.GAME, "mods", "folder", 1))
+        self.assertIn(
+            284, main._known_broken_mods("verdicttest", self.build),
+            "reset threw away what the plugin had learned",
+        )
+
+
 class TestGodotModManifests(unittest.TestCase):
     """Reading each mod's own manifest, which is what makes matching a log
     tag to an installed mod possible at all.

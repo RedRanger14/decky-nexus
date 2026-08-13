@@ -8,6 +8,8 @@ import {
   cancellableDownload,
   disableFailingOutcome,
   failingProblem,
+  knownBrokenNote,
+  preDisabledNote,
   repairedNote,
   crashSuspect,
   huntProgressNote,
@@ -863,4 +865,42 @@ test("several are named and the rest counted", () => {
 
 test("says why, not just what", () => {
   assert.match(repairedNote(["A"]), /kept crashing/);
+});
+
+// --- preDisabledNote / knownBrokenNote ------------------------------------
+// The point of remembering a verdict: the FIRST launch works, instead of
+// the plugin learning the same thing from a third crash.
+
+test("nothing pre-disabled says nothing", () => {
+  assert.equal(preDisabledNote([]), "");
+  assert.equal(preDisabledNote([""]), "");
+});
+
+test("pre-disabled leads with the good news", () => {
+  // Somebody who just installed 27 mods wants to know the game will start,
+  // not to read an incident report.
+  const msg = preDisabledNote(["Relics Reminder"]);
+  assert.match(msg, /^Ready to play\./);
+  assert.match(msg, /Relics Reminder was left switched off/);
+  assert.match(msg, /it does not work with the version of the game you have/);
+  assert.match(msg, /still installed/);
+});
+
+test("several pre-disabled read in the plural and count the rest", () => {
+  const msg = preDisabledNote(["A", "B", "C", "D"]);
+  assert.match(msg, /A, B, C and 1 more were left switched off/);
+  assert.match(msg, /they do not work/);
+  assert.match(msg, /updates arrive/);
+});
+
+test("the mod page names the version it watched fail", () => {
+  const msg = knownBrokenNote("1.2.0");
+  assert.match(msg, /version \(1\.2\.0\) stopped the game running/);
+  assert.match(msg, /needs an update/);
+  // Never blocks the install - it is a warning, not a gate.
+  assert.match(msg, /You can still install it/);
+});
+
+test("the mod page copes with no version recorded", () => {
+  assert.match(knownBrokenNote(""), /This mod stopped the game running/);
 });

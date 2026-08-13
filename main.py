@@ -4597,6 +4597,64 @@ _OPTIONAL_FAILURE_RE = re.compile(
 _AUTO_DISABLE_FLOOD = 25
 
 
+def _record_mod_verdicts(
+    game_domain: str, build: str, verdicts: list
+) -> int:
+    """Remember that these mods could not run on this game build.
+
+    Slay the Spire 2, 2026-08-13. Michael reset game modding, reinstalled the
+    collection, and the game crashed on exactly the mod the plugin had
+    already watched crash it twice - because the only record of that lived in
+    a session log, and reset threw it away. Learning the same thing three
+    times is not learning.
+
+    Keyed by Nexus mod id and game BUILD. A mod is not broken in the
+    abstract; it is broken against a build. When the game updates, or the
+    mod's installed version changes, the verdict stops applying - which is
+    the difference between a memory and a blacklist.
+    """
+    if not build:
+        return 0
+    settings = _load_settings()
+    store = settings.setdefault("mod_verdicts", {}).setdefault(game_domain, {})
+    added = 0
+    for v in verdicts:
+        mod_id = v.get("mod_id")
+        if not mod_id:
+            continue
+        key = str(int(mod_id))
+        entry = {
+            "build": build,
+            "version": v.get("version") or "",
+            "state": "broken",
+            "why": (v.get("why") or "")[:200],
+            "name": v.get("name") or "",
+        }
+        if store.get(key) != entry:
+            added += 1
+        store[key] = entry
+    if added:
+        _save_settings(settings)
+    return added
+
+
+def _known_broken_mods(game_domain: str, build: str) -> dict:
+    """mod id -> verdict, for verdicts that still apply to this build.
+
+    A verdict from an older build is deliberately dropped rather than
+    upgraded: a game update is the single most likely thing to have fixed
+    OR broken a mod, so the honest answer afterwards is "unknown".
+    """
+    if not build:
+        return {}
+    store = (_load_settings().get("mod_verdicts") or {}).get(game_domain) or {}
+    return {
+        int(mid): v for mid, v in store.items()
+        if isinstance(v, dict) and v.get("build") == build
+        and v.get("state") == "broken"
+    }
+
+
 def _is_unambiguously_broken(info: dict) -> bool:
     """Whether this blame needs no judgement call.
 
@@ -9940,6 +9998,12 @@ query Link($slug: String!, $domainName: String!) {
                 leftovers = sorted(set(os.listdir(mods_path)) - set(baseline))
             except OSError:
                 leftovers = []
+        # Deliberately NOT "mod_verdicts". Reset means start the mods
+        # clean, not forget what the game can run - and those two got
+        # confused once already: Michael reset, reinstalled, and the game
+        # died on the same mod for the third time because the only record
+        # of it lived in a session log. A verdict is a fact about a game
+        # build and a mod version, not about what happens to be installed.
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges", "skipped"):
             settings.get(section, {}).pop(game_domain, None)
@@ -11039,7 +11103,9 @@ query Link($slug: String!, $domainName: String!) {
                 continue
             if dry_run:
                 off.append({"name": rec.get("name") or key,
-                            "why": hit.get("detail") or "errored last run"})
+                            "why": hit.get("detail") or "errored last run",
+                            "mod_id": rec.get("mod_id"),
+                            "version": rec.get("version") or ""})
                 continue
             try:
                 result = await self.set_mod_enabled(
@@ -11051,7 +11117,9 @@ query Link($slug: String!, $domainName: String!) {
                 continue
             if result.get("ok"):
                 off.append({"name": rec.get("name") or key,
-                            "why": hit.get("detail") or "errored last run"})
+                            "why": hit.get("detail") or "errored last run",
+                            "mod_id": rec.get("mod_id"),
+                            "version": rec.get("version") or ""})
             else:
                 errors.append(f"{key}: {result.get('error')}")
         if not dry_run:
@@ -11079,6 +11147,106 @@ query Link($slug: String!, $domainName: String!) {
                     if blame_for(key, rec)
                 }
             ),
+        }
+
+    async def apply_known_verdicts(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        install_mode: str = "folder", app_id: int = 0,
+        plugins_subpath: str = "", plugins_style: str = "starred",
+        protected_ids: list = None,
+    ) -> dict:
+        """Switch off mods already known not to run on this game build,
+        before the user ever launches.
+
+        This is the step that stops the first crash. Michael reset game
+        modding, reinstalled the collection and the game died on the same mod
+        for the third time - every fix so far only worked AFTER a crash had
+        produced a log to read.
+
+        Only verdicts for the installed build, and only for the same mod
+        version they were recorded against: an update is the most likely
+        thing to have fixed it, so a newer version starts from innocent.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        build = _steam_build_id(app_id)
+        known = _known_broken_mods(game_domain, build)
+        if not known:
+            return {"ok": True, "disabled": 0, "names": [], "held": []}
+        _install, mods_path, _dis = _game_paths(install_dir, mods_subdir)
+        manifests = _godot_mod_manifests(mods_path)
+        keep = {int(m) for m in (protected_ids or []) if m is not None}
+        records = _load_settings().get("installed", {}).get(game_domain, {})
+        going, targets = set(), []
+        for key, rec in list(records.items()):
+            mod_id = rec.get("mod_id")
+            verdict = known.get(mod_id) if mod_id else None
+            if not verdict or mod_id in keep:
+                continue
+            # A different version than the one that failed has not been
+            # tried yet. Assuming it is still broken would pin a user to a
+            # fix that has already shipped.
+            if (verdict.get("version") or "") != (rec.get("version") or ""):
+                continue
+            if rec.get("enabled") is False or rec.get("parked"):
+                continue
+            targets.append((key, rec, verdict))
+            going.add(rec.get("folder") or key)
+        if not targets:
+            return {"ok": True, "disabled": 0, "names": [], "held": []}
+        needed = _mods_needed_by_others(
+            manifests, {f for f in manifests if f not in going}
+        )
+        off, held, errors = [], [], []
+        for key, rec, verdict in targets:
+            folder = rec.get("folder") or key
+            mod_id = (manifests.get(folder) or {}).get("id") or ""
+            if needed.get(mod_id.strip().lower()):
+                held.append(rec.get("name") or key)
+                continue
+            try:
+                result = await self.set_mod_enabled(
+                    install_dir, mods_subdir, key, False, install_mode,
+                    game_domain, app_id, plugins_subpath, plugins_style,
+                )
+            except Exception as e:  # noqa: BLE001 - report, keep going
+                errors.append(f"{key}: {type(e).__name__}")
+                continue
+            if result.get("ok"):
+                off.append(rec.get("name") or key)
+            else:
+                errors.append(f"{key}: {result.get('error')}")
+        decky.logger.info(
+            f"switched off {len(off)} mod(s) already known not to run on "
+            f"{game_domain} build {build}: {', '.join(off[:6])}"
+        )
+        return {"ok": True, "disabled": len(off), "names": off,
+                "held": held[:6], "errors": errors[:6]}
+
+    async def get_known_mod_verdict(
+        self, game_domain: str, mod_id: int, app_id: int = 0
+    ) -> dict:
+        """Whether we have watched this mod fail on the build installed now.
+
+        For the mod's own page. Michael: "I dont want users to run into these
+        problems indicually as well as on collections" - and unlike the
+        hand-written table next door, this one fills itself in.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        try:
+            verdict = _known_broken_mods(
+                game_domain, _steam_build_id(app_id)
+            ).get(int(mod_id))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Invalid mod id"}
+        if not verdict:
+            return {"ok": True, "known": False}
+        return {
+            "ok": True,
+            "known": True,
+            "version": verdict.get("version") or "",
+            "why": verdict.get("why") or "",
         }
 
     async def get_blamed_folders(
@@ -11160,6 +11328,17 @@ query Link($slug: String!, $domainName: String!) {
                     f"automatically switched off {len(repaired['names'])} "
                     f"mod(s) the game could not run: "
                     f"{', '.join(repaired['names'][:6])}"
+                )
+            # Remember it, so a reset and reinstall does not have to crash
+            # the game again to find out the same thing.
+            noted = _record_mod_verdicts(
+                game_domain, _steam_build_id(app_id),
+                repaired.get("details") or [],
+            )
+            if noted:
+                decky.logger.info(
+                    f"recorded {noted} broken-mod verdict(s) for "
+                    f"{game_domain} build {_steam_build_id(app_id)}"
                 )
         else:
             repaired = {"disabled": 0, "names": seen.get("names") or [],
