@@ -1229,7 +1229,7 @@ export function CollectionPage() {
               </div>
             )}
             {ownedCount > 0 && detail && (
-              <div style={{ marginBottom: "10px" }}>
+              <div style={{ marginBottom: "10px", display: "flex" }}>
                 <EndorsePill
                   endorsed={endorsed}
                   busy={endorsing}
@@ -1278,9 +1278,13 @@ export function CollectionPage() {
             }}
           >
             {installing
-              ? `Installing… ${runIsOurs ? run!.finished : 0}/${
+              ? // The count is COMPLETED INSTALLS, which sits at 0 for a
+                // long time on a big collection while several gigabytes
+                // download - so it read as stuck. The percentage includes
+                // download progress, so something always moves.
+                `Installing… ${runIsOurs ? run!.finished : 0}/${
                   runIsOurs ? run!.total : remaining.length
-                }`
+                } · ${getAggregateDownloadPercent(run) ?? 0}%`
               : remaining.length === 0 && detail
               ? "Everything installed ✓"
               : partialFromRun

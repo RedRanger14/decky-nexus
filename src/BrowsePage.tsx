@@ -815,6 +815,19 @@ export function BrowsePage() {
           </div>
         ) : isHome ? (
           <div ref={contentRef}>
+            {/* Focus anchor. The element that claims focus on this page is
+                the hero rail, and it only renders once the API answers -
+                so on landing there is a window with NO established gamepad
+                focus, and the first bumper press is spent establishing it
+                instead of switching tab ("press RB twice from the Store").
+                A zero-height focusable that exists from the first frame
+                closes that window; it removes itself once the hero is
+                there and can take focus properly. */}
+            {heroMods.length === 0 && (
+              <Focusable autoFocus style={{ height: 0, overflow: "hidden" }}>
+                <span />
+              </Focusable>
+            )}
             {/* ---- Hero: curated recommendations, big and bold ---- */}
             {heroMods.length > 0 && (
               <>
