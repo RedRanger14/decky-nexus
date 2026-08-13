@@ -12,7 +12,7 @@ import {
 } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
-import { FaArrowDown, FaEye, FaPuzzlePiece, FaThumbsUp } from "react-icons/fa";
+import { FaArrowDown, FaEye, FaPuzzlePiece } from "react-icons/fa";
 import {
   collectionOwnedCount,
   fileConflictProblem,
@@ -374,6 +374,26 @@ export function CollectionPage() {
     }
   };
 
+  /** Endorse the collection. One-way: see the button for why. */
+  const endorseCollectionNow = async () => {
+    if (!detail || endorsing || endorsed) return;
+    setEndorsing(true);
+    try {
+      const r = await endorseCollection(detail.id, true);
+      if (r.ok) {
+        setEndorsed(true);
+        toaster.toast({
+          title: "Collection endorsed!",
+          body: `Thanks for supporting ${detail.author}`,
+        });
+      } else {
+        toaster.toast({ title: "Could not endorse", body: r.error ?? "" });
+      }
+    } finally {
+      setEndorsing(false);
+    }
+  };
+
   const persistAttention = (items: AttentionItem[]) => {
     attentionRef.current = items;
     setAttention(items);
@@ -483,6 +503,7 @@ export function CollectionPage() {
     2 + // Go to downloads, Back
     (actionable.length > 0 ? 1 : 0) +
     (optionalRemaining.length > 0 ? 1 : 0) +
+    (ownedCount > 0 && !installing ? 1 : 0) + // Endorse
     (conflictIssue && !installing ? 1 : 0) + // Fix contested files
     (ownedCount > 0 && !installing ? 1 : 0) + // Repair
     ((ownedCount > 0 && !installing) || (justUninstalled && !installing)
@@ -1154,64 +1175,6 @@ export function CollectionPage() {
               {installedRequiredCount > 0 && (
                 <StatChip>✓ {installedRequiredCount} installed</StatChip>
               )}
-              {/* One-way on purpose. The API has no viewer-endorsement
-                  field for collections yet (PR open), so a toggle would
-                  be guesswork - and guessing wrong records an abstention
-                  over somebody's existing endorsement. Pressing this
-                  always endorses. */}
-              {ownedCount > 0 && detail && (
-                <Focusable
-                  onActivate={async () => {
-                    if (endorsing || endorsed) return;
-                    setEndorsing(true);
-                    try {
-                      const r = await endorseCollection(detail.id, true);
-                      if (r.ok) {
-                        setEndorsed(true);
-                        toaster.toast({
-                          title: "Collection endorsed!",
-                          body: `Thanks for supporting ${detail.author}`,
-                        });
-                      } else {
-                        toaster.toast({
-                          title: "Could not endorse",
-                          body: r.error ?? "",
-                        });
-                      }
-                    } finally {
-                      setEndorsing(false);
-                    }
-                  }}
-                  style={{
-                    padding: "3px 12px",
-                    borderRadius: "999px",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    opacity: endorsing ? 0.5 : 1,
-                    ...(endorsed
-                      ? {
-                          background: "rgba(143, 212, 143, 0.15)",
-                          border: "1px solid rgba(143, 212, 143, 0.5)",
-                        }
-                      : {
-                          background: "rgba(218, 142, 53, 0.15)",
-                          border: "1px solid #da8e3588",
-                        }),
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                    }}
-                  >
-                    <FaThumbsUp size={11} />
-                    {endorsed ? "Endorsed" : "Endorse"}
-                  </span>
-                </Focusable>
-              )}
             </Focusable>
             {conflictIssue && (
               <div
@@ -1326,6 +1289,25 @@ export function CollectionPage() {
                 : `Fix ${conflicts!.files.toLocaleString()} file${
                     conflicts!.files === 1 ? "" : "s"
                   }`}
+            </DialogButton>
+          )}
+          {/* One-way on purpose: the API has no viewer-endorsement field
+              for collections (PR open against nexus-api), so a toggle
+              would be guesswork and guessing wrong records an abstention
+              over somebody's existing endorsement.
+              Shown whenever the collection is installed, not hidden in the
+              stat chips where it read as a label rather than a button. */}
+          {ownedCount > 0 && !installing && detail && (
+            <DialogButton
+              disabled={endorsing || endorsed}
+              onClick={endorseCollectionNow}
+              style={ACTION_BUTTON}
+            >
+              {endorsed
+                ? "✓ Endorsed"
+                : endorsing
+                  ? "Endorsing…"
+                  : "👍 Endorse collection"}
             </DialogButton>
           )}
           {ownedCount > 0 && !installing && (
