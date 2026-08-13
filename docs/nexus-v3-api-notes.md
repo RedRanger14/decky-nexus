@@ -45,3 +45,45 @@ in `src/services/*/models` document exact response shapes).
 - Requirements v2: game-scoped lookup → global id → materialized
   dependency ranges (batch) → exact required-mod graph.
 - Donation Points support once a user OAuth flow exists (apikey can't).
+
+## `legacyMods(ids:)` truncates at 20, silently
+
+**Found:** 13 August 2026, on device, against
+`https://api.nexusmods.com/v2/graphql`.
+
+`legacyMods(ids: [{gameId, modId}, ...])` returns **at most 20 nodes**
+regardless of how many ids you pass. Measured directly:
+
+| ids asked | nodes returned |
+|---|---|
+| 10 | 10 |
+| 20 | 20 |
+| 21 | 20 |
+| 25 | 20 |
+| 40 | 20 |
+
+There is **no error, no `errors` entry, and no page cursor** on the
+connection. The surplus ids are simply absent from `nodes`, so a caller
+cannot distinguish "that mod has no data" from "the API stopped answering".
+
+**How it bit us.** 27 Slay the Spire 2 mods were installed. `check_updates`
+asked about all 27, got 20, and RitsuLib - three minor versions behind a
+game build that was printing *"Loaded 21 mods WITH ERRORS"* across the main
+menu - was one of the seven the API dropped. The plugin reported "no updates
+available". A separate call site batched in 40s and was losing half of every
+batch. On the 546-mod New Vegas collection, 526 mods were being ignored.
+
+**Worth raising with the API team.** Silent truncation is the failure mode a
+client cannot defend against by inspection - it looks exactly like a
+successful, complete response. Either of these would fix it:
+
+- return an error when `ids` exceeds the limit, or
+- expose the limit on the connection (`pageInfo`/`totalCount`) so a client
+  can tell it has been cut off.
+
+Documenting the number would help too; nothing in the schema states it.
+
+**Our workaround:** `_legacy_mods_in_batches` (main.py) chunks every bulk id
+lookup at `LEGACY_MODS_PAGE = 20`. Its tests use a fake endpoint that also
+answers only the first 20, so any future caller that skips the helper fails
+in tests rather than in the field.
