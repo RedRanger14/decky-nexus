@@ -87,3 +87,43 @@ Documenting the number would help too; nothing in the schema states it.
 lookup at `LEGACY_MODS_PAGE = 20`. Its tests use a fake endpoint that also
 answers only the first 20, so any future caller that skips the helper fails
 in tests rather than in the field.
+
+## `modRequirements` has three fields and we were using one
+
+**Found:** 13 August 2026, prompted by Michael: *"file to file and DLC
+requirements is something the website has put a lot of work into tackling and
+it feeds vortex via api so I would have thought its available to us too"*.
+It is.
+
+`Mod.modRequirements` (GraphQL v2):
+
+| field | what it gives | used? |
+|---|---|---|
+| `nexusRequirements` | required Nexus mods, with `modId` | yes, since v0.x |
+| **`dlcRequirements`** | **required game DLC, by name** | **now, v0.145.0** |
+| `modsRequiringThisMod` | reverse dependencies — who needs this mod | not yet |
+
+`dlcRequirements` returns `[ModRequirementsDlc]`, each
+`{ notes, gameExpansion { id gameId name } }`. Verified live:
+
+```
+newvegas mod 65000 "Rigged Odds - Casino Cheat Mod"
+  -> [{"gameExpansion": {"gameId": "130", "id": "1,130",
+                         "name": "Dead Money"}, "notes": ""}]
+```
+
+**Why it matters.** `DLC_MASTER_NAMES` in main.py holds this fact by hand for
+four games, and only catches a missing DLC *after* a failed boot, by reading
+the plugin names inside a downloaded mod. This is the same fact from the
+authority, available **before the download** — which is the difference
+between "Dead Money is required, and you do not own it" on the mod page and
+`mil.esp is missing required files: DeadMoney.esm` after a 2 GB download and
+a crash.
+
+`modsRequiringThisMod` is the other half of a health check: it answers "what
+breaks if I remove this?", which is currently only inferrable from Godot mod
+manifests and not at all for Bethesda games.
+
+Also on `ModFile`: `requirementsAlert` (Int) — not yet investigated, but the
+name suggests per-FILE requirement flags, which is the "file to file" half of
+Michael's point.
