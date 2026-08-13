@@ -972,6 +972,49 @@ def _proton_binary_for(app_id: int):
     return "", compat, steam_root, "No Proton installation found on this device"
 
 
+# Content that belongs to the GAME rather than to modding: base masters,
+# DLC, and the archives that carry them. Creation Club files follow the
+# same shape on Skyrim SE.
+_CC_FILE_RE = re.compile(r"^cc[a-z]{3,4}(sse|fo4)\d{3}[-_ .]", re.IGNORECASE)
+
+
+def _game_owned_name(game_domain: str, name: str) -> bool:
+    """Is this file part of the game the user bought?
+
+    Reset sweeps everything in the mods folder that is not in the vanilla
+    baseline, on the reasoning that the baseline was captured before the
+    first mod and so anything newer arrived with modding. That reasoning
+    has a hole in it: the GAME can gain files afterwards.
+
+    On device it did. New Vegas's baseline was captured, the user then
+    bought the Ultimate Edition DLC in a sale, and the next reset deleted
+    all nine DLC masters and their archives - content they had paid for
+    that hour, removed by a button labelled "reset game modding". The game
+    then refused to start, asking for the very files we had taken.
+
+    A baseline cannot be the only guard, so game-owned content is never
+    swept whatever the baseline says.
+    """
+    low = (name or "").lower()
+    masters = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain) or frozenset()
+    if low in masters:
+        return True
+    if _CC_FILE_RE.match(low):
+        return True
+    base, _, ext = low.rpartition(".")
+    if ext not in ("bsa", "ba2", "esm", "esp", "esl"):
+        return False
+    # DLC archives are named after their master: "DeadMoney - Main.bsa",
+    # "ClassicPack - Main.bsa".
+    for master in masters:
+        stem = master.rsplit(".", 1)[0]
+        if base == stem or base.startswith(stem + " ") or base.startswith(
+            stem + "-"
+        ):
+            return True
+    return False
+
+
 def _plugins_txt_path(app_id: int, subpath: str) -> str:
     """Plugins.txt for a Proton game lives inside its compat prefix. The
     game creates it through Wine's case-insensitive lookup, so the on-disk
@@ -9435,6 +9478,12 @@ query Link($slug: String!, $domainName: String!) {
             # modding. Without a baseline nothing is swept, because then
             # we would only be guessing at what the user started with.
             for name in list(leftovers):
+                # Never the game's own content. The baseline predates any
+                # DLC bought later, so without this the sweep deletes what
+                # the user paid for - it did exactly that on device.
+                if _game_owned_name(game_domain, name):
+                    leftovers.remove(name)
+                    continue
                 p = os.path.join(mods_path, name)
                 try:
                     if os.path.isdir(p):

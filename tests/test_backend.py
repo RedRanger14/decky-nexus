@@ -4012,6 +4012,61 @@ class TestCollectionExtras(unittest.TestCase):
         self.assertTrue(extras["browse"][0]["optional"])
 
 
+class TestGameOwnedContent(unittest.TestCase):
+    """Reset must never delete content the user bought.
+
+    Device, 2026-08-12: New Vegas's vanilla baseline was captured, the user
+    then bought the Ultimate Edition DLC in a sale, and the next reset swept
+    all nine DLC masters and their archives - because the baseline predated
+    them and the sweep treats anything newer as arriving with modding. The
+    game then refused to start, asking for the files we had just taken."""
+
+    def test_dlc_masters_are_game_owned(self):
+        for esm in main.VANILLA_MASTERS_BY_DOMAIN["newvegas"]:
+            self.assertTrue(
+                main._game_owned_name("newvegas", esm), esm
+            )
+
+    def test_dlc_archives_are_game_owned(self):
+        # Named after their master: "DeadMoney - Main.bsa".
+        for name in ("DeadMoney - Main.bsa", "ClassicPack - Main.bsa",
+                     "CaravanPack - Main.bsa", "HonestHearts - Main.bsa"):
+            self.assertTrue(main._game_owned_name("newvegas", name), name)
+
+    def test_fallout3_dlc_too(self):
+        for esm in main.VANILLA_MASTERS_BY_DOMAIN["fallout3"]:
+            self.assertTrue(main._game_owned_name("fallout3", esm), esm)
+        self.assertTrue(
+            main._game_owned_name("fallout3", "ThePitt - Main.bsa")
+        )
+
+    def test_skyrim_creation_club_is_game_owned(self):
+        # Bought or claimed from the Creation Club - not ours to delete.
+        for name in ("ccbgssse001-fish.esm", "ccQDRSSE001-SurvivalMode.esl",
+                     "ccbgssse025-advdsgs.bsa"):
+            self.assertTrue(
+                main._game_owned_name("skyrimspecialedition", name), name
+            )
+
+    def test_a_mod_that_merely_starts_similarly_is_not_protected(self):
+        # "DeadMoneyAnnoyanceReducer.esp" is a mod, not Dead Money.
+        self.assertFalse(
+            main._game_owned_name("newvegas", "DeadMoneyAnnoyanceReducer.esp")
+        )
+
+    def test_ordinary_mod_files_are_not_protected(self):
+        for name in ("SomeMod.esp", "textures", "MyMod - Main.bsa",
+                     "nvse_config.ini"):
+            self.assertFalse(main._game_owned_name("newvegas", name), name)
+
+    def test_the_sweep_skips_game_owned_files(self):
+        """Guards the wiring, not just the predicate - the sweep has to
+        actually consult it."""
+        import inspect
+        src = inspect.getsource(main.Plugin.reset_game_modding)
+        self.assertIn("_game_owned_name", src)
+
+
 class TestBundleCaseMerge(unittest.TestCase):
     """A bundled mod's paths must adopt the casing already on disk.
 
