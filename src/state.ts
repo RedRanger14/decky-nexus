@@ -320,6 +320,10 @@ export interface CollectionRun {
   running: boolean;
   total: number;
   finished: number;
+  /** Mods THIS run installed. Cancel removes exactly these - not
+   * everything the collection lists, because the user may already have
+   * had some of it. */
+  installedModIds: number[];
   /** What the run is doing when there are no download rows to show yet.
    * A collection starts by fetching its own manifest - megabytes, with no
    * progress events - so the Downloads page said "nothing downloading"
@@ -362,6 +366,7 @@ export function beginCollectionRun(
     running: true,
     total,
     finished: 0,
+    installedModIds: [],
     note: "Reading the collection…",
     rows: {},
     startedAt: Date.now(),
@@ -377,6 +382,14 @@ export function getRunSkippedCount(run?: CollectionRun): number {
 }
 
 /** Name the current phase, for when there is nothing else to show. */
+/** Record that this run installed a mod, for a precise cancel. */
+export function noteCollectionInstalled(modId: number): void {
+  if (!collectionRun) return;
+  if (!collectionRun.installedModIds.includes(modId)) {
+    collectionRun.installedModIds.push(modId);
+  }
+}
+
 export function setCollectionNote(note: string): void {
   if (!collectionRun) return;
   collectionRun.note = note;

@@ -919,6 +919,30 @@ export const applyKnownPrerequisites = callable<
   }
 >("apply_known_prerequisites");
 
+// Abandon a collection: only what IT installed is removed. mod_ids is what
+// the run actually installed - a mod the user had already, or one from
+// another collection, is left alone even though this collection lists it.
+export const cancelCollectionInstall = callable<
+  [
+    game_domain: string,
+    slug: string,
+    install_dir: string,
+    mods_subdir: string,
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    mod_ids: number[]
+  ],
+  { ok: boolean; removed?: number; kept?: number; errors?: string[]; error?: string }
+>("cancel_collection_install");
+
+// Whether we know a collection cannot work on SteamOS, said before the
+// download rather than after it.
+export const getCollectionSupport = callable<
+  [game_domain: string, slug: string],
+  { ok: boolean; supported?: boolean; reason?: string; title?: string; error?: string }
+>("get_collection_support");
+
 export const getFileConflicts = callable<
   [game_domain: string, mod_order: number[]],
   {

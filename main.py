@@ -1077,6 +1077,29 @@ NEEDS_EXTERNAL_MOD = {
 }
 
 
+# Collections that cannot work on a SteamOS/Gaming Mode install, and why.
+# Said up front rather than after a 42 GB download.
+#
+# Keyed by slug because that is what the page has. The reason is shown
+# verbatim, so it has to read as an explanation and not a refusal.
+UNSUPPORTED_COLLECTIONS = {
+    "newvegas": {
+        "3fs9zx": {
+            "title": "VeryLastKiss's TTW",
+            "reason": (
+                "This collection is built on Tale of Two Wastelands, which "
+                "it does not include. TTW is not a Nexus mod - it is built "
+                "from your own copy of Fallout 3 using a Windows installer, "
+                "which cannot run in Gaming Mode. Without it around 70 of "
+                "these mods have nothing to attach to and will be switched "
+                "off, and the Fallout 3 content the collection exists for "
+                "will not be there."
+            ),
+        },
+    },
+}
+
+
 def _parked_files_dir(game_domain: str, record_key: str) -> str:
     """Where a disabled dataDir mod's files wait to be put back."""
     return os.path.join(
@@ -10508,6 +10531,93 @@ query Link($slug: String!, $domainName: String!) {
             "restored": restored,
             "mods": [w["mod"] for w in waiting],
             "needs": sorted({w["needs"] for w in waiting}),
+        }
+
+    async def get_collection_support(
+        self, game_domain: str, slug: str
+    ) -> dict:
+        """Whether we know this collection cannot work here, and why.
+
+        Said before the download, not after. The TTW collection is 42 GB and
+        needs a conversion that cannot be built in Gaming Mode at all, so
+        finding out afterwards costs a day.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        entry = (UNSUPPORTED_COLLECTIONS.get(game_domain) or {}).get(slug or "")
+        if not entry:
+            return {"ok": True, "supported": True}
+        return {
+            "ok": True,
+            "supported": False,
+            "reason": entry["reason"],
+            "title": entry.get("title") or "",
+        }
+
+    async def cancel_collection_install(
+        self, game_domain: str, slug: str, install_dir: str,
+        mods_subdir: str = "Data", app_id: int = 0,
+        plugins_subpath: str = "", plugins_style: str = "starred",
+        mod_ids: list = None,
+    ) -> dict:
+        """Abandon a collection: stop its downloads and remove what THIS
+        collection installed.
+
+        `mod_ids` is what the run actually installed, from the page. Only
+        records carrying this collection's slug AND appearing in that list
+        are removed - so a mod the user installed on their own before, or
+        one that belongs to a different collection, is left alone even
+        though the collection lists it too. Getting that wrong deletes
+        somebody's existing setup, so the default is to remove nothing.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        wanted = {int(m) for m in (mod_ids or []) if m is not None}
+        settings = _load_settings()
+        records = settings.get("installed", {}).get(game_domain, {})
+        removable = [
+            key for key, rec in records.items()
+            if (rec.get("collection_slug") or "") == slug
+            and rec.get("mod_id") in wanted
+        ]
+        kept_other = sum(
+            1 for rec in records.values()
+            if rec.get("mod_id") in wanted
+            and (rec.get("collection_slug") or "") != slug
+        )
+        removed, errors = 0, []
+        for key in removable:
+            try:
+                result = await self.uninstall_mod(
+                    game_domain, install_dir, mods_subdir, key,
+                    "dataDir" if records[key].get("mode") == "dataDir"
+                    else records[key].get("mode") or "folder",
+                    app_id, plugins_subpath, plugins_style,
+                )
+            except Exception as e:  # noqa: BLE001 - report, keep going
+                errors.append(f"{key}: {type(e).__name__}")
+                continue
+            if result.get("ok"):
+                removed += 1
+            else:
+                errors.append(f"{key}: {result.get('error')}")
+        settings = _load_settings()
+        settings.get("collection_attention", {}).get(game_domain, {}).pop(
+            slug, None
+        )
+        settings.get("collections", {}).get(game_domain, {}).pop(slug, None)
+        _save_settings(settings)
+        decky.logger.info(
+            f"cancelled collection {slug!r}: removed {removed} mod(s), left "
+            f"{kept_other} that were installed outside it, {len(errors)} errors"
+        )
+        return {
+            "ok": True,
+            "removed": removed,
+            "kept": kept_other,
+            "errors": errors[:8],
         }
 
     async def get_known_bad_state(

@@ -1,15 +1,18 @@
 // Full-screen Downloads: active transfers (mods and collection batches)
 // plus a completed section - the QAM only carries a shortcut here.
 import {
+  ConfirmModal,
   DialogButton,
   Focusable,
   ScrollPanelGroup,
+  showModal,
 } from "@decky/ui";
 import { useEffect, useState } from "react";
 
 import {
   CollectionRun,
   clearCompletedDownloads,
+  endCollectionRun,
   getAggregateBps,
   getCollectionRun,
   getCompletedDownloads,
@@ -24,6 +27,7 @@ import {
   subscribeDownloads,
 } from "./state";
 import {
+  cancelCollectionInstall,
   cancelDownload,
   getDiskUsage,
   getDownloadControl,
@@ -31,7 +35,8 @@ import {
   setDownloadsPaused,
 } from "./api";
 import { cancellableDownload, pauseAllControl } from "./panelRules";
-import { getSupportedGame } from "./games";
+import { toaster } from "@decky/api";
+import { getSupportedGame, modeParams } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
@@ -546,23 +551,84 @@ export function DownloadsPage() {
           <span style={{ fontSize: "13px", fontWeight: 600 }}>
             Active ({active.length})
           </span>
-          {pauseAllControl(active.length, paused).show && (
-            <DialogButton
-              onClick={async () => {
-                const next = !paused;
-                setPaused(next);
-                await setDownloadsPaused(next);
-              }}
-              style={{
-                minWidth: "0",
-                width: "auto",
-                padding: "4px 12px",
-                fontSize: "12px",
-              }}
-            >
-              {pauseAllControl(active.length, paused).label}
-            </DialogButton>
-          )}
+          <Focusable style={{ display: "flex", gap: "6px" }}>
+            {pauseAllControl(active.length, paused).show && (
+              <DialogButton
+                onClick={async () => {
+                  const next = !paused;
+                  setPaused(next);
+                  await setDownloadsPaused(next);
+                }}
+                style={{
+                  minWidth: "0",
+                  width: "auto",
+                  padding: "4px 12px",
+                  fontSize: "12px",
+                }}
+              >
+                {pauseAllControl(active.length, paused).label}
+              </DialogButton>
+            )}
+            {/* Pause existed; there was no way to abandon a collection
+                short of letting 42 GB finish. Confirmed, because a mis-tap
+                here throws away hours of downloading. */}
+            {run?.running && (
+              <DialogButton
+                onClick={() => showModal(
+                  <ConfirmModal
+                    strTitle={`Cancel ${run.name ?? "this collection"}?`}
+                    strDescription={
+                      `Stops the download and removes the ` +
+                      `${run.installedModIds.length} mod` +
+                      `${run.installedModIds.length === 1 ? "" : "s"} it has ` +
+                      `installed so far. Mods you already had - your own, or ` +
+                      `from another collection - are kept, even if this one ` +
+                      `lists them. Nothing else is touched.`
+                    }
+                    strOKButtonText="Cancel collection"
+                    bDestructiveWarning={true}
+                    onOK={async () => {
+                      const game = getSupportedGame(run.gameAppId ?? 0);
+                      setDownloadsPaused(true).catch(() => {});
+                      for (const d of getDownloads()) {
+                        cancelDownload(d.modId).catch(() => {});
+                      }
+                      const ids = [...run.installedModIds];
+                      const slug = run.slug;
+                      endCollectionRun();
+                      if (game && slug) {
+                        const r = await cancelCollectionInstall(
+                          game.nexusDomain,
+                          slug,
+                          game.installDirName,
+                          game.modsSubdir,
+                          ...modeParams(game).slice(1) as [number, string, "starred" | "listed"],
+                          ids
+                        );
+                        toaster.toast({
+                          title: r.ok
+                            ? `Collection cancelled`
+                            : "Could not finish cancelling",
+                          body: r.ok
+                            ? `${r.removed ?? 0} removed, ${r.kept ?? 0} kept`
+                            : r.error ?? "",
+                        });
+                      }
+                      setDownloadsPaused(false).catch(() => {});
+                    }}
+                  />
+                )}
+                style={{
+                  minWidth: "0",
+                  width: "auto",
+                  padding: "4px 12px",
+                  fontSize: "12px",
+                }}
+              >
+                ✕ Cancel collection
+              </DialogButton>
+            )}
+          </Focusable>
         </div>
         <Focusable style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
           {active.length === 0 && (

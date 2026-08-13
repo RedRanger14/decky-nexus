@@ -4083,6 +4083,121 @@ class TestBaselineBuildGuard(unittest.TestCase):
         self.assertIn("game_changed", src)
 
 
+class TestCancelCollectionInstall(unittest.TestCase):
+    """Abandoning a collection must remove what IT installed and nothing
+    else. A mod the user installed on their own before, or one belonging to
+    another collection, stays - even when this collection lists it too.
+    Getting that wrong deletes somebody's existing setup."""
+
+    GAME = "Cancel Test"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.data = os.path.join(root, "Data")
+        os.makedirs(self.data)
+        for rel in ("fromcollection.esp", "byhand.esp", "othercollection.esp"):
+            with open(os.path.join(self.data, rel), "w") as f:
+                f.write(rel)
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["canceltest"] = {
+            "From Collection": {
+                "mode": "dataDir", "mod_id": 1, "collection_slug": "abc123",
+                "plugins": [], "files": ["fromcollection.esp"],
+            },
+            "By Hand": {
+                "mode": "dataDir", "mod_id": 2, "collection_slug": "",
+                "plugins": [], "files": ["byhand.esp"],
+            },
+            "Other Collection": {
+                "mode": "dataDir", "mod_id": 3, "collection_slug": "zzz999",
+                "plugins": [], "files": ["othercollection.esp"],
+            },
+        }
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("canceltest", None)
+        main._save_settings(settings)
+
+    def _cancel(self, mod_ids):
+        return run(self.plugin.cancel_collection_install(
+            "canceltest", "abc123", self.GAME, "Data", 0, "", "listed",
+            mod_ids))
+
+    def _there(self, rel):
+        return os.path.isfile(os.path.join(self.data, rel))
+
+    def test_removes_only_this_collection_s_mods(self):
+        # All three are in the collection's list, only one was installed BY
+        # the collection.
+        r = self._cancel([1, 2, 3])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["removed"], 1)
+        self.assertEqual(r["kept"], 2)
+        self.assertFalse(self._there("fromcollection.esp"))
+        self.assertTrue(self._there("byhand.esp"))
+        self.assertTrue(self._there("othercollection.esp"))
+
+    def test_a_mod_not_in_the_run_is_untouched(self):
+        # The run had not reached it, so it is not ours to remove.
+        r = self._cancel([])
+        self.assertEqual(r["removed"], 0)
+        self.assertTrue(self._there("fromcollection.esp"))
+
+    def test_the_records_go_with_the_files(self):
+        self._cancel([1])
+        recs = main._load_settings()["installed"]["canceltest"]
+        self.assertNotIn("From Collection", recs)
+        self.assertIn("By Hand", recs)
+
+    def test_the_collection_is_deregistered(self):
+        settings = main._load_settings()
+        settings.setdefault("collections", {}).setdefault(
+            "canceltest", {})["abc123"] = {"title": "Test"}
+        settings.setdefault("collection_attention", {}).setdefault(
+            "canceltest", {})["abc123"] = [{"reason": "tool"}]
+        main._save_settings(settings)
+        self._cancel([1])
+        settings = main._load_settings()
+        self.assertNotIn(
+            "abc123", settings.get("collections", {}).get("canceltest", {})
+        )
+        self.assertNotIn(
+            "abc123",
+            settings.get("collection_attention", {}).get("canceltest", {}),
+        )
+
+    def test_rejects_a_bad_slug(self):
+        r = run(self.plugin.cancel_collection_install(
+            "canceltest", "../evil", self.GAME))
+        self.assertFalse(r["ok"])
+
+
+class TestUnsupportedCollections(unittest.TestCase):
+    """Saying a collection cannot work HERE, before the download rather
+    than after it. The TTW collection is 42 GB and needs a conversion that
+    cannot be built in Gaming Mode at all."""
+
+    def test_reports_the_known_unsupported_one(self):
+        r = run(main.Plugin().get_collection_support("newvegas", "3fs9zx"))
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["supported"])
+        self.assertIn("Tale of Two Wastelands", r["reason"])
+        # The reason has to say what the user loses, not just "no".
+        self.assertIn("switched off", r["reason"])
+
+    def test_anything_else_is_supported(self):
+        r = run(main.Plugin().get_collection_support("newvegas", "jscbqj"))
+        self.assertTrue(r["supported"])
+
+    def test_rejects_a_bad_domain(self):
+        r = run(main.Plugin().get_collection_support("../evil", "x"))
+        self.assertFalse(r["ok"])
+
+
 class TestRefuseEnablingBrokenMod(unittest.TestCase):
     """Switching a mod back on must not be allowed to break the game.
 

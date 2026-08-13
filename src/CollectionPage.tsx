@@ -26,6 +26,7 @@ import {
   endorseCollection,
   applyKnownPrerequisites,
   getCollectionExtras,
+  getCollectionSupport,
   disableBlockedPlugins,
   getFileConflicts,
   installCollectionBundles,
@@ -67,6 +68,7 @@ import {
   getDownloadPercent,
   getDownloads,
   getSelectedCollection,
+  noteCollectionInstalled,
   setCollectionNote,
   setCollectionRow,
   setDetailOrigin,
@@ -153,6 +155,9 @@ export function CollectionPage() {
   // silent for a long time after Finish setup with no hint that anything
   // was happening, or that waiting was the right thing to do.
   const [finalising, setFinalising] = useState("");
+  // Known not to work here. Said before the download, not after - the TTW
+  // collection is 42 GB and needs a conversion Gaming Mode cannot build.
+  const [unsupported, setUnsupported] = useState("");
   // Mods the collection needs that are hosted off Nexus - no API can
   // fetch them, so the only honest thing is to name them.
   const [manualMods, setManualMods] = useState<
@@ -236,6 +241,21 @@ export function CollectionPage() {
   // cannot be downloaded here is a permanent fact about the collection -
   // it has to be visible when someone comes back to ask "why is this one
   // missing", which is exactly when they will look.
+  useEffect(() => {
+    if (!sel) return;
+    let live = true;
+    getCollectionSupport(sel.game.nexusDomain, sel.collection.slug)
+      .then((r) => {
+        if (live && r.ok && r.supported === false) {
+          setUnsupported(r.reason ?? "");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [sel?.collection.slug, sel?.game.nexusDomain]);
+
   useEffect(() => {
     if (!sel) return;
     let live = true;
@@ -760,6 +780,7 @@ export function CollectionPage() {
             // instead of silently taking wizard defaults.
           }
           if (result.ok) {
+            noteCollectionInstalled(f.modId);
             setCollectionRow(f.fileId, "done");
           } else if (result.needs_choice || result.needs_fomod) {
             // Manual decisions pending - remembered (persisted) so the
@@ -1231,6 +1252,21 @@ export function CollectionPage() {
                 <StatChip>✓ {installedRequiredCount} installed</StatChip>
               )}
             </Focusable>
+            {unsupported && (
+              <div
+                style={{
+                  marginBottom: "10px",
+                  padding: "8px 10px",
+                  borderRadius: "4px",
+                  fontSize: "12.5px",
+                  lineHeight: 1.45,
+                  background: "rgba(220, 80, 80, 0.14)",
+                  border: "1px solid rgba(220, 80, 80, 0.5)",
+                }}
+              >
+                ⚠ This collection isn't supported on SteamOS. {unsupported}
+              </div>
+            )}
             {conflictIssue && (
               <div
                 style={{
