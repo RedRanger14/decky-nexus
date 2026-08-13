@@ -4548,6 +4548,35 @@ _OPTIONAL_FAILURE_RE = re.compile(
 )
 
 
+# How many attributed exceptions make a mod broken beyond argument.
+#
+# Relics Reminder threw between 1,005 and 1,077 of them per session on
+# device - it throws from _Process, so once per frame, and the log just ends
+# mid-flood where the game died. A working mod that logs one handled
+# exception sits at 1 or 2. There is no honest reading of a four-figure
+# count, which is what makes this the one case safe to act on unasked.
+_AUTO_DISABLE_FLOOD = 25
+
+
+def _is_unambiguously_broken(info: dict) -> bool:
+    """Whether this blame needs no judgement call.
+
+    Two kinds:
+
+    - a flood of attributed exceptions (see _AUTO_DISABLE_FLOOD)
+    - "failed to load", where the mod never ran, so switching it off
+      changes nothing except stopping the error box
+
+    Deliberately NOT included: a single exception, and a "[Critical]" patch
+    failure. Both mean part of a mod is unhappy, and on device two mods in
+    that state did no visible harm - the game reached the menu and stayed
+    there. Switching those off is a decision, so it stays on the button.
+    """
+    if int(info.get("errors") or 0) >= _AUTO_DISABLE_FLOOD:
+        return True
+    return "failed to load" in (info.get("detail") or "").lower()
+
+
 def _godot_mod_manifests(mods_dir: str) -> dict:
     """Read every installed Godot mod's own manifest.
 
@@ -10834,6 +10863,7 @@ query Link($slug: String!, $domainName: String!) {
         game_user_dir: str, install_mode: str = "folder", app_id: int = 0,
         plugins_subpath: str = "", plugins_style: str = "starred",
         protected_ids: list = None, dry_run: bool = False,
+        auto_only: bool = False,
     ) -> dict:
         """Switch off the mods the last session blamed for errors.
 
@@ -10858,6 +10888,9 @@ query Link($slug: String!, $domainName: String!) {
         `dry_run` returns exactly the same answer without touching anything,
         which is what the panel row is built from. The row saying "9 mods
         broke" and the button switching off 3 was its own bug.
+
+        `auto_only` narrows this to the mods no judgement is needed on, for
+        acting without being asked: see _AUTO_DISABLE_FLOOD.
         """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
@@ -10878,12 +10911,14 @@ query Link($slug: String!, $domainName: String!) {
         blamed = {
             key: info for key, info in status.items()
             if info.get("state") == "error"
+            and (not auto_only or _is_unambiguously_broken(info))
         }
         if not blamed:
             return {"ok": True, "disabled": 0, "names": []}
         records = _load_settings().get("installed", {}).get(game_domain, {})
         keep = {int(m) for m in (protected_ids or []) if m is not None}
         _install, mods_path, _disabled = _game_paths(install_dir, mods_subdir)
+        _disabled = _disabled or os.path.join(mods_path + "-disabled")
         manifests = _godot_mod_manifests(mods_path)
 
         def blame_for(key: str, rec: dict):
@@ -10912,11 +10947,32 @@ query Link($slug: String!, $domainName: String!) {
                 or blamed.get(_norm_mod_id(rec.get("folder") or ""))
             )
 
+        def already_off(key: str, rec: dict) -> bool:
+            """A mod switched off earlier must not be counted again.
+
+            The log does not change when a mod is disabled - the session
+            that blamed it already happened - so without this the row keeps
+            offering to switch off mods that are already off.
+            """
+            if rec.get("enabled") is False or rec.get("parked"):
+                return True
+            folder = rec.get("folder") or key
+            # Only ask the filesystem about mods the filesystem tracks. A
+            # dataDir mod (Bethesda) has no folder of its own - its files
+            # live in Data - so an isdir check would call every one of them
+            # switched off.
+            if os.path.isdir(os.path.join(_disabled, folder)):
+                return True
+            return not os.path.isdir(os.path.join(mods_path, folder)) and (
+                os.path.isdir(mods_path)
+                and rec.get("mode") in (None, "", "folder")
+            )
+
         candidates = [
             (key, rec, hit)
             for key, rec in list(records.items())
             for hit in [blame_for(key, rec)]
-            if hit
+            if hit and not already_off(key, rec)
         ]
         # Whatever survives this pass is what dependencies are judged
         # against: hold back a library only if something staying on needs it.
@@ -10965,6 +11021,84 @@ query Link($slug: String!, $domainName: String!) {
             "details": off[:12],
             "held": held[:6],
             "errors": errors[:6],
+        }
+
+    async def repair_failing_mods(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        game_user_dir: str, install_mode: str = "folder", app_id: int = 0,
+        plugins_subpath: str = "", plugins_style: str = "starred",
+        protected_ids: list = None,
+    ) -> dict:
+        """Switch off the mods that are broken beyond argument, and report
+        what is left for the user to decide on.
+
+        The button worked and should not have existed. Michael's standing
+        rule: if the plugin can detect it, it fixes it - a button is a
+        failure, because the audience is someone holding a handheld who has
+        never heard of a stack trace. Here the plugin knew which mod threw
+        1,041 exceptions and still waited to be asked.
+
+        Acts once per session log. If the user deliberately switches a mod
+        back on, opening the panel again must not silently switch it off
+        - so the log this was done for is remembered, and a decision is
+        only revisited when the game has actually run again.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9 ._-]+", game_user_dir or ""):
+            return {"ok": False, "error": "Invalid game user dir"}
+        log_path = os.path.join(
+            decky.DECKY_USER_HOME, ".local", "share", game_user_dir,
+            "logs", "godot.log",
+        )
+        try:
+            st = os.stat(log_path)
+            signature = f"{int(st.st_mtime)}:{st.st_size}"
+        except OSError:
+            return {"ok": True, "repaired": 0, "names": [], "held": [],
+                    "remaining": [], "note": ""}
+        settings = _load_settings()
+        seen = (
+            settings.setdefault("auto_disabled", {}).get(game_domain) or {}
+        )
+        already = seen.get("log") == signature
+        repaired = {"disabled": 0, "names": [], "details": [], "held": []}
+        if not already:
+            repaired = await self.disable_failing_mods(
+                game_domain, install_dir, mods_subdir, game_user_dir,
+                install_mode, app_id, plugins_subpath, plugins_style,
+                protected_ids, False, True,
+            )
+            if not repaired.get("ok"):
+                return repaired
+            settings = _load_settings()
+            settings.setdefault("auto_disabled", {})[game_domain] = {
+                "log": signature,
+                "names": repaired.get("names") or [],
+            }
+            _save_settings(settings)
+            if repaired.get("names"):
+                decky.logger.info(
+                    f"automatically switched off {len(repaired['names'])} "
+                    f"mod(s) the game could not run: "
+                    f"{', '.join(repaired['names'][:6])}"
+                )
+        else:
+            repaired = {"disabled": 0, "names": seen.get("names") or [],
+                        "details": [], "held": []}
+        # Whatever is still blamed after that is a judgement call, so it
+        # stays on the button rather than being decided for the user.
+        rest = await self.disable_failing_mods(
+            game_domain, install_dir, mods_subdir, game_user_dir,
+            install_mode, app_id, plugins_subpath, plugins_style,
+            protected_ids, True, False,
+        )
+        return {
+            "ok": True,
+            "repaired": len(repaired.get("names") or []),
+            "names": repaired.get("names") or [],
+            "held": rest.get("held") or [],
+            "remaining": rest.get("details") or [],
         }
 
     async def get_known_bad_state(

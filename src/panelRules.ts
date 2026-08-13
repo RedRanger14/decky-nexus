@@ -260,6 +260,28 @@ export function failingProblem(
   );
 }
 
+/** What the panel says about mods it switched off without being asked.
+ *
+ * Silence would be worse than a button. Somebody who installed a
+ * 27-mod collection and finds 4 of them off is owed the reason and the
+ * knowledge that they can put them back - the plugin acting on its own is
+ * only acceptable if it says what it did.
+ */
+export function repairedNote(names: string[]): string {
+  const off = names.filter(Boolean);
+  if (!off.length) return "";
+  const one = off.length === 1;
+  const shown = off.slice(0, 3).join(", ");
+  const rest = off.length - 3;
+  return (
+    `${shown}${rest > 0 ? ` and ${rest} more` : ""} ` +
+    `${one ? "was" : "were"} switched off — the game could not run ` +
+    `${one ? "it" : "them"} and kept crashing. ${one ? "It is" : "They are"} ` +
+    `still installed, so you can switch ${one ? "it" : "them"} back on in ` +
+    `Installed mods once ${one ? "it has" : "they have"} been updated.`
+  );
+}
+
 /** What the toast says after switching off the mods the log blamed.
  *
  * `held` is the ecosystem libraries. BaseLib genuinely threw in that

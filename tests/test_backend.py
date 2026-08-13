@@ -4474,6 +4474,141 @@ class TestDisableFailingMods(unittest.TestCase):
         self.assertEqual(self._dry()["held"], ["STS2RitsuLib"])
 
 
+class TestAutoRepairFailingMods(unittest.TestCase):
+    """Acting without being asked, for the mods no judgement is needed on.
+
+    Michael's standing rule: if the plugin can detect it, it fixes it - a
+    button is a failure. It had detected the mod that threw 1,041
+    exceptions and still waited to be told."""
+
+    GAME = "Repair Test"
+    USER_DIR = "RepairTestUser"
+    FLOOD = chr(10).join(
+        ["ERROR: System.MissingMethodException: Method not found: 'x'.",
+         "   at RelicsReminder.Icon._Process(Double delta)"] * 40
+    )
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.mods = os.path.join(root, "mods")
+        for name in ("RelicsReminder", "DeadMod", "Grumpy", "Fine"):
+            os.makedirs(os.path.join(self.mods, name))
+        self.logdir = os.path.join(
+            main.decky.DECKY_USER_HOME, ".local", "share", self.USER_DIR,
+            "logs",
+        )
+        os.makedirs(self.logdir, exist_ok=True)
+        self._log(chr(10).join([
+            self.FLOOD,
+            # Verbatim shape from the device log: no [tag] bracket, so
+            # this is the branch that reports "failed to load".
+            "[ERROR] Exception thrown while loading mod DeadMod: "
+            "System.Reflection.ReflectionTypeLoadException: Unable to "
+            "load one or more of the requested types.",
+            "[ERROR] [Grumpy] [Patcher - main] [Critical] some_hook - Failed",
+        ]))
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["repairtest"] = {
+            n: {"mode": "folder", "folder": n, "name": n, "files": []}
+            for n in ("RelicsReminder", "DeadMod", "Grumpy", "Fine")
+        }
+        settings.pop("auto_disabled", None)
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("repairtest", None)
+        settings.pop("auto_disabled", None)
+        main._save_settings(settings)
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+        shutil.rmtree(
+            os.path.join(main.decky.DECKY_USER_HOME, ".local", "share",
+                         self.USER_DIR),
+            ignore_errors=True,
+        )
+
+    def _log(self, body: str):
+        with open(os.path.join(self.logdir, "godot.log"), "w") as f:
+            f.write(body + chr(10))
+
+    def _repair(self):
+        return run(self.plugin.repair_failing_mods(
+            "repairtest", self.GAME, "mods", self.USER_DIR, "folder"))
+
+    def test_a_flood_of_exceptions_is_switched_off_unasked(self):
+        r = self._repair()
+        self.assertTrue(r["ok"], r)
+        self.assertIn("RelicsReminder", r["names"])
+        self.assertFalse(os.path.isdir(
+            os.path.join(self.mods, "RelicsReminder")))
+
+    def test_a_mod_that_never_loaded_is_switched_off_unasked(self):
+        # It was not running, so this costs nothing and stops the error box.
+        self.assertIn("DeadMod", self._repair()["names"])
+
+    def test_an_ambiguous_failure_is_left_for_the_user(self):
+        # A [Critical] patch failure means part of a mod is unhappy. Two
+        # mods in that state did no visible harm on device, so switching
+        # them off is a decision and stays on the button.
+        r = self._repair()
+        self.assertNotIn("Grumpy", r["names"])
+        self.assertTrue(os.path.isdir(os.path.join(self.mods, "Grumpy")))
+        self.assertEqual([d["name"] for d in r["remaining"]], ["Grumpy"])
+
+    def test_a_healthy_mod_is_untouched(self):
+        r = self._repair()
+        self.assertNotIn("Fine", r["names"])
+        self.assertNotIn("Fine", [d["name"] for d in r["remaining"]])
+
+    def test_it_does_not_fight_a_user_who_switches_one_back_on(self):
+        # The log does not change when a mod is re-enabled, so a second
+        # look at the same session must not undo the user's decision.
+        self._repair()
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "mods", "RelicsReminder", True, "folder",
+            "repairtest"))
+        again = self._repair()
+        # RelicsReminder and DeadMod: it remembers what it did rather than
+        # re-deciding, which is the whole point.
+        self.assertEqual(again["repaired"], 2)
+        self.assertTrue(
+            os.path.isdir(os.path.join(self.mods, "RelicsReminder")),
+            "re-enabled mod was switched off again behind the user's back",
+        )
+
+    def test_a_new_session_is_judged_again(self):
+        self._repair()
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "mods", "RelicsReminder", True, "folder",
+            "repairtest"))
+        # The game ran again and blamed it again: that is new evidence.
+        time.sleep(1.1)
+        self._log(self.FLOOD)
+        self._repair()
+        self.assertFalse(
+            os.path.isdir(os.path.join(self.mods, "RelicsReminder")),
+            "a fresh session blaming the same mod was ignored",
+        )
+
+    def test_an_already_disabled_mod_is_not_offered_again(self):
+        self._repair()
+        self.assertNotIn(
+            "DeadMod", [d["name"] for d in self._repair()["remaining"]])
+
+    def test_no_log_is_not_an_error(self):
+        os.remove(os.path.join(self.logdir, "godot.log"))
+        r = self._repair()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["repaired"], 0)
+
+    def test_rejects_a_bad_domain(self):
+        self.assertFalse(run(self.plugin.repair_failing_mods(
+            "../evil", self.GAME, "mods", self.USER_DIR))["ok"])
+
+
 class TestGodotModManifests(unittest.TestCase):
     """Reading each mod's own manifest, which is what makes matching a log
     tag to an installed mod possible at all.

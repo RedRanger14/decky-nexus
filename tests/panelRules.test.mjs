@@ -8,6 +8,7 @@ import {
   cancellableDownload,
   disableFailingOutcome,
   failingProblem,
+  repairedNote,
   crashSuspect,
   huntProgressNote,
   launchWaitNotice,
@@ -837,4 +838,29 @@ test("nothing matched falls back to the backend note", () => {
   assert.equal(disableFailingOutcome([], [], "No session log yet"),
                "No session log yet");
   assert.match(disableFailingOutcome([], []), /Nothing matched/);
+});
+
+// --- repairedNote ---------------------------------------------------------
+// The plugin switching mods off on its own is only acceptable if it says so.
+
+test("nothing repaired says nothing", () => {
+  assert.equal(repairedNote([]), "");
+  assert.equal(repairedNote([""]), "");
+});
+
+test("one mod reads in the singular and says it is recoverable", () => {
+  const msg = repairedNote(["Relics Reminder"]);
+  assert.match(msg, /Relics Reminder was switched off/);
+  assert.match(msg, /still installed/);
+  assert.match(msg, /switch it back on in Installed mods/);
+});
+
+test("several are named and the rest counted", () => {
+  const msg = repairedNote(["A", "B", "C", "D", "E"]);
+  assert.match(msg, /A, B, C and 2 more were switched off/);
+  assert.match(msg, /They are still installed/);
+});
+
+test("says why, not just what", () => {
+  assert.match(repairedNote(["A"]), /kept crashing/);
 });
