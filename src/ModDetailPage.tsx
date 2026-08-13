@@ -28,7 +28,9 @@ import {
   installMod,
   setEndorsement,
   uninstallMod,
-} from "./api";
+
+  getKnownModVerdict,} from "./api";
+import { knownBrokenNote } from "./panelRules";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
 import { popOurPage } from "./Tabs";
@@ -105,6 +107,8 @@ export function ModDetailPage() {
   // Needs something Nexus does not host. Shown on the mod's own page,
   // because a user can arrive here from a search and never see the
   // collection that warned about it.
+  // Non-empty = the version we watched fail on this game build.
+  const [knownBroken, setKnownBroken] = useState("");
   const [needsExternal, setNeedsExternal] = useState<
     { reason: string; url: string } | undefined
   >();
@@ -153,6 +157,14 @@ export function ModDetailPage() {
     });
     setEndorseStatus(undefined);
     setNeedsExternal(undefined);
+    setKnownBroken("");
+    // What we have watched this mod actually do on the game build installed
+    // right now. Michael: "I dont want users to run into these problems
+    // indicually as well as on collections" - and unlike the hand-written
+    // table this one fills itself in.
+    getKnownModVerdict(s.game.nexusDomain, s.mod.modId, s.game.appId)
+      .then((r) => setKnownBroken(r.ok && r.known ? r.version ?? "" : ""))
+      .catch(() => {});
     getModSupport(s.game.nexusDomain, s.mod.modId)
       .then((r) => {
         if (r.ok && r.supported === false) {
@@ -516,6 +528,21 @@ export function ModDetailPage() {
               ships it - a user can arrive here from a search and would
               otherwise install something that stops the game starting with
               nothing anywhere to explain why. */}
+          {knownBroken && (
+            <div
+              style={{
+                marginBottom: "10px",
+                padding: "8px 10px",
+                borderRadius: "4px",
+                fontSize: "12.5px",
+                lineHeight: 1.45,
+                background: "rgba(220, 80, 80, 0.14)",
+                border: "1px solid rgba(220, 80, 80, 0.5)",
+              }}
+            >
+              ⚠ {knownBrokenNote(knownBroken)}
+            </div>
+          )}
           {needsExternal && (
             <div
               style={{
