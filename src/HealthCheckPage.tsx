@@ -33,6 +33,38 @@ import { healthVerdict } from "./panelRules";
 import { installLatest } from "./install";
 
 const WARN = "230, 180, 80";
+const NEXUS_ORANGE = "#da8e35";
+
+// The design language says progress is shown by filling the control itself,
+// left to right, in brand orange. There is nothing to fill here - the check
+// cannot report a percentage - so this is the same idea as a sweep: one
+// orange band travelling across the banner, so a slow check reads as working
+// rather than stuck. On a large Fallout 3 collection it is the difference
+// between waiting and reaching for the back button.
+const SWEEP_CSS = `
+@keyframes nexusHealthSweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.nexus-health-sweep {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 33%;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    rgba(218,142,53,0) 0%,
+    ${NEXUS_ORANGE} 50%,
+    rgba(218,142,53,0) 100%
+  );
+  animation: nexusHealthSweep 1.15s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nexus-health-sweep { animation-duration: 2.4s; }
+}
+`;
 // ScrollPanelGroup's published props do not include the ones the other
 // full-screen pages already pass; same escape hatch they use.
 const Scroller: any = ScrollPanelGroup;
@@ -183,6 +215,9 @@ export default function HealthCheckPage() {
     run();
   };
 
+  // While a check is running the previous findings are history, and showing
+  // them under a "Checking…" banner invites acting on them.
+  const shown = busy ? undefined : report;
   const missingCount = report
     ? new Set(
         report.needs_mods.flatMap((f) =>
@@ -212,6 +247,7 @@ export default function HealthCheckPage() {
           scrollPaddingBottom: "110px",
         }}
       >
+        <style>{SWEEP_CSS}</style>
         <TabBar currentId="health" />
         <h1
           style={{
@@ -237,6 +273,9 @@ export default function HealthCheckPage() {
             padding: "20px 22px",
             marginTop: "18px",
             borderRadius: "8px",
+            // So the sweep can sit on the banner's own bottom edge.
+            position: "relative",
+            overflow: "hidden",
             background: `linear-gradient(135deg, rgba(${verdict.tone}, 0.16), rgba(255,255,255,0.02))`,
             border: `1px solid rgba(${verdict.tone}, 0.35)`,
           }}
@@ -260,6 +299,7 @@ export default function HealthCheckPage() {
               {verdict.detail}
             </div>
           </div>
+          {busy && <div className="nexus-health-sweep" />}
         </Focusable>
 
         <div
@@ -301,7 +341,7 @@ export default function HealthCheckPage() {
           </DialogButton>
         </Focusable>
 
-        {missingCount > 0 && (
+        {missingCount > 0 && shown && (
           <>
             <SectionHeading
               title="Mods that need other mods"
@@ -340,7 +380,7 @@ export default function HealthCheckPage() {
           </>
         )}
 
-        {(report?.needs_dlc.length ?? 0) > 0 && (
+        {(shown?.needs_dlc.length ?? 0) > 0 && (
           <>
             <SectionHeading title="Mods that need game DLC" />
             {report!.needs_dlc.map((f) => (
@@ -363,7 +403,7 @@ export default function HealthCheckPage() {
           </>
         )}
 
-        {(report?.needs_external.length ?? 0) > 0 && (
+        {(shown?.needs_external.length ?? 0) > 0 && (
           <>
             <SectionHeading title="Files that aren't on Nexus" />
             {report!.needs_external.map((f) => (
@@ -388,7 +428,7 @@ export default function HealthCheckPage() {
           </>
         )}
 
-        {(report?.already_fixed.length ?? 0) > 0 && (
+        {(shown?.already_fixed.length ?? 0) > 0 && (
           <>
             <SectionHeading title="Sorted out already" />
             {report!.already_fixed.map((d, i) => (
