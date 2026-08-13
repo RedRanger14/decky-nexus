@@ -11053,6 +11053,7 @@ query Link($slug: String!, $domainName: String!) {
         if install_mode == "dataDir":
             settings = _load_settings()
             records = settings.get("installed", {}).get(game_domain, {})
+            skips = _load_skips(game_domain) if game_domain else {}
             active = set()
             if plugins_subpath:
                 active = _active_plugins(
@@ -11088,6 +11089,23 @@ query Link($slug: String!, $domainName: String!) {
                 enabled = not parked and (
                     (not plugins) or any(p.lower() in active for p in plugins)
                 )
+                # WHY it is off, in the user's words, on the row where they
+                # see it off. Without this a mod switched off for a real
+                # reason looks identical to one the user turned off - so on
+                # device the answer to "why is this disabled?" was to turn
+                # it back on, which put the game back to not booting.
+                why = ""
+                if parked and rec.get("needs_external"):
+                    why = (
+                        f"Needs {rec['needs_external']}, which is not on "
+                        "Nexus Mods. Add it, then switch this back on."
+                    )
+                elif not enabled:
+                    for pl in plugins:
+                        note = skips.get(pl.lower())
+                        if note and note.get("reason"):
+                            why = str(note["reason"])
+                            break
                 results.append(
                     {
                         "folder": key,
@@ -11102,6 +11120,7 @@ query Link($slug: String!, $domainName: String!) {
                         # untoggleable and left "its assets are always
                         # active" as the only answer.
                         "togglable": True,
+                        "disabled_reason": why,
                         "source": rec.get("source") or "",
                         "collection_slug": rec.get("collection_slug") or "",
                     }
@@ -11257,6 +11276,31 @@ query Link($slug: String!, $domainName: String!) {
             records = settings.get("installed", {}).get(game_domain, {})
             rec = records.get(folder) or rec
             plugins = rec.get("plugins") or []
+            # Refuse to switch a mod back on when it still cannot work.
+            # On device a collection shipped a patch for a mod it never
+            # asked you to install, so the patch had no master; we switched
+            # it off correctly, the user could not see why, turned it back
+            # on, and the game stopped booting. Saying no with the reason is
+            # the whole difference.
+            if enabled and plugins:
+                _install_path, data_now, _u = _game_paths(
+                    install_dir, mods_subdir
+                )
+                blocked = _missing_masters(
+                    data_now, plugins,
+                    IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset()),
+                )
+                if blocked:
+                    names = ", ".join(m for m, _deps in blocked[:3])
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"{folder} needs {names}, which "
+                            f"{'is' if len(blocked) == 1 else 'are'} not "
+                            "installed. Switching it on stops the game "
+                            "starting, so it has been left off."
+                        ),
+                    }
             if plugins and plugins_subpath:
                 _set_plugins_active(
                     _plugins_txt_path(app_id, plugins_subpath),

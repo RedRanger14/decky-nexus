@@ -99,6 +99,11 @@ export interface InstalledMod {
   mod_id?: number;
   /** dataDir mode: false when the mod has no plugin file to toggle */
   togglable?: boolean;
+  /** Why it is switched off, when we switched it off for a reason. A mod
+   * off deliberately and one the user turned off look identical without
+   * this, so "why is this disabled?" gets answered by turning it back on -
+   * which is how a device ended up not booting. */
+  disabled_reason?: string;
   /** "collection" when installed as part of a collection */
   source?: string;
   /** Which collection (registered via registerCollection) */
