@@ -282,6 +282,29 @@ class TestModLoadLogParsing(unittest.TestCase):
         self.assertEqual(status["ataironclad"]["state"], "degraded")
         self.assertIn("Patching exception", status["ataironclad"]["detail"])
 
+    def test_a_missing_dependency_is_reported_against_the_mod(self):
+        # Verbatim from device. Michael installed four mods individually,
+        # the game booted, the banner said "Loaded 3 mods (4 total)" and
+        # the plugin reported nothing wrong - because this line shape was
+        # not parsed at all. It is the clearest error the loader produces.
+        status, _modded = main._parse_mod_load_log([
+            "[INFO] RUNNING MODDED",
+            "[ERROR] Tried to load mod EnchantedOfferings, but it depends "
+            "on mods which have not been loaded: BaseLib!",
+        ])
+        self.assertEqual(status["enchantedofferings"]["state"], "error")
+        self.assertEqual(
+            status["enchantedofferings"]["detail"],
+            "needs BaseLib, which is not installed",
+        )
+
+    def test_several_missing_dependencies_are_all_named(self):
+        status, _modded = main._parse_mod_load_log([
+            "[ERROR] Tried to load mod Thing, but it depends on mods which "
+            "have not been loaded: BaseLib, RitsuLib!",
+        ])
+        self.assertIn("BaseLib, RitsuLib", status["thing"]["detail"])
+
     def test_a_mod_that_never_loaded_is_still_an_error(self):
         status, _modded = main._parse_mod_load_log([
             "[INFO] RUNNING MODDED",
@@ -5276,6 +5299,58 @@ class TestGodotModManifests(unittest.TestCase):
     def test_a_missing_mods_dir_is_empty_not_an_error(self):
         self.assertEqual(
             main._godot_mod_manifests(os.path.join(self.root, "nope")), {})
+
+
+class TestManifestDependencyShapes(unittest.TestCase):
+    """Both dependency shapes appear in the wild, and only one was handled.
+
+    Verified on device 2026-08-13: the collection's mods wrote
+    ["BaseLib"], while Enchanted Offerings wrote
+    [{"id": "BaseLib", "min_version": "3.1.2"}]. str() on the dict form
+    produced "{'id': 'BaseLib', ...}", which matched nothing - so a mod
+    declaring its dependency the richer way silently failed to protect the
+    library it needs from being switched off."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _mod(self, folder, deps):
+        os.makedirs(os.path.join(self.root, folder), exist_ok=True)
+        with open(os.path.join(self.root, folder, "mod_manifest.json"),
+                  "w", encoding="utf-8") as f:
+            json.dump({"id": folder, "name": folder,
+                       "dependencies": deps}, f)
+
+    def test_the_string_shape_still_works(self):
+        self._mod("A", ["BaseLib"])
+        self.assertEqual(
+            main._godot_mod_manifests(self.root)["A"]["deps"], ["BaseLib"])
+
+    def test_the_dict_shape_yields_the_id(self):
+        self._mod("A", [{"id": "BaseLib", "min_version": "3.1.2"}])
+        self.assertEqual(
+            main._godot_mod_manifests(self.root)["A"]["deps"], ["BaseLib"])
+
+    def test_a_mixture_is_handled(self):
+        self._mod("A", ["ModConfig", {"id": "BaseLib"}])
+        self.assertEqual(
+            main._godot_mod_manifests(self.root)["A"]["deps"],
+            ["ModConfig", "BaseLib"])
+
+    def test_a_dict_with_no_id_is_dropped_not_stringified(self):
+        self._mod("A", [{"min_version": "1.0"}, ""])
+        self.assertEqual(main._godot_mod_manifests(self.root)["A"]["deps"], [])
+
+    def test_the_dict_shape_protects_its_library(self):
+        # The consequence, stated end to end: BaseLib must read as needed.
+        self._mod("BaseLib", [])
+        self._mod("A", [{"id": "BaseLib", "min_version": "3.1.2"}])
+        manifests = main._godot_mod_manifests(self.root)
+        needed = main._mods_needed_by_others(manifests, {"A", "BaseLib"})
+        self.assertEqual(needed.get("baselib"), ["A"])
 
 
 class TestLogTagMatching(unittest.TestCase):

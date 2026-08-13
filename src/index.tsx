@@ -225,6 +225,7 @@ import { ModDetailPage } from "./ModDetailPage";
 import { ManagerPage } from "./ManagerPage";
 import { SettingsPage } from "./SettingsPage";
 import { UpdatesPage } from "./UpdatesPage";
+import { installLatest } from "./install";
 import { scanUpdates } from "./updates";
 
 /** QAM row shortcut: jump from an installed mod straight to its detail page
@@ -732,15 +733,25 @@ function CurrentGameSection() {
       if (game.prefixRuntimeFix) {
         await fixPrefixRuntime(game.appId).catch(() => undefined);
       }
-      const result = await installFramework(
-        game.nexusDomain,
-        game.framework.nexusModId,
-        game.installDirName,
-        game.framework.installKind ?? "smapi",
-        game.framework.detectFile,
-        game.framework.avoidFileKeywords ?? [],
-        game.framework.installSubdir ?? ""
-      );
+      // BaseLib is an ordinary mod that lives in mods/BaseLib/. The
+      // framework installer flattens archives into the game root, which
+      // would scatter it across mods/ - so route it through the installer
+      // that already handles folder mods correctly.
+      const result = game.framework.installAsMod
+        ? await installLatest(
+            game,
+            game.framework.nexusModId,
+            game.framework.name
+          )
+        : await installFramework(
+            game.nexusDomain,
+            game.framework.nexusModId,
+            game.installDirName,
+            game.framework.installKind ?? "smapi",
+            game.framework.detectFile,
+            game.framework.avoidFileKeywords ?? [],
+            game.framework.installSubdir ?? ""
+          );
       // Some games need ini blocks before mods load at all (e.g. FO4's
       // archive invalidation) - apply them as part of framework setup.
       if (result.ok && game.setupInis) {
@@ -754,12 +765,19 @@ function CurrentGameSection() {
           );
         }
       }
-      if (result.ok && result.install_path) {
+      // installAsMod frameworks report no install_path and need no launch
+      // command: Slay the Spire 2 loads whatever is in mods/ by itself, so
+      // Step 1 is the whole setup.
+      const installPath =
+        "install_path" in result ? result.install_path : undefined;
+      if (result.ok) {
         toaster.toast({
           title: `${game.framework.name} installed`,
-          body: "Step 2: set the launch command",
+          body: game.framework.launchOptionsTemplate
+            ? "Step 2: set the launch command"
+            : "That's the setup done — mods will load next time you play",
         });
-        if (game.framework.launchOptionsTemplate) {
+        if (game.framework.launchOptionsTemplate && installPath) {
           showModal(
             <LaunchOptionsModal
               frameworkName={game.framework.name}
@@ -768,7 +786,7 @@ function CurrentGameSection() {
               gameDomain={game.nexusDomain}
               options={game.framework.launchOptionsTemplate.replace(
                 "{install_path}",
-                result.install_path
+                installPath
               )}
               onDone={markDone}
             />
