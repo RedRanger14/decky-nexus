@@ -1048,6 +1048,35 @@ def _game_owned_name(game_domain: str, name: str) -> bool:
     return False
 
 
+# Mods that need something Nexus does not host, and so cannot work on a
+# console-style install where nobody is going to fetch it by hand.
+#
+# Switched OFF by default rather than installed-and-broken. Anyone who does
+# go and get the external file can turn them back on in one tap - a user
+# capable of downloading from ModDB has already shown they will tinker;
+# a user who just wants the collection to start should never have to.
+#
+# Keyed on the install record name, lowercased. `needs_file` is looked for
+# in the game's Data folder, so the check is a fact about the install
+# rather than a guess.
+NEEDS_EXTERNAL_MOD = {
+    "newvegas": {
+        "one hud - ohud": {
+            "needs_file": "Vanilla UI Plus.esp",
+            "needs_name": "Vanilla UI+ (VUI+)",
+        },
+        "clean vanilla hud": {
+            "needs_file": "Vanilla UI Plus.esp",
+            "needs_name": "Vanilla UI+ (VUI+)",
+        },
+        "one hud - ohud - clean vanilla hud patch": {
+            "needs_file": "Vanilla UI Plus.esp",
+            "needs_name": "Vanilla UI+ (VUI+)",
+        },
+    },
+}
+
+
 def _parked_files_dir(game_domain: str, record_key: str) -> str:
     """Where a disabled dataDir mod's files wait to be put back."""
     return os.path.join(
@@ -10339,6 +10368,108 @@ query Link($slug: String!, $domainName: String!) {
             "names_off": sorted(turn_off)[:12],
             "total": after,
             "limit": limit,
+        }
+
+    async def apply_known_prerequisites(
+        self, game_domain: str, install_dir: str, mods_subdir: str = "Data",
+        app_id: int = 0, plugins_subpath: str = "",
+        plugins_style: str = "starred", slug: str = "",
+    ) -> dict:
+        """Switch off mods that need a file Nexus does not host.
+
+        Console-first: a mod that cannot work is OFF, not installed and
+        silently breaking the game. Nothing to read, nothing to tap.
+
+        The three New Vegas interface mods here need Vanilla UI+, which is
+        hosted on ModDB. Left on, the game reaches the main menu background
+        and stops - no crash log, no error the user can act on. Off, the
+        collection starts and the page says which mods are waiting and what
+        they are waiting for. Anyone who fetches VUI+ by hand can turn them
+        back on in one tap, and by definition they are already tinkering.
+
+        Reversible: if the prerequisite IS present, anything parked for
+        want of it is restored.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        table = NEEDS_EXTERNAL_MOD.get(game_domain) or {}
+        if not table:
+            return {"ok": True, "parked": 0, "restored": 0, "mods": []}
+        _install_path, data_path, _unused = _game_paths(
+            install_dir, mods_subdir
+        )
+        if not os.path.isdir(data_path):
+            return {"ok": False, "error": f"{mods_subdir} not found"}
+        try:
+            on_disk = {f.lower() for f in os.listdir(data_path)}
+        except OSError:
+            on_disk = set()
+        settings = _load_settings()
+        records = settings.get("installed", {}).get(game_domain, {})
+        parked, restored, waiting = 0, 0, []
+        for key, rec in records.items():
+            entry = table.get(key.lower())
+            if not entry or rec.get("mode") != "dataDir":
+                continue
+            have = entry["needs_file"].lower() in on_disk
+            rels = [
+                r for r in (rec.get("files") or [])
+                if r.lower() not in _shared_paths(records, key)
+            ]
+            park_dir = _parked_files_dir(game_domain, key)
+            if have:
+                if rec.get("parked"):
+                    restored += _move_mod_files(park_dir, data_path, rels)
+                    _force_rmtree(park_dir)
+                    rec.pop("parked", None)
+                    rec.pop("needs_external", None)
+                continue
+            if not rec.get("parked"):
+                moved = _move_mod_files(data_path, park_dir, rels)
+                if moved:
+                    rec["parked"] = True
+                    rec["needs_external"] = entry["needs_name"]
+                    parked += moved
+            waiting.append({"mod": rec.get("name") or key,
+                            "needs": entry["needs_name"]})
+            for plugin in rec.get("plugins") or []:
+                if plugins_subpath:
+                    _set_plugins_active(
+                        _plugins_txt_path(app_id, plugins_subpath),
+                        [plugin], False, plugins_style,
+                    )
+        if waiting and slug and re.fullmatch(r"[A-Za-z0-9_-]+", slug):
+            queue = settings.setdefault("collection_attention", {}).setdefault(
+                game_domain, {}
+            ).setdefault(slug, [])
+            known = {
+                (a.get("mod_name"), a.get("reason")) for a in queue
+            }
+            for w in waiting:
+                if (w["mod"], "needs_external") in known:
+                    continue
+                queue.append({
+                    "file_id": 0, "mod_id": 0, "mod_name": w["mod"],
+                    "file_name": "", "version": "",
+                    "reason": "needs_external", "options": [],
+                    "detail": (
+                        f"Switched off because it needs {w['needs']}, which "
+                        "is not hosted on Nexus Mods. Get that mod and turn "
+                        "this back on in My Mods."
+                    ),
+                })
+        _save_settings(settings)
+        if parked or restored:
+            decky.logger.info(
+                f"prerequisites {game_domain!r}: parked {parked} file(s) "
+                f"across {len(waiting)} mod(s), restored {restored}"
+            )
+        return {
+            "ok": True,
+            "parked": parked,
+            "restored": restored,
+            "mods": [w["mod"] for w in waiting],
+            "needs": sorted({w["needs"] for w in waiting}),
         }
 
     async def get_known_bad_state(
