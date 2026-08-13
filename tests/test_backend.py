@@ -4176,6 +4176,40 @@ class TestCancelCollectionInstall(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class TestPerModSupport(unittest.TestCase):
+    """The same warning has to reach someone who found the mod by
+    browsing, not only someone installing the collection it came from.
+
+    Michael: "I don't want users to run into these problems individually as
+    well as on collections." The three New Vegas interface mods that stop
+    the game starting are one search away from any user."""
+
+    def test_a_mod_needing_an_off_nexus_file_is_flagged(self):
+        for mod_id in (44757, 70001, 84166):
+            r = run(main.Plugin().get_mod_support("newvegas", mod_id))
+            self.assertTrue(r["ok"])
+            self.assertFalse(r["supported"], mod_id)
+            self.assertEqual(r["needs_name"], "Vanilla UI+ (VUI+)")
+            # And where to get it, or the warning is a dead end.
+            self.assertIn("moddb.com", r["url"])
+            # And what happens if they install it anyway.
+            self.assertIn("will not start", r["reason"])
+
+    def test_an_ordinary_mod_is_supported(self):
+        r = run(main.Plugin().get_mod_support("newvegas", 51664))
+        self.assertTrue(r["supported"])
+
+    def test_the_table_is_keyed_by_id_not_name(self):
+        # Record names are sanitised display strings that drift; the mod id
+        # is what a mod page knows, which is the whole point of this table.
+        for mod_id in main.MODS_NEEDING_EXTERNAL["newvegas"]:
+            self.assertIsInstance(mod_id, int)
+
+    def test_rejects_a_bad_domain(self):
+        r = run(main.Plugin().get_mod_support("../evil", 1))
+        self.assertFalse(r["ok"])
+
+
 class TestUnsupportedCollections(unittest.TestCase):
     """Saying a collection cannot work HERE, before the download rather
     than after it. The TTW collection is 42 GB and needs a conversion that
@@ -4290,13 +4324,14 @@ class TestExternalPrerequisites(unittest.TestCase):
         settings.setdefault("installed", {})["newvegas_prereq"] = {
             "One HUD - oHUD": {
                 "mode": "dataDir", "plugins": [], "name": "One HUD - oHUD",
+                "mod_id": 4001,
                 "files": ["menus/hud.xml", "menus/other.xml"],
             },
         }
         main._save_settings(settings)
         # Point the table at our fake domain for the duration.
-        main.NEEDS_EXTERNAL_MOD["newvegas_prereq"] = {
-            "one hud - ohud": {
+        main.MODS_NEEDING_EXTERNAL["newvegas_prereq"] = {
+            4001: {
                 "needs_file": "Vanilla UI Plus.esp",
                 "needs_name": "Vanilla UI+ (VUI+)",
             },
@@ -4310,7 +4345,7 @@ class TestExternalPrerequisites(unittest.TestCase):
         settings.get("installed", {}).pop("newvegas_prereq", None)
         settings.get("collection_attention", {}).pop("newvegas_prereq", None)
         main._save_settings(settings)
-        main.NEEDS_EXTERNAL_MOD.pop("newvegas_prereq", None)
+        main.MODS_NEEDING_EXTERNAL.pop("newvegas_prereq", None)
         main._force_rmtree(
             main._parked_files_dir("newvegas_prereq", "One HUD - oHUD")
         )
@@ -4365,11 +4400,12 @@ class TestExternalPrerequisites(unittest.TestCase):
         recs = settings["installed"]["newvegas_prereq"]
         recs["The Patch"] = {
             "mode": "dataDir", "plugins": [], "name": "The Patch",
+            "mod_id": 4002,
             # Both of its files belong to the other mod too.
             "files": ["menus/hud.xml", "menus/other.xml"],
         }
         main._save_settings(settings)
-        main.NEEDS_EXTERNAL_MOD["newvegas_prereq"]["the patch"] = {
+        main.MODS_NEEDING_EXTERNAL["newvegas_prereq"][4002] = {
             "needs_file": "Vanilla UI Plus.esp",
             "needs_name": "Vanilla UI+ (VUI+)",
         }

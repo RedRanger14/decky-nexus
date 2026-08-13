@@ -1059,19 +1059,42 @@ def _game_owned_name(game_domain: str, name: str) -> bool:
 # Keyed on the install record name, lowercased. `needs_file` is looked for
 # in the game's Data folder, so the check is a fact about the install
 # rather than a guess.
-NEEDS_EXTERNAL_MOD = {
+# Mods that need something Nexus does not host, keyed by NEXUS MOD ID.
+#
+# Keyed by id rather than by our record name for two reasons: the record
+# name is a sanitised display string that can drift, and the id is what the
+# mod PAGE knows - so the same table warns a user browsing to the mod on its
+# own, not only someone installing the collection it came from. Michael's
+# point: "I don't want users to run into these problems individually as
+# well as on collections."
+#
+# `needs_file` is looked for in the game's mods folder, so "have I got it?"
+# is a fact about the install rather than a guess. Mods listed here are
+# switched OFF when it is absent and restored when it appears.
+MODS_NEEDING_EXTERNAL = {
     "newvegas": {
-        "one hud - ohud": {
+        # One HUD, Clean Vanilla Hud and the patch between them are the
+        # interface layer of New Vegas's most popular collections, and all
+        # three are built on Vanilla UI+ - which lives on ModDB, so no API
+        # can fetch it. With it absent the game reaches the main-menu
+        # background and stops, with nothing in any log a user could act on.
+        44757: {
+            "name": "One HUD - oHUD",
             "needs_file": "Vanilla UI Plus.esp",
             "needs_name": "Vanilla UI+ (VUI+)",
+            "url": "https://www.moddb.com/mods/vanilla-ui-plus/downloads/vanilla-ui-plus-nv",
         },
-        "clean vanilla hud": {
+        70001: {
+            "name": "Clean Vanilla Hud",
             "needs_file": "Vanilla UI Plus.esp",
             "needs_name": "Vanilla UI+ (VUI+)",
+            "url": "https://www.moddb.com/mods/vanilla-ui-plus/downloads/vanilla-ui-plus-nv",
         },
-        "one hud - ohud - clean vanilla hud patch": {
+        84166: {
+            "name": "One HUD - oHUD - Clean Vanilla Hud Patch",
             "needs_file": "Vanilla UI Plus.esp",
             "needs_name": "Vanilla UI+ (VUI+)",
+            "url": "https://www.moddb.com/mods/vanilla-ui-plus/downloads/vanilla-ui-plus-nv",
         },
     },
 }
@@ -10440,7 +10463,7 @@ query Link($slug: String!, $domainName: String!) {
         """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
-        table = NEEDS_EXTERNAL_MOD.get(game_domain) or {}
+        table = MODS_NEEDING_EXTERNAL.get(game_domain) or {}
         if not table:
             return {"ok": True, "parked": 0, "restored": 0, "mods": []}
         _install_path, data_path, _unused = _game_paths(
@@ -10459,11 +10482,11 @@ query Link($slug: String!, $domainName: String!) {
         # the group is still movable.
         group = {
             key for key, rec in records.items()
-            if key.lower() in table and rec.get("mode") == "dataDir"
-            and table[key.lower()]["needs_file"].lower() not in on_disk
+            if rec.get("mod_id") in table and rec.get("mode") == "dataDir"
+            and table[rec["mod_id"]]["needs_file"].lower() not in on_disk
         }
         for key, rec in records.items():
-            entry = table.get(key.lower())
+            entry = table.get(rec.get("mod_id"))
             if not entry or rec.get("mode") != "dataDir":
                 continue
             have = entry["needs_file"].lower() in on_disk
@@ -10618,6 +10641,32 @@ query Link($slug: String!, $domainName: String!) {
             "removed": removed,
             "kept": kept_other,
             "errors": errors[:8],
+        }
+
+    async def get_mod_support(self, game_domain: str, mod_id: int) -> dict:
+        """Whether this mod needs something we cannot install, and what.
+
+        Answered for a SINGLE mod so the warning reaches someone who found
+        it by browsing, not only someone installing the collection it came
+        from. The same three New Vegas interface mods that stop the game
+        starting are one search away from any user.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        entry = (MODS_NEEDING_EXTERNAL.get(game_domain) or {}).get(int(mod_id))
+        if not entry:
+            return {"ok": True, "supported": True}
+        return {
+            "ok": True,
+            "supported": False,
+            "needs_name": entry["needs_name"],
+            "url": entry.get("url") or "",
+            "reason": (
+                f"This mod needs {entry['needs_name']}, which is not hosted "
+                "on Nexus Mods and cannot be downloaded here. Installed "
+                "without it, the game will not start - so it is switched off "
+                "until you add it yourself."
+            ),
         }
 
     async def get_known_bad_state(

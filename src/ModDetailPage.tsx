@@ -24,6 +24,7 @@ import {
   getModDetails,
   getModFiles,
   getModRequirements,
+  getModSupport,
   installMod,
   setEndorsement,
   uninstallMod,
@@ -101,6 +102,12 @@ export function ModDetailPage() {
   const [installedMods, setInstalledMods] = useState<InstalledMod[]>([]);
   const [endorseStatus, setEndorseStatus] = useState<string | undefined>();
   const [endorseBusy, setEndorseBusy] = useState(false);
+  // Needs something Nexus does not host. Shown on the mod's own page,
+  // because a user can arrive here from a search and never see the
+  // collection that warned about it.
+  const [needsExternal, setNeedsExternal] = useState<
+    { reason: string; url: string } | undefined
+  >();
   const [imageFull, setImageFull] = useState(false);
   const [fwInstalled, setFwInstalled] = useState(false);
   const [uploader, setUploader] = useState<NexusMod["uploader"]>();
@@ -145,6 +152,14 @@ export function ModDetailPage() {
       setUploader(r.ok ? (r.mod as NexusMod | undefined)?.uploader : undefined);
     });
     setEndorseStatus(undefined);
+    setNeedsExternal(undefined);
+    getModSupport(s.game.nexusDomain, s.mod.modId)
+      .then((r) => {
+        if (r.ok && r.supported === false) {
+          setNeedsExternal({ reason: r.reason ?? "", url: r.url ?? "" });
+        }
+      })
+      .catch(() => {});
     getEndorsement(s.game.nexusDomain, s.mod.modId).then((r) =>
       setEndorseStatus(r.ok ? r.status : undefined)
     );
@@ -497,6 +512,26 @@ export function ModDetailPage() {
           <div style={{ opacity: 0.75, fontSize: "13.5px", marginBottom: "8px" }}>
             by {mod.author}
           </div>
+          {/* Warned on the mod's OWN page, not only on the collection that
+              ships it - a user can arrive here from a search and would
+              otherwise install something that stops the game starting with
+              nothing anywhere to explain why. */}
+          {needsExternal && (
+            <div
+              style={{
+                marginBottom: "10px",
+                padding: "8px 10px",
+                borderRadius: "4px",
+                fontSize: "12.5px",
+                lineHeight: 1.45,
+                background: "rgba(220, 80, 80, 0.14)",
+                border: "1px solid rgba(220, 80, 80, 0.5)",
+              }}
+            >
+              ⚠ {needsExternal.reason}
+              {needsExternal.url ? ` Get it from ${needsExternal.url}` : ""}
+            </div>
+          )}
           <Focusable
             style={{
               display: "flex",
