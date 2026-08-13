@@ -13,6 +13,7 @@ export type PageId =
   | "detail-from-browse"
   | "detail-from-qam"
   | "downloads"
+  | "health"
   | "manager"
   | "updates";
 

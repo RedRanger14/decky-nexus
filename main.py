@@ -1814,6 +1814,21 @@ def _load_order_report(data_path: str, names: list, cache: dict = None) -> int:
 # not own. Named so the panel can say "Dead Money" rather than
 # "DeadMoney.esm", which nobody can act on without already knowing it maps
 # to a Steam DLC.
+def _dlc_checkable(game_domain: str) -> bool:
+    """Whether a missing DLC can be proved rather than guessed.
+
+    True only where expansions ship as master files in the game's data
+    folder, which is what DLC_MASTER_NAMES enumerates. Everywhere else a
+    "you need this DLC" warning would be a guess aimed at somebody who may
+    well own it - worse than silence.
+    """
+    return game_domain in DLC_GAMES_WITH_MASTERS
+
+
+DLC_GAMES_WITH_MASTERS = frozenset(
+    {"newvegas", "fallout3", "skyrimspecialedition", "fallout4", "oblivion"}
+)
+
 DLC_MASTER_NAMES = {
     # Fallout: New Vegas
     "deadmoney.esm": "Dead Money",
@@ -11457,6 +11472,101 @@ query Link($slug: String!, $domainName: String!) {
             "known": True,
             "version": verdict.get("version") or "",
             "why": verdict.get("why") or "",
+        }
+
+    async def get_health_check(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        app_id: int = 0,
+    ) -> dict:
+        """What is wrong with this setup that the user cannot see.
+
+        Michael asked for this months ago and was talked out of it. One day
+        of testing Slay the Spire 2 settled the argument: two mods silently
+        did not load for want of a library, a collection's pinned libraries
+        broke four more, mods were switched off that had fixes published,
+        and a collection listed mods Nexus no longer serves. Every one of
+        those was knowable, and none of it appeared anywhere a player looks.
+
+        Checks each installed mod against what its Nexus page says it
+        needs - other mods, and game DLC. The DLC half is the one that
+        matters most for Bethesda games, where a missing expansion is not
+        discoverable until the game refuses to start, and where Michael
+        lost a day to exactly that on New Vegas.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        records = _load_settings().get("installed", {}).get(game_domain, {})
+        tracked = {
+            key: rec for key, rec in records.items()
+            if rec.get("mod_id") and rec.get("enabled") is not False
+        }
+        _install, _mods_path, _dis = _game_paths(install_dir, mods_subdir)
+        data_path = _game_paths(install_dir, mods_subdir)[1]
+        have_ids = {int(rec["mod_id"]) for rec in tracked.values()}
+        # Which DLC the user actually owns, read from disk rather than from
+        # the store: a master file present in Data is the only proof that
+        # survives a reinstall, a family share or a regional edition.
+        owned_dlc = set()
+        try:
+            for name in os.listdir(data_path):
+                human = DLC_MASTER_NAMES.get(name.lower())
+                if human:
+                    owned_dlc.add(human)
+        except OSError:
+            pass
+        needs_mods, needs_dlc, needs_external, errors = [], [], [], []
+        for key, rec in sorted(tracked.items()):
+            try:
+                reqs = await self.get_mod_requirements(
+                    game_domain, int(rec["mod_id"])
+                )
+            except Exception as e:  # noqa: BLE001 - one mod must not stop it
+                errors.append(f"{key}: {type(e).__name__}")
+                continue
+            if not reqs.get("ok"):
+                continue
+            name = rec.get("name") or key
+            missing = [
+                {"name": r.get("modName") or f"Mod {r.get('modId')}",
+                 "mod_id": r.get("modId"),
+                 "notes": r.get("notes") or ""}
+                for r in reqs.get("requirements") or []
+                if (r.get("modId") or 0) > 0
+                and int(r["modId"]) not in have_ids
+                and not re.search(r"optional", r.get("notes") or "", re.I)
+            ]
+            if missing:
+                needs_mods.append({"name": name, "mod_id": rec["mod_id"],
+                                   "missing": missing})
+            off_nexus = [
+                {"name": r.get("modName") or "an off-site file",
+                 "url": r.get("url") or ""}
+                for r in reqs.get("requirements") or []
+                if (r.get("modId") or 0) <= 0 and r.get("url")
+            ]
+            if off_nexus:
+                needs_external.append({"name": name, "files": off_nexus})
+            # DLC is only checkable where the game keeps its expansions as
+            # master files we can see. Elsewhere, saying nothing beats
+            # guessing "you do not own this" at somebody who does.
+            if owned_dlc or _dlc_checkable(game_domain):
+                short = [
+                    d["name"] for d in reqs.get("dlc") or []
+                    if d.get("name")
+                    and d["name"].strip().lower() not in {
+                        o.lower() for o in owned_dlc
+                    }
+                ]
+                if short:
+                    needs_dlc.append({"name": name, "dlc": short})
+        return {
+            "ok": True,
+            "checked": len(tracked),
+            "needs_mods": needs_mods[:20],
+            "needs_dlc": needs_dlc[:20],
+            "needs_external": needs_external[:20],
+            "owned_dlc": sorted(owned_dlc),
+            "errors": errors[:5],
         }
 
     async def get_blamed_folders(
