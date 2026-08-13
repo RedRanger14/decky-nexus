@@ -4786,12 +4786,25 @@ def _godot_mod_manifests(mods_dir: str) -> dict:
                 continue
             if not isinstance(data, dict) or not data.get("id"):
                 continue
+            # Both shapes appear in the wild, verified on device:
+            #   "dependencies": ["BaseLib"]
+            #   "dependencies": [{"id": "BaseLib", "min_version": "3.1.2"}]
+            # str() on the dict form produced "{'id': 'BaseLib', ...}", which
+            # matched nothing - so a mod declaring its dependency the richer
+            # way silently failed to protect the library it needs.
             deps = data.get("dependencies")
+            names = []
+            if isinstance(deps, list):
+                for dep in deps:
+                    if isinstance(dep, dict):
+                        if dep.get("id"):
+                            names.append(str(dep["id"]))
+                    elif dep:
+                        names.append(str(dep))
             out[folder] = {
                 "id": str(data["id"]),
                 "name": str(data.get("name") or data["id"]),
-                "deps": [str(d) for d in deps] if isinstance(deps, list)
-                        else [],
+                "deps": names,
             }
             break
     return out
@@ -4870,6 +4883,23 @@ def _parse_mod_load_log(lines: list):
         m = re.search(r"Tried to load mod with id (\S+?),", line)
         if m:
             errors.setdefault(norm(m.group(1)), "duplicate mod id")
+            raw_tags.setdefault(norm(m.group(1)), m.group(1))
+            continue
+        # The clearest error the loader produces, and the one the parser
+        # missed: Enchanted Offerings did not load at all because BaseLib
+        # was not installed, the banner said "Loaded 3 mods (4 total)", and
+        # the plugin reported no problems.
+        m = re.search(
+            r"Tried to load mod (\S+?), but it depends on mods which have "
+            r"not been loaded: (.+?)!?$",
+            line,
+        )
+        if m:
+            needed = m.group(2).strip().rstrip("!")
+            errors[norm(m.group(1))] = (
+                f"needs {needed}, which is not installed"
+            )
+            raw_tags.setdefault(norm(m.group(1)), m.group(1))
             continue
         m = re.match(r"\[ERROR\] \[([^\]]+)\] (.*)", line)
         if m:

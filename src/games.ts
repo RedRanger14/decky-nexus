@@ -35,6 +35,12 @@ export interface GameFramework {
   installSubdir?: string;
   /** Steam launch options needed after install; {install_path} is replaced */
   launchOptionsTemplate?: string;
+  /** The framework IS an ordinary Nexus mod that installs into the mods
+   * folder like any other - Slay the Spire 2's BaseLib. Step 1 then routes
+   * through the normal mod installer instead of the framework one, which
+   * flattens archives into the game root and would scatter BaseLib's files
+   * across mods/ instead of mods/BaseLib/. */
+  installAsMod?: boolean;
   /** Reset-to-vanilla: game-root files AND directories starting with any
    * of these prefixes belong to the framework (copyRoot installs keep no
    * manifest) and are removed on reset (e.g. ["skse64"]). */
@@ -227,6 +233,19 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     processName: "SlayTheSpire2",
     logAdapter: { kind: "godot", userDirName: "SlayTheSpire2" },
     recommendedModIds: [103, 137], // BaseLib, RitsuLib - the ecosystem libraries
+    // BaseLib is this game's SMAPI - Michael's observation, and the mods
+    // agree: five of one collection's mods declare it, and Enchanted
+    // Offerings installed on its own did not load at all without it
+    // ("Tried to load mod EnchantedOfferings, but it depends on mods which
+    // have not been loaded: BaseLib!"). Nobody should have to know that.
+    framework: {
+      name: "BaseLib",
+      detectFile: "mods/BaseLib/BaseLib.dll",
+      url: "nexusmods.com/slaythespire2/mods/103",
+      nexusModId: 103,
+      installAsMod: true,
+      frameworkModFolders: ["BaseLib"],
+    },
   },
   413150: {
     appId: 413150,
