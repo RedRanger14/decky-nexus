@@ -233,6 +233,42 @@ First real contents, Slay the Spire 2 build 23811903:
 | 107 | Campfire Trading | 1.0 | failed to load |
 | 468 | Refresh Ancient | 1.3.3 | failed to load |
 
+### The loop closed, on the most popular collection there is
+
+13 August 2026, Slay the Spire 2, Mesugaki the Spire (#1 by popularity).
+Install, launch, quit, and the game's own banner reads:
+
+```
+Loaded 11 mods (11 total)      <- no "WITH ERRORS" suffix
+```
+
+Zero mods blamed. Reached without a human deciding anything: the plugin
+switched off what could not run, updated what had a newer version, held back
+the libraries other mods needed, and said so in plain words. Verdict store
+after the run:
+
+| mod id | mod | version | verdict |
+|---|---|---|---|
+| 21 | Remove Multiplayer Player Limit | 0.1.6 | broken |
+| 27 | ModConfig | 0.2.3 | stale, nothing newer published |
+| 37 | Act 4 Final Ascent | 0.1.2f | broken, nothing newer published |
+| 103 | BaseLib | 3.3.8 | stale, updated from 3.0.9 |
+| 107 | Campfire Trading | 1.0 | broken, nothing newer published |
+| 137 | RitsuLib | 0.2.30 | stale, updated to 0.5.11 |
+| 284 | Relics Reminder | 1.1.0 | broken, nothing newer published |
+| 302 | Ryoshu | 0.2.8 | stale, updated to 0.3.6 |
+| 468 | Refresh Ancient | 1.3.3 | broken, 1.4.3 published |
+
+Nine rows from two collections on one device, gathered by crashing a game
+repeatedly. That is the case for Crucible in one table: the data is
+obviously useful and obviously does not scale this way.
+
+Note row 468. It is recorded "broken" from before the remedy order was
+fixed - it was switched off while 1.4.3 sat published. Crucible will produce
+verdicts that later turn out to have been the harness's fault rather than
+the mod's, so **a verdict needs the harness version that produced it**, and
+a way to retire rows a newer harness would have judged differently.
+
 ### What the first verdicts immediately taught us
 
 Investigating why the game still printed *"Loaded 23 mods WITH ERRORS"* after
