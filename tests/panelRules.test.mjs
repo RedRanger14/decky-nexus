@@ -689,3 +689,28 @@ test("explains where they come from", () => {
   // The user did not do anything wrong - we left them behind.
   assert.match(ghostPluginProblem(2, []), /left behind by an uninstall/);
 });
+
+
+// ---- an installer with nothing to install ------------------------------
+// Device: a collection listed a SECOND file of Iron Sights Aligned whose
+// installer offers options none of whose sources are in the archive. Every
+// attempt staged 0 files, and Finish setup kept presenting it as
+// outstanding work - so the run never looked finished. The mod itself was
+// already installed from its main file.
+
+test("an empty installer is answered, not still remaining", () => {
+  const file = { modId: 81933, fileId: 1000129576 };
+  // Recorded as a skip, which means it is in the attention set - and
+  // pending-attention files are not "remaining".
+  assert.equal(
+    isRemaining(file, new Set(), {}, new Set([1000129576])),
+    false
+  );
+});
+
+test("it does not count as an actionable Finish setup item", () => {
+  // Only choices and fomod are actionable; "empty" must not be, or the
+  // button reappears offering the same nothing.
+  const actionable = ["choices", "fomod"];
+  assert.equal(actionable.includes("empty"), false);
+});

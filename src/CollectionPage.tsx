@@ -462,6 +462,7 @@ export function CollectionPage() {
   );
   const actionableIds = new Set(actionable.map((a) => a.file_id));
   const toolSkips = attention.filter((a) => a.reason === "tool");
+  const emptySkips = attention.filter((a) => a.reason === "empty");
   // Mods proven to stop THIS game booting on SteamOS. Not a failure to
   // retry and not something Finish setup can resolve - the collection is
   // usable without them and the page has to say which and why, or the
@@ -752,6 +753,18 @@ export function CollectionPage() {
               reason: result.needs_fomod ? "fomod" : "choices",
               options: result.options ?? [],
             });
+          } else if (result.nothing_staged) {
+            dropDownload(f.modId);
+            setCollectionRow(f.fileId, "skipped");
+            freshAttention.push({
+              file_id: f.fileId,
+              mod_id: f.modId,
+              mod_name: f.modName,
+              file_name: f.fileName,
+              version: f.version,
+              reason: "empty",
+              options: [],
+            });
           } else if (result.unsupported_layout) {
             // Retrying can't change an unrecognized archive layout -
             // park it (the refusal log carries the shape for us to fix).
@@ -917,7 +930,7 @@ export function CollectionPage() {
    * modal - the item stays pending AND the caller must stop prompting. */
   const resolveAttentionItem = async (
     item: AttentionItem
-  ): Promise<"installed" | "backout" | "failed"> => {
+  ): Promise<"installed" | "backout" | "failed" | "empty"> => {
     setFinishingFileId(item.file_id);
     try {
       let choice = "";
@@ -961,6 +974,17 @@ export function CollectionPage() {
         );
       }
       if (result.ok) return "installed";
+      // An installer with nothing to install is answered, not failed.
+      // Asking again can only produce the same nothing, and leaving it in
+      // the queue makes Finish setup look permanently unfinished.
+      if (result.nothing_staged) {
+        updateDownload(item.mod_id, "done", 100);
+        toaster.toast({
+          title: `${item.mod_name}: nothing to install`,
+          body: "Skipped - see the note on the collection",
+        });
+        return "empty";
+      }
       updateDownload(item.mod_id, "error", 0);
       toaster.toast({
         title: `${item.mod_name} failed`,
@@ -989,11 +1013,18 @@ export function CollectionPage() {
         const outcome = await resolveAttentionItem(item);
         if (outcome === "backout") break;
         done++;
-        if (outcome === "installed") {
+        if (outcome === "installed" || outcome === "empty") {
           setJustResolved((prev) => new Set(prev).add(item.file_id));
-          persistAttention(
-            attentionRef.current.filter((a) => a.file_id !== item.file_id)
-          );
+          persistAttention([
+            ...attentionRef.current.filter(
+              (a) => a.file_id !== item.file_id
+            ),
+            // Kept on the collection as a named skip so the mod is not
+            // silently absent - it just stops being a question.
+            ...(outcome === "empty"
+              ? [{ ...item, reason: "empty", options: [] }]
+              : []),
+          ]);
         }
       }
     } finally {
@@ -1011,11 +1042,14 @@ export function CollectionPage() {
   const resolveSingle = async (item: AttentionItem) => {
     if (finishingFileId !== undefined) return;
     const outcome = await resolveAttentionItem(item);
-    if (outcome === "installed") {
+    if (outcome === "installed" || outcome === "empty") {
       setJustResolved((prev) => new Set(prev).add(item.file_id));
-      persistAttention(
-        attentionRef.current.filter((a) => a.file_id !== item.file_id)
-      );
+      persistAttention([
+        ...attentionRef.current.filter((a) => a.file_id !== item.file_id),
+        ...(outcome === "empty"
+          ? [{ ...item, reason: "empty", options: [] }]
+          : []),
+      ]);
       refreshInstalled();
     }
   };
@@ -1457,6 +1491,21 @@ export function CollectionPage() {
             {brokenSkips.map((b) => b.mod_name).join(", ")}.
             {brokenSkips[0]?.detail ? ` ${brokenSkips[0].detail}` : ""}{" "}
             Everything else in the collection is installed and working.
+          </div>
+        )}
+        {emptySkips.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              opacity: 0.7,
+              margin: "-6px 0 12px",
+            }}
+          >
+            ⏭ {emptySkips.length} installer
+            {emptySkips.length === 1 ? "" : "s"} had nothing to install (
+            {emptySkips.map((t) => t.mod_name).join(", ")}) - the options
+            offered are not in the archive, so there is nothing to add and
+            nothing to fix.
           </div>
         )}
         {toolSkips.length > 0 && !installing && (
