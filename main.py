@@ -7968,7 +7968,20 @@ query Link($slug: String!, $domainName: String!) {
                     f"FOMOD {entry.get('mod_name')!r}: staged 0 files from "
                     f"{len(selected_ids or [])} selected option(s)"
                 )
-                return {"ok": False, "error": "Nothing selected to install"}
+                # A permanent skip, not a question to ask again. On device
+                # a collection listed a SECOND file of Iron Sights Aligned
+                # whose installer offers options none of whose sources are
+                # in the archive - so every attempt stages nothing, and
+                # Finish setup kept presenting it as work outstanding. The
+                # mod itself was already installed from its main file.
+                return {
+                    "ok": False,
+                    "nothing_staged": True,
+                    "error": (
+                        "This installer has nothing to install - the "
+                        "options it offers are not in the archive. Skipped."
+                    ),
+                }
 
             _, mods_path, _unused = _game_paths(
                 entry["install_dir"], entry["mods_subdir"]

@@ -84,6 +84,10 @@ export interface InstallResult {
   /** Files actually written. On a repair pass this is how many were
    * missing - 0 means the mod was already complete. */
   added?: number;
+  /** The installer ran but had nothing to install: none of the options it
+   * offers exist in the archive. A permanent skip, not a retry - asking
+   * again can only produce the same nothing. */
+  nothing_staged?: boolean;
 }
 
 export interface InstalledMod {
