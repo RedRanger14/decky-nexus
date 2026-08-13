@@ -118,6 +118,7 @@ export default function HealthCheckPage() {
     needs_dlc: Finding[];
     needs_external: Finding[];
     owned_dlc: string[];
+    already_fixed: { name: string; for: string }[];
   }>();
   const [busy, setBusy] = useState(false);
   const [fixing, setFixing] = useState("");
@@ -140,6 +141,7 @@ export default function HealthCheckPage() {
                 needs_dlc: r.needs_dlc ?? [],
                 needs_external: r.needs_external ?? [],
                 owned_dlc: r.owned_dlc ?? [],
+                already_fixed: r.already_fixed ?? [],
               }
             : undefined
         )
@@ -190,6 +192,19 @@ export default function HealthCheckPage() {
         focusable={false}
         style={{ height: "100%", padding: "0 24px 24px" }}
       >
+        <h1
+          style={{
+            margin: "18px 0 2px",
+            fontSize: "26px",
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+          }}
+        >
+          Health check
+        </h1>
+        <div style={{ fontSize: "13px", opacity: 0.6, marginBottom: "14px" }}>
+          {game ? game.displayName : "No game selected"}
+        </div>
         {/* The verdict, sized to be read from a sofa. Somebody opens this
             screen already annoyed; the first thing they should get is an
             answer, not a table. */}
@@ -224,22 +239,6 @@ export default function HealthCheckPage() {
               {verdict.detail}
             </div>
           </div>
-          <DialogButton
-            style={{ width: "auto", minWidth: "150px" }}
-            disabled={busy || Boolean(fixing)}
-            onClick={run}
-          >
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "8px",
-              }}
-            >
-              <FaSyncAlt />
-              {busy ? "Checking…" : "Check again"}
-            </span>
-          </DialogButton>
         </Focusable>
 
         <div
@@ -259,6 +258,27 @@ export default function HealthCheckPage() {
             </StatChip>
           )}
         </div>
+        {/* Below the verdict rather than inside it: re-running is an action
+            ON the report, and inside the banner it competed with the one
+            thing the page exists to say. */}
+        <Focusable style={{ display: "flex", marginTop: "12px" }}>
+          <DialogButton
+            style={{ width: "auto", minWidth: "170px" }}
+            disabled={busy || Boolean(fixing)}
+            onClick={run}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              <FaSyncAlt />
+              {busy ? "Checking…" : "Check again"}
+            </span>
+          </DialogButton>
+        </Focusable>
 
         {missingCount > 0 && (
           <>
@@ -347,6 +367,26 @@ export default function HealthCheckPage() {
           </>
         )}
 
+        {(report?.already_fixed.length ?? 0) > 0 && (
+          <>
+            <SectionHeading title="Sorted out already" />
+            {report!.already_fixed.map((d, i) => (
+              <FindingCard
+                key={`${d.name}:${i}`}
+                tone="143, 212, 143"
+                icon={<FaCheck size={14} />}
+                title={d.name}
+                detail={
+                  <>
+                    Installed for you because <b>{d.for || "a mod"}</b> needs
+                    it and it was missing. This is why the check above may
+                    find nothing — it was already dealt with.
+                  </>
+                }
+              />
+            ))}
+          </>
+        )}
         {verdict.clean && !busy && (
           <div
             style={{

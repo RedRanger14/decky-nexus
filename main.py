@@ -11562,6 +11562,18 @@ query Link($slug: String!, $domainName: String!) {
         return {
             "ok": True,
             "checked": len(tracked),
+            # What the plugin already put right on its own. Without this the
+            # page reads as broken: Michael installed LustTravel2 without its
+            # libraries, opened the QAM - which installed them - then ran the
+            # check and saw nothing, with no way to tell "nothing was wrong"
+            # apart from "this does not work".
+            "already_fixed": [
+                entry for entry in (
+                    (_load_settings().get("auto_fixed") or {}).get(game_domain)
+                    or []
+                )
+                if isinstance(entry, dict) and entry.get("name")
+            ][-6:],
             "needs_mods": needs_mods[:20],
             "needs_dlc": needs_dlc[:20],
             "needs_external": needs_external[:20],
@@ -11651,6 +11663,17 @@ query Link($slug: String!, $domainName: String!) {
                         have_ids.add(rid)
                         done.append({"name": name,
                                      "for": want.get("name") or ""})
+                        # Remembered so the health check can say what it
+                        # already sorted out, instead of looking broken by
+                        # finding nothing.
+                        settings = _load_settings()
+                        log = settings.setdefault("auto_fixed", {}).setdefault(
+                            game_domain, []
+                        )
+                        log.append({"name": name,
+                                    "for": want.get("name") or ""})
+                        settings["auto_fixed"][game_domain] = log[-12:]
+                        _save_settings(settings)
                         decky.logger.info(
                             f"installed {name!r} because "
                             f"{want.get('name')!r} needs it and it was "
