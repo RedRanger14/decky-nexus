@@ -167,10 +167,18 @@ export interface UpdateInfo {
   installed: string;
   current: string;
   update_available: boolean;
+  /** The game's own log blamed this mod, so the update is not a nag - it
+   * is the likely fix. */
+  blamed?: boolean;
 }
 
 export const checkUpdates = callable<
-  [game_domain: string],
+  [
+    game_domain: string,
+    /** Folders to check even though a collection pinned them. A curator's
+     * pin is normally respected; one the game cannot run is not. */
+    force_folders: string[]
+  ],
   { ok: boolean; updates?: Record<string, UpdateInfo>; error?: string }
 >("check_updates");
 
@@ -958,6 +966,18 @@ export const getModSupport = callable<
   }
 >("get_mod_support");
 
+// The installed mods the game's last session blamed. Reads only - its job
+// is to tell checkUpdates which collection-pinned mods have earned a look.
+export const getBlamedFolders = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    game_user_dir: string
+  ],
+  { ok: boolean; folders?: string[]; error?: string }
+>("get_blamed_folders");
+
 // Switch off the mods that are broken beyond argument, and report what is
 // left for the user to decide on. Acts once per session log, so a mod the
 // user deliberately switches back on stays on.
@@ -979,6 +999,10 @@ export const repairFailingMods = callable<
     names?: string[];
     held?: string[];
     remaining?: { name: string; why: string }[];
+    /** Every mod the log blamed, however it was handled. Fed back into
+     * checkUpdates: a collection pin the game cannot run has earned an
+     * update check even though a curator chose it. */
+    blamed_folders?: string[];
     error?: string;
   }
 >("repair_failing_mods");

@@ -58,6 +58,7 @@ import {
   getInstalledMods,
   getModDetails,
   disableFailingMods,
+  getBlamedFolders,
   getModLoadStatus,
   repairFailingMods,
   getSaveStatus,
@@ -1993,8 +1994,22 @@ function InstalledModsSection() {
       } else {
         setLoadStates(undefined);
       }
-      checkUpdates(game.nexusDomain).then((r) =>
-        setUpdates(r.ok ? r.updates : undefined)
+      // Ask which mods the game blamed first, so a collection-pinned mod
+      // the game cannot run still gets its update offered. Without this the
+      // panel reported "no updates" at a game printing "Loaded 21 mods WITH
+      // ERRORS" over its own main menu.
+      (game.logAdapter?.kind === "godot"
+        ? getBlamedFolders(
+            game.nexusDomain,
+            game.installDirName,
+            game.modsSubdir,
+            game.logAdapter.userDirName
+          ).then((b) => (b.ok ? b.folders ?? [] : []))
+        : Promise.resolve<string[]>([])
+      ).then((blamed) =>
+        checkUpdates(game.nexusDomain, blamed).then((r) =>
+          setUpdates(r.ok ? r.updates : undefined)
+        )
       );
       if (game.framework) {
         getGameStatus(
@@ -2210,7 +2225,13 @@ function InstalledModsSection() {
             : load.state === "loaded"
             ? " · loaded ✓"
             : " · failed to load ⚠") +
-          (update?.update_available ? ` · ⬆ ${update.current} available` : "");
+          (update?.update_available
+            ? update.blamed
+              ? // Not a nag. The game named this mod as erroring and the
+                // newer version is the likely reason it will stop.
+                ` · ⬆ ${update.current} may fix its errors`
+              : ` · ⬆ ${update.current} available`
+            : "");
         const base = mod.tracked
           ? `v${mod.version}${mod.enabled ? "" : " · disabled"}`
           : "not installed by this plugin";
