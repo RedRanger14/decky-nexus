@@ -4531,11 +4531,15 @@ class TestAutoRepairFailingMods(unittest.TestCase):
             for n in ("RelicsReminder", "DeadMod", "Grumpy", "Fine")
         }
         settings.pop("auto_disabled", None)
+        settings.get("update_attempts", {}).pop("repairtest", None)
+        settings.get("mod_verdicts", {}).pop("repairtest", None)
         main._save_settings(settings)
 
     def tearDown(self):
         settings = main._load_settings()
         settings.get("installed", {}).pop("repairtest", None)
+        settings.get("update_attempts", {}).pop("repairtest", None)
+        settings.get("mod_verdicts", {}).pop("repairtest", None)
         settings.pop("auto_disabled", None)
         main._save_settings(settings)
         shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
@@ -4754,6 +4758,51 @@ class TestAutoRepairFailingMods(unittest.TestCase):
         before = len(self.calls)
         self._repair()
         self.assertEqual(len(self.calls), before)
+
+    def test_a_mod_blamed_in_an_earlier_session_is_still_offered_its_update(
+        self,
+    ):
+        # Michael's Ryoshu: blamed two launches ago, still at the version
+        # that failed, a newer one published - and the fix appeared in the
+        # Updates list while Fixes said nothing, because the repair only
+        # ever read the most recent log.
+        self._library_setup()
+        main._record_mod_verdicts("repairtest", "1", [
+            {"mod_id": 103, "version": "3.1.2", "name": "Grumpy",
+             "why": "errored"}], "stale")
+        # A log that says nothing about Grumpy at all.
+        self._log("[WARN] [ts] Fine: Mod loaded")
+        orig = main._steam_build_id
+        main._steam_build_id = lambda app_id: "1"
+        try:
+            r = self._repair()
+        finally:
+            main._steam_build_id = orig
+        self.assertEqual(
+            r["updated"], [{"name": "Grumpy", "from": "3.1.2", "to": "3.3.8"}])
+
+    def test_the_same_version_is_only_asked_about_once(self):
+        # After being told there is nothing newer, asking again cannot
+        # change the answer until the mod's version changes.
+        self._library_setup(latest="3.1.2")
+        self._repair()
+        asked = len(self.calls)
+        self._repair()
+        self._repair()
+        self.assertEqual(len(self.calls), asked)
+
+    def test_the_update_pass_is_not_blocked_by_the_disable_guard(self):
+        # Two different risks, two different guards: switching a mod off
+        # contradicts a user who just re-enabled it, while installing a
+        # newer version is idempotent.
+        self._library_setup()
+        self._repair()                      # sets the once-per-log guard
+        settings = main._load_settings()
+        settings["installed"]["repairtest"]["Grumpy"]["version"] = "3.1.2"
+        settings.get("update_attempts", {}).pop("repairtest", None)
+        main._save_settings(settings)
+        r = self._repair()                  # same log, guard already set
+        self.assertEqual([u["name"] for u in r["updated"]], ["Grumpy"])
 
     def test_a_switchable_mod_is_switched_off_not_downloaded(self):
         # Everything with a cheaper remedy already took it, so this never

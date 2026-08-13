@@ -11407,13 +11407,27 @@ query Link($slug: String!, $domainName: String!) {
         """
         if not held_names:
             return []
-        records = _load_settings().get("installed", {}).get(game_domain, {})
+        settings = _load_settings()
+        records = settings.get("installed", {}).get(game_domain, {})
         wanted = {n for n in held_names if n}
         done = []
         self._no_update_for = []
+        # Which (mod, version) pairs have already been asked about. Asking
+        # again cannot help - the answer only changes when the mod's author
+        # publishes something or the user installs a different version - and
+        # this is what lets the update pass run on every panel open instead
+        # of being gated behind "once per session log", which is why
+        # Michael's Ryoshu update sat unoffered.
+        tried = settings.setdefault("update_attempts", {}).setdefault(
+            game_domain, {}
+        )
         for key, rec in list(records.items()):
             name = rec.get("name") or key
             if name not in wanted or not rec.get("mod_id"):
+                continue
+            mod_key = str(int(rec["mod_id"]))
+            if tried.get(mod_key) == (rec.get("version") or ""):
+                self._no_update_for.append(name)
                 continue
             try:
                 files = await self.get_mod_files(
@@ -11431,6 +11445,11 @@ query Link($slug: String!, $domainName: String!) {
                     # game has moved on since, so only its author can fix
                     # it.
                     self._no_update_for.append(rec.get("name") or key)
+                    settings = _load_settings()
+                    settings.setdefault("update_attempts", {}).setdefault(
+                        game_domain, {}
+                    )[mod_key] = rec.get("version") or ""
+                    _save_settings(settings)
                     continue
                 result = await self.install_mod(
                     game_domain, int(rec["mod_id"]), newest["file_id"],
@@ -11444,7 +11463,7 @@ query Link($slug: String!, $domainName: String!) {
                     decky.logger.info(
                         f"updated {name!r} {rec.get('version')} -> "
                         f"{newest.get('version')} because the game blamed it "
-                        f"and it cannot be switched off"
+                        f"and a newer version exists"
                     )
             except Exception as e:  # noqa: BLE001 - best effort, never fatal
                 decky.logger.warning(
@@ -11494,7 +11513,15 @@ query Link($slug: String!, $domainName: String!) {
         already = seen.get("log") == signature
         repaired = {"disabled": 0, "names": [], "details": [], "held": []}
         updated, no_update = [], []
-        if not already:
+        # The update pass runs every time; the disable pass runs once per
+        # session log. They need different guards because they carry
+        # different risks: switching a mod off contradicts a user who just
+        # switched it back on, whereas installing a newer version is
+        # idempotent - after it lands there is nothing newer to find, and
+        # _update_held_mods remembers every (mod, version) it has already
+        # asked about. Sharing one guard is why Michael's Ryoshu update
+        # never got offered.
+        if True:
             # Update BEFORE switching anything off. An update keeps the mod
             # and is the likeliest fix; switching off is what is left when
             # there is no newer version. Doing it the other way round
@@ -11507,9 +11534,32 @@ query Link($slug: String!, $domainName: String!) {
                 protected_ids, True, False,
             )
             if pre.get("ok"):
-                blamed_names = [
-                    d["name"] for d in (pre.get("details") or [])
-                ] + list(pre.get("held") or [])
+                # Every mod already known to error on this build and still at
+                # the version that did, whether or not the LATEST log
+                # mentions it. Michael's Ryoshu was blamed two runs ago, was
+                # still at 0.2.8 against a published 0.3.6, and the fix sat
+                # in the Updates list while Fixes said nothing - because the
+                # repair only ever read the most recent log.
+                remembered = []
+                stale_now = _known_broken_mods(
+                    game_domain, _steam_build_id(app_id), "stale"
+                )
+                if stale_now:
+                    records_now = _load_settings().get("installed", {}).get(
+                        game_domain, {}
+                    )
+                    remembered = [
+                        rec.get("name") or key
+                        for key, rec in records_now.items()
+                        if rec.get("mod_id") in stale_now
+                        and (stale_now[rec["mod_id"]].get("version") or "")
+                        == (rec.get("version") or "")
+                    ]
+                blamed_names = (
+                    [d["name"] for d in (pre.get("details") or [])]
+                    + list(pre.get("held") or [])
+                    + remembered
+                )
                 updated = await self._update_held_mods(
                     game_domain, install_dir, mods_subdir, install_mode,
                     app_id, plugins_subpath, plugins_style, blamed_names,
@@ -11526,6 +11576,7 @@ query Link($slug: String!, $domainName: String!) {
                     ],
                     "stale",
                 )
+        if not already:
             repaired = await self.disable_failing_mods(
                 game_domain, install_dir, mods_subdir, game_user_dir,
                 install_mode, app_id, plugins_subpath, plugins_style,
@@ -11579,13 +11630,16 @@ query Link($slug: String!, $domainName: String!) {
             install_mode, app_id, plugins_subpath, plugins_style,
             protected_ids, True, False, [u["name"] for u in updated],
         )
-        # A held-back mod gets a verdict even when nothing could be done for
-        # it, or the knowledge dies with the log and a reinstall pins the
-        # same version straight back.
-        if rest.get("ok") and rest.get("held_details"):
+        # EVERY blamed mod gets a verdict, not just the ones something was
+        # done about. The mods left to the user's judgement were recording
+        # nothing, so a mod blamed two launches ago was forgotten the moment
+        # the log rotated - which is how Ryoshu 0.2.8 came to sit beside a
+        # published 0.3.6 with the plugin saying nothing.
+        if rest.get("ok"):
             _record_mod_verdicts(
                 game_domain, _steam_build_id(app_id),
-                rest["held_details"], "stale",
+                (rest.get("held_details") or []) + (rest.get("details") or []),
+                "stale",
             )
         return {
             "ok": True,
