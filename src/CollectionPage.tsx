@@ -221,6 +221,23 @@ export function CollectionPage() {
 
   useEffect(refreshConflicts, [detail, sel?.collection.slug]);
 
+  // Loaded whenever the page opens, not only after an install. A mod that
+  // cannot be downloaded here is a permanent fact about the collection -
+  // it has to be visible when someone comes back to ask "why is this one
+  // missing", which is exactly when they will look.
+  useEffect(() => {
+    if (!sel) return;
+    let live = true;
+    getCollectionExtras(sel.collection.slug, sel.game.nexusDomain)
+      .then((r) => {
+        if (live && r.ok) setManualMods(r.browse ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [sel?.collection.slug, sel?.game.nexusDomain]);
+
   /** Rewrite each contested file from the mod the collection wanted to
    * own it. Per PATH: nothing uncontested is touched, so this cannot
    * create the new conflicts that reinstalling whole mods did. */
