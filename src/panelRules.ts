@@ -497,6 +497,23 @@ export function endorseControl(
   };
 }
 
+/** Whether a parked mod is something Finish setup can actually resolve.
+ *
+ * "choices" means the installer offered alternatives and the user must
+ * pick one - but an entry with an EMPTY option list has nothing to pick.
+ * Counting it made the button read "Finish setup (2)" and then do
+ * nothing visible, which is worse than not offering it: the user taps,
+ * sees no wizard, and cannot tell whether it worked.
+ *
+ * A FOMOD always has a wizard, so it needs no such check. */
+export function isActionableAttention(item: {
+  reason: string;
+  options?: unknown[];
+}): boolean {
+  if (item.reason === "fomod") return true;
+  return item.reason === "choices" && (item.options?.length ?? 0) > 0;
+}
+
 /** Whether a download row offers a Cancel control, by phase.
  *
  * Only while bytes are still owed: cancelling mid-extraction would leave

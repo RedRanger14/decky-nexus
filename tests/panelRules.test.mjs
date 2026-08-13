@@ -17,6 +17,7 @@ import {
   showResetRow,
   slotPressure,
   isRemaining,
+  isActionableAttention,
   collectionOwnedCount,
   endorseControl,
   missingMasterProblem,
@@ -713,4 +714,38 @@ test("it does not count as an actionable Finish setup item", () => {
   // button reappears offering the same nothing.
   const actionable = ["choices", "fomod"];
   assert.equal(actionable.includes("empty"), false);
+});
+
+
+// ---- what Finish setup can actually resolve ----------------------------
+// Device, Gopher's Stable New Vegas: the button read "Finish setup (2)",
+// the user tapped it, and no wizard appeared - there was nothing to pick.
+// Offering a step that does nothing visible is worse than not offering it,
+// because the user cannot tell whether it worked.
+
+test("a FOMOD is always actionable", () => {
+  assert.equal(isActionableAttention({ reason: "fomod" }), true);
+});
+
+test("choices with options to pick are actionable", () => {
+  assert.equal(
+    isActionableAttention({ reason: "choices", options: ["a", "b"] }),
+    true
+  );
+});
+
+test("choices with nothing to pick are NOT actionable", () => {
+  assert.equal(isActionableAttention({ reason: "choices", options: [] }), false);
+  assert.equal(isActionableAttention({ reason: "choices" }), false);
+});
+
+test("permanent skips are never actionable", () => {
+  for (const reason of ["tool", "conflict", "layout", "empty",
+                        "needs_external"]) {
+    assert.equal(
+      isActionableAttention({ reason, options: ["a"] }),
+      false,
+      reason
+    );
+  }
 });
