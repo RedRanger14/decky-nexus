@@ -27,7 +27,8 @@ import {
 
 import { getHealthCheck } from "./api";
 import { PageBackdrop, SectionHeading, StatChip } from "./chrome";
-import { SupportedGame } from "./games";
+import { SupportedGame, getActiveGame } from "./games";
+import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 import { healthVerdict } from "./panelRules";
 import { installLatest } from "./install";
 
@@ -36,8 +37,13 @@ const WARN = "230, 180, 80";
 // full-screen pages already pass; same escape hatch they use.
 const Scroller: any = ScrollPanelGroup;
 
-/** The game whose setup is being checked. Set before navigating, the same
- * way the other full-screen pages receive their subject. */
+/** The game whose setup is being checked.
+ *
+ * Set when the page is opened from the QAM, but NOT when the user arrives
+ * with LB/RB from another tab - which is how it shipped saying "Nothing
+ * installed yet" on a device with mods installed. A tab has no opener, so
+ * it has to fall back to the active game like every other tab page does.
+ */
 let healthGame: SupportedGame | undefined;
 export const setHealthGame = (g: SupportedGame) => {
   healthGame = g;
@@ -111,7 +117,7 @@ function FindingCard({
 }
 
 export default function HealthCheckPage() {
-  const game = healthGame;
+  const game = healthGame ?? getActiveGame(undefined);
   const [report, setReport] = useState<{
     checked: number;
     needs_mods: Finding[];
@@ -186,15 +192,30 @@ export default function HealthCheckPage() {
     : 0;
 
   return (
-    <div style={{ height: "100%", overflow: "hidden" }}>
+    // The wrapper every tab page needs: LB/RB switching, B back to the QAM,
+    // and the 40px top offset that clears Steam's own header. Shipping
+    // without it left the page with no navigation at all and Steam's search
+    // bar sitting over the title.
+    <Focusable
+      onButtonDown={handleTabButtons("health")}
+      onCancel={exitTabsToQam}
+      style={{ marginTop: "40px", height: "calc(100% - 40px)" }}
+    >
       <PageBackdrop height={180} blur />
       <Scroller
         focusable={false}
-        style={{ height: "100%", padding: "0 24px 24px" }}
+        onButtonDown={handleTabButtons("health")}
+        style={{
+          height: "100%",
+          overflowY: "auto",
+          padding: "0 24px 110px",
+          scrollPaddingBottom: "110px",
+        }}
       >
+        <TabBar currentId="health" />
         <h1
           style={{
-            margin: "18px 0 2px",
+            margin: "12px 0 2px",
             fontSize: "26px",
             fontWeight: 700,
             letterSpacing: "0.5px",
@@ -404,8 +425,7 @@ export default function HealthCheckPage() {
             Nothing here needs your attention.
           </div>
         )}
-        <div style={{ height: "40px" }} />
       </Scroller>
-    </div>
+    </Focusable>
   );
 }
