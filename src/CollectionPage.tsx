@@ -21,7 +21,10 @@ import {
 
 import {
   endorseCollection,
+  getCollectionExtras,
   getFileConflicts,
+  installCollectionBundles,
+  applyCollectionPlugins,
   resolveFileConflicts,
   AttentionItem,
   CollectionDetail,
@@ -139,6 +142,11 @@ export function CollectionPage() {
     | undefined
   >();
   const [fixingFiles, setFixingFiles] = useState(false);
+  // Mods the collection needs that are hosted off Nexus - no API can
+  // fetch them, so the only honest thing is to name them.
+  const [manualMods, setManualMods] = useState<
+    { name: string; url: string; instructions: string; optional: boolean }[]
+  >([]);
   // Batch state lives in a module store so navigating away and back
   // shows live progress instead of a stale page.
   const [, force] = useState(0);
@@ -242,6 +250,75 @@ export function CollectionPage() {
     } finally {
       setFixingFiles(false);
       refreshConflicts();
+    }
+  };
+
+  /** Apply what the collection's own manifest says, once its mods are in.
+   *
+   * Every one of these was being thrown away with the manifest we already
+   * download for its FOMOD choices:
+   *  - mods it ships itself, which need no download at all
+   *  - the plugin list, because we switch on every plugin in every
+   *    archive and a curator picks which should be ON (21 too many on
+   *    device, past the engine's 254 limit, so the game refused to start)
+   *  - mods hosted off Nexus that no API can fetch, which were skipped in
+   *    silence and left the collection quietly broken
+   */
+  const runCollectionExtras = async () => {
+    if (!sel) return;
+    const { game, collection } = sel;
+    try {
+      const bundles = await installCollectionBundles(
+        collection.slug,
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        game.appId,
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred"
+      );
+      if (bundles.ok && (bundles.installed ?? 0) > 0) {
+        toaster.toast({
+          title: `${bundles.installed} bundled mod${
+            bundles.installed === 1 ? "" : "s"
+          } installed`,
+          body: (bundles.mods ?? []).join(", "),
+        });
+      }
+    } catch {
+      /* a bundle failing must not fail the whole install */
+    }
+    if (game.pluginsTxtSubpath) {
+      try {
+        const pl = await applyCollectionPlugins(
+          collection.slug,
+          game.nexusDomain,
+          game.installDirName,
+          game.modsSubdir,
+          game.appId,
+          game.pluginsTxtSubpath,
+          game.pluginsTxtStyle ?? "starred"
+        );
+        if (pl.ok && (pl.disabled ?? 0) > 0) {
+          toaster.toast({
+            title: `Load order set to the collection's ${pl.total ?? 0}`,
+            body: `${pl.disabled} plugin${
+              pl.disabled === 1 ? "" : "s"
+            } the collection doesn't use were switched off`,
+          });
+        }
+      } catch {
+        /* leave the load order as installed rather than half-applied */
+      }
+    }
+    try {
+      const extras = await getCollectionExtras(
+        collection.slug,
+        game.nexusDomain
+      );
+      if (extras.ok) setManualMods(extras.browse ?? []);
+    } catch {
+      /* the note is a nicety; never block on it */
     }
   };
 
@@ -687,6 +764,10 @@ export function CollectionPage() {
         ),
         ...freshAttention,
       ]);
+      // The three things the collection tells us that a plain per-mod
+      // install cannot know. Run at the END of the batch because they
+      // work on the finished set, not on one mod at a time.
+      await runCollectionExtras();
       refreshInstalled();
       // Only actionable items belong in "waiting on your choices" -
       // tools/conflicts/unrecognized archives are permanent skips and
@@ -844,6 +925,10 @@ export function CollectionPage() {
     } finally {
       setFinishProgress(undefined);
     }
+    // The collection is only complete once the wizards are answered, so
+    // the manifest steps belong here too - a mod resolved by Finish setup
+    // brings its own plugins, and the plugin list has to account for them.
+    await runCollectionExtras();
     refreshInstalled();
   };
 
@@ -1248,6 +1333,32 @@ export function CollectionPage() {
               installed - only the missing ones will download.
             </div>
           )}
+        {manualMods.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              margin: "-6px 0 12px",
+              padding: "8px 10px",
+              borderRadius: "4px",
+              lineHeight: 1.45,
+              background: "rgba(218, 142, 53, 0.12)",
+              border: "1px solid rgba(218, 142, 53, 0.4)",
+            }}
+          >
+            ⬇ {manualMods.length} mod
+            {manualMods.length === 1 ? "" : "s"} in this collection
+            {manualMods.length === 1 ? " is" : " are"} not hosted on Nexus
+            Mods, so {manualMods.length === 1 ? "it" : "they"} cannot be
+            downloaded here:{" "}
+            {manualMods
+              .map((m) => `${m.name}${m.optional ? " (optional)" : ""}`)
+              .join(", ")}
+            . {manualMods[0]?.url ? `Get it from ${manualMods[0].url}. ` : ""}
+            The rest of the collection installs and works without
+            {manualMods.length === 1 ? " it" : " them"}, but parts that
+            depend on {manualMods.length === 1 ? "it" : "them"} may not.
+          </div>
+        )}
         {brokenSkips.length > 0 && !installing && (
           <div
             style={{

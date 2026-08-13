@@ -833,6 +833,61 @@ export const removeGhostPlugins = callable<
   { ok: boolean; removed?: number; names?: string[]; error?: string }
 >("remove_ghost_plugins");
 
+// Mods a collection ships inside its own archive - no download needed.
+export const installCollectionBundles = callable<
+  [
+    slug: string,
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
+  ],
+  { ok: boolean; installed?: number; mods?: string[]; errors?: string[]; error?: string }
+>("install_collection_bundles");
+
+// Enable exactly the plugins the collection's manifest lists. We switch on
+// every plugin in every archive; a curator picks which should be ON.
+export const applyCollectionPlugins = callable<
+  [
+    slug: string,
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
+  ],
+  {
+    ok: boolean;
+    disabled?: number;
+    enabled?: number;
+    names_off?: string[];
+    total?: number;
+    limit?: number;
+    error?: string;
+  }
+>("apply_collection_plugins");
+
+// Mods hosted off Nexus (browse) and shipped inside the archive (bundle).
+export const getCollectionExtras = callable<
+  [slug: string, game_domain: string],
+  {
+    ok: boolean;
+    browse?: {
+      name: string;
+      url: string;
+      instructions: string;
+      size: number;
+      md5: string;
+      optional: boolean;
+    }[];
+    bundle?: { name: string; folder: string; size: number; optional: boolean }[];
+    error?: string;
+  }
+>("get_collection_extras");
+
 export const getFileConflicts = callable<
   [game_domain: string, mod_order: number[]],
   {
