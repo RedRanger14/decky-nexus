@@ -498,6 +498,17 @@ def _merge_install_record(existing: dict, new: dict) -> dict:
         if new.get("file_id") not in ids:
             ids.append(new.get("file_id"))
         merged["file_ids"] = [i for i in ids if i is not None]
+    # Where the mod came from outlives which file of it is installed.
+    #
+    # Updating BaseLib inside a collection blanked its source and
+    # collection_slug, because a plain install passes those as "". The mod
+    # was still part of the collection - so cancelling the collection would
+    # have walked past it and left an orphan, which is the exact failure
+    # Michael asked to be careful about. An update is not a change of
+    # provenance.
+    for field in ("source", "collection_slug"):
+        if not merged.get(field) and existing.get(field):
+            merged[field] = existing[field]
     return merged
 
 
