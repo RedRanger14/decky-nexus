@@ -8,6 +8,7 @@ import {
   cancellableDownload,
   disableFailingOutcome,
   failingProblem,
+  frameworkStepNumbers,
   isGoneFromNexus,
   knownBrokenNote,
   lastRunSummary,
@@ -1062,4 +1063,42 @@ test("several unavailable mods read in the plural", () => {
 
 test("nothing unavailable says nothing", () => {
   assert.equal(unavailableNote([]), "");
+});
+
+// --- frameworkStepNumbers -------------------------------------------------
+// The labels were hardcoded 1/2/3/4 with step 2 conditional, so Slay the
+// Spire 2 - whose BaseLib needs no launch command - read "Step 1" then
+// "Step 3". Michael spotted it immediately.
+
+test("a framework needing a launch command numbers 1 to 4", () => {
+  assert.deepEqual(frameworkStepNumbers(true), {
+    install: 1,
+    launch: 2,
+    browse: 3,
+    play: 4,
+  });
+});
+
+test("a framework needing no launch command has no gap", () => {
+  const steps = frameworkStepNumbers(false);
+  assert.equal(steps.install, 1);
+  assert.equal(steps.browse, 2);
+  assert.equal(steps.play, 3);
+});
+
+test("the launch step is falsy when it does not render", () => {
+  // So a stray label cannot say "Step 0" or "Step undefined".
+  assert.ok(!frameworkStepNumbers(false).launch);
+});
+
+test("the numbers are always consecutive from 1", () => {
+  for (const hasLaunch of [true, false]) {
+    const s = frameworkStepNumbers(hasLaunch);
+    const shown = [s.install, s.launch, s.browse, s.play].filter(Boolean);
+    assert.deepEqual(
+      shown,
+      shown.map((_, i) => i + 1),
+      `gap with hasLaunch=${hasLaunch}`
+    );
+  }
 });
