@@ -4609,6 +4609,122 @@ class TestAutoRepairFailingMods(unittest.TestCase):
             "../evil", self.GAME, "mods", self.USER_DIR))["ok"])
 
 
+class TestLegacyModsBatching(unittest.TestCase):
+    """The Nexus v2 legacyMods(ids:) response caps at 20 nodes and says
+    nothing about the rest - no error, no cursor, the extra ids are simply
+    absent.
+
+    Found 2026-08-13 the hard way: 27 Slay the Spire 2 mods were installed,
+    the game was printing "Loaded 21 mods WITH ERRORS" across the main menu
+    because RitsuLib was 3 minor versions behind, and the plugin reported no
+    updates available - RitsuLib was one of the 7 ids the API dropped. On a
+    546-mod collection this silently ignored 526 mods."""
+
+    def setUp(self):
+        self.original = main._gql_query
+        self.asked = []
+
+        async def fake_gql(query, api_key=None):
+            ids = [int(m) for m in re.findall(r"modId: (\d+)", query)]
+            self.asked.append(ids)
+            # Behave exactly like the real endpoint: answer the first 20 and
+            # stay silent about the others.
+            return {
+                "legacyMods": {
+                    "nodes": [
+                        {"modId": i, "version": f"9.{i}"}
+                        for i in ids[:main.LEGACY_MODS_PAGE]
+                    ]
+                }
+            }
+
+        main._gql_query = fake_gql
+        main._GAME_ID_CACHE["batchtest"] = 1
+
+    def tearDown(self):
+        main._gql_query = self.original
+        main._GAME_ID_CACHE.pop("batchtest", None)
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("batchtest", None)
+        main._save_settings(settings)
+
+    def test_every_id_comes_back_when_there_are_more_than_a_page(self):
+        got = run(main._legacy_mods_in_batches(
+            1, list(range(1, 28)), " modId version "))
+        self.assertEqual(len(got), 27)
+        self.assertEqual({n["modId"] for n in got}, set(range(1, 28)))
+
+    def test_it_asks_in_pages_the_api_answers_fully(self):
+        run(main._legacy_mods_in_batches(1, list(range(1, 28)), " modId "))
+        self.assertEqual([len(a) for a in self.asked], [20, 7])
+
+    def test_exactly_one_page_is_one_request(self):
+        run(main._legacy_mods_in_batches(1, list(range(1, 21)), " modId "))
+        self.assertEqual(len(self.asked), 1)
+
+    def test_no_ids_makes_no_request(self):
+        self.assertEqual(run(main._legacy_mods_in_batches(1, [], " modId ")), [])
+        self.assertEqual(self.asked, [])
+
+    def test_the_update_check_sees_past_the_first_page(self):
+        # The bug as the user met it: the 27th mod's update was invisible.
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["batchtest"] = {
+            f"Mod{i}": {"mod_id": i, "version": "1.0.0", "mode": "folder"}
+            for i in range(1, 28)
+        }
+        main._save_settings(settings)
+        r = run(main.Plugin().check_updates("batchtest"))
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(len(r["updates"]), 27)
+        self.assertTrue(r["updates"]["Mod27"]["update_available"])
+
+
+class TestCollectionPinnedUpdates(unittest.TestCase):
+    """A collection pins mod versions on purpose, so the update check
+    normally leaves them alone. Not when the game cannot run the pin."""
+
+    def setUp(self):
+        self.original = main._gql_query
+
+        async def fake_gql(query, api_key=None):
+            ids = [int(m) for m in re.findall(r"modId: (\d+)", query)]
+            return {"legacyMods": {"nodes": [
+                {"modId": i, "version": "3.3.8"} for i in ids]}}
+
+        main._gql_query = fake_gql
+        main._GAME_ID_CACHE["pintest"] = 1
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["pintest"] = {
+            "BaseLib": {"mod_id": 103, "version": "3.1.2",
+                        "source": "collection", "mode": "folder"},
+            "Quiet": {"mod_id": 104, "version": "3.1.2",
+                      "source": "collection", "mode": "folder"},
+        }
+        main._save_settings(settings)
+
+    def tearDown(self):
+        main._gql_query = self.original
+        main._GAME_ID_CACHE.pop("pintest", None)
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("pintest", None)
+        main._save_settings(settings)
+
+    def test_a_pinned_mod_is_left_alone_by_default(self):
+        r = run(main.Plugin().check_updates("pintest"))
+        self.assertEqual(r["updates"], {})
+
+    def test_a_pinned_mod_the_game_blamed_is_checked_anyway(self):
+        r = run(main.Plugin().check_updates("pintest", ["BaseLib"]))
+        self.assertTrue(r["updates"]["BaseLib"]["update_available"])
+        self.assertTrue(r["updates"]["BaseLib"]["blamed"])
+
+    def test_the_other_pinned_mods_stay_quiet(self):
+        # Only the mod the game complained about earns the exception.
+        r = run(main.Plugin().check_updates("pintest", ["BaseLib"]))
+        self.assertNotIn("Quiet", r["updates"])
+
+
 class TestGodotModManifests(unittest.TestCase):
     """Reading each mod's own manifest, which is what makes matching a log
     tag to an installed mod possible at all.

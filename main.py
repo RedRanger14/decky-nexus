@@ -73,6 +73,19 @@ def _make_ssl_context() -> ssl.SSLContext:
 
 SSL_CONTEXT = _make_ssl_context()
 
+# legacyMods(ids: [...]) returns at most 20 nodes and says nothing about the
+# rest. Not an error, not a page cursor - the extra ids are simply absent
+# from the response.
+#
+# Found 2026-08-13: 27 Slay the Spire 2 mods were installed, the update check
+# asked about all 27, and RitsuLib - two minor versions behind a game build
+# that was printing "Loaded 21 mods WITH ERRORS" across the main menu - was
+# one of the 7 the API dropped. It had reported "no updates available". The
+# thumbnail query batched in 40s and was quietly losing half of every batch.
+#
+# Anything asking for ids in bulk goes through _legacy_mods_in_batches.
+LEGACY_MODS_PAGE = 20
+
 MOD_FIELDS = """
       modId
       name
@@ -658,6 +671,32 @@ async def _gql_query(query: str, api_key=None) -> dict:
             if body.get("errors"):
                 raise RuntimeError(body["errors"][0].get("message", "GraphQL error"))
             return body["data"]
+
+
+async def _legacy_mods_in_batches(
+    game_id: int, mod_ids: list, fields: str, api_key=None
+) -> list:
+    """Fetch legacyMods for any number of ids, in batches the API answers
+    fully.
+
+    The response cap is LEGACY_MODS_PAGE and it is silent: ask for 27 and 20
+    come back with no error and no cursor, so the caller cannot tell the
+    difference between "that mod has no data" and "the API stopped talking".
+    Every bulk id lookup goes through here so that cannot be got wrong in one
+    place and right in another.
+    """
+    nodes = []
+    for start in range(0, len(mod_ids), LEGACY_MODS_PAGE):
+        chunk = mod_ids[start : start + LEGACY_MODS_PAGE]
+        id_args = ", ".join(
+            "{gameId: %d, modId: %d}" % (game_id, int(i)) for i in chunk
+        )
+        data = await _gql_query(
+            "{ legacyMods(ids: [%s]) { nodes {%s} } }" % (id_args, fields),
+            api_key,
+        )
+        nodes.extend(data["legacyMods"]["nodes"])
+    return nodes
 
 
 async def _resolve_game_id(game_domain: str, api_key=None) -> int:
@@ -6361,10 +6400,17 @@ query Link($slug: String!, $domainName: String!) {
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    async def check_updates(self, game_domain: str) -> dict:
+    async def check_updates(
+        self, game_domain: str, force_folders: list = None
+    ) -> dict:
         """Compare installed (tracked) mod versions against current Nexus
         versions. Version strings in the wild are messy, so 'update available'
-        means 'differs from what we installed', normalized for a leading v."""
+        means 'differs from what we installed', normalized for a leading v.
+
+        `force_folders` are checked even though a collection pinned them.
+        See the source == "collection" skip below for why that needs an
+        exception.
+        """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         records = _load_settings().get("installed", {}).get(game_domain, {})
@@ -6374,17 +6420,16 @@ query Link($slug: String!, $domainName: String!) {
         if not tracked:
             return {"ok": True, "updates": {}}
         api_key = _load_settings().get("api_key")
+        forced = {f for f in (force_folders or []) if f}
         try:
             game_id = await _resolve_game_id(game_domain, api_key)
-            ids = ", ".join(
-                "{gameId: %d, modId: %d}" % (game_id, int(rec["mod_id"]))
-                for rec in tracked.values()
-            )
-            data = await _gql_query(
-                "{ legacyMods(ids: [%s]) { nodes { modId version } } }" % ids,
+            nodes = await _legacy_mods_in_batches(
+                game_id,
+                [int(rec["mod_id"]) for rec in tracked.values()],
+                " modId version ",
                 api_key,
             )
-            current = {n["modId"]: n for n in data["legacyMods"]["nodes"]}
+            current = {n["modId"]: n for n in nodes}
             updates = {}
             for folder, rec in tracked.items():
                 node = current.get(rec["mod_id"])
@@ -6392,7 +6437,15 @@ query Link($slug: String!, $domainName: String!) {
                     continue
                 # Collection installs are pinned by the curator - nagging
                 # users to update them off-plan does more harm than good.
-                if rec.get("source") == "collection":
+                #
+                # Unless the pin has demonstrably failed. Slay the Spire 2,
+                # 2026-08-13: a collection pinned BaseLib 3.1.2 and RitsuLib
+                # 0.2.30 against a game build that wants 3.3.8 and 0.5.11,
+                # the game printed "Loaded 21 mods WITH ERRORS" across the
+                # main menu, and this skip meant the plugin looked at that
+                # and reported no updates available. A pin the game cannot
+                # run is not a plan worth respecting.
+                if rec.get("source") == "collection" and folder not in forced:
                     continue
                 cur = _norm_version(node.get("version"))
                 # Compare in page-version units when we recorded them - the
@@ -6409,6 +6462,9 @@ query Link($slug: String!, $domainName: String!) {
                     "installed": rec.get("version"),
                     "current": node.get("version"),
                     "update_available": _is_newer_version(cur, installed),
+                    # So the panel can say why it is nagging about a mod a
+                    # collection pinned.
+                    "blamed": folder in forced,
                 }
             decky.logger.info(
                 f"check_updates({game_domain!r}): "
@@ -6649,7 +6705,7 @@ query Link($slug: String!, $domainName: String!) {
     async def get_mods_by_ids(self, game_domain: str, mod_ids) -> dict:
         """Fetch specific mods in the given order. Used by the curated
         rail (a handful) AND My Mods thumbnails (every installed mod) -
-        batches of 40 per query, capped at 200 total."""
+        batches the API answers fully, capped at 200 total."""
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         try:
@@ -6661,18 +6717,9 @@ query Link($slug: String!, $domainName: String!) {
         api_key = _load_settings().get("api_key")
         try:
             game_id = await _resolve_game_id(game_domain, api_key)
-            nodes = []
-            for start in range(0, len(ids), 40):
-                chunk = ids[start : start + 40]
-                id_args = ", ".join(
-                    "{gameId: %d, modId: %d}" % (game_id, i) for i in chunk
-                )
-                data = await _gql_query(
-                    "{ legacyMods(ids: [%s]) { nodes {%s} } }"
-                    % (id_args, MOD_FIELDS),
-                    api_key,
-                )
-                nodes.extend(data["legacyMods"]["nodes"])
+            nodes = await _legacy_mods_in_batches(
+                game_id, ids, MOD_FIELDS, api_key
+            )
             order = {mod_id: idx for idx, mod_id in enumerate(ids)}
             nodes.sort(key=lambda n: order.get(n.get("modId"), len(ids)))
             return {"ok": True, "mods": nodes}
@@ -11021,7 +11068,38 @@ query Link($slug: String!, $domainName: String!) {
             "details": off[:12],
             "held": held[:6],
             "errors": errors[:6],
+            # Blamed regardless of what was done about it - a held-back
+            # library that is two minor versions behind the game is the most
+            # likely thing to be fixed by an update.
+            "blamed_folders": sorted(
+                {rec.get("folder") or key for key, rec, _h in candidates}
+                | {
+                    rec.get("folder") or key
+                    for key, rec in records.items()
+                    if blame_for(key, rec)
+                }
+            ),
         }
+
+    async def get_blamed_folders(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        game_user_dir: str,
+    ) -> dict:
+        """The installed mods the game's last session blamed. Reads only.
+
+        Its one job is to tell the update check where to look. A collection
+        pins mod versions on purpose and is normally left alone, but a pin
+        the game prints "Loaded 21 mods WITH ERRORS" about has stopped being
+        a plan - and on device the two libraries responsible were 3.1.2
+        against 3.3.8 and 0.2.30 against 0.5.11.
+        """
+        result = await self.disable_failing_mods(
+            game_domain, install_dir, mods_subdir, game_user_dir,
+            "folder", 0, "", "starred", None, True, False,
+        )
+        if not result.get("ok"):
+            return result
+        return {"ok": True, "folders": result.get("blamed_folders") or []}
 
     async def repair_failing_mods(
         self, game_domain: str, install_dir: str, mods_subdir: str,
@@ -11099,6 +11177,11 @@ query Link($slug: String!, $domainName: String!) {
             "names": repaired.get("names") or [],
             "held": rest.get("held") or [],
             "remaining": rest.get("details") or [],
+            # Every mod the log blamed, whether acted on, held back or left
+            # to the user. A collection pinning a version the game cannot
+            # run is exactly when the pin should stop being respected, so
+            # these get update-checked even though a curator chose them.
+            "blamed_folders": rest.get("blamed_folders") or [],
         }
 
     async def get_known_bad_state(
