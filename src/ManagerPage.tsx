@@ -172,6 +172,23 @@ function ModRow({
           {mod.enabled ? "" : " · disabled"}
           {mod.togglable === false ? " · always active" : ""}
         </div>
+        {/* The reason lives on the row, not in a log. A mod switched off
+            because it cannot work looks exactly like one the user turned
+            off, so without this the obvious response is to turn it back
+            on - which is what stopped a device booting. */}
+        {!mod.enabled && mod.disabled_reason && (
+          <div
+            style={{
+              fontSize: "11px",
+              marginTop: "2px",
+              lineHeight: 1.3,
+              color: NEXUS_ORANGE,
+              opacity: 0.85,
+            }}
+          >
+            {mod.disabled_reason}
+          </div>
+        )}
       </div>
       {mod.mod_id !== undefined && mod.mod_id > 0 && (
         <DialogButton

@@ -4083,6 +4083,73 @@ class TestBaselineBuildGuard(unittest.TestCase):
         self.assertIn("game_changed", src)
 
 
+class TestRefuseEnablingBrokenMod(unittest.TestCase):
+    """Switching a mod back on must not be allowed to break the game.
+
+    Device, NPC Overhaul: the collection ships "Mojave Raiders - The Living
+    Desert Patch" and never asks you to install Mojave Raiders itself, so
+    the patch has no master. We switched it off correctly - and because the
+    row gave no reason, the natural response to "why is this disabled?" was
+    to turn it back on, after which the game stopped booting."""
+
+    GAME = "Refuse Test"
+    APP_ID = 22380
+    SUBPATH = "FalloutNV/Plugins.txt"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.data = os.path.join(root, "Data")
+        os.makedirs(self.data)
+        _make_plugin(os.path.join(self.data, "patch.esp"),
+                     masters=["TheMainMod.esp"])
+        _make_plugin(os.path.join(self.data, "fine.esp"))
+        self.txt = main._plugins_txt_path(self.APP_ID, self.SUBPATH)
+        main._makedirs_for(self.txt)
+        with open(self.txt, "w", encoding="utf-8") as f:
+            f.write("")
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["refusetest"] = {
+            "Patch Mod": {"mode": "dataDir", "plugins": ["patch.esp"],
+                          "files": ["patch.esp"]},
+            "Fine Mod": {"mode": "dataDir", "plugins": ["fine.esp"],
+                         "files": ["fine.esp"]},
+        }
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("refusetest", None)
+        main._save_settings(settings)
+
+    def _enable(self, folder):
+        return run(self.plugin.set_mod_enabled(
+            self.GAME, "Data", folder, True, "dataDir", "refusetest",
+            self.APP_ID, self.SUBPATH, "listed"))
+
+    def test_refuses_a_mod_whose_master_is_absent(self):
+        r = self._enable("Patch Mod")
+        self.assertFalse(r["ok"])
+        self.assertIn("TheMainMod.esp", r["error"])
+        # And says what it did instead of leaving the user guessing.
+        self.assertIn("left off", r["error"])
+
+    def test_it_stays_off(self):
+        self._enable("Patch Mod")
+        self.assertEqual(main._enabled_plugins(self.txt, "listed"), [])
+
+    def test_a_healthy_mod_still_enables(self):
+        r = self._enable("Fine Mod")
+        self.assertTrue(r["ok"], r)
+        self.assertIn("fine.esp", main._enabled_plugins(self.txt, "listed"))
+
+    def test_the_master_arriving_makes_it_enableable(self):
+        _make_plugin(os.path.join(self.data, "TheMainMod.esp"))
+        r = self._enable("Patch Mod")
+        self.assertTrue(r["ok"], r)
+
+
 class TestExternalPrerequisites(unittest.TestCase):
     """A mod that needs a file Nexus does not host is switched OFF, not
     installed and silently breaking the game.
