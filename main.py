@@ -1048,6 +1048,60 @@ def _game_owned_name(game_domain: str, name: str) -> bool:
     return False
 
 
+def _parked_files_dir(game_domain: str, record_key: str) -> str:
+    """Where a disabled dataDir mod's files wait to be put back."""
+    return os.path.join(
+        decky.DECKY_PLUGIN_RUNTIME_DIR, "parked", game_domain,
+        _safe_name(record_key),
+    )
+
+
+def _shared_paths(records: dict, record_key: str) -> set:
+    """Recorded paths that another installed mod ALSO provides.
+
+    Moving one of these away takes the other mod's copy with it - whoever
+    wrote last owns the file on disk, and it is not necessarily the mod
+    being switched off. Left in place: a mod that stays half-active is a
+    smaller wrong than one that silently guts another.
+    """
+    mine = {f.lower() for f in (records.get(record_key) or {}).get("files") or []}
+    shared = set()
+    for key, rec in records.items():
+        if key == record_key or rec.get("mode") != "dataDir":
+            continue
+        shared |= mine & {f.lower() for f in rec.get("files") or []}
+    return shared
+
+
+def _move_mod_files(src_root: str, dst_root: str, rels: list) -> int:
+    """Move a list of relative paths between two trees, pruning empties."""
+    moved = 0
+    touched = set()
+    for rel in rels:
+        if not _safe_rel_path(rel):
+            continue
+        src = os.path.join(src_root, *rel.split("/"))
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(dst_root, *rel.split("/"))
+        try:
+            _makedirs_for(dst)
+            shutil.move(src, dst)
+        except OSError:
+            continue
+        moved += 1
+        parent = os.path.dirname(src)
+        while parent and len(parent) > len(src_root):
+            touched.add(parent)
+            parent = os.path.dirname(parent)
+    for d in sorted(touched, key=len, reverse=True):
+        try:
+            os.rmdir(d)
+        except OSError:
+            pass
+    return moved
+
+
 def _plugins_txt_path(app_id: int, subpath: str) -> str:
     """Plugins.txt for a Proton game lives inside its compat prefix. The
     game creates it through Wine's case-insensitive lookup, so the on-disk
@@ -9569,6 +9623,14 @@ query Link($slug: String!, $domainName: String!) {
         # be, and it now includes whatever DLC or patch content the game
         # has gained since. Stamped with the build so a later update is
         # still detectable.
+        # Files parked by a disabled mod live outside the game folder, so
+        # nothing above would ever find them.
+        parked_root = os.path.join(
+            decky.DECKY_PLUGIN_RUNTIME_DIR, "parked", game_domain
+        )
+        if os.path.isdir(parked_root):
+            _force_rmtree(parked_root)
+            decky.logger.info(f"reset {game_domain!r}: cleared parked files")
         if os.path.isdir(mods_path) and not errors:
             try:
                 fresh = sorted(os.listdir(mods_path))
@@ -10850,8 +10912,12 @@ query Link($slug: String!, $domainName: String!) {
                 if mode != "dataDir":
                     continue
                 plugins = rec.get("plugins") or []
-                enabled = (not plugins) or any(
-                    p.lower() in active for p in plugins
+                # `parked` means its files were moved out of Data, which
+                # is the only way to switch off a mod made purely of
+                # assets - a UI overhaul or a texture pack.
+                parked = bool(rec.get("parked"))
+                enabled = not parked and (
+                    (not plugins) or any(p.lower() in active for p in plugins)
                 )
                 results.append(
                     {
@@ -10861,7 +10927,12 @@ query Link($slug: String!, $domainName: String!) {
                         "name": rec.get("name") or key,
                         "version": rec.get("version") or "",
                         "mod_id": rec.get("mod_id"),
-                        "togglable": bool(plugins),
+                        # Every dataDir mod can be toggled now: without a
+                        # plugin its files are parked instead. The old
+                        # `bool(plugins)` marked asset-only mods as
+                        # untoggleable and left "its assets are always
+                        # active" as the only answer.
+                        "togglable": True,
                         "source": rec.get("source") or "",
                         "collection_slug": rec.get("collection_slug") or "",
                     }
@@ -11013,23 +11084,51 @@ query Link($slug: String!, $domainName: String!) {
             )
             if not rec:
                 return {"ok": False, "error": f"{folder} is not tracked"}
+            settings = _load_settings()
+            records = settings.get("installed", {}).get(game_domain, {})
+            rec = records.get(folder) or rec
             plugins = rec.get("plugins") or []
-            if not plugins:
-                return {
-                    "ok": False,
-                    "error": "This mod has no plugin file to toggle - its "
-                    "assets are always active",
-                }
-            _set_plugins_active(
-                _plugins_txt_path(app_id, plugins_subpath),
-                plugins,
-                enabled,
-                plugins_style,
+            if plugins and plugins_subpath:
+                _set_plugins_active(
+                    _plugins_txt_path(app_id, plugins_subpath),
+                    plugins,
+                    enabled,
+                    plugins_style,
+                )
+            # Unticking a plugin does NOT switch a dataDir mod off. Its
+            # textures, meshes and interface XML sit in Data and keep
+            # loading, and a mod made only of those - a UI overhaul, a
+            # texture pack - could not be turned off at all. On device
+            # three interface mods had to be UNINSTALLED to get New Vegas
+            # to start, losing the download, when all that was needed was
+            # for their files to stop being read.
+            _install_path, data_path, _unused = _game_paths(
+                install_dir, mods_subdir
             )
+            park = _parked_files_dir(game_domain, folder)
+            rels = list(rec.get("files") or [])
+            shared = _shared_paths(records, folder)
+            movable = [r for r in rels if r.lower() not in shared]
+            if enabled:
+                moved = _move_mod_files(park, data_path, movable)
+                _force_rmtree(park)
+                rec.pop("parked", None)
+            else:
+                moved = _move_mod_files(data_path, park, movable)
+                if moved:
+                    rec["parked"] = True
+            _save_settings(settings)
             decky.logger.info(
-                f"{'enabled' if enabled else 'disabled'} plugins for {folder!r}"
+                f"{'enabled' if enabled else 'disabled'} {folder!r}: "
+                f"{len(plugins)} plugin(s), {moved} file(s) moved"
+                + (f", {len(shared)} left (another mod provides them)"
+                   if shared else "")
             )
-            return {"ok": True}
+            return {
+                "ok": True,
+                "moved": moved,
+                "shared": len(shared),
+            }
 
         # Folder names come from our own directory scan, but never trust a
         # path component: refuse separators outright.

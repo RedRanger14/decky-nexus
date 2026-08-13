@@ -2793,9 +2793,14 @@ class TestDataDirFlows(unittest.TestCase):
         self.assertTrue(by_name["SkyUI"]["enabled"])
         self.assertTrue(by_name["SkyUI"]["togglable"])
         self.assertFalse(by_name["Disabled"]["enabled"])
-        # Asset-only mods have nothing to toggle and count as always active.
+        # Asset-only mods ARE toggleable now: with no plugin to untick,
+        # their files are parked out of Data instead. They used to be
+        # marked untoggleable, which meant a UI overhaul or texture pack
+        # could not be switched off at all - on device three interface
+        # mods had to be uninstalled, losing the downloads, to get New
+        # Vegas to start.
         self.assertTrue(by_name["TextureOnly"]["enabled"])
-        self.assertFalse(by_name["TextureOnly"]["togglable"])
+        self.assertTrue(by_name["TextureOnly"]["togglable"])
 
     def test_toggle_stars_and_unstars_plugins(self):
         self.seed_mod("SkyUI", ["SkyUI_SE.esp"], ["SkyUI_SE.esp"])
@@ -2814,14 +2819,32 @@ class TestDataDirFlows(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(main._read_plugins_txt(self.plugins_txt), ["*SkyUI_SE.esp"])
 
-    def test_toggle_asset_only_mod_is_refused(self):
+    def test_toggle_asset_only_mod_parks_its_files(self):
+        """Previously refused outright - "its assets are always active".
+        A mod with no plugin is switched off by moving its files out of
+        Data, and back when it is switched on."""
         self.seed_mod("TextureOnly", ["textures/armor/shiny.dds"], [])
+        shiny = os.path.join(
+            main.STEAM_COMMON, self.GAME, "Data", "textures", "armor",
+            "shiny.dds",
+        )
+        self.assertTrue(os.path.isfile(shiny))
+
         result = run(
             self.plugin.set_mod_enabled(
                 self.GAME, "Data", "TextureOnly", False, *self.toggle_args()
             )
         )
-        self.assertFalse(result["ok"])
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(os.path.isfile(shiny))
+
+        result = run(
+            self.plugin.set_mod_enabled(
+                self.GAME, "Data", "TextureOnly", True, *self.toggle_args()
+            )
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(os.path.isfile(shiny))
 
     def test_toggle_all_flips_every_tracked_plugin(self):
         self.seed_mod("A", ["A.esp"], ["A.esp"])
@@ -4058,6 +4081,95 @@ class TestBaselineBuildGuard(unittest.TestCase):
         src = inspect.getsource(main.Plugin.reset_game_modding)
         self.assertIn("_steam_build_id", src)
         self.assertIn("game_changed", src)
+
+
+class TestDataDirToggleParksFiles(unittest.TestCase):
+    """Unticking a plugin does not switch a dataDir mod off.
+
+    Its textures, meshes and interface XML sit in Data and keep loading,
+    and a mod made only of those - a UI overhaul, a texture pack - could
+    not be turned off AT ALL: the toggle refused with "its assets are
+    always active". On device three interface mods had to be uninstalled
+    to get New Vegas to start, losing the downloads, when all that was
+    needed was for their files to stop being read."""
+
+    GAME = "Park Test"
+    APP_ID = 22380
+    SUBPATH = "FalloutNV/Plugins.txt"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.data = os.path.join(root, "Data")
+        os.makedirs(os.path.join(self.data, "menus", "main"))
+        for rel in ("menus/main/hud.xml", "menus/main/other.xml"):
+            with open(os.path.join(self.data, *rel.split("/")), "w") as f:
+                f.write(rel)
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["parktest"] = {
+            "UI Mod": {
+                "mode": "dataDir", "plugins": [],
+                "files": ["menus/main/hud.xml", "menus/main/other.xml"],
+            },
+        }
+        main._save_settings(settings)
+        main._force_rmtree(main._parked_files_dir("parktest", "UI Mod"))
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("parktest", None)
+        main._save_settings(settings)
+        main._force_rmtree(main._parked_files_dir("parktest", "UI Mod"))
+
+    def _toggle(self, on):
+        return run(self.plugin.set_mod_enabled(
+            self.GAME, "Data", "UI Mod", on, "dataDir", "parktest",
+            self.APP_ID, self.SUBPATH, "listed"))
+
+    def _on_disk(self, rel):
+        return os.path.isfile(os.path.join(self.data, *rel.split("/")))
+
+    def test_a_mod_with_no_plugins_can_now_be_turned_off(self):
+        r = self._toggle(False)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["moved"], 2)
+        self.assertFalse(self._on_disk("menus/main/hud.xml"))
+
+    def test_turning_it_back_on_restores_every_file(self):
+        self._toggle(False)
+        r = self._toggle(True)
+        self.assertEqual(r["moved"], 2)
+        self.assertTrue(self._on_disk("menus/main/hud.xml"))
+        self.assertTrue(self._on_disk("menus/main/other.xml"))
+
+    def test_the_content_is_the_same_after_a_round_trip(self):
+        self._toggle(False)
+        self._toggle(True)
+        with open(os.path.join(self.data, "menus", "main", "hud.xml")) as f:
+            self.assertEqual(f.read(), "menus/main/hud.xml")
+
+    def test_a_file_another_mod_also_provides_is_left_alone(self):
+        """Whoever wrote last owns the file on disk, and it is not
+        necessarily the mod being switched off - moving it would gut the
+        other one."""
+        settings = main._load_settings()
+        settings["installed"]["parktest"]["Other Mod"] = {
+            "mode": "dataDir", "plugins": [],
+            "files": ["menus/main/other.xml"],
+        }
+        main._save_settings(settings)
+        r = self._toggle(False)
+        self.assertEqual(r["moved"], 1)
+        self.assertEqual(r["shared"], 1)
+        self.assertTrue(self._on_disk("menus/main/other.xml"))
+        self.assertFalse(self._on_disk("menus/main/hud.xml"))
+
+    def test_empty_directories_are_pruned(self):
+        self._toggle(False)
+        self.assertFalse(
+            os.path.isdir(os.path.join(self.data, "menus", "main"))
+        )
 
 
 class TestBaselineRetakenOnReset(unittest.TestCase):
