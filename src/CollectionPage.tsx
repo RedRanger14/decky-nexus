@@ -16,6 +16,7 @@ import { FaArrowDown, FaEye, FaPuzzlePiece } from "react-icons/fa";
 import { EndorsePill } from "./EndorseButton";
 import {
   collectionOwnedCount,
+  isActionableAttention,
   fileConflictProblem,
   isRemaining,
 } from "./panelRules";
@@ -457,12 +458,15 @@ export function CollectionPage() {
   // their modals. Script conflicts are NOT retryable by default now -
   // the second mod is skipped to keep the game bootable (auto-merge
   // proved able to break boot), so they're a note, not an action.
-  const actionable = attention.filter(
-    (a) => a.reason === "choices" || a.reason === "fomod"
-  );
+  const actionable = attention.filter(isActionableAttention);
   const actionableIds = new Set(actionable.map((a) => a.file_id));
   const toolSkips = attention.filter((a) => a.reason === "tool");
   const emptySkips = attention.filter((a) => a.reason === "empty");
+  // Only claim we switched things off when we actually did - this
+  // collection's note said so while nothing had been parked.
+  const parkedForExternal = attention.filter(
+    (a) => a.reason === "needs_external"
+  ).length;
   // Mods proven to stop THIS game booting on SteamOS. Not a failure to
   // retry and not something Finish setup can resolve - the collection is
   // usable without them and the page has to say which and why, or the
@@ -859,9 +863,7 @@ export function CollectionPage() {
       // Only actionable items belong in "waiting on your choices" -
       // tools/conflicts/unrecognized archives are permanent skips and
       // used to make this toast promise a Finish setup that never came.
-      const needsChoices = freshAttention.filter(
-        (a) => a.reason === "choices" || a.reason === "fomod"
-      ).length;
+      const needsChoices = freshAttention.filter(isActionableAttention).length;
       const skipped = freshAttention.length - needsChoices;
       const bits = [];
       if (failures > 0) bits.push(`${failures} failure(s)`);
@@ -1463,11 +1465,19 @@ export function CollectionPage() {
                     hosted on Nexus Mods, so{" "}
                     {items.length === 1 ? "it cannot" : "they cannot"} be
                     downloaded here: {items.map((i) => i.label).join(", ")}.
-                    {withUrl ? ` Get it from ${withUrl.url}.` : ""} Anything
-                    that needs {items.length === 1 ? "it" : "them"} has been
-                    switched off so the game still starts — turn it back on
-                    in My Mods once you have added{" "}
-                    {items.length === 1 ? "it" : "them"}.
+                    {withUrl ? ` Get it from ${withUrl.url}.` : ""}
+                    {parkedForExternal > 0
+                      ? ` ${parkedForExternal} mod${
+                          parkedForExternal === 1 ? "" : "s"
+                        } that need ${
+                          items.length === 1 ? "it" : "them"
+                        } been switched off so the game still starts — turn ${
+                          parkedForExternal === 1 ? "it" : "them"
+                        } back on in My Mods once you have added ${
+                          items.length === 1 ? "it" : "them"
+                        }.`
+                      : " Nothing else needed switching off, so the rest of" +
+                        " the collection is installed and active."}
                   </>
                 );
               })()}
