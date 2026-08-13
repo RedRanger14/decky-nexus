@@ -4548,12 +4548,19 @@ def _parse_mod_load_log(lines: list):
 
     loaded: set = set()
     errors: dict = {}
+    blamed_counts: dict = {}
+    pending_exc = ""
     modded_session = False
     for line in lines:
         if "RUNNING MODDED" in line:
             modded_session = True
             continue
         m = re.search(r"Finished mod initialization for '.*' \(([^)]+)\)", line)
+        if m:
+            loaded.add(norm(m.group(1)))
+            continue
+        # Slay the Spire 2's loader: "[WARN] [ts] RouteSuggest: Mod loaded"
+        m = re.search(r"\] ([A-Za-z0-9_.]+): Mod loaded", line)
         if m:
             loaded.add(norm(m.group(1)))
             continue
@@ -4564,10 +4571,47 @@ def _parse_mod_load_log(lines: list):
         m = re.match(r"\[ERROR\] \[([^\]]+)\] (.*)", line)
         if m:
             errors.setdefault(norm(m.group(1)), m.group(2)[:160])
+            continue
+        # A .NET mod loader names the mod it could not load.
+        m = re.search(r"while loading mod ([A-Za-z0-9_.]+)", line)
+        if m:
+            errors[norm(m.group(1))] = "failed to load"
+            continue
+        # An exception block: the FIRST stack frame after it is where the
+        # throw happened, so that mod is the culprit. Later frames are the
+        # libraries it called through - blaming those would switch off a
+        # shared dependency and take working mods with it.
+        m = re.match(r"ERROR: System\.([A-Za-z]+Exception)", line)
+        if m:
+            pending_exc = m.group(1)
+            continue
+        if pending_exc:
+            frame = re.match(r"\s+at ([A-Za-z0-9_]+)\.", line)
+            if frame:
+                blamed = frame.group(1)
+                if blamed not in ("Godot", "System", "HarmonyLib", "MegaCrit"):
+                    detail = (
+                        "calls something this version of the game does not "
+                        "have - built for a different game build"
+                        if pending_exc in (
+                            "MissingMethodException", "MissingFieldException",
+                            "TypeLoadException",
+                        )
+                        else f"threw {pending_exc}"
+                    )
+                    errors.setdefault(norm(blamed), detail)
+                    blamed_counts[norm(blamed)] = (
+                        blamed_counts.get(norm(blamed), 0) + 1
+                    )
+                pending_exc = ""
 
     status = {key: {"state": "loaded", "detail": ""} for key in loaded}
     for key, detail in errors.items():
-        status[key] = {"state": "error", "detail": detail}
+        status[key] = {
+            "state": "error",
+            "detail": detail,
+            "errors": blamed_counts.get(key, 0),
+        }
     return status, modded_session
 
 
@@ -10667,6 +10711,81 @@ query Link($slug: String!, $domainName: String!) {
                 "without it, the game will not start - so it is switched off "
                 "until you add it yourself."
             ),
+        }
+
+    async def disable_failing_mods(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        game_user_dir: str, install_mode: str = "folder", app_id: int = 0,
+        plugins_subpath: str = "", plugins_style: str = "starred",
+    ) -> dict:
+        """Switch off the mods the last session blamed for errors.
+
+        Slay the Spire 2, 2026-08-13: a collection produced 1,078
+        MissingMethodExceptions and killed the game five seconds into the
+        main menu. The game's own log names the mod each exception was
+        thrown IN - so the outdated ones are knowable, and switching them
+        off is a tap rather than a hunt.
+
+        Only mods the log blames DIRECTLY. _parse_mod_load_log attributes an
+        exception to the first stack frame, not to the libraries beneath it,
+        because a shared dependency appears in every trace as a victim and
+        disabling it would take the working mods with it.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9 ._-]+", game_user_dir or ""):
+            return {"ok": False, "error": "Invalid game user dir"}
+        log_path = os.path.join(
+            decky.DECKY_USER_HOME, ".local", "share", game_user_dir,
+            "logs", "godot.log",
+        )
+        if not os.path.isfile(log_path):
+            return {"ok": True, "disabled": 0, "names": [],
+                    "error": "No session log yet - launch the game once"}
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                status, _modded = _parse_mod_load_log(f.read().splitlines())
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        blamed = {
+            key: info for key, info in status.items()
+            if info.get("state") == "error"
+        }
+        if not blamed:
+            return {"ok": True, "disabled": 0, "names": []}
+        records = _load_settings().get("installed", {}).get(game_domain, {})
+        off, errors = [], []
+        for key, rec in list(records.items()):
+            hit = (
+                blamed.get(_norm_mod_id(key))
+                or blamed.get(_norm_mod_id(rec.get("name") or ""))
+                or blamed.get(_norm_mod_id(rec.get("folder") or ""))
+            )
+            if not hit:
+                continue
+            try:
+                result = await self.set_mod_enabled(
+                    install_dir, mods_subdir, key, False, install_mode,
+                    game_domain, app_id, plugins_subpath, plugins_style,
+                )
+            except Exception as e:  # noqa: BLE001 - report, keep going
+                errors.append(f"{key}: {type(e).__name__}")
+                continue
+            if result.get("ok"):
+                off.append({"name": rec.get("name") or key,
+                            "why": hit.get("detail") or "errored last run"})
+            else:
+                errors.append(f"{key}: {result.get('error')}")
+        decky.logger.info(
+            f"disabled {len(off)} mod(s) the last session blamed: "
+            f"{', '.join(m['name'] for m in off[:6])}"
+        )
+        return {
+            "ok": True,
+            "disabled": len(off),
+            "names": [m["name"] for m in off],
+            "details": off[:12],
+            "errors": errors[:6],
         }
 
     async def get_known_bad_state(

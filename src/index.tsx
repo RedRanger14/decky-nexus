@@ -57,6 +57,7 @@ import {
   getGameStatus,
   getInstalledMods,
   getModDetails,
+  disableFailingMods,
   getModLoadStatus,
   getSaveStatus,
   getSmapiLoadStatus,
@@ -99,6 +100,7 @@ import {
 import {
   crashHuntVerdict,
   crashSuspect,
+  failingProblem,
   huntProgressNote,
   launchWaitNotice,
   loadOrderProblem,
@@ -2353,6 +2355,10 @@ function TroubleshootingSection() {
   const [seBusy, setSeBusy] = useState(false);
   const [blockedBusy, setBlockedBusy] = useState(false);
   const [ghostBusy, setGhostBusy] = useState(false);
+  // Mods the game's own log blamed last session. Named by the log, so
+  // "which ones are outdated" stops being a hunt.
+  const [failing, setFailing] = useState<string[]>([]);
+  const [failingBusy, setFailingBusy] = useState(false);
   // Enabled plugins listed before a master they need - a boot crash.
   const [loadOrder, setLoadOrder] = useState<
     {
@@ -2412,6 +2418,21 @@ function TroubleshootingSection() {
             : undefined
         )
       );
+    }
+    // The game's own log naming the mods it blamed. Only games whose logs
+    // attribute errors to a mod - so far the Godot ones.
+    if (game.logAdapter?.kind === "godot") {
+      getModLoadStatus(game.logAdapter.userDirName).then((r) =>
+        setFailing(
+          r.ok && r.available && r.modded_session
+            ? Object.values(r.status ?? {})
+                .filter((st) => st.state === "error")
+                .map((st) => st.detail)
+            : []
+        )
+      );
+    } else {
+      setFailing([]);
     }
     if (game.pluginsTxtSubpath) {
       getLoadOrderState(
@@ -2634,7 +2655,7 @@ function TroubleshootingSection() {
 
   const problems = troubleshootingCount(
     Boolean(runtime?.outdated),
-    sePlugins?.failed.length ?? 0,
+    (sePlugins?.failed.length ?? 0) + failing.length,
     Boolean(suspect),
     loadOrderIssue,
     missingMasters || ghostIssue
@@ -2808,6 +2829,54 @@ function TroubleshootingSection() {
               }}
             >
               {hunt?.running ? "Stop the hunt" : "Find what's breaking it"}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {failing.length > 0 && game && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              label={
+                failing.length === 1
+                  ? "1 mod broke last time you played"
+                  : `${failing.length} mods broke last time you played`
+              }
+              description={failingProblem(failing)}
+              disabled={failingBusy}
+              onClick={async () => {
+                if (game.logAdapter?.kind !== "godot") return;
+                setFailingBusy(true);
+                try {
+                  const r = await disableFailingMods(
+                    game.nexusDomain,
+                    game.installDirName,
+                    game.modsSubdir,
+                    game.logAdapter.userDirName,
+                    game.installMode ?? "folder",
+                    game.appId,
+                    game.pluginsTxtSubpath ?? "",
+                    game.pluginsTxtStyle ?? "starred"
+                  );
+                  toaster.toast({
+                    title: r.ok
+                      ? `Switched off ${r.disabled ?? 0}`
+                      : "Could not switch them off",
+                    body: r.ok
+                      ? (r.names ?? []).slice(0, 3).join(", ") ||
+                        r.error ||
+                        "Nothing matched an installed mod"
+                      : r.error ?? "",
+                  });
+                  if (r.ok && (r.disabled ?? 0) > 0) {
+                    setFailing([]);
+                    notifyGameStateChanged();
+                  }
+                } finally {
+                  setFailingBusy(false);
+                }
+              }}
+            >
+              {failingBusy ? "Switching off…" : "Switch them off"}
             </ButtonItem>
           </PanelSectionRow>
         )}
