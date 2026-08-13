@@ -4609,7 +4609,7 @@ _AUTO_DISABLE_FLOOD = 25
 
 
 def _record_mod_verdicts(
-    game_domain: str, build: str, verdicts: list
+    game_domain: str, build: str, verdicts: list, state: str = "broken"
 ) -> int:
     """Remember that these mods could not run on this game build.
 
@@ -4637,7 +4637,14 @@ def _record_mod_verdicts(
         entry = {
             "build": build,
             "version": v.get("version") or "",
-            "state": "broken",
+            # "broken" cannot run and gets switched off. "stale" errors but
+            # other mods depend on it, so the only remedy is an update - and
+            # that distinction has to survive a reinstall, because a
+            # collection puts its pinned version straight back. Michael
+            # reset, reinstalled, and BaseLib 3.1.2 and RitsuLib 0.2.30
+            # returned with all five errors, having been fixed minutes
+            # earlier.
+            "state": state,
             "why": (v.get("why") or "")[:200],
             "name": v.get("name") or "",
         }
@@ -4649,7 +4656,9 @@ def _record_mod_verdicts(
     return added
 
 
-def _known_broken_mods(game_domain: str, build: str) -> dict:
+def _known_broken_mods(
+    game_domain: str, build: str, state: str = "broken"
+) -> dict:
     """mod id -> verdict, for verdicts that still apply to this build.
 
     A verdict from an older build is deliberately dropped rather than
@@ -4662,7 +4671,7 @@ def _known_broken_mods(game_domain: str, build: str) -> dict:
     return {
         int(mid): v for mid, v in store.items()
         if isinstance(v, dict) and v.get("build") == build
-        and v.get("state") == "broken"
+        and v.get("state") == state
     }
 
 
@@ -11104,13 +11113,19 @@ query Link($slug: String!, $domainName: String!) {
         }
         keeping = {f for f in manifests if f not in going}
         needed = _mods_needed_by_others(manifests, keeping)
-        off, held, errors = [], [], []
+        off, held, held_details, errors = [], [], [], []
         for key, rec, hit in candidates:
             folder = rec.get("folder") or key
             mod_id = (manifests.get(folder) or {}).get("id") or ""
             dependents = needed.get(mod_id.strip().lower(), [])
             if rec.get("mod_id") in keep or dependents:
                 held.append(rec.get("name") or key)
+                held_details.append({
+                    "name": rec.get("name") or key,
+                    "mod_id": rec.get("mod_id"),
+                    "version": rec.get("version") or "",
+                    "why": hit.get("detail") or "errored last run",
+                })
                 continue
             if dry_run:
                 off.append({"name": rec.get("name") or key,
@@ -11146,6 +11161,7 @@ query Link($slug: String!, $domainName: String!) {
             "names": [m["name"] for m in off],
             "details": off[:12],
             "held": held[:6],
+            "held_details": held_details[:12],
             "errors": errors[:6],
             # Blamed regardless of what was done about it - a held-back
             # library that is two minor versions behind the game is the most
@@ -11182,8 +11198,30 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Invalid game domain"}
         build = _steam_build_id(app_id)
         known = _known_broken_mods(game_domain, build)
+        # Stale ones are handled first and differently. A collection reinstall
+        # restores its pinned version, so BaseLib 3.1.2 and RitsuLib 0.2.30
+        # came back with all five errors minutes after being fixed - the
+        # verdict knew, and finish-setup had no way to act on it.
+        stale = _known_broken_mods(game_domain, build, "stale")
+        updated = []
+        if stale:
+            records = _load_settings().get("installed", {}).get(
+                game_domain, {}
+            )
+            names = [
+                rec.get("name") or key
+                for key, rec in records.items()
+                if rec.get("mod_id") in stale
+                and (stale[rec["mod_id"]].get("version") or "")
+                == (rec.get("version") or "")
+            ]
+            updated = await self._update_held_mods(
+                game_domain, install_dir, mods_subdir, install_mode, app_id,
+                plugins_subpath, plugins_style, names,
+            )
         if not known:
-            return {"ok": True, "disabled": 0, "names": [], "held": []}
+            return {"ok": True, "disabled": 0, "names": [], "held": [],
+                    "updated": updated}
         _install, mods_path, _dis = _game_paths(install_dir, mods_subdir)
         manifests = _godot_mod_manifests(mods_path)
         keep = {int(m) for m in (protected_ids or []) if m is not None}
@@ -11204,7 +11242,8 @@ query Link($slug: String!, $domainName: String!) {
             targets.append((key, rec, verdict))
             going.add(rec.get("folder") or key)
         if not targets:
-            return {"ok": True, "disabled": 0, "names": [], "held": []}
+            return {"ok": True, "disabled": 0, "names": [], "held": [],
+                    "updated": updated}
         needed = _mods_needed_by_others(
             manifests, {f for f in manifests if f not in going}
         )
@@ -11232,7 +11271,7 @@ query Link($slug: String!, $domainName: String!) {
             f"{game_domain} build {build}: {', '.join(off[:6])}"
         )
         return {"ok": True, "disabled": len(off), "names": off,
-                "held": held[:6], "errors": errors[:6]}
+                "held": held[:6], "updated": updated, "errors": errors[:6]}
 
     async def get_known_mod_verdict(
         self, game_domain: str, mod_id: int, app_id: int = 0
@@ -11429,6 +11468,14 @@ query Link($slug: String!, $domainName: String!) {
         # construction - a library erroring while other mods depend on it is
         # exactly the case the auto pass refuses to touch. Which is why the
         # update has to come from here rather than from the auto result.
+        # Held-back mods get a verdict too, or the knowledge dies with the
+        # log: a collection reinstall puts its pinned version straight back,
+        # and nothing at install time knows the pin is stale.
+        if rest.get("ok") and rest.get("held_details"):
+            _record_mod_verdicts(
+                game_domain, _steam_build_id(app_id),
+                rest["held_details"], "stale",
+            )
         updated = []
         if not already and rest.get("ok"):
             updated = await self._update_held_mods(

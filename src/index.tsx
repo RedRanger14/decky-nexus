@@ -110,6 +110,7 @@ import {
   ghostPluginProblem,
   missingMasterProblem,
   blockedPluginsAction,
+  lastRunSummary,
   maskCoopPassword,
   repairedNote,
   updatedNote,
@@ -2879,6 +2880,19 @@ function TroubleshootingSection() {
             >
               {hunt?.running ? "Stop the hunt" : "Find what's breaking it"}
             </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {game?.logAdapter?.kind === "godot" && (
+          <PanelSectionRow>
+            <Field label="What the game reported last run" childrenLayout="below">
+              {lastRunSummary(
+                [
+                  ...failing.held,
+                  ...failing.details.map((d) => d.name),
+                ],
+                failing.repaired.length + failing.updated.length
+              )}
+            </Field>
           </PanelSectionRow>
         )}
         {failing.updated.length > 0 && (

@@ -9,6 +9,7 @@ import {
   disableFailingOutcome,
   failingProblem,
   knownBrokenNote,
+  lastRunSummary,
   preDisabledNote,
   repairedNote,
   updatedNote,
@@ -947,4 +948,32 @@ test("a missing target version still reads", () => {
     updatedNote([{ name: "A", from: "1", to: "" }]),
     /A to the newest version/
   );
+});
+
+// --- lastRunSummary -------------------------------------------------------
+// The game's banner reads "Loaded 23 mods WITH ERRORS" whether one mod erred
+// or five, so 5 -> 1 was invisible where Michael was looking.
+
+test("a clean run says so plainly", () => {
+  assert.equal(
+    lastRunSummary([], 0),
+    "No mods reported errors the last time you played."
+  );
+});
+
+test("a clean run just after a fix warns the banner is stale", () => {
+  const msg = lastRunSummary([], 4);
+  assert.match(msg, /No mods are reporting errors any more/);
+  assert.match(msg, /launch it once more and that will clear/);
+});
+
+test("one erroring mod is named and counted", () => {
+  const msg = lastRunSummary(["ModConfig"], 4);
+  assert.match(msg, /^1 mod is still reporting errors: ModConfig\./);
+});
+
+test("several are counted, because the banner never counts", () => {
+  const msg = lastRunSummary(["A", "B", "C", "D", "E"], 0);
+  assert.match(msg, /^5 mods are still reporting errors: A, B, C and 2 more\./);
+  assert.match(msg, /looks the same whether that is one or twenty/);
 });
