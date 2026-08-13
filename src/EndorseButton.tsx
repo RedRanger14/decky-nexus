@@ -20,6 +20,84 @@ import { endorseControl } from "./panelRules";
 const NEXUS_ORANGE = "#da8e35";
 const GREEN = "143, 212, 143";
 
+/** THE endorse control. One component so the same action cannot end up
+ * looking like three different things - which it did: a pill on the mod
+ * page, a bare square in the QAM, and a DialogButton on collections.
+ *
+ * `iconOnly` is the QAM's framework row, where it sits beside a full-width
+ * Step button and a label would crowd it. Everywhere else it carries its
+ * word, because a pill with no text is only obvious to whoever wrote it.
+ */
+export function EndorsePill({
+  endorsed,
+  busy,
+  onActivate,
+  iconOnly = false,
+  label = "Endorse",
+  endorsedLabel = "Endorsed",
+}: {
+  endorsed: boolean;
+  busy: boolean;
+  onActivate: () => void;
+  iconOnly?: boolean;
+  label?: string;
+  endorsedLabel?: string;
+}) {
+  const tone = endorsed
+    ? {
+        background: `rgba(${GREEN}, 0.15)`,
+        border: `1px solid rgba(${GREEN}, 0.5)`,
+        color: `rgb(${GREEN})`,
+      }
+    : {
+        background: "rgba(218, 142, 53, 0.15)",
+        border: `1px solid ${NEXUS_ORANGE}88`,
+      };
+  return (
+    <Focusable
+      onActivate={() => {
+        if (!busy) onActivate();
+      }}
+      style={{
+        ...(iconOnly
+          ? {
+              width: "40px",
+              height: "40px",
+              marginLeft: "8px",
+              flex: "0 0 auto",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "4px",
+            }
+          : {
+              padding: "3px 12px",
+              borderRadius: "999px",
+              fontSize: "12px",
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+            }),
+        // Half-lit in flight: on a handheld there is no cursor to show
+        // that a press landed.
+        opacity: busy ? 0.4 : 1,
+        ...tone,
+      }}
+    >
+      {iconOnly ? (
+        <FaThumbsUp size={16} />
+      ) : (
+        <span
+          style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+        >
+          <FaThumbsUp size={12} />
+          {endorsed ? endorsedLabel : label}
+        </span>
+      )}
+    </Focusable>
+  );
+}
+
+
 /** "SMAPI installed ✓" with a thumbs-up beside it, and the cooldown note
  * underneath rather than squeezed alongside. */
 export function EndorsableFrameworkRow({
@@ -84,36 +162,12 @@ export function EndorsableFrameworkRow({
       <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
         <span style={{ flex: "1 1 auto" }}>{text}</span>
         {control.show && (
-          <Focusable
+          <EndorsePill
+            endorsed={control.endorsed}
+            busy={busy}
             onActivate={onActivate}
-            // Square, so it reads as an icon button rather than a second
-            // action competing with the Step buttons above it.
-            style={{
-              width: "40px",
-              height: "40px",
-              marginLeft: "8px",
-              flex: "0 0 auto",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: "4px",
-              // Half-lit in flight: on a handheld there is no cursor to
-              // show that a press landed.
-              opacity: busy ? 0.4 : 1,
-              ...(control.endorsed
-                ? {
-                    background: `rgba(${GREEN}, 0.15)`,
-                    border: `1px solid rgba(${GREEN}, 0.5)`,
-                    color: `rgb(${GREEN})`,
-                  }
-                : {
-                    background: "rgba(218, 142, 53, 0.15)",
-                    border: `1px solid ${NEXUS_ORANGE}88`,
-                  }),
-            }}
-          >
-            <FaThumbsUp size={16} />
-          </Focusable>
+            iconOnly
+          />
         )}
       </div>
       {control.hint && (

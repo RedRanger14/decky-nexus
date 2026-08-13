@@ -13,6 +13,7 @@ import {
 import { toaster } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 import { FaArrowDown, FaEye, FaPuzzlePiece } from "react-icons/fa";
+import { EndorsePill } from "./EndorseButton";
 import {
   collectionOwnedCount,
   fileConflictProblem,
@@ -1298,17 +1299,21 @@ export function CollectionPage() {
               Shown whenever the collection is installed, not hidden in the
               stat chips where it read as a label rather than a button. */}
           {ownedCount > 0 && !installing && detail && (
-            <DialogButton
-              disabled={endorsing || endorsed}
-              onClick={endorseCollectionNow}
-              style={ACTION_BUTTON}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                alignSelf: "center",
+              }}
             >
-              {endorsed
-                ? "✓ Endorsed"
-                : endorsing
-                  ? "Endorsing…"
-                  : "👍 Endorse collection"}
-            </DialogButton>
+              <EndorsePill
+                endorsed={endorsed}
+                busy={endorsing}
+                onActivate={endorseCollectionNow}
+                label="Endorse collection"
+                endorsedLabel="Collection endorsed"
+              />
+            </div>
           )}
           {ownedCount > 0 && !installing && (
             <DialogButton
