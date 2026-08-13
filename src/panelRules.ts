@@ -255,6 +255,34 @@ export function failingProblem(details: string[]): string | undefined {
   );
 }
 
+/** What the toast says after switching off the mods the log blamed.
+ *
+ * `held` is the ecosystem libraries. BaseLib genuinely threw in that
+ * session, but 21 mods sit on it - so it is named as still-erroring rather
+ * than switched off, and saying so beats the user finding out later that
+ * one blamed mod is still there.
+ */
+export function disableFailingOutcome(
+  names: string[],
+  held: string[] = [],
+  fallback?: string
+): string {
+  const off = names.filter(Boolean);
+  const kept = held.filter(Boolean);
+  if (!off.length && !kept.length) {
+    return fallback || "Nothing matched an installed mod";
+  }
+  const parts: string[] = [];
+  if (off.length) parts.push(off.slice(0, 3).join(", "));
+  if (kept.length) {
+    parts.push(
+      `Left ${kept.slice(0, 2).join(", ")} on — your other mods need ` +
+        `${kept.length === 1 ? "it" : "them"}.`
+    );
+  }
+  return parts.join(" ");
+}
+
 /** Whether the load order has outgrown what the engine can address, and
  * what to tell someone who has never heard of a plugin slot.
  *

@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   crashHuntVerdict,
   cancellableDownload,
+  disableFailingOutcome,
   failingProblem,
   crashSuspect,
   huntProgressNote,
@@ -793,4 +794,35 @@ test("says switching them off leaves the others alone", () => {
 test("a detail with no mod name still counts", () => {
   const msg = failingProblem([":  ", "A: x"]);
   assert.match(msg, /A/);
+});
+
+// --- disableFailingOutcome ------------------------------------------------
+// Verified against the real Slay the Spire 2 session: RelicsReminder threw
+// 1,077 times and is the culprit; BaseLib also threw but 21 mods sit on it.
+
+test("names what was switched off", () => {
+  assert.equal(
+    disableFailingOutcome(["RelicsReminder", "RefreshAncient"]),
+    "RelicsReminder, RefreshAncient"
+  );
+});
+
+test("says which library it left alone and why", () => {
+  const msg = disableFailingOutcome(["RelicsReminder"], ["BaseLib"]);
+  assert.match(msg, /RelicsReminder/);
+  assert.match(msg, /Left BaseLib on/);
+  assert.match(msg, /your other mods need it/);
+});
+
+test("plural for two held libraries", () => {
+  assert.match(
+    disableFailingOutcome([], ["BaseLib", "RitsuLib"]),
+    /Left BaseLib, RitsuLib on .* need them\./
+  );
+});
+
+test("nothing matched falls back to the backend note", () => {
+  assert.equal(disableFailingOutcome([], [], "No session log yet"),
+               "No session log yet");
+  assert.match(disableFailingOutcome([], []), /Nothing matched/);
 });
