@@ -1036,6 +1036,9 @@ export const repairFailingMods = callable<
     /** Blamed mods that could not be switched off (other mods need them)
      * and were updated instead - the only remedy they have. */
     updated?: { name: string; from: string; to: string }[];
+    /** Blamed, cannot be switched off, and nothing newer exists - a dead
+     * end only the mod's author can clear. */
+    no_update?: string[];
     remaining?: { name: string; why: string }[];
     /** Every mod the log blamed, however it was handled. Fed back into
      * checkUpdates: a collection pin the game cannot run has earned an

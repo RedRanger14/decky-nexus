@@ -290,7 +290,8 @@ export function knownBrokenNote(version: string): string {
  */
 export function lastRunSummary(
   blamed: string[],
-  handled: number
+  handled: number,
+  noUpdate: string[] = []
 ): string | undefined {
   const names = blamed.filter(Boolean);
   if (!names.length) {
@@ -303,11 +304,22 @@ export function lastRunSummary(
   const one = names.length === 1;
   const shown = names.slice(0, 3).join(", ");
   const rest = names.length - 3;
+  const stuck = noUpdate.filter((n) => names.includes(n));
+  // The dead-end case, which is worth naming as a dead end. Otherwise the
+  // reader keeps looking for the fix that does not exist, and the red line
+  // reads as an unsolved problem rather than a finished one.
+  const allStuck = stuck.length === names.length;
   return (
     `${one ? "1 mod is" : `${names.length} mods are`} still reporting ` +
-    `errors: ${shown}${rest > 0 ? ` and ${rest} more` : ""}. The game ` +
-    `shows one red line however many there are, so it looks the same ` +
-    `whether that is one or twenty.`
+    `errors: ${shown}${rest > 0 ? ` and ${rest} more` : ""}. ` +
+    (allStuck
+      ? `${one ? "It is" : "They are"} running — only part of ` +
+        `${one ? "it" : "them"} failed — and there is no newer version to ` +
+        `move to, so only the mod ${one ? "author" : "authors"} can clear ` +
+        `this. Nothing else to do: the game plays, and the red line the ` +
+        `game shows will stay until ${one ? "it is" : "they are"} updated.`
+      : `The game shows one red line however many there are, so it looks ` +
+        `the same whether that is one or twenty.`)
   );
 }
 

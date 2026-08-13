@@ -2389,7 +2389,15 @@ function TroubleshootingSection() {
     held: string[];
     repaired: string[];
     updated: { name: string; from: string; to: string }[];
-  }>({ names: [], details: [], held: [], repaired: [], updated: [] });
+    noUpdate: string[];
+  }>({
+    names: [],
+    details: [],
+    held: [],
+    repaired: [],
+    updated: [],
+    noUpdate: [],
+  });
   const [failingBusy, setFailingBusy] = useState(false);
   // Enabled plugins listed before a master they need - a boot crash.
   const [loadOrder, setLoadOrder] = useState<
@@ -2473,6 +2481,7 @@ function TroubleshootingSection() {
           held: r.ok ? r.held ?? [] : [],
           repaired: r.ok ? r.names ?? [] : [],
           updated: r.ok ? r.updated ?? [] : [],
+          noUpdate: r.ok ? r.no_update ?? [] : [],
         })
       );
     } else {
@@ -2482,6 +2491,7 @@ function TroubleshootingSection() {
         held: [],
         repaired: [],
         updated: [],
+        noUpdate: [],
       });
     }
     if (game.pluginsTxtSubpath) {
@@ -2890,7 +2900,8 @@ function TroubleshootingSection() {
                   ...failing.held,
                   ...failing.details.map((d) => d.name),
                 ],
-                failing.repaired.length + failing.updated.length
+                failing.repaired.length + failing.updated.length,
+                failing.noUpdate
               )}
             </Field>
           </PanelSectionRow>
