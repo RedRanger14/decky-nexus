@@ -8849,11 +8849,27 @@ query Link($slug: String!, $domainName: String!) {
                     continue
                 dst = os.path.join(install_path, *rel.split("/"))
                 if os.path.exists(dst):
+                    # Already staged by an earlier run of this same tool.
+                    #
+                    # This used to fail the whole step: "already exists in
+                    # the game folder - not overwriting it". Michael had run
+                    # the Fallout 3 ESM patcher successfully weeks ago, so
+                    # its exe was sitting there, and every attempt since has
+                    # failed for the single reason that it had already
+                    # worked. He remembered FO3 working and could not see
+                    # why it now would not - because the guard against
+                    # clobbering somebody's file was also refusing to reuse
+                    # OUR OWN copy of a tool we put there.
+                    #
+                    # Reuse it. It is the tool's own executable, extracted
+                    # from the same mod, and running it again is the entire
+                    # point of pressing the button.
                     if src == exe_path:
-                        stage_err = (
-                            f"{name} already exists in the game folder - "
-                            "not overwriting it"
+                        decky.logger.info(
+                            f"prefix tool {game_domain}/{mod_id}: {name} is "
+                            "already staged from an earlier run - reusing it"
                         )
+                        exe_path = dst
                     continue
                 _makedirs_for(dst)
                 shutil.copy2(src, dst)

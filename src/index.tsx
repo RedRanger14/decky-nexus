@@ -157,7 +157,6 @@ import {
   updateDownload,
 } from "./state";
 import {
-  NEXUS_ORANGE,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
 } from "./theme";
@@ -1475,8 +1474,13 @@ function CurrentGameSection() {
                         minWidth: 0,
                         padding: "8px 10px",
                         fontSize: "13px",
-                        background: NEXUS_ORANGE,
-                        color: "#fff",
+                        // Off-white, not brand orange. Orange is reserved
+                        // for the one primary action or for something
+                        // happening right now, and three orange buttons in
+                        // a row of setup steps makes none of them read as
+                        // the one to press.
+                        background: "rgba(240, 240, 238, 0.92)",
+                        color: "#1c1c1c",
                       }}
                       onClick={async () => {
                     for (const tool of game.prefixTools!) {
@@ -1523,6 +1527,11 @@ function CurrentGameSection() {
                       }
                     }
                     setToolsBusy(undefined);
+                    // Re-read from the backend rather than trusting the
+                    // optimistic local flags. A tool that ran but failed
+                    // verification left the count unchanged with no
+                    // explanation, which reads as "the button did nothing".
+                    refreshStatus();
                   }}
                     >
                       {toolsBusy ??
