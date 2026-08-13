@@ -143,11 +143,33 @@ candidate to cross it.
 ## New Vegas: VeryLastKiss's New New Vegas (2026-08-13)
 
 The domain's most popular collection, 852 entries / 766 mods installed,
-booting on SteamOS after a reset to vanilla and a full reinstall - but NOT
-yet unattended. This run still needed two backend passes driven over SSH
-(the external-prerequisite parking and the orphaned-plugin sweep) plus a
-re-park by hand. Both are now wired into the install and Finish-setup
-paths, and the unattended run is the outstanding verification.
+booting on SteamOS **unattended, verified 2026-08-13**: reset to vanilla,
+installed from scratch, Finish setup, boot - with no terminal, no manual
+toggles and nothing done for it from outside. The collection was then
+endorsed from the page.
+
+Two earlier attempts that day were NOT unattended, and were described as
+such at first. They needed the prerequisite parking and the orphan sweep
+driven over SSH. Recording that because the difference between "it works"
+and "it works without me" was three more rounds of finding real bugs.
+
+### The verified configuration
+
+| | |
+|---|---|
+| Mods installed | 766 of 852 entries |
+| Plugins enabled | 219 + 10 implicit = 229 of 254 |
+| Load-order violations / missing masters / ghosts | 0 / 0 / 0 |
+| Parked, needing Vanilla UI+ | One HUD, Clean Vanilla Hud, their patch |
+| Installed from the collection archive | NVAO Throwverhaul, OneTweak |
+| Plugins auto-disabled as orphans | 5 |
+| Installers with nothing to install | 1 (a second file of Iron Sights Aligned) |
+| Desktop tools skipped | 1 (FNV 4GB Patcher) |
+
+Everything in that table is reached automatically. The five orphans include
+the Immersion Mods FPGE patch, which broke an earlier boot with "missing
+required files" - it is disabled now because the orphan sweep runs AFTER
+the parking that creates orphans, which it did not at first.
 
 Final state: 222 plugins of a 254 ceiling, 0 order violations, 0 blocked
 plugins, 0 plugins enabled-but-absent. Three mods switched off and named on
