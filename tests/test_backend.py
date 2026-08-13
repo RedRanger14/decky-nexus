@@ -5832,6 +5832,40 @@ class TestFileConflicts(unittest.TestCase):
         self.assertEqual(found[0]["actual"], "a")
         self.assertEqual(found[0]["intended"], "b")
 
+    def test_updating_a_collection_mod_keeps_it_in_the_collection(self):
+        # Found on device: updating BaseLib inside a collection blanked its
+        # source and collection_slug, because a plain install passes those
+        # as "". Cancelling the collection would then have walked past it
+        # and left an orphan - the exact failure Michael asked to be
+        # careful about. An update is not a change of provenance.
+        existing = {"mod_id": 103, "file_id": 1, "version": "3.1.2",
+                    "source": "collection", "collection_slug": "q9rlkd"}
+        merged = main._merge_install_record(
+            existing,
+            {"mod_id": 103, "file_id": 2, "version": "3.3.8",
+             "source": "", "collection_slug": ""},
+        )
+        self.assertEqual(merged["source"], "collection")
+        self.assertEqual(merged["collection_slug"], "q9rlkd")
+        self.assertEqual(merged["version"], "3.3.8")
+
+    def test_a_deliberate_new_provenance_still_wins(self):
+        merged = main._merge_install_record(
+            {"mod_id": 1, "file_id": 1, "source": "collection",
+             "collection_slug": "old"},
+            {"mod_id": 1, "file_id": 2, "source": "collection",
+             "collection_slug": "new"},
+        )
+        self.assertEqual(merged["collection_slug"], "new")
+
+    def test_a_standalone_install_gains_no_provenance(self):
+        merged = main._merge_install_record(
+            {"mod_id": 1, "file_id": 1},
+            {"mod_id": 1, "file_id": 2, "source": "", "collection_slug": ""},
+        )
+        self.assertEqual(merged.get("source"), "")
+        self.assertEqual(merged.get("collection_slug"), "")
+
     def test_the_sequence_increases_and_survives_a_restart(self):
         first = main._merge_install_record(None, {"mod_id": 1})["install_seq"]
         second = main._merge_install_record(None, {"mod_id": 2})["install_seq"]
