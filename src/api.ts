@@ -958,6 +958,31 @@ export const getModSupport = callable<
   }
 >("get_mod_support");
 
+// Switch off the mods that are broken beyond argument, and report what is
+// left for the user to decide on. Acts once per session log, so a mod the
+// user deliberately switches back on stays on.
+export const repairFailingMods = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    game_user_dir: string,
+    install_mode: InstallMode,
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    protected_ids: number[]
+  ],
+  {
+    ok: boolean;
+    repaired?: number;
+    names?: string[];
+    held?: string[];
+    remaining?: { name: string; why: string }[];
+    error?: string;
+  }
+>("repair_failing_mods");
+
 // Switch off the mods the game's own last session blamed for errors. Only
 // direct culprits - the first stack frame - never the libraries beneath.
 export const disableFailingMods = callable<

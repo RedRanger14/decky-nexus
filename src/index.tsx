@@ -59,6 +59,7 @@ import {
   getModDetails,
   disableFailingMods,
   getModLoadStatus,
+  repairFailingMods,
   getSaveStatus,
   getSmapiLoadStatus,
   checkPluginMasters,
@@ -109,6 +110,7 @@ import {
   missingMasterProblem,
   blockedPluginsAction,
   maskCoopPassword,
+  repairedNote,
   showInstalledModsSection,
   showResetRow,
   slotPressure,
@@ -2362,7 +2364,8 @@ function TroubleshootingSection() {
     names: string[];
     details: { name: string; why: string }[];
     held: string[];
-  }>({ names: [], details: [], held: [] });
+    repaired: string[];
+  }>({ names: [], details: [], held: [], repaired: [] });
   const [failingBusy, setFailingBusy] = useState(false);
   // Enabled plugins listed before a master they need - a boot crash.
   const [loadOrder, setLoadOrder] = useState<
@@ -2424,12 +2427,12 @@ function TroubleshootingSection() {
         )
       );
     }
-    // The game's own log naming the mods it blamed. Asked as a dry run of
-    // the same call the button makes, so the count in the row is exactly
-    // what pressing it will do - reading the log directly said "9 mods
-    // broke" where only 6 were installed mods it could act on.
+    // Switch off what the game could not run, then report what is left.
+    // The mod that threw 1,041 exceptions was knowable from the log and the
+    // plugin still waited to be asked - which is a button where there
+    // should have been an action.
     if (game.logAdapter?.kind === "godot") {
-      disableFailingMods(
+      repairFailingMods(
         game.nexusDomain,
         game.installDirName,
         game.modsSubdir,
@@ -2438,17 +2441,17 @@ function TroubleshootingSection() {
         game.appId,
         game.pluginsTxtSubpath ?? "",
         game.pluginsTxtStyle ?? "starred",
-        game.recommendedModIds ?? [],
-        true
+        game.recommendedModIds ?? []
       ).then((r) =>
         setFailing({
-          names: r.ok ? r.names ?? [] : [],
-          details: r.ok ? r.details ?? [] : [],
+          names: r.ok ? (r.remaining ?? []).map((d) => d.name) : [],
+          details: r.ok ? r.remaining ?? [] : [],
           held: r.ok ? r.held ?? [] : [],
+          repaired: r.ok ? r.names ?? [] : [],
         })
       );
     } else {
-      setFailing({ names: [], details: [], held: [] });
+      setFailing({ names: [], details: [], held: [], repaired: [] });
     }
     if (game.pluginsTxtSubpath) {
       getLoadOrderState(
@@ -2848,6 +2851,13 @@ function TroubleshootingSection() {
             </ButtonItem>
           </PanelSectionRow>
         )}
+        {failing.repaired.length > 0 && (
+          <PanelSectionRow>
+            <Field label="✓ Mods the game could not run" childrenLayout="below">
+              {repairedNote(failing.repaired)}
+            </Field>
+          </PanelSectionRow>
+        )}
         {failing.names.length > 0 && game && (
           <PanelSectionRow>
             <ButtonItem
@@ -2888,7 +2898,7 @@ function TroubleshootingSection() {
                       : r.error ?? "",
                   });
                   if (r.ok && (r.disabled ?? 0) > 0) {
-                    setFailing({ names: [], details: [], held: [] });
+                    setFailing((f) => ({ ...f, names: [], details: [] }));
                     notifyGameStateChanged();
                   }
                 } finally {
