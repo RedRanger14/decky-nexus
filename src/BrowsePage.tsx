@@ -2,7 +2,6 @@ import {
   ButtonItem,
   Dropdown,
   Focusable,
-  Navigation,
   Router,
   ScrollPanelGroup,
   TextField,
@@ -40,7 +39,7 @@ import {
 const Scroller: any = ScrollPanelGroup;
 import { PageBackdrop, SectionHeading, StackedThumb } from "./chrome";
 import { NEXUS_ORANGE } from "./theme";
-import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
+import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 
 const SORT_OPTIONS = [
   { data: "featured", label: "Featured" },
@@ -76,7 +75,7 @@ function CollectionCard({
         if (fromList) markCollectionsReturn();
         setSelectedCollection({ game, collection: c });
         setDetailOrigin("browse");
-        Navigation.Navigate("/nexus-mods/collection");
+        pushOurPage("/nexus-mods/collection");
       }}
       style={{
         display: "flex",
@@ -125,7 +124,7 @@ function openMod(game: SupportedGame, mod: NexusMod) {
   setSelectedMod({ game, mod });
   setDetailOrigin("browse");
   markBrowseReturn();
-  Navigation.Navigate("/nexus-mods/mod");
+  pushOurPage("/nexus-mods/mod");
 }
 
 /** Endorsements + downloads with real icons - emoji looked cheap next

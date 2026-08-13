@@ -35,3 +35,18 @@ export function backAction(page: PageId): BackAction {
       return "open-qam";
   }
 }
+
+/** How many pages to pop when leaving our full-screen pages for the QAM.
+ *
+ * Exactly the depth we are at - no +1. The old exit popped depth+1, which
+ * over-popped whenever a page had been reached without a counted push, and
+ * under-popped when several uncounted pushes had happened. Both go wrong in
+ * the same visible way: B in the QAM closes it and reveals a stale Nexus
+ * page instead of the game.
+ *
+ * Never negative: over-popping walks into Steam's own screens, which is
+ * worse than leaving one of ours behind.
+ */
+export function popsToExitToQam(depth: number): number {
+  return Math.max(0, Math.floor(depth));
+}

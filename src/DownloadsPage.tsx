@@ -3,7 +3,6 @@
 import {
   DialogButton,
   Focusable,
-  Navigation,
   ScrollPanelGroup,
 } from "@decky/ui";
 import { useEffect, useState } from "react";
@@ -33,7 +32,7 @@ import {
 } from "./api";
 import { cancellableDownload, pauseAllControl } from "./panelRules";
 import { getSupportedGame } from "./games";
-import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
+import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -178,7 +177,7 @@ async function openDownloadTarget(
         totalSize: 0,
       },
     });
-    Navigation.Navigate("/nexus-mods/collection");
+    pushOurPage("/nexus-mods/collection");
     return;
   }
   if (modId <= 0) return;
@@ -186,7 +185,7 @@ async function openDownloadTarget(
   if (result.ok && result.mod) {
     setSelectedMod({ game, mod: result.mod });
     setDetailOrigin("browse"); // B returns here, not to the QAM
-    Navigation.Navigate("/nexus-mods/mod");
+    pushOurPage("/nexus-mods/mod");
   }
 }
 
@@ -290,7 +289,7 @@ function CollectionHero({
   }
   return (
     <Focusable
-      onActivate={() => Navigation.Navigate("/nexus-mods/collection")}
+      onActivate={() => pushOurPage("/nexus-mods/collection")}
       style={{
         position: "relative",
         borderRadius: "12px",

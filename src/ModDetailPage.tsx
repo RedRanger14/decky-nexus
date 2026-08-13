@@ -30,6 +30,7 @@ import {
 } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
+import { popOurPage } from "./Tabs";
 import { getCompatHint } from "./compat";
 import { modeParams } from "./games";
 import { finishFomod, installLatest } from "./install";
@@ -399,7 +400,7 @@ export function ModDetailPage() {
       Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
       setTimeout(() => Navigation.NavigateBack(), 50);
     } else {
-      Navigation.NavigateBack();
+      popOurPage();
     }
   };
 

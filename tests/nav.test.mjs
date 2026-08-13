@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { backAction } from "../.test-build/navRules.js";
+import { backAction, popsToExitToQam } from "../.test-build/navRules.js";
 
 test("collection page pops back to the page beneath it (store home or downloads), never the QAM", () => {
   assert.equal(backAction("collection"), "pop");
@@ -26,4 +26,26 @@ test("QAM-entered pages return to the QAM", () => {
   for (const page of ["browse-home", "downloads", "manager", "updates"]) {
     assert.equal(backAction(page), "open-qam", page);
   }
+});
+
+
+// ---- exiting our pages for the QAM -------------------------------------
+// The recurring B-in-QAM bug: press B in the QAM and it closes to reveal a
+// stale Nexus page instead of the game. Cause was an exit that popped
+// depth+1 while the depth itself was counted in three places and pushed
+// from twenty.
+
+test("exit pops exactly the depth, never one more", () => {
+  assert.equal(popsToExitToQam(1), 1);
+  assert.equal(popsToExitToQam(3), 3);
+});
+
+test("nothing open pops nothing", () => {
+  assert.equal(popsToExitToQam(0), 0);
+});
+
+test("never pops past our own pages", () => {
+  // Over-popping walks into Steam's screens, which is worse than leaving
+  // one of ours behind.
+  assert.equal(popsToExitToQam(-2), 0);
 });
