@@ -5732,6 +5732,35 @@ class TestHealthCheck(unittest.TestCase):
             main._save_settings(settings)
 
 
+class TestPrefixToolRestaging(unittest.TestCase):
+    """A tool already staged by an earlier successful run must be reused,
+    not treated as an obstacle.
+
+    Michael ran the Fallout 3 ESM patcher successfully weeks ago, so its exe
+    was sitting in the game folder. Every attempt since failed with "already
+    exists in the game folder - not overwriting it" - failing for the single
+    reason that it had already worked. He remembered FO3 working and could
+    not see why it now would not."""
+
+    def test_the_guard_no_longer_fails_on_our_own_file(self):
+        src = os.path.join(REPO_ROOT, "main.py")
+        body = open(src, encoding="utf-8").read()
+        start = body.index("async def run_prefix_tool")
+        window = body[start:start + 20000]
+        self.assertIn("already staged from an earlier run", window)
+        # The failure it used to raise is gone: stage_err is now only ever
+        # set by something that is genuinely a problem.
+        self.assertNotIn('stage_err = (', window)
+
+    def test_it_reuses_rather_than_skipping_silently(self):
+        # Reusing means pointing exe_path at the staged copy. Skipping
+        # without that leaves the tool with nothing to run, which would be
+        # a quieter version of the same bug.
+        body = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = body.index("already staged from an earlier run")
+        self.assertIn("exe_path = dst", body[start:start + 400])
+
+
 class TestLogTagMatching(unittest.TestCase):
     """Mods log under a logger name they chose, not their id. Five of the
     nine blamed tags in the real crash log matched nothing until this."""
