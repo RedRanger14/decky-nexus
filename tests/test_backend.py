@@ -5532,25 +5532,46 @@ class TestHealthCheck(unittest.TestCase):
                             "mode": "dataDir"},
         }
         main._save_settings(settings)
+        # Stubbed at the GraphQL layer, not at get_mod_requirements, so the
+        # batching and the node-splitting are both under test - the health
+        # check asks in pages of 20 now rather than once per mod.
         self.reqs = {
-            44757: {"ok": True, "dlc": [], "requirements": [
+            44757: {"requirements": [
                 {"modName": "UIO", "modId": 57174, "notes": "", "url": ""},
                 {"modName": "MCM", "modId": 42507, "notes": "optional",
                  "url": ""},
                 {"modName": "Vanilla UI+", "modId": 0, "notes": "",
                  "url": "moddb.com/mods/vanilla-ui-plus"},
-            ]},
-            65000: {"ok": True, "requirements": [], "dlc": [
-                {"name": "Dead Money", "notes": ""}]},
+            ], "dlc": []},
+            65000: {"requirements": [], "dlc": ["Dead Money"]},
         }
+        self.batches = []
+        self._orig_gql = main._gql_query
+        main._GAME_ID_CACHE["newvegas"] = 130
 
-        async def fake_reqs(game_domain, mod_id):
-            return self.reqs.get(int(mod_id), {"ok": True,
-                                              "requirements": [], "dlc": []})
+        async def fake_gql(query, api_key=None):
+            ids = [int(m) for m in re.findall(r"modId: (\d+)", query)]
+            self.batches.append(ids)
+            nodes = []
+            for mid in ids:
+                spec = self.reqs.get(mid, {"requirements": [], "dlc": []})
+                nodes.append({
+                    "modId": mid,
+                    "modRequirements": {
+                        "nexusRequirements": {"nodes": spec["requirements"]},
+                        "dlcRequirements": [
+                            {"notes": "", "gameExpansion": {"name": d}}
+                            for d in spec["dlc"]
+                        ],
+                    },
+                })
+            return {"legacyMods": {"nodes": nodes}}
 
-        self.plugin.get_mod_requirements = fake_reqs
+        main._gql_query = fake_gql
 
     def tearDown(self):
+        main._gql_query = self._orig_gql
+        main._GAME_ID_CACHE.pop("newvegas", None)
         settings = main._load_settings()
         settings.get("installed", {}).pop("newvegas", None)
         main._save_settings(settings)
@@ -5560,6 +5581,30 @@ class TestHealthCheck(unittest.TestCase):
     def _check(self):
         return run(self.plugin.get_health_check(
             "newvegas", self.GAME, "Data", 1))
+
+    def test_it_asks_in_pages_not_once_per_mod(self):
+        # The point of the change: a 500-mod Fallout 3 collection was going
+        # to make 500 sequential requests and look hung.
+        settings = main._load_settings()
+        settings["installed"]["newvegas"].update({
+            f"Mod{i}": {"mod_id": 1000 + i, "name": f"Mod{i}",
+                        "mode": "dataDir"}
+            for i in range(45)
+        })
+        main._save_settings(settings)
+        self._check()
+        self.assertEqual([len(b) for b in self.batches], [20, 20, 7])
+
+    def test_a_mod_the_api_skips_is_reported_not_assumed_clean(self):
+        # legacyMods truncates silently, so a missing node must never read
+        # as "this mod needs nothing".
+        async def half_answer(query, api_key=None):
+            return {"legacyMods": {"nodes": []}}
+
+        main._gql_query = half_answer
+        r = self._check()
+        self.assertEqual(r["needs_mods"], [])
+        self.assertEqual(len(r["errors"]), 2)
 
     def test_a_missing_required_mod_is_reported(self):
         r = self._check()

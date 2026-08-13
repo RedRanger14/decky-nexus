@@ -555,6 +555,32 @@ def _normalize_perms(path: str) -> None:
                     pass
 
 
+REQUIREMENT_FIELDS = """
+ modId
+ modRequirements {
+   nexusRequirements { nodes { modName modId notes url } }
+   dlcRequirements { notes gameExpansion { name } }
+ }
+"""
+
+
+def _split_requirements(node: dict) -> dict:
+    """One legacyMods node -> {"requirements", "dlc"}.
+
+    Shared by the single-mod call and the batched one so the two cannot
+    drift into disagreeing about the same mod.
+    """
+    reqs = (node or {}).get("modRequirements") or {}
+    raw = ((reqs.get("nexusRequirements") or {}).get("nodes")) or []
+    dlc = []
+    for entry in reqs.get("dlcRequirements") or []:
+        name = ((entry or {}).get("gameExpansion") or {}).get("name")
+        if name:
+            dlc.append({"name": str(name),
+                        "notes": str((entry or {}).get("notes") or "")})
+    return {"requirements": _normalize_requirements(raw), "dlc": dlc}
+
+
 def _normalize_requirements(raw: list) -> list:
     """The v2 API returns requirement modId as a STRING, and external
     requirements (VC++ redist links etc.) come through as modId "0" with an
@@ -6131,21 +6157,8 @@ class Plugin:
                 api_key,
             )
             nodes = data["legacyMods"]["nodes"]
-            reqs = nodes[0]["modRequirements"] if nodes else {}
-            raw = ((reqs.get("nexusRequirements") or {}).get("nodes")) or []
-            dlc = []
-            for entry in reqs.get("dlcRequirements") or []:
-                name = ((entry or {}).get("gameExpansion") or {}).get("name")
-                if name:
-                    dlc.append({
-                        "name": str(name),
-                        "notes": str((entry or {}).get("notes") or ""),
-                    })
-            return {
-                "ok": True,
-                "requirements": _normalize_requirements(raw),
-                "dlc": dlc,
-            }
+            split = _split_requirements(nodes[0] if nodes else {})
+            return {"ok": True, **split}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -11538,15 +11551,30 @@ query Link($slug: String!, $domainName: String!) {
         except OSError:
             pass
         needs_mods, needs_dlc, needs_external, errors = [], [], [], []
+        # One query per 20 mods rather than one per mod. At 14 mods the
+        # difference is invisible; on a 500-mod Fallout 3 collection it is
+        # 25 requests instead of 500, which is the difference between a
+        # pause and a screen that looks hung.
+        by_mod = {}
+        try:
+            api_key = _load_settings().get("api_key")
+            game_id = await _resolve_game_id(game_domain, api_key)
+            nodes = await _legacy_mods_in_batches(
+                game_id,
+                sorted({int(rec["mod_id"]) for rec in tracked.values()}),
+                REQUIREMENT_FIELDS,
+                api_key,
+            )
+            by_mod = {int(n["modId"]): _split_requirements(n) for n in nodes}
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                KeyError, ValueError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         for key, rec in sorted(tracked.items()):
-            try:
-                reqs = await self.get_mod_requirements(
-                    game_domain, int(rec["mod_id"])
-                )
-            except Exception as e:  # noqa: BLE001 - one mod must not stop it
-                errors.append(f"{key}: {type(e).__name__}")
-                continue
-            if not reqs.get("ok"):
+            reqs = by_mod.get(int(rec["mod_id"]))
+            if reqs is None:
+                # Asked for and not returned. Saying nothing beats claiming
+                # a mod has no requirements because the API skipped it.
+                errors.append(f"{key}: no data returned")
                 continue
             name = rec.get("name") or key
             missing = [
