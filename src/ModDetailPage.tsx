@@ -29,6 +29,7 @@ import {
   uninstallMod,
 } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
+import { EndorsePill } from "./EndorseButton";
 import { getCompatHint } from "./compat";
 import { modeParams } from "./games";
 import { finishFomod, installLatest } from "./install";
@@ -513,7 +514,9 @@ export function ModDetailPage() {
             <StatChip>v{mod.version}</StatChip>
             {updatedDate && <StatChip>updated {updatedDate}</StatChip>}
             {endorseStatus !== undefined && endorseStatus !== "unknown" && (
-              <Focusable
+              <EndorsePill
+                endorsed={endorseStatus === "Endorsed"}
+                busy={endorseBusy}
                 onActivate={async () => {
                   if (endorseBusy) return;
                   setEndorseBusy(true);
@@ -543,29 +546,7 @@ export function ModDetailPage() {
                     setEndorseBusy(false);
                   }
                 }}
-                style={{
-                  padding: "3px 12px",
-                  borderRadius: "999px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  whiteSpace: "nowrap",
-                  opacity: endorseBusy ? 0.5 : 1,
-                  ...(endorseStatus === "Endorsed"
-                    ? {
-                        background: "rgba(143, 212, 143, 0.15)",
-                        border: "1px solid rgba(143, 212, 143, 0.5)",
-                      }
-                    : {
-                        background: "rgba(218, 142, 53, 0.15)",
-                        border: `1px solid ${NEXUS_ORANGE}88`,
-                      }),
-                }}
-              >
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                  <FaThumbsUp size={12} />
-                  {endorseStatus === "Endorsed" ? "Endorsed" : "Endorse"}
-                </span>
-              </Focusable>
+              />
             )}
             {uploader?.donationsEnabled && uploader.memberId && (
               <Focusable
