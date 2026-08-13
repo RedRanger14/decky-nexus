@@ -943,6 +943,21 @@ export const getCollectionSupport = callable<
   { ok: boolean; supported?: boolean; reason?: string; title?: string; error?: string }
 >("get_collection_support");
 
+// Whether ONE mod needs something Nexus does not host. Keyed by mod id so
+// the warning reaches a user who found it by browsing, not only someone
+// installing the collection it came from.
+export const getModSupport = callable<
+  [game_domain: string, mod_id: number],
+  {
+    ok: boolean;
+    supported?: boolean;
+    needs_name?: string;
+    url?: string;
+    reason?: string;
+    error?: string;
+  }
+>("get_mod_support");
+
 export const getFileConflicts = callable<
   [game_domain: string, mod_order: number[]],
   {
