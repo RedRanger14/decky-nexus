@@ -1033,6 +1033,9 @@ export const repairFailingMods = callable<
     repaired?: number;
     names?: string[];
     held?: string[];
+    /** Blamed mods that could not be switched off (other mods need them)
+     * and were updated instead - the only remedy they have. */
+    updated?: { name: string; from: string; to: string }[];
     remaining?: { name: string; why: string }[];
     /** Every mod the log blamed, however it was handled. Fed back into
      * checkUpdates: a collection pin the game cannot run has earned an
