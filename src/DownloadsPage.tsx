@@ -567,7 +567,15 @@ export function DownloadsPage() {
         <Focusable style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
           {active.length === 0 && (
             <div style={{ fontSize: "13px", opacity: 0.6 }}>
-              Nothing downloading right now.
+              {/* A run in flight with no rows yet is NOT "nothing
+                  downloading" - it is a collection reading its own
+                  manifest, which is megabytes and emits no progress. */}
+              {!run?.running
+                ? "Nothing downloading right now."
+                : run.note
+                  ? run.note
+                  : `Installing ${run.finished} of ${run.total} — nothing ` +
+                    `left to download`}
             </div>
           )}
           {active.map((d) => (

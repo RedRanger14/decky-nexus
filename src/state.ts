@@ -147,12 +147,24 @@ export function nameDownload(
   name: string,
   gameAppId?: number
 ): void {
+  // A real row exists now, so the run no longer needs a stand-in phase -
+  // otherwise the note would linger and hide the actual percentage.
+  if (collectionRun?.note) {
+    collectionRun.note = undefined;
+    notifyRun();
+  }
+  const prior = downloads.get(modId);
   downloads.set(modId, {
     modId,
     name,
-    phase: "starting",
-    percent: 0,
+    // Keep whatever the row already knew: naming a download must not
+    // blank its progress back to 0%.
+    phase: prior?.phase ?? "starting",
+    percent: prior?.percent ?? 0,
     gameAppId,
+    bytesDone: prior?.bytesDone,
+    bytesTotal: prior?.bytesTotal,
+    bps: prior?.bps,
   });
   notifyDownloads();
 }
@@ -308,6 +320,11 @@ export interface CollectionRun {
   running: boolean;
   total: number;
   finished: number;
+  /** What the run is doing when there are no download rows to show yet.
+   * A collection starts by fetching its own manifest - megabytes, with no
+   * progress events - so the Downloads page said "nothing downloading"
+   * while the run was very much underway. */
+  note?: string;
   rows: Record<number, CollectionRowState>;
   /** Display metadata so Downloads entries can open the collection. */
   gameAppId?: number;
@@ -345,6 +362,7 @@ export function beginCollectionRun(
     running: true,
     total,
     finished: 0,
+    note: "Reading the collection…",
     rows: {},
     startedAt: Date.now(),
     ...meta,
@@ -356,6 +374,13 @@ export function beginCollectionRun(
 export function getRunSkippedCount(run?: CollectionRun): number {
   if (!run) return 0;
   return Object.values(run.rows).filter((s) => s === "skipped").length;
+}
+
+/** Name the current phase, for when there is nothing else to show. */
+export function setCollectionNote(note: string): void {
+  if (!collectionRun) return;
+  collectionRun.note = note;
+  notifyRun();
 }
 
 export function setCollectionRow(

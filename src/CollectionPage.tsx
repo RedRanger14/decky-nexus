@@ -67,6 +67,7 @@ import {
   getDownloadPercent,
   getDownloads,
   getSelectedCollection,
+  setCollectionNote,
   setCollectionRow,
   setDetailOrigin,
   setSelectedMod,
@@ -637,6 +638,7 @@ export function CollectionPage() {
       // The curator's FOMOD selections travel in the collection manifest -
       // fetch once so wizard mods install hands-off with their choices.
       let curatorChoices: Record<string, unknown> = {};
+      setCollectionNote("Reading the collection…");
       try {
         const manifest = await getCollectionManifest(
           collection.slug,
@@ -653,6 +655,7 @@ export function CollectionPage() {
       // to 4 files in parallel, never more than 8 ahead of the installer
       // (bounds disk usage to a handful of archives). The installer's own
       // download step then hits the backend's archive cache instantly.
+      setCollectionNote("Starting downloads…");
       const prefs = await getUserPrefs().catch(() => undefined);
       const PREFETCH_PARALLEL = prefs?.prefs?.parallel_downloads ?? 4;
       const PREFETCH_WINDOW = prefs?.prefs?.prefetch_window ?? 8;
@@ -1282,9 +1285,11 @@ export function CollectionPage() {
                 // long time on a big collection while several gigabytes
                 // download - so it read as stuck. The percentage includes
                 // download progress, so something always moves.
-                `Installing… ${runIsOurs ? run!.finished : 0}/${
-                  runIsOurs ? run!.total : remaining.length
-                } · ${getAggregateDownloadPercent(run) ?? 0}%`
+                runIsOurs && run!.finished === 0 && run!.note
+                  ? run!.note
+                  : `Installing… ${runIsOurs ? run!.finished : 0}/${
+                      runIsOurs ? run!.total : remaining.length
+                    } · ${getAggregateDownloadPercent(run) ?? 0}%`
               : remaining.length === 0 && detail
               ? "Everything installed ✓"
               : partialFromRun
