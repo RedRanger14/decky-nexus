@@ -148,6 +148,11 @@ export function CollectionPage() {
     | undefined
   >();
   const [fixingFiles, setFixingFiles] = useState(false);
+  // What the post-install pass is doing. It runs several backend steps -
+  // one of which re-downloads the collection manifest - so the page sat
+  // silent for a long time after Finish setup with no hint that anything
+  // was happening, or that waiting was the right thing to do.
+  const [finalising, setFinalising] = useState("");
   // Mods the collection needs that are hosted off Nexus - no API can
   // fetch them, so the only honest thing is to name them.
   const [manualMods, setManualMods] = useState<
@@ -290,7 +295,9 @@ export function CollectionPage() {
   const runCollectionExtras = async () => {
     if (!sel) return;
     const { game, collection } = sel;
+    setFinalising("Finishing off — this takes a minute, don't close the page");
     try {
+      setFinalising("Installing the mods this collection ships itself…");
       const bundles = await installCollectionBundles(
         collection.slug,
         game.nexusDomain,
@@ -313,6 +320,7 @@ export function CollectionPage() {
     }
     if (game.pluginsTxtSubpath) {
       try {
+        setFinalising("Setting the load order the collection asks for…");
         const pl = await applyCollectionPlugins(
           collection.slug,
           game.nexusDomain,
@@ -336,6 +344,7 @@ export function CollectionPage() {
     }
     // Mods that need a file Nexus does not host: off, not broken.
     try {
+      setFinalising("Checking for mods that need a manual download…");
       await applyKnownPrerequisites(
         game.nexusDomain,
         game.installDirName,
@@ -356,6 +365,7 @@ export function CollectionPage() {
     // Patch.esp is missing required files' reached the user.
     if (game.pluginsTxtSubpath) {
       try {
+        setFinalising("Switching off mods that can't load…");
         await disableBlockedPlugins(
           game.appId,
           game.installDirName,
@@ -376,6 +386,11 @@ export function CollectionPage() {
     } catch {
       /* the note is a nicety; never block on it */
     }
+    setFinalising("");
+    toaster.toast({
+      title: "Collection ready",
+      body: "Launch the game from the panel or your library",
+    });
   };
 
   /** Endorse the collection. One-way: see the button for why. */
@@ -1280,7 +1295,9 @@ export function CollectionPage() {
                 : {}),
             }}
           >
-            {installing
+            {finalising
+              ? finalising
+              : installing
               ? // The count is COMPLETED INSTALLS, which sits at 0 for a
                 // long time on a big collection while several gigabytes
                 // download - so it read as stuck. The percentage includes
