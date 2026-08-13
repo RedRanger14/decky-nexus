@@ -208,7 +208,7 @@ function resolveGameContext(): GameContext {
   if (last) return { game: last };
   return { neutral: true };
 }
-import { resetTabStack } from "./Tabs";
+import { pushOurPage, resetTabStack } from "./Tabs";
 import { BrowsePage } from "./BrowsePage";
 import { EndorsableFrameworkRow } from "./EndorseButton";
 import { CollectionPage } from "./CollectionPage";
@@ -228,7 +228,7 @@ async function openInstalledModDetail(game: SupportedGame, mod: InstalledMod) {
     setSelectedMod({ game, mod: result.mod });
     setDetailOrigin("qam");
     Router.CloseSideMenus();
-    Navigation.Navigate(DETAIL_ROUTE);
+    pushOurPage(DETAIL_ROUTE);
   } else {
     toaster.toast({
       title: "Could not open mod",
@@ -933,7 +933,7 @@ function CurrentGameSection() {
             onClick={() => {
               setBrowseGame(undefined);
               resetTabStack();
-              Navigation.Navigate(BROWSE_ROUTE);
+              pushOurPage(BROWSE_ROUTE);
               Navigation.CloseSideMenus();
             }}
           >
@@ -1117,7 +1117,7 @@ function CurrentGameSection() {
                 onClick={() => {
                   setBrowseGame(game);
                   resetTabStack();
-              Navigation.Navigate(BROWSE_ROUTE);
+              pushOurPage(BROWSE_ROUTE);
                   Navigation.CloseSideMenus();
                 }}
               >
@@ -1617,7 +1617,7 @@ function CurrentGameSection() {
                   onClick={() => {
                     setBrowseGame(game);
                     resetTabStack();
-                    Navigation.Navigate(BROWSE_ROUTE);
+                    pushOurPage(BROWSE_ROUTE);
                     Navigation.CloseSideMenus();
                   }}
                 >
@@ -1629,7 +1629,7 @@ function CurrentGameSection() {
                 onClick={() => {
                   setBrowseGame(game);
                   resetTabStack();
-                  Navigation.Navigate(BROWSE_ROUTE);
+                  pushOurPage(BROWSE_ROUTE);
                   Navigation.CloseSideMenus();
                 }}
               >
@@ -2304,7 +2304,7 @@ function InstalledModsSection() {
             onClick={() => {
               Router.CloseSideMenus();
               resetTabStack();
-              Navigation.Navigate(MANAGER_ROUTE);
+              pushOurPage(MANAGER_ROUTE);
             }}
           >
             Manage my mods →
@@ -3500,7 +3500,7 @@ function DownloadsButton() {
         onClick={() => {
           Router.CloseSideMenus();
           resetTabStack();
-          Navigation.Navigate(DOWNLOADS_ROUTE);
+          pushOurPage(DOWNLOADS_ROUTE);
         }}
       >
         {label}
@@ -3529,7 +3529,7 @@ function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
         onClick={() => {
           Router.CloseSideMenus();
           resetTabStack();
-              Navigation.Navigate(UPDATES_ROUTE);
+              pushOurPage(UPDATES_ROUTE);
         }}
       >
         {count ? `⬆ Updates · ${count} available` : "Updates"}
@@ -3602,7 +3602,7 @@ function Content() {
             description="Download pipeline, bandwidth and disk safety"
             onClick={() => {
               resetTabStack();
-              Navigation.Navigate(SETTINGS_ROUTE);
+              pushOurPage(SETTINGS_ROUTE);
               Navigation.CloseSideMenus();
             }}
           >

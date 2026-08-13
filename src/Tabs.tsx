@@ -4,6 +4,7 @@
 import { Focusable, Navigation, QuickAccessTab } from "@decky/ui";
 import { GamepadButton } from "@decky/ui";
 
+import { popsToExitToQam } from "./navRules";
 import { NEXUS_ORANGE } from "./theme";
 
 export interface TabDef {
@@ -22,38 +23,61 @@ export const TABS: TabDef[] = [
   { id: "settings", label: "Settings", route: "/nexus-mods/settings" },
 ];
 
-// Every tab switch PUSHES a page onto Steam's nav stack - exiting to the
-// QAM must pop them ALL, or B in the QAM "returns" to the stale pages
-// left underneath (the recurring B-in-QAM bug). Entry points from the
-// QAM reset the counter; switches increment it.
-let tabPushes = 0;
+// EVERY push of one of our full-screen pages onto Steam's nav stack has to
+// be counted, because exiting to the QAM must pop all of them. Miss one and
+// B in the QAM closes it to reveal a stale Nexus page still mounted
+// underneath instead of the game - the recurring B-in-QAM bug.
+//
+// It kept recurring because the count was kept in three places in this file
+// while TWENTY call sites pushed pages (browse -> collection -> mod, the
+// Downloads shortcut, five QAM entry points), and the reset was called from
+// exactly one of them. Under-counting leaves pages behind; over-counting
+// pops Steam's own screens. So the counter lives here and pushes go through
+// pushOurPage - there is no second place to forget.
+let ourDepth = 0;
 
 export function resetTabStack(): void {
-  tabPushes = 0;
+  ourDepth = 0;
 }
 
-/** Count a navigation into a tabbed page made from somewhere other than
- * the tab strip (the Downloads shortcut on a mod/collection page). Without
- * it, B on the destination unwinds one page too few and "returns" to the
- * stale pages left underneath. */
+/** Push one of our full-screen pages, counting it. */
+export function pushOurPage(route: string): void {
+  ourDepth += 1;
+  Navigation.Navigate(route);
+}
+
+/** Pop one of our pages (B on a page that layers over another). */
+export function popOurPage(): void {
+  if (ourDepth > 0) ourDepth -= 1;
+  Navigation.NavigateBack();
+}
+
+/** How deep we currently are. Exported for the exit and for tests. */
+export function ourPageDepth(): number {
+  return ourDepth;
+}
+
+/** Kept for call sites that navigate without going through pushOurPage. */
 export function noteTabPush(): void {
-  tabPushes += 1;
+  ourDepth += 1;
 }
 
 export function switchTab(currentId: string, direction: 1 | -1): void {
   const idx = TABS.findIndex((t) => t.id === currentId);
   if (idx < 0) return;
   const next = TABS[(idx + direction + TABS.length) % TABS.length];
-  tabPushes += 1;
-  Navigation.Navigate(next.route);
+  pushOurPage(next.route);
 }
 
 /** The tabbed pages' exit: open the QAM (so gamepad focus lands inside
  * it), then unwind the ENTIRE tab stack - the original page plus one
  * push per tab switch. */
 export function exitTabsToQam(): void {
-  const pops = tabPushes + 1;
-  tabPushes = 0;
+  // Exactly as deep as we actually are - not depth+1, which over-popped
+  // whenever the page had been reached without a counted push. Rule and
+  // reasoning in navRules.popsToExitToQam, with tests.
+  const pops = popsToExitToQam(ourDepth);
+  ourDepth = 0;
   Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
   setTimeout(() => {
     for (let i = 0; i < pops; i++) Navigation.NavigateBack();
@@ -98,10 +122,7 @@ export function TabBar({ currentId }: { currentId: string }) {
             // focus on the active tab at mount makes press one dispatch.
             autoFocus={active}
             onActivate={() => {
-              if (!active) {
-                tabPushes += 1;
-                Navigation.Navigate(tab.route);
-              }
+              if (!active) pushOurPage(tab.route);
             }}
             style={{
               padding: "5px 16px",

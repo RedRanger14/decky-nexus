@@ -514,6 +514,34 @@ export function isActionableAttention(item: {
   return item.reason === "choices" && (item.options?.length ?? 0) > 0;
 }
 
+/** Overall progress through a collection, as a percentage.
+ *
+ * Each in-flight download counts as its OWN fraction of a mod, which is
+ * the fix: this used to take the AVERAGE of the active downloads and add
+ * it as a single mod's worth. With six mods downloading at 50% that is
+ * 0.5 of one mod out of hundreds - so the bar sat at 0% while the device
+ * was visibly pulling four to six files at once, and nothing moved until
+ * the first install finished.
+ *
+ * Six at 50% is three mods of real progress, and that is what it now
+ * reports. Capped at 100 because a download can briefly still be listed
+ * while its install has already been counted as finished.
+ */
+export function collectionProgressPercent(
+  finished: number,
+  total: number,
+  inFlightPercents: number[]
+): number | undefined {
+  const inFlight = inFlightPercents.reduce((sum, p) => sum + p / 100, 0);
+  if (total > 0) {
+    return Math.min(100, Math.round(((finished + inFlight) / total) * 100));
+  }
+  if (!inFlightPercents.length) return undefined;
+  return Math.round(
+    inFlightPercents.reduce((a, b) => a + b, 0) / inFlightPercents.length
+  );
+}
+
 /** Whether a download row offers a Cancel control, by phase.
  *
  * Only while bytes are still owed: cancelling mid-extraction would leave

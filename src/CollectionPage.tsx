@@ -14,6 +14,7 @@ import { toaster } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 import { FaArrowDown, FaEye, FaPuzzlePiece } from "react-icons/fa";
 import { EndorsePill } from "./EndorseButton";
+import { popOurPage, pushOurPage } from "./Tabs";
 import {
   collectionOwnedCount,
   isActionableAttention,
@@ -509,7 +510,6 @@ export function CollectionPage() {
     2 + // Go to downloads, Back
     (actionable.length > 0 ? 1 : 0) +
     (optionalRemaining.length > 0 ? 1 : 0) +
-    (ownedCount > 0 && !installing ? 1 : 0) + // Endorse
     (conflictIssue && !installing ? 1 : 0) + // Fix contested files
     (ownedCount > 0 && !installing ? 1 : 0) + // Repair
     ((ownedCount > 0 && !installing) || (justUninstalled && !installing)
@@ -1070,7 +1070,7 @@ export function CollectionPage() {
     }
     setSelectedMod({ game, mod: info });
     setDetailOrigin("browse");
-    Navigation.Navigate("/nexus-mods/mod");
+    pushOurPage("/nexus-mods/mod");
   };
 
   const onUninstallCollection = () => {
@@ -1148,7 +1148,7 @@ export function CollectionPage() {
         // downloads) - B pops back there. Opening the QAM here trapped
         // users in a B-loop (see navRules + tests/nav.test.mjs).
         if (backAction("collection") === "pop") {
-          Navigation.NavigateBack();
+          popOurPage();
         } else {
           Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
           setTimeout(() => Navigation.NavigateBack(), 50);
@@ -1226,6 +1226,17 @@ export function CollectionPage() {
                 }}
               >
                 {conflictIssue}
+              </div>
+            )}
+            {ownedCount > 0 && detail && (
+              <div style={{ marginBottom: "10px" }}>
+                <EndorsePill
+                  endorsed={endorsed}
+                  busy={endorsing}
+                  onActivate={endorseCollectionNow}
+                  label="Endorse collection"
+                  endorsedLabel="Collection endorsed"
+                />
               </div>
             )}
             {(detail?.summary ?? collection.summary) && (
@@ -1334,23 +1345,6 @@ export function CollectionPage() {
               over somebody's existing endorsement.
               Shown whenever the collection is installed, not hidden in the
               stat chips where it read as a label rather than a button. */}
-          {ownedCount > 0 && !installing && detail && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                alignSelf: "center",
-              }}
-            >
-              <EndorsePill
-                endorsed={endorsed}
-                busy={endorsing}
-                onActivate={endorseCollectionNow}
-                label="Endorse collection"
-                endorsedLabel="Collection endorsed"
-              />
-            </div>
-          )}
           {ownedCount > 0 && !installing && (
             <DialogButton
               disabled={repairing || finishingFileId !== undefined}
@@ -1381,7 +1375,7 @@ export function CollectionPage() {
           <DialogButton
             style={ACTION_BUTTON}
             onClick={() => {
-              Navigation.NavigateBack();
+              popOurPage();
             }}
           >
             Back

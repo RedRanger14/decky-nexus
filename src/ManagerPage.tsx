@@ -6,7 +6,6 @@ import {
   ConfirmModal,
   DialogButton,
   Focusable,
-  Navigation,
   Router,
   ScrollPanelGroup,
   showModal,
@@ -40,7 +39,7 @@ import {
   WHITE_BUTTON_CLASS,
 } from "./theme";
 import { OrangeToggle } from "./Toggle";
-import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
+import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -115,7 +114,7 @@ async function openModDetail(game: SupportedGame, mod: InstalledMod) {
   if (result.ok && result.mod) {
     setSelectedMod({ game, mod: result.mod });
     setDetailOrigin("browse"); // B pops back here, not to the QAM
-    Navigation.Navigate("/nexus-mods/mod");
+    pushOurPage("/nexus-mods/mod");
   } else {
     toaster.toast({
       title: "Could not open mod",
@@ -368,7 +367,7 @@ export function ManagerPage() {
         thumbnailUrl: info?.thumb_url,
       },
     });
-    Navigation.Navigate("/nexus-mods/collection");
+    pushOurPage("/nexus-mods/collection");
   };
 
   const removeCollection = (

@@ -1,4 +1,5 @@
 // Tiny hand-off store: the browse page selects a mod, the detail page reads it.
+import { collectionProgressPercent } from "./panelRules";
 // (Decky routes can't easily carry complex objects as params.)
 import { NexusMod } from "./api";
 import { SupportedGame } from "./games";
@@ -240,21 +241,14 @@ export function dropDownload(modId: number): void {
 export function getAggregateDownloadPercent(
   run?: CollectionRun
 ): number | undefined {
-  const active = Array.from(downloads.values());
-  const avg =
-    active.length > 0
-      ? active.reduce(
-          (sum, d) => sum + (d.phase === "extracting" ? 100 : d.percent),
-          0
-        ) / active.length
-      : undefined;
-  if (run?.running && run.total > 0) {
-    return Math.round(
-      ((run.finished + (avg ?? 0) / 100) / run.total) * 100
-    );
-  }
-  if (avg === undefined) return undefined;
-  return Math.round(avg);
+  const active = Array.from(downloads.values()).map((d) =>
+    d.phase === "extracting" ? 100 : d.percent
+  );
+  return collectionProgressPercent(
+    run?.finished ?? 0,
+    run?.running ? run.total : 0,
+    active
+  );
 }
 
 export function getCompletedDownloads(): ActiveDownload[] {

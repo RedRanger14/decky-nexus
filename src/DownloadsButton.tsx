@@ -2,7 +2,7 @@
 // Those pages sit on top of the nav stack and have no tab strip, so the
 // only route to Downloads was backing out to the Store first - painful
 // exactly when it matters, mid-collection-install.
-import { DialogButton, Navigation } from "@decky/ui";
+import { DialogButton } from "@decky/ui";
 import { useEffect, useState } from "react";
 import { FaDownload } from "react-icons/fa";
 
@@ -12,7 +12,7 @@ import {
   getDownloads,
   subscribeDownloads,
 } from "./state";
-import { DOWNLOADS_ROUTE, noteTabPush } from "./Tabs";
+import { DOWNLOADS_ROUTE, pushOurPage } from "./Tabs";
 import { ACTION_BUTTON, NEXUS_ORANGE } from "./theme";
 
 /** Says where it goes, not what it is: an icon-only download glyph next
@@ -29,10 +29,9 @@ export function DownloadsButton() {
 
   return (
     <DialogButton
-      onClick={() => {
-        noteTabPush();
-        Navigation.Navigate(DOWNLOADS_ROUTE);
-      }}
+      // pushOurPage counts it; the old noteTabPush() alongside made it
+      // count twice, and an over-count pops Steam's own screens on exit.
+      onClick={() => pushOurPage(DOWNLOADS_ROUTE)}
       style={{
         ...ACTION_BUTTON,
         ...(busy ? { color: NEXUS_ORANGE, fontWeight: 600 } : {}),
