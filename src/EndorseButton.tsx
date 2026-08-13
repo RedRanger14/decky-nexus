@@ -71,6 +71,14 @@ export function EndorsePill({
               borderRadius: "4px",
             }
           : {
+              // Hugs its text. As a plain block it stretched the full
+              // width of the description column, which read as a banner
+              // rather than a pill.
+              display: "inline-flex",
+              alignItems: "center",
+              alignSelf: "flex-start",
+              width: "fit-content",
+              maxWidth: "100%",
               padding: "3px 12px",
               borderRadius: "999px",
               fontSize: "12px",
