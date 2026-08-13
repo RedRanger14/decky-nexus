@@ -1085,18 +1085,30 @@ def _parked_files_dir(game_domain: str, record_key: str) -> str:
     )
 
 
-def _shared_paths(records: dict, record_key: str) -> set:
-    """Recorded paths that another installed mod ALSO provides.
+def _shared_paths(records: dict, record_key: str, also_off=()) -> set:
+    """Recorded paths that another ACTIVE mod also provides.
 
     Moving one of these away takes the other mod's copy with it - whoever
     wrote last owns the file on disk, and it is not necessarily the mod
     being switched off. Left in place: a mod that stays half-active is a
     smaller wrong than one that silently guts another.
+
+    But "another mod" has to mean another mod that is still ON. When a
+    whole group goes off together there is nobody left to protect, and
+    being cautious then defeats the point: on device the oHUD/Clean
+    Vanilla Hud patch owns exactly two files, both shared with the other
+    two interface mods, so with all three being switched off it had NOTHING
+    movable and stayed fully active - keeping the one file that stops the
+    game starting. `also_off` is the rest of the group, plus anything
+    already parked.
     """
+    ignore = {k.lower() for k in also_off} | {record_key.lower()}
     mine = {f.lower() for f in (records.get(record_key) or {}).get("files") or []}
     shared = set()
     for key, rec in records.items():
-        if key == record_key or rec.get("mode") != "dataDir":
+        if key.lower() in ignore or rec.get("mode") != "dataDir":
+            continue
+        if rec.get("parked"):
             continue
         shared |= mine & {f.lower() for f in rec.get("files") or []}
     return shared
@@ -10407,6 +10419,13 @@ query Link($slug: String!, $domainName: String!) {
         settings = _load_settings()
         records = settings.get("installed", {}).get(game_domain, {})
         parked, restored, waiting = 0, 0, []
+        # Every mod this pass will switch off, so a file shared only within
+        # the group is still movable.
+        group = {
+            key for key, rec in records.items()
+            if key.lower() in table and rec.get("mode") == "dataDir"
+            and table[key.lower()]["needs_file"].lower() not in on_disk
+        }
         for key, rec in records.items():
             entry = table.get(key.lower())
             if not entry or rec.get("mode") != "dataDir":
@@ -10414,7 +10433,7 @@ query Link($slug: String!, $domainName: String!) {
             have = entry["needs_file"].lower() in on_disk
             rels = [
                 r for r in (rec.get("files") or [])
-                if r.lower() not in _shared_paths(records, key)
+                if r.lower() not in _shared_paths(records, key, group)
             ]
             park_dir = _parked_files_dir(game_domain, key)
             if have:
@@ -10426,10 +10445,16 @@ query Link($slug: String!, $domainName: String!) {
                 continue
             if not rec.get("parked"):
                 moved = _move_mod_files(data_path, park_dir, rels)
-                if moved:
-                    rec["parked"] = True
-                    rec["needs_external"] = entry["needs_name"]
-                    parked += moved
+                parked += moved
+                # Marked off even when it moved nothing. Several mods in a
+                # group can list the same file, and whichever reaches it
+                # first takes it - so the others legitimately move zero and
+                # were being left flagged as ON. On device that showed the
+                # oHUD patch enabled while both its files sat in another
+                # mod's park directory, which would have made "turn it back
+                # on" a no-op.
+                rec["parked"] = True
+                rec["needs_external"] = entry["needs_name"]
             waiting.append({"mod": rec.get("name") or key,
                             "needs": entry["needs_name"]})
             for plugin in rec.get("plugins") or []:

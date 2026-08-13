@@ -4172,6 +4172,55 @@ class TestExternalPrerequisites(unittest.TestCase):
         self.assertEqual(r["mods"], [])
         self.assertTrue(self._present("menus/hud.xml"))
 
+    def test_a_group_can_park_files_it_only_shares_with_itself(self):
+        """Device: the oHUD/Clean Vanilla Hud patch owns exactly two files,
+        both shared with the other two interface mods. With all three going
+        off, "leave shared files alone" left it nothing to move - so it
+        stayed fully active and kept hud_main_menu.xml, the one file that
+        stops the game starting. Being cautious about a mod that is also
+        being switched off protects nobody."""
+        settings = main._load_settings()
+        recs = settings["installed"]["newvegas_prereq"]
+        recs["The Patch"] = {
+            "mode": "dataDir", "plugins": [], "name": "The Patch",
+            # Both of its files belong to the other mod too.
+            "files": ["menus/hud.xml", "menus/other.xml"],
+        }
+        main._save_settings(settings)
+        main.NEEDS_EXTERNAL_MOD["newvegas_prereq"]["the patch"] = {
+            "needs_file": "Vanilla UI Plus.esp",
+            "needs_name": "Vanilla UI+ (VUI+)",
+        }
+        try:
+            r = self._apply()
+            self.assertEqual(sorted(r["mods"]),
+                             ["One HUD - oHUD", "The Patch"])
+            # Both are recorded OFF even though only one of them actually
+            # moved the shared files - whichever got there first took them.
+            recs = main._load_settings()["installed"]["newvegas_prereq"]
+            self.assertTrue(recs["The Patch"].get("parked"))
+            self.assertTrue(recs["One HUD - oHUD"].get("parked"))
+            # The contested files are gone, because nothing still on is
+            # relying on them.
+            self.assertFalse(self._present("menus/hud.xml"))
+            self.assertFalse(self._present("menus/other.xml"))
+        finally:
+            main._force_rmtree(
+                main._parked_files_dir("newvegas_prereq", "The Patch")
+            )
+
+    def test_a_file_shared_with_a_mod_staying_on_is_still_left(self):
+        settings = main._load_settings()
+        settings["installed"]["newvegas_prereq"]["Unrelated Mod"] = {
+            "mode": "dataDir", "plugins": [], "name": "Unrelated Mod",
+            "files": ["menus/other.xml"],
+        }
+        main._save_settings(settings)
+        r = self._apply()
+        self.assertEqual(r["parked"], 1)
+        self.assertFalse(self._present("menus/hud.xml"))
+        self.assertTrue(self._present("menus/other.xml"))
+
     def test_a_game_with_no_table_is_left_alone(self):
         r = run(self.plugin.apply_known_prerequisites(
             "stardewvalley", self.GAME, "Data"))

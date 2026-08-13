@@ -140,6 +140,75 @@ the 254 full slots, same as Gate To Sovngarde at 208. The v0.89.0 warning
 exists for the 2,444-mod collection, which is the first plausible
 candidate to cross it.
 
+## New Vegas: VeryLastKiss's New New Vegas (2026-08-13)
+
+The domain's most popular collection, 852 entries / 766 mods installed,
+booting on SteamOS after a reset to vanilla and a full reinstall - but NOT
+yet unattended. This run still needed two backend passes driven over SSH
+(the external-prerequisite parking and the orphaned-plugin sweep) plus a
+re-park by hand. Both are now wired into the install and Finish-setup
+paths, and the unattended run is the outstanding verification.
+
+Final state: 222 plugins of a 254 ceiling, 0 order violations, 0 blocked
+plugins, 0 plugins enabled-but-absent. Three mods switched off and named on
+the page; one plugin left off; one desktop tool skipped.
+
+### What this collection taught us, and it was all in the manifest
+
+Everything below was already stated in `collection.json`, which we
+downloaded for its FOMOD choices and then deleted unread:
+
+| The collection said | We were doing |
+|---|---|
+| 1,442 `modRules` - explicit before/after | inferring priority from list order |
+| 226 plugins should be ON | enabling all 246 we found, past the 254 limit |
+| 2 mods ship inside the archive | never installing them |
+| 1 mod is hosted off Nexus | skipping it in silence |
+
+The last one cost the most. `Vanilla UI+` is a `browse`-type mod on ModDB,
+so no API can fetch it - and it is the base UI layer three interface mods
+are built on. The collection installed "successfully" and the game stopped
+at the main-menu background with nothing in any log a user could act on.
+
+Those three mods are now switched OFF by default via
+`NEEDS_EXTERNAL_MOD`, with their files parked rather than deleted, and
+restored automatically if the prerequisite ever appears. A user who fetches
+an off-Nexus mod by hand has already shown they will tinker; the default
+path must not need it.
+
+### Bugs this collection found
+
+1. **7z had never run once.** Decky is a PyInstaller bundle, so plugins
+   inherit an LD_LIBRARY_PATH pointing at its unpacked temp dir, whose
+   libreadline kills /bin/sh - and SteamOS ships 7z as a shell wrapper. The
+   three-deep extractor fallback had been two deep since it was written.
+2. **Legacy `.fomod` packages** were called unsupported. Much of the older
+   FNV/FO3/Oblivion catalogue ships as one.
+3. **Reset deleted DLC bought after the baseline was taken.** Nine masters
+   and 23 archives, paid for that hour. A baseline describes one build of
+   the game; reset now refuses to sweep when the build has moved, and
+   re-takes the baseline itself after a clean reset.
+4. **FO3/FNV had no implicit-master guard**, so the load-order repair
+   offered to write the base game and DLC into Plugins.txt - renumbering
+   every plugin, which is what a save file records.
+5. **A dataDir mod could not be switched off.** Unticking a plugin leaves
+   its assets loading, and a mod made only of assets was refused outright.
+   Disabling now parks its files.
+6. **`Data/NVSE/Plugins` beside `Data/NVSE/plugins`** - a bundled mod
+   shipped a capital P and the extender then loaded none of its 56 plugins.
+
+### Two safety rules I got wrong before getting them right
+
+Both were correct in isolation and wrong in the case at hand, and both
+looked exactly like the bug they were meant to fix:
+
+- **"reinstall the affected mods in collection order"** took 47 wrongly-won
+  files to 92, because reinstalling a mod rewrites files it was not
+  contesting. The fix is per PATH.
+- **"never move a file another mod also provides"** left the one file that
+  stopped the game starting, and left a mod whose only files were shared
+  with nothing to move. "Another mod" has to mean another mod still ON.
+
 ## Bugs in the plugin this exposed, all fixed
 
 These were ours, not the collection's, and every one would have hit any

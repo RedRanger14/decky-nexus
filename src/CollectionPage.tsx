@@ -330,23 +330,6 @@ export function CollectionPage() {
         /* leave the load order as installed rather than half-applied */
       }
     }
-    // A plugin whose master never arrived stops the game starting with a
-    // modal naming one file. We detected that and put the fix behind a
-    // button in Troubleshooting, which is no use to someone holding a
-    // controller who just wants to play.
-    if (game.pluginsTxtSubpath) {
-      try {
-        await disableBlockedPlugins(
-          game.appId,
-          game.installDirName,
-          game.pluginsTxtSubpath,
-          game.pluginsTxtStyle ?? "starred",
-          game.nexusDomain
-        );
-      } catch {
-        /* the load-order row still offers it manually */
-      }
-    }
     // Mods that need a file Nexus does not host: off, not broken.
     try {
       await applyKnownPrerequisites(
@@ -360,6 +343,25 @@ export function CollectionPage() {
       );
     } catch {
       /* nothing parked is the same as before this existed */
+    }
+    // LAST of the load-order steps, deliberately. A plugin whose master
+    // never arrived stops the game starting with a modal naming one
+    // file - and parking a mod above REMOVES its plugins, so orphans are
+    // created by that step. Running this first swept a load order that
+    // was about to change, which is how 'Immersion Mods Merged - FPGE
+    // Patch.esp is missing required files' reached the user.
+    if (game.pluginsTxtSubpath) {
+      try {
+        await disableBlockedPlugins(
+          game.appId,
+          game.installDirName,
+          game.pluginsTxtSubpath,
+          game.pluginsTxtStyle ?? "starred",
+          game.nexusDomain
+        );
+      } catch {
+        /* the load-order row still offers it manually */
+      }
     }
     try {
       const extras = await getCollectionExtras(
