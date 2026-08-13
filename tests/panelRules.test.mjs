@@ -8,10 +8,12 @@ import {
   cancellableDownload,
   disableFailingOutcome,
   failingProblem,
+  isGoneFromNexus,
   knownBrokenNote,
   lastRunSummary,
   preDisabledNote,
   repairedNote,
+  unavailableNote,
   updatedNote,
   crashSuspect,
   huntProgressNote,
@@ -1009,4 +1011,55 @@ test("no dead ends behaves exactly as before", () => {
     lastRunSummary(["A"], 0, []),
     /looks the same whether that is one or twenty/
   );
+});
+
+// --- isGoneFromNexus / unavailableNote ------------------------------------
+// Slay the Spire 2's most popular collection lists two mods Nexus will not
+// serve: one its author deleted, one under moderation. Michael was told he
+// needed a Premium account he already had.
+
+test("a deleted mod is recognised as gone", () => {
+  assert.equal(
+    isGoneFromNexus(
+      "The author has removed this mod from Nexus, so it cannot be " +
+        "downloaded any more."
+    ),
+    true
+  );
+});
+
+test("a moderated mod is recognised as gone", () => {
+  assert.equal(
+    isGoneFromNexus(
+      "Nexus has taken this mod down while it is reviewed. Nothing you " +
+        "can do - it will come back, or it will not."
+    ),
+    true
+  );
+});
+
+test("a real failure is not mistaken for a gone mod", () => {
+  // These must still be counted as failures and shown to the user.
+  assert.equal(isGoneFromNexus("Network error: ClientConnectorError"), false);
+  assert.equal(isGoneFromNexus("Direct downloads need a Premium account"), false);
+  assert.equal(isGoneFromNexus(undefined), false);
+  assert.equal(isGoneFromNexus(""), false);
+});
+
+test("one unavailable mod reads in the singular and blames nobody", () => {
+  const msg = unavailableNote(["Mesugaki Regent"]);
+  assert.match(msg, /Mesugaki Regent is no longer available on Nexus/);
+  assert.match(msg, /its author has removed it, or Nexus is reviewing it/);
+  assert.match(msg, /Nothing to fix/);
+  assert.match(msg, /the rest installed normally/);
+});
+
+test("several unavailable mods read in the plural", () => {
+  const msg = unavailableNote(["A", "B"]);
+  assert.match(msg, /A, B are no longer available/);
+  assert.match(msg, /their authors have removed them/);
+});
+
+test("nothing unavailable says nothing", () => {
+  assert.equal(unavailableNote([]), "");
 });

@@ -21,7 +21,9 @@ import {
   fileConflictProblem,
   isRemaining,
 
-  preDisabledNote,} from "./panelRules";
+  preDisabledNote,
+  isGoneFromNexus,
+  unavailableNote,} from "./panelRules";
 
 import {
   endorseCollection,
@@ -160,6 +162,8 @@ export function CollectionPage() {
   // Mods switched off before the first launch because this game build has
   // already been seen to fail on them.
   const [preDisabled, setPreDisabled] = useState<string[]>([]);
+  // Mods this collection lists that Nexus will not serve any more.
+  const [unavailable, setUnavailable] = useState<string[]>([]);
   // Known not to work here. Said before the download, not after - the TTW
   // collection is 42 GB and needs a conversion Gaming Mode cannot build.
   const [unsupported, setUnsupported] = useState("");
@@ -711,6 +715,9 @@ export function CollectionPage() {
         // Manifest is an enhancement - never let it stall the batch.
       }
       let failures = 0;
+      // Mods the collection lists that Nexus no longer serves. Tracked
+      // apart from failures because nobody can act on them.
+      const unavailable: string[] = [];
       // ---- download-ahead pipeline -------------------------------------
       // Installs are serial (they mutate game dirs and share plugins.txt),
       // but the network needn't idle while each mod extracts: prefetch up
@@ -892,6 +899,15 @@ export function CollectionPage() {
               title: `${f.modName}: conflict - skipped`,
               body: result.error ?? "",
             });
+          } else if (isGoneFromNexus(result.error)) {
+            // Not a failure of ours or theirs. A collection outlives the
+            // mods in it: authors delete things and Nexus takes things
+            // down for review, and the curator has not caught up yet.
+            // Counting it as "failed" made Michael go looking for a
+            // Premium problem on a Premium account.
+            unavailable.push(f.modName);
+            setCollectionRow(f.fileId, "skipped");
+            updateDownload(f.modId, "done", 100);
           } else {
             failures += 1;
             setCollectionRow(f.fileId, "failed");
@@ -932,7 +948,10 @@ export function CollectionPage() {
       const needsChoices = freshAttention.filter(isActionableAttention).length;
       const skipped = freshAttention.length - needsChoices;
       const bits = [];
+      if (unavailable.length > 0) setUnavailable(unavailable);
       if (failures > 0) bits.push(`${failures} failure(s)`);
+      if (unavailable.length > 0)
+        bits.push(`${unavailable.length} no longer on Nexus`);
       if (needsChoices > 0)
         bits.push(`${needsChoices} waiting on your choices (Finish setup)`);
       if (skipped > 0) bits.push(`${skipped} skipped (see notes)`);
@@ -1491,6 +1510,21 @@ export function CollectionPage() {
               installed - only the missing ones will download.
             </div>
           )}
+        {unavailable.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              margin: "-6px 0 12px",
+              padding: "8px 10px",
+              borderRadius: "4px",
+              background: "rgba(255, 255, 255, 0.06)",
+              border: "1px solid rgba(255, 255, 255, 0.18)",
+              lineHeight: 1.45,
+            }}
+          >
+            {unavailableNote(unavailable)}
+          </div>
+        )}
         {preDisabled.length > 0 && !installing && (
           <div
             style={{

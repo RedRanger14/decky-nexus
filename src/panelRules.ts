@@ -277,6 +277,44 @@ export function knownBrokenNote(version: string): string {
   );
 }
 
+/** Whether an install error means Nexus will not serve the mod at all.
+ *
+ * Matches on what _download_forbidden_reason writes, which is derived from
+ * the API's own 403 body - an author deleting a mod, or Nexus taking one
+ * down for review. Neither is a failure anybody can act on, so neither
+ * belongs in a failure count.
+ */
+export function isGoneFromNexus(error?: string): boolean {
+  const e = (error ?? "").toLowerCase();
+  return (
+    e.includes("author has removed this mod") ||
+    e.includes("taken this mod down while it is reviewed")
+  );
+}
+
+/** What the collection page says about mods Nexus no longer serves.
+ *
+ * A collection outlives the mods in it. Michael hit two on Slay the Spire
+ * 2's most popular collection - one deleted by its author, one under
+ * moderation - and was told he needed a Premium account he already had.
+ */
+export function unavailableNote(names: string[]): string {
+  const gone = names.filter(Boolean);
+  if (!gone.length) return "";
+  const one = gone.length === 1;
+  const shown = gone.slice(0, 3).join(", ");
+  const rest = gone.length - 3;
+  return (
+    `${shown}${rest > 0 ? ` and ${rest} more` : ""} ` +
+    `${one ? "is" : "are"} no longer available on Nexus — ` +
+    `${one ? "its author has" : "their authors have"} removed ` +
+    `${one ? "it" : "them"}, or Nexus is reviewing ` +
+    `${one ? "it" : "them"}. Nothing to fix: the collection lists ` +
+    `${one ? "it" : "them"} but cannot supply ` +
+    `${one ? "it" : "them"}, and the rest installed normally.`
+  );
+}
+
 /** A plain readout of what the game itself reported last run.
  *
  * Michael, 2026-08-13: "it doesnt say there are 23 errors, just 23 mods
