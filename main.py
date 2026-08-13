@@ -11424,6 +11424,80 @@ query Link($slug: String!, $domainName: String!) {
             return result
         return {"ok": True, "folders": result.get("blamed_folders") or []}
 
+    async def _install_missing_requirements(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        install_mode: str, app_id: int, plugins_subpath: str,
+        plugins_style: str, needy: list,
+    ) -> list:
+        """Install the libraries a mod said it needed and did not get.
+
+        Verified on device twice. Enchanted Offerings did not load because
+        BaseLib was absent; LustTravel2 did not load because RitsuLib was.
+        Both times the loader said so in one line and the mod's own Nexus
+        page listed the missing library with its mod id:
+
+            RitsuLib (137) - "Required base library"
+
+        So no table of known libraries is needed, and none is kept: the mod
+        page is the authority on what the mod needs. Requirements whose
+        notes say "optional" are left alone, and anything not hosted on
+        Nexus (modId 0 - redistributables and the like) cannot be installed
+        from here.
+
+        `needy` is [{"name", "mod_id"}]. Returns [{"name", "for"}] of what
+        was installed and which mod wanted it.
+        """
+        if not needy:
+            return []
+        records = _load_settings().get("installed", {}).get(game_domain, {})
+        have_ids = {
+            rec.get("mod_id") for rec in records.values() if rec.get("mod_id")
+        }
+        done = []
+        for want in needy:
+            mod_id = want.get("mod_id")
+            if not mod_id:
+                continue
+            try:
+                reqs = await self.get_mod_requirements(
+                    game_domain, int(mod_id)
+                )
+                if not reqs.get("ok"):
+                    continue
+                for req in reqs.get("requirements") or []:
+                    rid = req.get("modId") or 0
+                    if rid <= 0 or rid in have_ids:
+                        continue
+                    if re.search(r"optional", req.get("notes") or "", re.I):
+                        continue
+                    files = await self.get_mod_files(game_domain, rid)
+                    newest = (files.get("files") or [None])[0]
+                    if not newest:
+                        continue
+                    name = req.get("modName") or f"Mod {rid}"
+                    result = await self.install_mod(
+                        game_domain, rid, newest["file_id"],
+                        newest["file_name"], name,
+                        newest.get("version") or "", install_dir,
+                        mods_subdir, "", "", install_mode, app_id,
+                        plugins_subpath, plugins_style,
+                    )
+                    if result.get("ok"):
+                        have_ids.add(rid)
+                        done.append({"name": name,
+                                     "for": want.get("name") or ""})
+                        decky.logger.info(
+                            f"installed {name!r} because "
+                            f"{want.get('name')!r} needs it and it was "
+                            f"missing"
+                        )
+            except Exception as e:  # noqa: BLE001 - best effort, never fatal
+                decky.logger.warning(
+                    f"could not resolve requirements for "
+                    f"{want.get('name')!r}: {type(e).__name__}: {e}"
+                )
+        return done
+
     async def _update_held_mods(
         self, game_domain: str, install_dir: str, mods_subdir: str,
         install_mode: str, app_id: int, plugins_subpath: str,
@@ -11542,7 +11616,7 @@ query Link($slug: String!, $domainName: String!) {
         )
         already = seen.get("log") == signature
         repaired = {"disabled": 0, "names": [], "details": [], "held": []}
-        updated, no_update = [], []
+        updated, no_update, installed_deps = [], [], []
         # The update pass runs every time; the disable pass runs once per
         # session log. They need different guards because they carry
         # different risks: switching a mod off contradicts a user who just
@@ -11564,6 +11638,18 @@ query Link($slug: String!, $domainName: String!) {
                 protected_ids, True, False,
             )
             if pre.get("ok"):
+                # A mod that could not load for want of a library is not
+                # broken and does not need switching off - it needs the
+                # library. Done before anything else so the mod is judged
+                # on a run where it had what it asked for.
+                installed_deps = await self._install_missing_requirements(
+                    game_domain, install_dir, mods_subdir, install_mode,
+                    app_id, plugins_subpath, plugins_style,
+                    [
+                        d for d in (pre.get("details") or [])
+                        if "is not installed" in (d.get("why") or "")
+                    ],
+                )
                 # Every mod already known to error on this build and still at
                 # the version that did, whether or not the LATEST log
                 # mentions it. Michael's Ryoshu was blamed two runs ago, was
@@ -11585,8 +11671,14 @@ query Link($slug: String!, $domainName: String!) {
                         and (stale_now[rec["mod_id"]].get("version") or "")
                         == (rec.get("version") or "")
                     ]
+                # A mod that was only missing a library is not a candidate
+                # for updating or switching off: it has not had a fair run.
+                fixed_by_deps = {d["for"] for d in installed_deps}
                 blamed_names = (
-                    [d["name"] for d in (pre.get("details") or [])]
+                    [
+                        d["name"] for d in (pre.get("details") or [])
+                        if d["name"] not in fixed_by_deps
+                    ]
                     + list(pre.get("held") or [])
                     + remembered
                 )
@@ -11611,7 +11703,8 @@ query Link($slug: String!, $domainName: String!) {
                 game_domain, install_dir, mods_subdir, game_user_dir,
                 install_mode, app_id, plugins_subpath, plugins_style,
                 protected_ids, False, True,
-                [u["name"] for u in updated],
+                [u["name"] for u in updated]
+                + [d["for"] for d in installed_deps],
             )
             if not repaired.get("ok"):
                 return repaired
@@ -11676,6 +11769,9 @@ query Link($slug: String!, $domainName: String!) {
             "repaired": len(repaired.get("names") or []),
             "names": repaired.get("names") or [],
             "updated": updated,
+            # Libraries installed because a mod asked for them and they were
+            # not there. [{"name", "for"}].
+            "installed_deps": installed_deps,
             # Blamed, cannot be switched off, and nothing newer to move to -
             # a dead end that only the mod's author can clear.
             "no_update": no_update,

@@ -1036,6 +1036,9 @@ export const repairFailingMods = callable<
     /** Blamed mods that could not be switched off (other mods need them)
      * and were updated instead - the only remedy they have. */
     updated?: { name: string; from: string; to: string }[];
+    /** Libraries installed because a mod asked for them and they were not
+     * there. `for` is the mod that wanted it. */
+    installed_deps?: { name: string; for: string }[];
     /** Blamed, cannot be switched off, and nothing newer exists - a dead
      * end only the mod's author can clear. */
     no_update?: string[];

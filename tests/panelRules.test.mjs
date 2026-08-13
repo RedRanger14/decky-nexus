@@ -9,6 +9,7 @@ import {
   disableFailingOutcome,
   failingProblem,
   frameworkStepNumbers,
+  installedDepsNote,
   isGoneFromNexus,
   knownBrokenNote,
   lastRunSummary,
@@ -1101,4 +1102,36 @@ test("the numbers are always consecutive from 1", () => {
       `gap with hasLaunch=${hasLaunch}`
     );
   }
+});
+
+// --- installedDepsNote ----------------------------------------------------
+// Twice on device a mod simply did not load: Enchanted Offerings wanted
+// BaseLib, LustTravel2 wanted RitsuLib. Both times the mod count came up one
+// short and nothing said what was needed.
+
+test("nothing installed says nothing", () => {
+  assert.equal(installedDepsNote([]), "");
+  assert.equal(installedDepsNote([{ name: "", for: "X" }]), "");
+});
+
+test("one library names the mod that wanted it", () => {
+  const msg = installedDepsNote([{ name: "RitsuLib", for: "LustTravel2" }]);
+  assert.match(msg, /Installed RitsuLib for LustTravel2\./);
+  assert.match(msg, /That mod needs it and it was missing/);
+  assert.match(msg, /why it did not load/);
+  assert.match(msg, /Restart the game/);
+});
+
+test("two libraries read in the plural", () => {
+  const msg = installedDepsNote([
+    { name: "RitsuLib", for: "LustTravel2" },
+    { name: "BaseLib", for: "EnchantedOfferings" },
+  ]);
+  assert.match(msg, /RitsuLib for LustTravel2, BaseLib for EnchantedOfferings/);
+  assert.match(msg, /Those mods need them/);
+});
+
+test("a library with no named requester still reads", () => {
+  assert.match(installedDepsNote([{ name: "BaseLib", for: "" }]),
+               /Installed BaseLib\./);
 });

@@ -119,7 +119,8 @@ import {
   slotPressure,
   troubleshootingCount,
 
-  frameworkStepNumbers,} from "./panelRules";
+  frameworkStepNumbers,
+  installedDepsNote,} from "./panelRules";
 import {
   ALL_GAMES,
   DEFAULT_GAME,
@@ -2400,6 +2401,7 @@ function TroubleshootingSection() {
     repaired: string[];
     updated: { name: string; from: string; to: string }[];
     noUpdate: string[];
+    installedDeps: { name: string; for: string }[];
   }>({
     names: [],
     details: [],
@@ -2407,6 +2409,7 @@ function TroubleshootingSection() {
     repaired: [],
     updated: [],
     noUpdate: [],
+    installedDeps: [],
   });
   const [failingBusy, setFailingBusy] = useState(false);
   // Enabled plugins listed before a master they need - a boot crash.
@@ -2492,6 +2495,7 @@ function TroubleshootingSection() {
           repaired: r.ok ? r.names ?? [] : [],
           updated: r.ok ? r.updated ?? [] : [],
           noUpdate: r.ok ? r.no_update ?? [] : [],
+          installedDeps: r.ok ? r.installed_deps ?? [] : [],
         })
       );
     } else {
@@ -2502,6 +2506,7 @@ function TroubleshootingSection() {
         repaired: [],
         updated: [],
         noUpdate: [],
+        installedDeps: [],
       });
     }
     if (game.pluginsTxtSubpath) {
@@ -2934,6 +2939,13 @@ function TroubleshootingSection() {
                 failing.repaired.length + failing.updated.length,
                 failing.noUpdate
               )}
+            </Field>
+          </PanelSectionRow>
+        )}
+        {failing.installedDeps.length > 0 && (
+          <PanelSectionRow>
+            <Field label="✓ Libraries a mod needed" childrenLayout="below">
+              {installedDepsNote(failing.installedDeps)}
             </Field>
           </PanelSectionRow>
         )}
