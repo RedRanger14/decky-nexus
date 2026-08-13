@@ -10194,8 +10194,15 @@ query Link($slug: String!, $domainName: String!) {
         # died on the same mod for the third time because the only record
         # of it lived in a session log. A verdict is a fact about a game
         # build and a mod version, not about what happens to be installed.
+        # "auto_fixed" IS cleared, unlike mod_verdicts above. The two look
+        # similar and are opposites: a verdict is knowledge about a game
+        # build and a mod version, true whatever is installed, while
+        # auto_fixed is a list of things done to THIS install. Keeping it
+        # across a reset made the health check contradict itself - "RitsuLib
+        # sorted out already" directly above "LustTravel2 needs RitsuLib".
         for section in ("installed", "collections", "framework_setup",
-                        "collection_attention", "w3_merges", "skipped"):
+                        "collection_attention", "w3_merges", "skipped",
+                        "auto_fixed", "update_attempts"):
             settings.get(section, {}).pop(game_domain, None)
         # Re-take the baseline now, because THIS is the only moment we can
         # be sure what vanilla looks like.
@@ -11567,12 +11574,20 @@ query Link($slug: String!, $domainName: String!) {
             # libraries, opened the QAM - which installed them - then ran the
             # check and saw nothing, with no way to tell "nothing was wrong"
             # apart from "this does not work".
+            # Only what is STILL here. An uninstall does not go through
+            # reset, so the log can outlive the mod it names either way, and
+            # a stale line contradicting the findings above it is worse than
+            # no line at all.
             "already_fixed": [
                 entry for entry in (
                     (_load_settings().get("auto_fixed") or {}).get(game_domain)
                     or []
                 )
                 if isinstance(entry, dict) and entry.get("name")
+                and any(
+                    (rec.get("name") or key) == entry["name"]
+                    for key, rec in records.items()
+                )
             ][-6:],
             "needs_mods": needs_mods[:20],
             "needs_dlc": needs_dlc[:20],
