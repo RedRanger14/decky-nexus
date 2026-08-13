@@ -4673,10 +4673,56 @@ class TestAutoRepairFailingMods(unittest.TestCase):
     def test_a_held_back_library_is_updated_instead(self):
         self._library_setup()
         r = self._repair()
-        self.assertEqual(r["held"], ["Grumpy"])
         self.assertEqual(
             r["updated"], [{"name": "Grumpy", "from": "3.1.2", "to": "3.3.8"}])
         self.assertTrue(os.path.isdir(os.path.join(self.mods, "Grumpy")))
+        # Not reported as still held back: it was dealt with. "held" is for
+        # blamed mods nothing could be done about.
+        self.assertEqual(r["held"], [])
+
+    def test_a_broken_mod_with_an_update_is_updated_not_switched_off(self):
+        # The ordering bug, from device: Remove Multiplayer Player Limit and
+        # Refresh Ancient were switched off while 0.1.7 and 1.4.3 sat
+        # published on their pages. An update keeps the mod; switching off
+        # is what is left when there is no newer version.
+        async def fake_files(game_domain, mod_id):
+            return {"ok": True, "files": [
+                {"file_id": 5, "file_name": "r.zip", "version": "2.0.0"}]}
+
+        installs = []
+
+        async def fake_install(*a, **k):
+            installs.append(a[4])
+            settings = main._load_settings()
+            settings["installed"]["repairtest"]["DeadMod"]["version"] = "2.0.0"
+            main._save_settings(settings)
+            return {"ok": True}
+
+        settings = main._load_settings()
+        settings["installed"]["repairtest"]["DeadMod"]["mod_id"] = 21
+        settings["installed"]["repairtest"]["DeadMod"]["version"] = "0.1.6"
+        main._save_settings(settings)
+        self.plugin.get_mod_files = fake_files
+        self.plugin.install_mod = fake_install
+        r = self._repair()
+        self.assertIn("DeadMod", [u["name"] for u in r["updated"]])
+        self.assertNotIn("DeadMod", r["names"])
+        self.assertTrue(os.path.isdir(os.path.join(self.mods, "DeadMod")))
+
+    def test_a_broken_mod_with_no_update_is_still_switched_off(self):
+        # The remedy of last resort has to survive the reordering.
+        async def no_newer(game_domain, mod_id):
+            return {"ok": True, "files": [
+                {"file_id": 5, "file_name": "r.zip", "version": "0.0.1"}]}
+
+        settings = main._load_settings()
+        settings["installed"]["repairtest"]["DeadMod"]["mod_id"] = 21
+        settings["installed"]["repairtest"]["DeadMod"]["version"] = "0.1.6"
+        main._save_settings(settings)
+        self.plugin.get_mod_files = no_newer
+        r = self._repair()
+        self.assertIn("DeadMod", r["names"])
+        self.assertFalse(os.path.isdir(os.path.join(self.mods, "DeadMod")))
 
     def test_no_update_available_means_no_download(self):
         # Already newest: touching it would be churn for nothing.

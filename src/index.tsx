@@ -2085,12 +2085,6 @@ function InstalledModsSection() {
     b.missing.some((m) => /^cc[a-z]/i.test(m))
   ).length;
 
-  const failures = (mods ?? [])
-    .filter((m) => m.enabled && loadStateFor(m.folder)?.state === "error")
-    .map((m) => ({
-      name: m.name ?? m.folder,
-      detail: loadStateFor(m.folder)?.detail ?? "",
-    }));
 
   // Reset deliberately does NOT live in here - see ResetSection.
   if (!showInstalledModsSection((mods ?? []).length, showFrameworkRow)) {
@@ -2297,18 +2291,6 @@ function InstalledModsSection() {
               (mods?.length ?? 0) - 5
             } more — Manage my mods below has the full list`}
           />
-        </PanelSectionRow>
-      )}
-      {failures.length > 0 && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            description="Why, and what to try"
-            onClick={() => showModal(<FailedModsModal failures={failures} />)}
-          >
-            ⚠ {failures.length} mod{failures.length > 1 ? "s" : ""} failed to
-            load
-          </ButtonItem>
         </PanelSectionRow>
       )}
       {toggleableMods.length > 0 && (
@@ -2889,6 +2871,27 @@ function TroubleshootingSection() {
               }}
             >
               {hunt?.running ? "Stop the hunt" : "Find what's breaking it"}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {failing.details.length > 0 && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              description="Why, and what to try"
+              onClick={() =>
+                showModal(
+                  <FailedModsModal
+                    failures={failing.details.map((d) => ({
+                      name: d.name,
+                      detail: d.why,
+                    }))}
+                  />
+                )
+              }
+            >
+              ⚠ {failing.details.length} mod
+              {failing.details.length > 1 ? "s" : ""} failed to load
             </ButtonItem>
           </PanelSectionRow>
         )}

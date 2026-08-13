@@ -11064,7 +11064,7 @@ query Link($slug: String!, $domainName: String!) {
         game_user_dir: str, install_mode: str = "folder", app_id: int = 0,
         plugins_subpath: str = "", plugins_style: str = "starred",
         protected_ids: list = None, dry_run: bool = False,
-        auto_only: bool = False,
+        auto_only: bool = False, exclude: list = None,
     ) -> dict:
         """Switch off the mods the last session blamed for errors.
 
@@ -11169,11 +11169,16 @@ query Link($slug: String!, $domainName: String!) {
                 and rec.get("mode") in (None, "", "folder")
             )
 
+        # A mod updated moments ago is judged on a log its old version
+        # wrote. Two mods were switched off on device that had newer
+        # versions waiting - the blame was real, but the remedy was wrong.
+        spared = {n for n in (exclude or []) if n}
         candidates = [
             (key, rec, hit)
             for key, rec in list(records.items())
             for hit in [blame_for(key, rec)]
             if hit and not already_off(key, rec)
+            and (rec.get("name") or key) not in spared
         ]
         # Whatever survives this pass is what dependencies are judged
         # against: hold back a library only if something staying on needs it.
@@ -11488,11 +11493,44 @@ query Link($slug: String!, $domainName: String!) {
         )
         already = seen.get("log") == signature
         repaired = {"disabled": 0, "names": [], "details": [], "held": []}
+        updated, no_update = [], []
         if not already:
+            # Update BEFORE switching anything off. An update keeps the mod
+            # and is the likeliest fix; switching off is what is left when
+            # there is no newer version. Doing it the other way round
+            # switched off Remove Multiplayer Player Limit and Refresh
+            # Ancient on device, both of which had updates waiting - 1.3.3
+            # against a published 1.4.3 in one case.
+            pre = await self.disable_failing_mods(
+                game_domain, install_dir, mods_subdir, game_user_dir,
+                install_mode, app_id, plugins_subpath, plugins_style,
+                protected_ids, True, False,
+            )
+            if pre.get("ok"):
+                blamed_names = [
+                    d["name"] for d in (pre.get("details") or [])
+                ] + list(pre.get("held") or [])
+                updated = await self._update_held_mods(
+                    game_domain, install_dir, mods_subdir, install_mode,
+                    app_id, plugins_subpath, plugins_style, blamed_names,
+                )
+                no_update = list(getattr(self, "_no_update_for", []))
+                # What the OLD version did is worth remembering: a
+                # collection reinstall pins it straight back.
+                _record_mod_verdicts(
+                    game_domain, _steam_build_id(app_id),
+                    [
+                        d for d in (pre.get("details") or [])
+                        + (pre.get("held_details") or [])
+                        if d.get("name") in {u["name"] for u in updated}
+                    ],
+                    "stale",
+                )
             repaired = await self.disable_failing_mods(
                 game_domain, install_dir, mods_subdir, game_user_dir,
                 install_mode, app_id, plugins_subpath, plugins_style,
                 protected_ids, False, True,
+                [u["name"] for u in updated],
             )
             if not repaired.get("ok"):
                 return repaired
@@ -11539,27 +11577,16 @@ query Link($slug: String!, $domainName: String!) {
         rest = await self.disable_failing_mods(
             game_domain, install_dir, mods_subdir, game_user_dir,
             install_mode, app_id, plugins_subpath, plugins_style,
-            protected_ids, True, False,
+            protected_ids, True, False, [u["name"] for u in updated],
         )
-        # Held-back mods only show up in the FULL pass: they are ambiguous by
-        # construction - a library erroring while other mods depend on it is
-        # exactly the case the auto pass refuses to touch. Which is why the
-        # update has to come from here rather than from the auto result.
-        # Held-back mods get a verdict too, or the knowledge dies with the
-        # log: a collection reinstall puts its pinned version straight back,
-        # and nothing at install time knows the pin is stale.
+        # A held-back mod gets a verdict even when nothing could be done for
+        # it, or the knowledge dies with the log and a reinstall pins the
+        # same version straight back.
         if rest.get("ok") and rest.get("held_details"):
             _record_mod_verdicts(
                 game_domain, _steam_build_id(app_id),
                 rest["held_details"], "stale",
             )
-        updated, no_update = [], []
-        if not already and rest.get("ok"):
-            updated = await self._update_held_mods(
-                game_domain, install_dir, mods_subdir, install_mode, app_id,
-                plugins_subpath, plugins_style, rest.get("held") or [],
-            )
-            no_update = list(getattr(self, "_no_update_for", []))
         return {
             "ok": True,
             "repaired": len(repaired.get("names") or []),
