@@ -340,6 +340,34 @@ export function frameworkStepNumbers(hasLaunchCommand: boolean): {
   return { install, launch, browse, play };
 }
 
+/** What the panel says about libraries it installed on a mod's behalf.
+ *
+ * Twice on device a mod simply did not load: Enchanted Offerings wanted
+ * BaseLib, LustTravel2 wanted RitsuLib, and in both cases the game printed
+ * a red line, the mod count silently came up one short, and nothing said
+ * what was needed. Nobody browsing mods should have to know which library
+ * a mod is built on.
+ */
+export function installedDepsNote(
+  deps: { name: string; for: string }[]
+): string {
+  const kept = deps.filter((d) => d.name);
+  if (!kept.length) return "";
+  const one = kept.length === 1;
+  const shown = kept
+    .slice(0, 2)
+    .map((d) => (d.for ? `${d.name} for ${d.for}` : d.name))
+    .join(", ");
+  const rest = kept.length - 2;
+  return (
+    `Installed ${shown}${rest > 0 ? ` and ${rest} more` : ""}. ` +
+    `${one ? "That mod needs it" : "Those mods need them"} and ` +
+    `${one ? "it was" : "they were"} missing, which is why ` +
+    `${one ? "it" : "they"} did not load. Restart the game and ` +
+    `${one ? "it" : "they"} should work.`
+  );
+}
+
 /** A plain readout of what the game itself reported last run.
  *
  * Michael, 2026-08-13: "it doesnt say there are 23 errors, just 23 mods

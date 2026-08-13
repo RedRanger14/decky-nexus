@@ -4775,6 +4775,76 @@ class TestAutoRepairFailingMods(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertEqual(r["updated"], [])
 
+    # --- installing the library a mod asked for --------------------------
+    # Verified twice on device: Enchanted Offerings did not load without
+    # BaseLib, LustTravel2 did not load without RitsuLib, and both mod pages
+    # listed the missing library with its Nexus mod id.
+
+    def _needs_library(self):
+        settings = main._load_settings()
+        settings["installed"]["repairtest"]["DeadMod"]["mod_id"] = 965
+        main._save_settings(settings)
+        self._log("[ERROR] Tried to load mod DeadMod, but it depends on "
+                  "mods which have not been loaded: STS2-RitsuLib!")
+        self.installs = []
+
+        async def fake_reqs(game_domain, mod_id):
+            return {"ok": True, "requirements": [
+                {"modName": "RitsuLib", "modId": 137,
+                 "notes": "Required base library", "url": ""},
+                {"modName": "KitLib", "modId": 418,
+                 "notes": "optional developer toolkit", "url": ""},
+                {"modName": "VC++ redist", "modId": 0, "notes": "", "url": "x"},
+            ]}
+
+        async def fake_files(game_domain, mod_id):
+            return {"ok": True, "files": [
+                {"file_id": 1, "file_name": "lib.zip", "version": "0.5.11"}]}
+
+        async def fake_install(*a, **k):
+            self.installs.append(a[1])
+            return {"ok": True}
+
+        self.plugin.get_mod_requirements = fake_reqs
+        self.plugin.get_mod_files = fake_files
+        self.plugin.install_mod = fake_install
+
+    def test_the_missing_library_is_installed(self):
+        self._needs_library()
+        r = self._repair()
+        self.assertEqual(
+            r["installed_deps"], [{"name": "RitsuLib", "for": "DeadMod"}])
+        self.assertIn(137, self.installs)
+
+    def test_an_optional_requirement_is_left_alone(self):
+        # KitLib is listed as an optional developer toolkit. Installing it
+        # would be helping myself to somebody's disk.
+        self._needs_library()
+        self._repair()
+        self.assertNotIn(418, self.installs)
+
+    def test_an_off_nexus_requirement_cannot_be_installed(self):
+        self._needs_library()
+        self._repair()
+        self.assertNotIn(0, self.installs)
+
+    def test_the_mod_is_not_switched_off_for_missing_a_library(self):
+        # It is not broken - it never got a fair run. Switching it off would
+        # mean the user installed a mod and lost it to a fixable cause.
+        self._needs_library()
+        r = self._repair()
+        self.assertNotIn("DeadMod", r["names"])
+        self.assertTrue(os.path.isdir(os.path.join(self.mods, "DeadMod")))
+
+    def test_a_library_already_installed_is_not_installed_again(self):
+        self._needs_library()
+        settings = main._load_settings()
+        settings["installed"]["repairtest"]["Fine"]["mod_id"] = 137
+        main._save_settings(settings)
+        r = self._repair()
+        self.assertNotIn(137, self.installs)
+        self.assertEqual(r["installed_deps"], [])
+
     def test_it_does_not_re_download_on_every_panel_open(self):
         self._library_setup()
         self._repair()
