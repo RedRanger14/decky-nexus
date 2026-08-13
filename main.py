@@ -372,7 +372,35 @@ def _vanilla_baseline(game_domain: str) -> list:
     return _load_settings().get("vanilla_baseline", {}).get(game_domain) or []
 
 
-def _record_vanilla_baseline(game_domain: str, mods_path: str) -> None:
+def _steam_build_id(app_id: int) -> str:
+    """The installed build of a Steam app, or "" if it cannot be read.
+
+    Reset compares this against the build the vanilla baseline was taken
+    on. A baseline says "this is what the mods folder held before any mod
+    went in" - but it says nothing about what the GAME has added since,
+    and games gain files constantly: patches, and DLC for titles still
+    being updated. Trusting a stale baseline is how reset deleted nine
+    paid-for DLC masters on device.
+    """
+    if not app_id:
+        return ""
+    path = os.path.join(
+        os.path.dirname(STEAM_COMMON), f"appmanifest_{int(app_id)}.acf"
+    )
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.search(r'"buildid"\s+"(\d+)"', line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        return ""
+    return ""
+
+
+def _record_vanilla_baseline(
+    game_domain: str, mods_path: str, app_id: int = 0
+) -> None:
     """Snapshot what the game's mod folder held before we touched it.
 
     Reset can only remove mods it has records for, and a record is
@@ -397,6 +425,11 @@ def _record_vanilla_baseline(game_domain: str, mods_path: str) -> None:
         have[game_domain] = sorted(os.listdir(mods_path))
     except OSError:
         return
+    # Which build it describes. A later reset can then tell whether the
+    # game itself has changed underneath the baseline.
+    build = _steam_build_id(app_id)
+    if build:
+        settings.setdefault("baseline_build", {})[game_domain] = build
     _save_settings(settings)
     decky.logger.info(
         f"{game_domain}: recorded a {len(have[game_domain])}-entry vanilla "
@@ -9459,7 +9492,25 @@ query Link($slug: String!, $domainName: String!) {
         baseline = settings.get("vanilla_baseline", {}).get(game_domain) or []
         leftovers = []
         removed_leftovers = 0
-        if baseline and os.path.isdir(mods_path):
+        # A baseline describes one build of the game. Games gain files
+        # afterwards - patches, and DLC for titles still being updated -
+        # and every one of those looks identical to a mod leftover from
+        # here. Deleting a game file is unrecoverable without a Steam
+        # verify; leaving a mod's config file behind is untidy. Those are
+        # not comparable, so when the build has moved we report and stop.
+        baseline_build = (
+            settings.get("baseline_build", {}).get(game_domain) or ""
+        )
+        now_build = _steam_build_id(app_id)
+        game_changed = bool(baseline_build and now_build
+                            and baseline_build != now_build)
+        if game_changed:
+            decky.logger.info(
+                f"reset {game_domain!r}: game build changed "
+                f"{baseline_build} -> {now_build} since the baseline, so "
+                "untracked files are reported rather than swept"
+            )
+        if baseline and not game_changed and os.path.isdir(mods_path):
             try:
                 leftovers = sorted(
                     set(os.listdir(mods_path)) - set(baseline)
@@ -9494,6 +9545,11 @@ query Link($slug: String!, $domainName: String!) {
                     removed_leftovers += 1
                 except OSError as e:
                     errors.append(f"{name}: {e}")
+        if baseline and game_changed and os.path.isdir(mods_path):
+            try:
+                leftovers = sorted(set(os.listdir(mods_path)) - set(baseline))
+            except OSError:
+                leftovers = []
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges", "skipped"):
             settings.get(section, {}).pop(game_domain, None)
@@ -9526,6 +9582,10 @@ query Link($slug: String!, $domainName: String!) {
             # verified, not merely finished.
             "leftovers": len(leftovers),
             "swept": removed_leftovers,
+            # True when the game has been patched or gained DLC since the
+            # baseline, so untracked files were listed rather than
+            # deleted. The UI must not call that a failed reset.
+            "game_changed": game_changed,
             "leftover_examples": leftovers[:8],
             "verified": bool(baseline),
         }

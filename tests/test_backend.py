@@ -4012,6 +4012,54 @@ class TestCollectionExtras(unittest.TestCase):
         self.assertTrue(extras["browse"][0]["optional"])
 
 
+class TestBaselineBuildGuard(unittest.TestCase):
+    """A baseline describes ONE build of the game.
+
+    Games gain files afterwards - patches, and DLC for titles still being
+    updated - and from the mods folder every one of those is
+    indistinguishable from a mod leftover. Deleting a game file needs a
+    Steam verify to undo; leaving a mod's config file behind is untidy.
+    Those are not comparable, so when the build has moved the sweep stops
+    and reports instead.
+
+    The DLC case found this on device. A game update is the commoner one
+    and would have been silent, because no name-based guard can know what
+    a future patch will add."""
+
+    def setUp(self):
+        self.apps = os.path.dirname(main.STEAM_COMMON)
+        os.makedirs(self.apps, exist_ok=True)
+        self.manifest = os.path.join(self.apps, "appmanifest_999001.acf")
+
+    def tearDown(self):
+        try:
+            os.remove(self.manifest)
+        except OSError:
+            pass
+
+    def _write(self, build):
+        lines = ['"AppState"', "{", '	"buildid"		"%s"' % build, "}"]
+        with open(self.manifest, "w", encoding="utf-8") as f:
+            f.write(chr(10).join(lines) + chr(10))
+
+    def test_reads_the_installed_build(self):
+        self._write("1510068")
+        self.assertEqual(main._steam_build_id(999001), "1510068")
+
+    def test_a_missing_manifest_is_not_an_error(self):
+        self.assertEqual(main._steam_build_id(999002), "")
+
+    def test_no_app_id_reads_nothing(self):
+        self.assertEqual(main._steam_build_id(0), "")
+
+    def test_the_reset_consults_the_build(self):
+        # Guards the wiring: the predicate is no use uncalled.
+        import inspect
+        src = inspect.getsource(main.Plugin.reset_game_modding)
+        self.assertIn("_steam_build_id", src)
+        self.assertIn("game_changed", src)
+
+
 class TestGameOwnedContent(unittest.TestCase):
     """Reset must never delete content the user bought.
 
