@@ -6071,7 +6071,20 @@ class Plugin:
 
     async def get_mod_requirements(self, game_domain: str, mod_id: int) -> dict:
         """Nexus-listed requirements for a mod (public v2 data). Two-step:
-        resolve the numeric game id once, then query via legacyMods."""
+        resolve the numeric game id once, then query via legacyMods.
+
+        Returns Nexus mod requirements AND game DLC requirements. Michael,
+        2026-08-13: "file to file and DLC requirements is something the
+        website has put a lot of work into tackling and it feeds vortex via
+        api so I would have thought its available to us too". It is - the
+        plugin was asking for one of the three fields on ModRequirements.
+
+        Verified live: New Vegas mod 65000 returns
+        {"gameExpansion": {"name": "Dead Money"}}, which is the same fact
+        DLC_MASTER_NAMES holds by hand for four games, from the authority
+        instead of from me. It is also knowable BEFORE the download, where
+        the hand-written table only catches it after a failed boot.
+        """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         api_key = _load_settings().get("api_key")
@@ -6080,17 +6093,28 @@ class Plugin:
             data = await _gql_query(
                 "{ legacyMods(ids: [{gameId: %d, modId: %d}]) { nodes { "
                 "modRequirements { nexusRequirements { nodes "
-                "{ modName modId notes url } } } } } }"
+                "{ modName modId notes url } } "
+                "dlcRequirements { notes gameExpansion { name } } "
+                "} } } }"
                 % (game_id, int(mod_id)),
                 api_key,
             )
             nodes = data["legacyMods"]["nodes"]
-            raw = (
-                nodes[0]["modRequirements"]["nexusRequirements"]["nodes"]
-                if nodes
-                else []
-            )
-            return {"ok": True, "requirements": _normalize_requirements(raw)}
+            reqs = nodes[0]["modRequirements"] if nodes else {}
+            raw = ((reqs.get("nexusRequirements") or {}).get("nodes")) or []
+            dlc = []
+            for entry in reqs.get("dlcRequirements") or []:
+                name = ((entry or {}).get("gameExpansion") or {}).get("name")
+                if name:
+                    dlc.append({
+                        "name": str(name),
+                        "notes": str((entry or {}).get("notes") or ""),
+                    })
+            return {
+                "ok": True,
+                "requirements": _normalize_requirements(raw),
+                "dlc": dlc,
+            }
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
