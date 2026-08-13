@@ -1001,6 +1001,35 @@ export const getKnownModVerdict = callable<
   }
 >("get_known_mod_verdict");
 
+// Everything wrong with a setup that the game will not mention until it
+// refuses to start: mods missing their required mods, mods needing DLC that
+// is not installed, and requirements hosted off Nexus.
+export const getHealthCheck = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    app_id: number
+  ],
+  {
+    ok: boolean;
+    checked?: number;
+    needs_mods?: {
+      name: string;
+      mod_id?: number;
+      missing?: { name: string; mod_id?: number; notes?: string }[];
+    }[];
+    needs_dlc?: { name: string; dlc?: string[] }[];
+    needs_external?: {
+      name: string;
+      files?: { name: string; url: string }[];
+    }[];
+    owned_dlc?: string[];
+    errors?: string[];
+    error?: string;
+  }
+>("get_health_check");
+
 // The installed mods the game's last session blamed. Reads only - its job
 // is to tell checkUpdates which collection-pinned mods have earned a look.
 export const getBlamedFolders = callable<

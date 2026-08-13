@@ -368,6 +368,57 @@ export function installedDepsNote(
   );
 }
 
+/** The Health Check page's headline: an answer before any detail.
+ *
+ * Somebody opens a diagnostics screen already frustrated, so the first
+ * thing on it should be a verdict they can read from a sofa - not a table
+ * they have to interpret. The tone doubles as the page's accent colour.
+ */
+export function healthVerdict(
+  checked: number,
+  problems: number,
+  busy: boolean
+): { headline: string; detail: string; tone: string; clean: boolean } {
+  if (busy) {
+    return {
+      headline: "Checking your mods…",
+      detail:
+        "Asking Nexus what each installed mod says it needs, and looking " +
+        "for it on this device.",
+      tone: "218, 142, 53",
+      clean: false,
+    };
+  }
+  if (!checked) {
+    return {
+      headline: "Nothing installed yet",
+      detail:
+        "Install some mods and come back — this screen checks that each " +
+        "one has what it needs to actually work.",
+      tone: "255, 255, 255",
+      clean: false,
+    };
+  }
+  if (!problems) {
+    return {
+      headline: "Everything checks out",
+      detail: `All ${checked} of your mods have what they need.`,
+      tone: "143, 212, 143",
+      clean: true,
+    };
+  }
+  return {
+    headline:
+      problems === 1 ? "1 thing needs attention" : `${problems} things need attention`,
+    detail:
+      `Out of ${checked} mods checked. ` +
+      "None of this stops you playing right now, but each one means a mod " +
+      "is not doing what you installed it for.",
+    tone: "230, 180, 80",
+    clean: false,
+  };
+}
+
 /** A plain readout of what the game itself reported last run.
  *
  * Michael, 2026-08-13: "it doesnt say there are 23 errors, just 23 mods

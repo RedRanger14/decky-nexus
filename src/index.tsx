@@ -228,6 +228,7 @@ import { ManagerPage } from "./ManagerPage";
 import { SettingsPage } from "./SettingsPage";
 import { UpdatesPage } from "./UpdatesPage";
 import { installLatest } from "./install";
+import HealthCheckPage, { setHealthGame } from "./HealthCheckPage";
 import { scanUpdates } from "./updates";
 
 /** QAM row shortcut: jump from an installed mod straight to its detail page
@@ -252,6 +253,7 @@ const BROWSE_ROUTE = "/nexus-mods";
 const DETAIL_ROUTE = "/nexus-mods/mod";
 const COLLECTION_ROUTE = "/nexus-mods/collection";
 const DOWNLOADS_ROUTE = "/nexus-mods/downloads";
+const HEALTH_ROUTE = "/nexus-mods/health";
 const UPDATES_ROUTE = "/nexus-mods/updates";
 const MANAGER_ROUTE = "/nexus-mods/manager";
 const SETTINGS_ROUTE = "/nexus-mods/settings";
@@ -2755,6 +2757,22 @@ function TroubleshootingSection() {
       </PanelSectionRow>
       {open && (
         <>
+          {game && (
+            <PanelSectionRow>
+              <ButtonItem
+                layout="below"
+                description="Checks every installed mod has the other mods and the game DLC it says it needs — the things the game won't mention until it refuses to start."
+                onClick={() => {
+                  setHealthGame(game);
+                  resetTabStack();
+                  pushOurPage(HEALTH_ROUTE);
+                  Navigation.CloseSideMenus();
+                }}
+              >
+                Run a health check
+              </ButtonItem>
+            </PanelSectionRow>
+          )}
         {/* The prefix's VC++ runtime falls behind on its own: a game's own
             Steam install script writes an old one, and any mod binary that
             links it dynamically then fails to load with nothing said
@@ -3827,6 +3845,7 @@ export default definePlugin(() => {
   routerHook.addRoute(DETAIL_ROUTE, ModDetailPage, { exact: true });
   routerHook.addRoute(COLLECTION_ROUTE, CollectionPage, { exact: true });
   routerHook.addRoute(DOWNLOADS_ROUTE, DownloadsPage, { exact: true });
+  routerHook.addRoute(HEALTH_ROUTE, HealthCheckPage, { exact: true });
   routerHook.addRoute(UPDATES_ROUTE, UpdatesPage, { exact: true });
   routerHook.addRoute(MANAGER_ROUTE, ManagerPage, { exact: true });
   routerHook.addRoute(SETTINGS_ROUTE, SettingsPage, { exact: true });

@@ -5488,6 +5488,114 @@ class TestMissingManifestDeps(unittest.TestCase):
         }), [])
 
 
+class TestHealthCheck(unittest.TestCase):
+    """The screen Michael asked for months ago and was talked out of.
+
+    One day of Slay the Spire 2 settled it: two mods silently did not load
+    for want of a library, stale pinned libraries broke four more, mods were
+    switched off that had fixes published. All knowable, none surfaced."""
+
+    GAME = "Health Test"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.data = os.path.join(root, "Data")
+        os.makedirs(self.data)
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["newvegas"] = {
+            "oHUD": {"mod_id": 44757, "name": "One HUD", "mode": "dataDir"},
+            "Rigged Odds": {"mod_id": 65000, "name": "Rigged Odds",
+                            "mode": "dataDir"},
+        }
+        main._save_settings(settings)
+        self.reqs = {
+            44757: {"ok": True, "dlc": [], "requirements": [
+                {"modName": "UIO", "modId": 57174, "notes": "", "url": ""},
+                {"modName": "MCM", "modId": 42507, "notes": "optional",
+                 "url": ""},
+                {"modName": "Vanilla UI+", "modId": 0, "notes": "",
+                 "url": "moddb.com/mods/vanilla-ui-plus"},
+            ]},
+            65000: {"ok": True, "requirements": [], "dlc": [
+                {"name": "Dead Money", "notes": ""}]},
+        }
+
+        async def fake_reqs(game_domain, mod_id):
+            return self.reqs.get(int(mod_id), {"ok": True,
+                                              "requirements": [], "dlc": []})
+
+        self.plugin.get_mod_requirements = fake_reqs
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("newvegas", None)
+        main._save_settings(settings)
+        shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
+                      ignore_errors=True)
+
+    def _check(self):
+        return run(self.plugin.get_health_check(
+            "newvegas", self.GAME, "Data", 1))
+
+    def test_a_missing_required_mod_is_reported(self):
+        r = self._check()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(
+            [m["name"] for m in r["needs_mods"]], ["One HUD"])
+        self.assertEqual(
+            [x["name"] for x in r["needs_mods"][0]["missing"]], ["UIO"])
+
+    def test_an_optional_requirement_is_not_a_problem(self):
+        r = self._check()
+        names = [x["name"] for x in r["needs_mods"][0]["missing"]]
+        self.assertNotIn("MCM", names)
+
+    def test_an_installed_requirement_is_not_reported(self):
+        settings = main._load_settings()
+        settings["installed"]["newvegas"]["UIO"] = {
+            "mod_id": 57174, "name": "UIO", "mode": "dataDir"}
+        main._save_settings(settings)
+        self.assertEqual(self._check()["needs_mods"], [])
+
+    def test_an_off_nexus_file_is_reported_with_where_to_get_it(self):
+        # The Vanilla UI+ case, which cost three failed boots to find by
+        # hand. modId 0 with a url means Nexus cannot supply it.
+        r = self._check()
+        self.assertEqual(r["needs_external"][0]["name"], "One HUD")
+        self.assertIn("moddb.com", r["needs_external"][0]["files"][0]["url"])
+
+    def test_missing_dlc_is_reported_by_name(self):
+        r = self._check()
+        self.assertEqual(r["needs_dlc"], [{"name": "Rigged Odds",
+                                           "dlc": ["Dead Money"]}])
+
+    def test_owned_dlc_is_proved_from_disk_not_guessed(self):
+        # A master file in Data is the only proof that survives a
+        # reinstall, a family share or a regional edition.
+        open(os.path.join(self.data, "DeadMoney.esm"), "w").close()
+        r = self._check()
+        self.assertEqual(r["needs_dlc"], [])
+        self.assertIn("Dead Money", r["owned_dlc"])
+
+    def test_a_disabled_mod_is_not_checked(self):
+        settings = main._load_settings()
+        settings["installed"]["newvegas"]["oHUD"]["enabled"] = False
+        main._save_settings(settings)
+        self.assertEqual(self._check()["needs_mods"], [])
+
+    def test_dlc_is_only_claimed_where_it_can_be_proved(self):
+        # Slay the Spire 2 has no expansions as master files, so a "you
+        # need this DLC" warning there would be a guess.
+        self.assertTrue(main._dlc_checkable("newvegas"))
+        self.assertFalse(main._dlc_checkable("slaythespire2"))
+
+    def test_rejects_a_bad_domain(self):
+        self.assertFalse(run(self.plugin.get_health_check(
+            "../evil", self.GAME, "Data"))["ok"])
+
+
 class TestLogTagMatching(unittest.TestCase):
     """Mods log under a logger name they chose, not their id. Five of the
     nine blamed tags in the real crash log matched nothing until this."""

@@ -49,3 +49,7 @@ test("never pops past our own pages", () => {
   // one of ours behind.
   assert.equal(popsToExitToQam(-2), 0);
 });
+
+test("the health check returns to the QAM, because that is where it opens", () => {
+  assert.equal(backAction("health"), "open-qam");
+});

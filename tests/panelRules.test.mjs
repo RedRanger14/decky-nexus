@@ -9,6 +9,7 @@ import {
   disableFailingOutcome,
   failingProblem,
   frameworkStepNumbers,
+  healthVerdict,
   installedDepsNote,
   isGoneFromNexus,
   knownBrokenNote,
@@ -1134,4 +1135,45 @@ test("two libraries read in the plural", () => {
 test("a library with no named requester still reads", () => {
   assert.match(installedDepsNote([{ name: "BaseLib", for: "" }]),
                /Installed BaseLib\./);
+});
+
+// --- healthVerdict --------------------------------------------------------
+// The Health Check leads with an answer, not a table: somebody opens a
+// diagnostics screen already frustrated.
+
+test("a clean setup says so and counts what it checked", () => {
+  const v = healthVerdict(12, 0, false);
+  assert.equal(v.headline, "Everything checks out");
+  assert.match(v.detail, /All 12 of your mods/);
+  assert.equal(v.clean, true);
+});
+
+test("problems are counted in the headline, not buried", () => {
+  assert.equal(healthVerdict(12, 1, false).headline, "1 thing needs attention");
+  assert.equal(
+    healthVerdict(12, 4, false).headline,
+    "4 things need attention"
+  );
+});
+
+test("it never implies the game is unplayable", () => {
+  // Every finding so far has been "a mod is not doing its job", not "your
+  // game is broken" - overstating it would send people resetting for
+  // nothing.
+  assert.match(
+    healthVerdict(12, 3, false).detail,
+    /None of this stops you playing right now/
+  );
+});
+
+test("checking is its own state, not a fake clean result", () => {
+  const v = healthVerdict(0, 0, true);
+  assert.match(v.headline, /Checking/);
+  assert.equal(v.clean, false);
+});
+
+test("no mods installed is not a clean bill of health", () => {
+  const v = healthVerdict(0, 0, false);
+  assert.match(v.headline, /Nothing installed/);
+  assert.equal(v.clean, false);
 });
