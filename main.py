@@ -9553,6 +9553,37 @@ query Link($slug: String!, $domainName: String!) {
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges", "skipped"):
             settings.get(section, {}).pop(game_domain, None)
+        # Re-take the baseline now, because THIS is the only moment we can
+        # be sure what vanilla looks like.
+        #
+        # _record_vanilla_baseline writes once and never again, on the
+        # theory that the first install is preceded by a clean folder. It
+        # is not always: on device the New Vegas baseline was captured
+        # with 30-odd mod files already in Data - TTWLods.esp, Titans of
+        # The New West, mil.esp, uio - because the game had been modded
+        # before this plugin ever saw it. A baseline holding mod files
+        # PROTECTS those files from the sweep, which is the exact opposite
+        # of what it is for.
+        #
+        # After a reset the folder is as close to vanilla as it will ever
+        # be, and it now includes whatever DLC or patch content the game
+        # has gained since. Stamped with the build so a later update is
+        # still detectable.
+        if os.path.isdir(mods_path) and not errors:
+            try:
+                fresh = sorted(os.listdir(mods_path))
+            except OSError:
+                fresh = []
+            if fresh:
+                settings.setdefault("vanilla_baseline", {})[game_domain] = fresh
+                build = _steam_build_id(app_id)
+                if build:
+                    settings.setdefault("baseline_build", {})[game_domain] = build
+                decky.logger.info(
+                    f"reset {game_domain!r}: re-took the vanilla baseline, "
+                    f"{len(fresh)} entries at build {build or 'unknown'} "
+                    f"(was {len(baseline)})"
+                )
         _save_settings(settings)
         cleared_dlo = False
         if app_id and _dlo_present():

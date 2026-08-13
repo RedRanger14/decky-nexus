@@ -4060,6 +4060,36 @@ class TestBaselineBuildGuard(unittest.TestCase):
         self.assertIn("game_changed", src)
 
 
+class TestBaselineRetakenOnReset(unittest.TestCase):
+    """_record_vanilla_baseline writes once, on the theory that the first
+    install is preceded by a clean folder. On device it was not: New
+    Vegas's baseline held 30-odd mod files - TTWLods.esp, Titans of The
+    New West, mil.esp, uio - because the game had been modded before this
+    plugin ever saw it. A baseline containing mod files PROTECTS them from
+    the sweep, the exact opposite of its purpose.
+
+    After a reset the folder is as close to vanilla as it will ever be,
+    and includes any DLC or patch content gained since. That is the moment
+    to re-take it."""
+
+    def test_reset_retakes_the_baseline(self):
+        import inspect
+        src = inspect.getsource(main.Plugin.reset_game_modding)
+        self.assertIn("re-took the vanilla baseline", src)
+        # And stamps the build, or the update guard is blind again.
+        after = src[src.index("re-took the vanilla baseline") - 800:]
+        self.assertIn("_steam_build_id", src)
+        self.assertIn("baseline_build", src)
+        self.assertTrue(after)
+
+    def test_it_does_not_retake_after_a_failed_reset(self):
+        # A reset that hit errors may have left mods behind; recording
+        # those as "vanilla" would make them permanent.
+        import inspect
+        src = inspect.getsource(main.Plugin.reset_game_modding)
+        self.assertIn("and not errors", src)
+
+
 class TestGameOwnedContent(unittest.TestCase):
     """Reset must never delete content the user bought.
 
