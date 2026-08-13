@@ -888,6 +888,28 @@ export const getCollectionExtras = callable<
   }
 >("get_collection_extras");
 
+// Switches off mods needing a file Nexus does not host, and restores them
+// if the user fetches it. Console-first: a mod that cannot work is OFF.
+export const applyKnownPrerequisites = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    slug: string
+  ],
+  {
+    ok: boolean;
+    parked?: number;
+    restored?: number;
+    mods?: string[];
+    needs?: string[];
+    error?: string;
+  }
+>("apply_known_prerequisites");
+
 export const getFileConflicts = callable<
   [game_domain: string, mod_order: number[]],
   {

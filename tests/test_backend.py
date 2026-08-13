@@ -4083,6 +4083,106 @@ class TestBaselineBuildGuard(unittest.TestCase):
         self.assertIn("game_changed", src)
 
 
+class TestExternalPrerequisites(unittest.TestCase):
+    """A mod that needs a file Nexus does not host is switched OFF, not
+    installed and silently breaking the game.
+
+    Device: three New Vegas interface mods need Vanilla UI+, hosted on
+    ModDB. Left on, the game reaches the main-menu background and stops -
+    no crash log, no error anyone can act on. The workaround was a
+    terminal, then a manual toggle, and the audience is people holding a
+    controller. So it is automatic and reversible instead."""
+
+    GAME = "Prereq Test"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(root, ignore_errors=True)
+        self.data = os.path.join(root, "Data")
+        os.makedirs(os.path.join(self.data, "menus"))
+        for rel in ("menus/hud.xml", "menus/other.xml"):
+            with open(os.path.join(self.data, *rel.split("/")), "w") as f:
+                f.write(rel)
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["newvegas_prereq"] = {
+            "One HUD - oHUD": {
+                "mode": "dataDir", "plugins": [], "name": "One HUD - oHUD",
+                "files": ["menus/hud.xml", "menus/other.xml"],
+            },
+        }
+        main._save_settings(settings)
+        # Point the table at our fake domain for the duration.
+        main.NEEDS_EXTERNAL_MOD["newvegas_prereq"] = {
+            "one hud - ohud": {
+                "needs_file": "Vanilla UI Plus.esp",
+                "needs_name": "Vanilla UI+ (VUI+)",
+            },
+        }
+        main._force_rmtree(
+            main._parked_files_dir("newvegas_prereq", "One HUD - oHUD")
+        )
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("newvegas_prereq", None)
+        settings.get("collection_attention", {}).pop("newvegas_prereq", None)
+        main._save_settings(settings)
+        main.NEEDS_EXTERNAL_MOD.pop("newvegas_prereq", None)
+        main._force_rmtree(
+            main._parked_files_dir("newvegas_prereq", "One HUD - oHUD")
+        )
+
+    def _apply(self):
+        return run(self.plugin.apply_known_prerequisites(
+            "newvegas_prereq", self.GAME, "Data", 0, "", "listed", "abc123"))
+
+    def _present(self, rel):
+        return os.path.isfile(os.path.join(self.data, *rel.split("/")))
+
+    def test_parks_a_mod_whose_prerequisite_is_absent(self):
+        r = self._apply()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["parked"], 2)
+        self.assertEqual(r["mods"], ["One HUD - oHUD"])
+        self.assertEqual(r["needs"], ["Vanilla UI+ (VUI+)"])
+        self.assertFalse(self._present("menus/hud.xml"))
+
+    def test_it_says_why_on_the_collection(self):
+        self._apply()
+        queue = (main._load_settings().get("collection_attention", {})
+                 .get("newvegas_prereq", {}).get("abc123") or [])
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["reason"], "needs_external")
+        self.assertIn("Vanilla UI+", queue[0]["detail"])
+        self.assertIn("My Mods", queue[0]["detail"])
+
+    def test_running_twice_parks_nothing_extra(self):
+        self.assertEqual(self._apply()["parked"], 2)
+        self.assertEqual(self._apply()["parked"], 0)
+
+    def test_restores_the_mod_once_the_prerequisite_arrives(self):
+        self._apply()
+        self.assertFalse(self._present("menus/hud.xml"))
+        # The user fetched VUI+ by hand and installed it.
+        with open(os.path.join(self.data, "Vanilla UI Plus.esp"), "w") as f:
+            f.write("esp")
+        r = self._apply()
+        self.assertEqual(r["restored"], 2)
+        self.assertEqual(r["mods"], [])
+        self.assertTrue(self._present("menus/hud.xml"))
+
+    def test_a_game_with_no_table_is_left_alone(self):
+        r = run(self.plugin.apply_known_prerequisites(
+            "stardewvalley", self.GAME, "Data"))
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["parked"], 0)
+
+    def test_rejects_a_bad_domain(self):
+        r = run(self.plugin.apply_known_prerequisites("../evil", self.GAME))
+        self.assertFalse(r["ok"])
+
+
 class TestDataDirToggleParksFiles(unittest.TestCase):
     """Unticking a plugin does not switch a dataDir mod off.
 

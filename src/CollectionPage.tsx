@@ -21,7 +21,9 @@ import {
 
 import {
   endorseCollection,
+  applyKnownPrerequisites,
   getCollectionExtras,
+  disableBlockedPlugins,
   getFileConflicts,
   installCollectionBundles,
   applyCollectionPlugins,
@@ -327,6 +329,37 @@ export function CollectionPage() {
       } catch {
         /* leave the load order as installed rather than half-applied */
       }
+    }
+    // A plugin whose master never arrived stops the game starting with a
+    // modal naming one file. We detected that and put the fix behind a
+    // button in Troubleshooting, which is no use to someone holding a
+    // controller who just wants to play.
+    if (game.pluginsTxtSubpath) {
+      try {
+        await disableBlockedPlugins(
+          game.appId,
+          game.installDirName,
+          game.pluginsTxtSubpath,
+          game.pluginsTxtStyle ?? "starred",
+          game.nexusDomain
+        );
+      } catch {
+        /* the load-order row still offers it manually */
+      }
+    }
+    // Mods that need a file Nexus does not host: off, not broken.
+    try {
+      await applyKnownPrerequisites(
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        game.appId,
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred",
+        collection.slug
+      );
+    } catch {
+      /* nothing parked is the same as before this existed */
     }
     try {
       const extras = await getCollectionExtras(
@@ -1350,32 +1383,73 @@ export function CollectionPage() {
               installed - only the missing ones will download.
             </div>
           )}
-        {manualMods.length > 0 && !installing && (
-          <div
-            style={{
-              fontSize: "12.5px",
-              margin: "-6px 0 12px",
-              padding: "8px 10px",
-              borderRadius: "4px",
-              lineHeight: 1.45,
-              background: "rgba(218, 142, 53, 0.12)",
-              border: "1px solid rgba(218, 142, 53, 0.4)",
-            }}
-          >
-            ⬇ {manualMods.length} mod
-            {manualMods.length === 1 ? "" : "s"} in this collection
-            {manualMods.length === 1 ? " is" : " are"} not hosted on Nexus
-            Mods, so {manualMods.length === 1 ? "it" : "they"} cannot be
-            downloaded here:{" "}
-            {manualMods
-              .map((m) => `${m.name}${m.optional ? " (optional)" : ""}`)
-              .join(", ")}
-            . {manualMods[0]?.url ? `Get it from ${manualMods[0].url}. ` : ""}
-            The rest of the collection installs and works without
-            {manualMods.length === 1 ? " it" : " them"}, but parts that
-            depend on {manualMods.length === 1 ? "it" : "them"} may not.
-          </div>
-        )}
+        {(manualMods.length > 0 ||
+          (detail?.externals.length ?? 0) > 0) &&
+          !installing && (
+            <div
+              style={{
+                fontSize: "12.5px",
+                margin: "-6px 0 12px",
+                padding: "8px 10px",
+                borderRadius: "4px",
+                lineHeight: 1.45,
+                background: "rgba(218, 142, 53, 0.12)",
+                border: "1px solid rgba(218, 142, 53, 0.4)",
+              }}
+            >
+              {(() => {
+                // One list, deduplicated. A manifest browse-mod and a
+                // collection external resource are the same fact to a
+                // user - "we cannot download this for you" - and two
+                // notes with different counts read as contradicting
+                // each other.
+                const seen = new Set<string>();
+                const items: { label: string; url?: string }[] = [];
+                for (const m of manualMods) {
+                  const k = m.name.toLowerCase();
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  items.push({
+                    label: m.name + (m.optional ? " (optional)" : ""),
+                    url: m.url,
+                  });
+                }
+                for (const e of detail?.externals ?? []) {
+                  const k = e.name.toLowerCase();
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  const isFramework =
+                    game.framework &&
+                    e.name
+                      .toLowerCase()
+                      .includes(
+                        game.framework.name.toLowerCase().slice(0, 4)
+                      );
+                  items.push({
+                    label: isFramework
+                      ? `${e.name} — this is ${game.framework!.name}, ` +
+                        `Step 1 on the game panel installs it`
+                      : e.name + (e.optional ? " (optional)" : ""),
+                  });
+                }
+                const withUrl = items.find((i) => i.url);
+                return (
+                  <>
+                    ⬇ {items.length} thing{items.length === 1 ? "" : "s"} in
+                    this collection {items.length === 1 ? "is" : "are"} not
+                    hosted on Nexus Mods, so{" "}
+                    {items.length === 1 ? "it cannot" : "they cannot"} be
+                    downloaded here: {items.map((i) => i.label).join(", ")}.
+                    {withUrl ? ` Get it from ${withUrl.url}.` : ""} Anything
+                    that needs {items.length === 1 ? "it" : "them"} has been
+                    switched off so the game still starts — turn it back on
+                    in My Mods once you have added{" "}
+                    {items.length === 1 ? "it" : "them"}.
+                  </>
+                );
+              })()}
+            </div>
+          )}
         {brokenSkips.length > 0 && !installing && (
           <div
             style={{
@@ -1445,32 +1519,6 @@ export function CollectionPage() {
 
         {error && (
           <div style={{ color: "#ff8a8a", padding: "8px 0" }}>{error}</div>
-        )}
-
-        {detail && detail.externals.length > 0 && (
-          <div
-            style={{
-              margin: "0 0 12px",
-              padding: "8px 12px",
-              background: "rgba(255, 200, 60, 0.12)",
-              borderLeft: "3px solid #ffc83c",
-              borderRadius: "4px",
-              fontSize: "13px",
-            }}
-          >
-            This collection references {detail.externals.length} external
-            file(s) we can't fetch automatically:{" "}
-            {detail.externals
-              .map((e) =>
-                game.framework &&
-                e.name
-                  .toLowerCase()
-                  .includes(game.framework.name.toLowerCase().slice(0, 4))
-                  ? `${e.name} (this is ${game.framework.name} - Step 1 on the game's panel installs it)`
-                  : e.name
-              )
-              .join(", ")}
-          </div>
         )}
 
         {detail && (
