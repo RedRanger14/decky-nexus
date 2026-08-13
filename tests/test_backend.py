@@ -4979,6 +4979,52 @@ class TestApplyKnownVerdicts(unittest.TestCase):
         self.assertFalse(run(self.plugin.get_known_mod_verdict(
             "../evil", 1, 1))["ok"])
 
+    def test_a_stale_library_is_updated_at_install_not_disabled(self):
+        # The gap Michael hit: reset, reinstall, and the collection put
+        # BaseLib 3.1.2 and RitsuLib 0.2.30 straight back with all five
+        # errors, minutes after they had been fixed. Verdicts only covered
+        # mods that get switched off, so finish-setup had nothing to act on.
+        main._record_mod_verdicts("verdicttest", self.build, [
+            {"mod_id": 103, "version": "3.1.2", "name": "BaseLib",
+             "why": "HarmonyException"}], "stale")
+        calls = []
+
+        async def fake_files(game_domain, mod_id):
+            return {"ok": True, "files": [
+                {"file_id": 7, "file_name": "b.zip", "version": "3.3.8"}]}
+
+        async def fake_install(*a, **k):
+            calls.append(a[4])
+            return {"ok": True}
+
+        self.plugin.get_mod_files = fake_files
+        self.plugin.install_mod = fake_install
+        r = self._apply()
+        self.assertEqual(
+            r["updated"], [{"name": "BaseLib", "from": "3.1.2", "to": "3.3.8"}])
+        self.assertEqual(calls, ["BaseLib"])
+        # And it is NOT switched off - other mods need it.
+        self.assertTrue(os.path.isdir(os.path.join(self.mods, "BaseLib")))
+
+    def test_a_stale_verdict_against_another_version_is_ignored(self):
+        main._record_mod_verdicts("verdicttest", self.build, [
+            {"mod_id": 103, "version": "2.0.0", "name": "BaseLib",
+             "why": "x"}], "stale")
+        called = []
+        self.plugin.install_mod = lambda *a, **k: called.append(1)
+        self.assertEqual(self._apply()["updated"], [])
+        self.assertEqual(called, [])
+
+    def test_broken_and_stale_are_kept_apart(self):
+        self._note(mod_id=284, version="1.2.0")
+        main._record_mod_verdicts("verdicttest", self.build, [
+            {"mod_id": 103, "version": "3.1.2", "name": "BaseLib",
+             "why": "x"}], "stale")
+        broken = main._known_broken_mods("verdicttest", self.build)
+        stale = main._known_broken_mods("verdicttest", self.build, "stale")
+        self.assertEqual(list(broken), [284])
+        self.assertEqual(list(stale), [103])
+
     def test_reset_game_modding_does_not_forget_the_verdicts(self):
         # The exact moment the feature has to survive. Reset means start the
         # mods clean, not relearn from a third crash which mod kills the

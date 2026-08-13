@@ -277,6 +277,40 @@ export function knownBrokenNote(version: string): string {
   );
 }
 
+/** A plain readout of what the game itself reported last run.
+ *
+ * Michael, 2026-08-13: "it doesnt say there are 23 errors, just 23 mods
+ * loaded with errors so its hard to tell if its different or not". The
+ * game's banner is binary - it looks identical whether one mod erred or
+ * five - so going from 5 erroring mods to 1 is invisible in the place the
+ * user is actually looking. This is the number, in words, on our side.
+ *
+ * `blamed` counts mods still reporting errors; `handled` is what the plugin
+ * has already dealt with this run.
+ */
+export function lastRunSummary(
+  blamed: string[],
+  handled: number
+): string | undefined {
+  const names = blamed.filter(Boolean);
+  if (!names.length) {
+    return handled > 0
+      ? `No mods are reporting errors any more. The game may still show a ` +
+          `red "WITH ERRORS" line from the run before this fix — launch it ` +
+          `once more and that will clear.`
+      : "No mods reported errors the last time you played.";
+  }
+  const one = names.length === 1;
+  const shown = names.slice(0, 3).join(", ");
+  const rest = names.length - 3;
+  return (
+    `${one ? "1 mod is" : `${names.length} mods are`} still reporting ` +
+    `errors: ${shown}${rest > 0 ? ` and ${rest} more` : ""}. The game ` +
+    `shows one red line however many there are, so it looks the same ` +
+    `whether that is one or twenty.`
+  );
+}
+
 /** What the panel says about blamed mods it updated rather than switched
  * off.
  *
