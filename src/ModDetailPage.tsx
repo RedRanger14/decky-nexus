@@ -29,7 +29,8 @@ import {
   setEndorsement,
   uninstallMod,
 
-  getKnownModVerdict,} from "./api";
+  getKnownModVerdict,
+  getShowAdult,} from "./api";
 import { knownBrokenNote } from "./panelRules";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
@@ -107,6 +108,16 @@ export function ModDetailPage() {
   // Needs something Nexus does not host. Shown on the mod's own page,
   // because a user can arrive here from a search and never see the
   // collection that warned about it.
+  // The account's "blur adult images" preference. Browse tiles honoured it
+  // and this page did not, so opening a blurred tile showed it unblurred -
+  // which defeats the setting entirely, since the mod page is where the art
+  // is biggest.
+  const [blurAdult, setBlurAdult] = useState(false);
+  useEffect(() => {
+    getShowAdult()
+      .then((r) => setBlurAdult(Boolean(r.ok && r.show_adult && r.blur_adult)))
+      .catch(() => {});
+  }, []);
   // Non-empty = the version we watched fail on this game build.
   const [knownBroken, setKnownBroken] = useState("");
   const [needsExternal, setNeedsExternal] = useState<
@@ -416,6 +427,14 @@ export function ModDetailPage() {
         : progress.percent
       : 0;
 
+  // Blur only when BOTH are true: the account asked for it and this
+
+  // mod is flagged adult. Blurring everything would be a bug in the
+
+  // other direction.
+
+  const blurThisMod = blurAdult && Boolean(mod.adultContent);
+
   const heroUrl = mod.pictureUrl ?? mod.thumbnailUrl;
   const compatHint = getCompatHint(game.nexusDomain, mod.modId);
   const updatedDate = mod.updatedAt ? new Date(mod.updatedAt).toLocaleDateString() : "";
@@ -486,6 +505,9 @@ export function ModDetailPage() {
       {/* Mod art as blurred atmosphere behind the header - depth without
           competing with the real artwork card in front of it. */}
       <PageBackdrop src={heroUrl} height={250} />
+      {/* One flag for every image on the page: the header art, the backdrop
+          behind it and the gallery all have to agree, or the setting only
+          half-works. */}
       <div style={{ position: "relative", zIndex: 1 }}>
       {/* ---- Header: hero image + facts ---- */}
       <Focusable style={{ display: "flex", gap: "20px", padding: "12px 0 4px" }}>
@@ -498,6 +520,7 @@ export function ModDetailPage() {
               src={heroUrl}
               alt={mod.name}
               style={{
+                filter: blurThisMod ? "blur(18px)" : undefined,
                 width: "100%",
                 height: "250px",
                 // Never crop the artwork - letterbox odd aspect ratios.

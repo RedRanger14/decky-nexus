@@ -4926,6 +4926,22 @@ def _parse_mod_load_log(lines: list):
         if m:
             loaded.add(norm(m.group(1)))
             continue
+        # Same opening words, two completely different problems. The
+        # version one was being reported as "duplicate mod id", which sent
+        # Michael looking for a clash that did not exist.
+        m = re.search(
+            r"Tried to load mod with id (\S+?), but its declared min game "
+            r"version (\S+) is higher than the current game version (\S+)",
+            line,
+        )
+        if m:
+            errors[norm(m.group(1))] = (
+                f"needs game version {m.group(2)}, and this game is "
+                f"{m.group(3).lstrip('v')} - it is built for a NEWER build "
+                f"than the one installed"
+            )
+            raw_tags.setdefault(norm(m.group(1)), m.group(1))
+            continue
         m = re.search(r"Tried to load mod with id (\S+?),", line)
         if m:
             errors.setdefault(norm(m.group(1)), "duplicate mod id")
@@ -11545,11 +11561,18 @@ query Link($slug: String!, $domainName: String!) {
             if missing:
                 needs_mods.append({"name": name, "mod_id": rec["mod_id"],
                                    "missing": missing})
+            # "or BaseLib on Github (declared version in description of my
+            # files)" is an alternative SOURCE for a mod already installed
+            # from Nexus, not a second thing to go and get. Authors write
+            # these constantly, and reporting one as missing sends the user
+            # after something they already have - which is exactly what the
+            # health check exists to stop.
             off_nexus = [
                 {"name": r.get("modName") or "an off-site file",
                  "url": r.get("url") or ""}
                 for r in reqs.get("requirements") or []
                 if (r.get("modId") or 0) <= 0 and r.get("url")
+                and not re.match(r"\s*or", r.get("modName") or "", re.I)
             ]
             if off_nexus:
                 needs_external.append({"name": name, "files": off_nexus})

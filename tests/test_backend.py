@@ -305,6 +305,28 @@ class TestModLoadLogParsing(unittest.TestCase):
         ])
         self.assertIn("BaseLib, RitsuLib", status["thing"]["detail"])
 
+    def test_a_mod_built_for_a_newer_game_says_so(self):
+        # Verbatim from device. Two different problems open with the same
+        # words, and this one was being reported as "duplicate mod id",
+        # sending Michael after a clash that did not exist.
+        status, _m = main._parse_mod_load_log([
+            "[ERROR] Tried to load mod with id ChizuruIroncladSkin, but its "
+            "declared min game version 0.110.0 is higher than the current "
+            "game version v0.107.1",
+        ])
+        detail = status["chizuruironcladskin"]["detail"]
+        self.assertIn("needs game version 0.110.0", detail)
+        self.assertIn("this game is 0.107.1", detail)
+        self.assertIn("NEWER build", detail)
+        self.assertNotIn("duplicate", detail)
+
+    def test_a_real_duplicate_id_is_still_called_one(self):
+        status, _m = main._parse_mod_load_log([
+            "[ERROR] Tried to load mod with id Thing, but a mod with that "
+            "id is already loaded",
+        ])
+        self.assertEqual(status["thing"]["detail"], "duplicate mod id")
+
     def test_a_mod_that_never_loaded_is_still_an_error(self):
         status, _modded = main._parse_mod_load_log([
             "[INFO] RUNNING MODDED",
@@ -5558,6 +5580,30 @@ class TestHealthCheck(unittest.TestCase):
             "mod_id": 57174, "name": "UIO", "mode": "dataDir"}
         main._save_settings(settings)
         self.assertEqual(self._check()["needs_mods"], [])
+
+    def test_an_alternative_source_is_not_a_missing_requirement(self):
+        # Verbatim from device: The Watcher lists "or BaseLib on Github
+        # (declared version in description of my files)". That is another
+        # way to get a mod already installed from Nexus, not a second thing
+        # to fetch - and reporting it sent Michael after something he had.
+        self.reqs[44757]["requirements"].append(
+            {"modName": "or BaseLib on Github (declared version in "
+                        "description of my files)",
+             "modId": 0, "notes": "",
+             "url": "https://github.com/Alchyr/BaseLib-StS2/releases/"})
+        names = [
+            f["files"][0]["name"] for f in self._check()["needs_external"]
+        ]
+        self.assertNotIn(
+            "or BaseLib on Github (declared version in description of my "
+            "files)", names)
+
+    def test_a_real_off_nexus_file_is_still_reported(self):
+        # The distinction has to hold both ways: Vanilla UI+ is a genuine
+        # off-site requirement and must survive the "or" rule.
+        r = self._check()
+        self.assertEqual(r["needs_external"][0]["files"][0]["name"],
+                         "Vanilla UI+")
 
     def test_an_off_nexus_file_is_reported_with_where_to_get_it(self):
         # The Vanilla UI+ case, which cost three failed boots to find by
