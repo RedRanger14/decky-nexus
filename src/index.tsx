@@ -2358,7 +2358,11 @@ function TroubleshootingSection() {
   const [ghostBusy, setGhostBusy] = useState(false);
   // Mods the game's own log blamed last session. Named by the log, so
   // "which ones are outdated" stops being a hunt.
-  const [failing, setFailing] = useState<string[]>([]);
+  const [failing, setFailing] = useState<{
+    names: string[];
+    details: { name: string; why: string }[];
+    held: string[];
+  }>({ names: [], details: [], held: [] });
   const [failingBusy, setFailingBusy] = useState(false);
   // Enabled plugins listed before a master they need - a boot crash.
   const [loadOrder, setLoadOrder] = useState<
@@ -2420,20 +2424,31 @@ function TroubleshootingSection() {
         )
       );
     }
-    // The game's own log naming the mods it blamed. Only games whose logs
-    // attribute errors to a mod - so far the Godot ones.
+    // The game's own log naming the mods it blamed. Asked as a dry run of
+    // the same call the button makes, so the count in the row is exactly
+    // what pressing it will do - reading the log directly said "9 mods
+    // broke" where only 6 were installed mods it could act on.
     if (game.logAdapter?.kind === "godot") {
-      getModLoadStatus(game.logAdapter.userDirName).then((r) =>
-        setFailing(
-          r.ok && r.available && r.modded_session
-            ? Object.values(r.status ?? {})
-                .filter((st) => st.state === "error")
-                .map((st) => st.detail)
-            : []
-        )
+      disableFailingMods(
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        game.logAdapter.userDirName,
+        game.installMode ?? "folder",
+        game.appId,
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred",
+        game.recommendedModIds ?? [],
+        true
+      ).then((r) =>
+        setFailing({
+          names: r.ok ? r.names ?? [] : [],
+          details: r.ok ? r.details ?? [] : [],
+          held: r.ok ? r.held ?? [] : [],
+        })
       );
     } else {
-      setFailing([]);
+      setFailing({ names: [], details: [], held: [] });
     }
     if (game.pluginsTxtSubpath) {
       getLoadOrderState(
@@ -2656,7 +2671,7 @@ function TroubleshootingSection() {
 
   const problems = troubleshootingCount(
     Boolean(runtime?.outdated),
-    (sePlugins?.failed.length ?? 0) + failing.length,
+    (sePlugins?.failed.length ?? 0) + failing.names.length,
     Boolean(suspect),
     loadOrderIssue,
     missingMasters || ghostIssue
@@ -2833,16 +2848,16 @@ function TroubleshootingSection() {
             </ButtonItem>
           </PanelSectionRow>
         )}
-        {failing.length > 0 && game && (
+        {failing.names.length > 0 && game && (
           <PanelSectionRow>
             <ButtonItem
               layout="below"
               label={
-                failing.length === 1
+                failing.names.length === 1
                   ? "1 mod broke last time you played"
-                  : `${failing.length} mods broke last time you played`
+                  : `${failing.names.length} mods broke last time you played`
               }
-              description={failingProblem(failing)}
+              description={failingProblem(failing.details, failing.held)}
               disabled={failingBusy}
               onClick={async () => {
                 if (game.logAdapter?.kind !== "godot") return;
@@ -2857,7 +2872,8 @@ function TroubleshootingSection() {
                     game.appId,
                     game.pluginsTxtSubpath ?? "",
                     game.pluginsTxtStyle ?? "starred",
-                    game.recommendedModIds ?? []
+                    game.recommendedModIds ?? [],
+                    false
                   );
                   toaster.toast({
                     title: r.ok
@@ -2872,7 +2888,7 @@ function TroubleshootingSection() {
                       : r.error ?? "",
                   });
                   if (r.ok && (r.disabled ?? 0) > 0) {
-                    setFailing([]);
+                    setFailing({ names: [], details: [], held: [] });
                     notifyGameStateChanged();
                   }
                 } finally {

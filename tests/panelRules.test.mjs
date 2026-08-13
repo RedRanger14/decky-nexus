@@ -756,44 +756,56 @@ test("permanent skips are never actionable", () => {
 // The Slay the Spire 2 case: the log names every mod it threw from, so the
 // panel can name them back instead of saying "something crashed".
 
+const d = (...names) => names.map((name) => ({ name, why: "boom" }));
+
 test("nothing blamed says nothing", () => {
   assert.equal(failingProblem([]), undefined);
-  assert.equal(failingProblem(["", "  "]), undefined);
+  assert.equal(failingProblem([{ name: "", why: "x" }]), undefined);
 });
 
 test("one failing mod reads in the singular", () => {
-  const msg = failingProblem(["Friedslop: MissingMethodException"]);
-  assert.match(msg, /Friedslop/);
+  const msg = failingProblem(d("Relics Reminder"));
+  assert.match(msg, /Relics Reminder/);
   assert.match(msg, /it has not been updated/);
   assert.match(msg, /switch it back on/);
   assert.doesNotMatch(msg, /and \d+ more/);
 });
 
 test("two failing mods are both named", () => {
-  const msg = failingProblem(["Alpha: boom", "Beta: boom"]);
+  const msg = failingProblem(d("Alpha", "Beta"));
   assert.match(msg, /Alpha, Beta/);
   assert.match(msg, /they have not been updated/);
   assert.doesNotMatch(msg, /more/);
 });
 
 test("a long list names two and counts the rest", () => {
-  const msg = failingProblem(
-    ["A: x", "B: x", "C: x", "D: x", "E: x"].slice()
-  );
-  assert.match(msg, /A, B and 3 more/);
+  assert.match(failingProblem(d("A", "B", "C", "D", "E")), /A, B and 3 more/);
 });
 
 test("says switching them off leaves the others alone", () => {
   // The whole point of the button: it is not "disable all mods".
   assert.match(
-    failingProblem(["A: x", "B: x"]),
+    failingProblem(d("A", "B")),
     /leaves the rest of your mods alone/
   );
 });
 
-test("a detail with no mod name still counts", () => {
-  const msg = failingProblem([":  ", "A: x"]);
-  assert.match(msg, /A/);
+test("names the library it is leaving on, and why", () => {
+  // BaseLib threw too, and five mods depend on it. Saying nothing would
+  // leave the user to notice a blamed mod is still there.
+  const msg = failingProblem(d("Relics Reminder"), ["BaseLib"]);
+  assert.match(msg, /BaseLib also reported errors but is left on/);
+  assert.match(msg, /your other mods need it/);
+});
+
+test("two held libraries read in the plural", () => {
+  const msg = failingProblem(d("A"), ["BaseLib", "RitsuLib"]);
+  assert.match(msg, /BaseLib and RitsuLib also reported errors but are/);
+  assert.match(msg, /need them/);
+});
+
+test("no held libraries adds no sentence about them", () => {
+  assert.doesNotMatch(failingProblem(d("A")), /left on/);
 });
 
 // --- disableFailingOutcome ------------------------------------------------

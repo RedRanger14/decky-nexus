@@ -235,23 +235,28 @@ export function ghostPluginProblem(
  * Names the first two mods. A list of nine reads as a wall and gets
  * skipped; two plus a count is enough to recognise what is going.
  */
-export function failingProblem(details: string[]): string | undefined {
-  const kept = details.filter((d) => d && d.trim());
-  if (!kept.length) return undefined;
-  const names = kept.map((d) => d.split(":")[0].trim()).filter(Boolean);
+export function failingProblem(
+  details: { name: string; why: string }[],
+  held: string[] = []
+): string | undefined {
+  const names = details.map((d) => d.name).filter(Boolean);
+  if (!names.length) return undefined;
+  const one = names.length === 1;
   const shown = names.slice(0, 2).join(", ");
   const rest = names.length - 2;
-  const who = shown
-    ? `${shown}${rest > 0 ? ` and ${rest} more` : ""}`
-    : `${kept.length} mod${kept.length === 1 ? "" : "s"}`;
+  const who = `${shown}${rest > 0 ? ` and ${rest} more` : ""}`;
+  const kept = held.filter(Boolean);
   return (
     `The game reported errors from ${who}. That normally means ` +
-    `${names.length === 1 ? "it has" : "they have"} not been updated for ` +
-    `this version of the game. Switching ${
-      names.length === 1 ? "it" : "them"
-    } off leaves the rest of your mods alone, and you can switch ` +
-    `${names.length === 1 ? "it" : "them"} back on once ` +
-    `${names.length === 1 ? "an update arrives" : "updates arrive"}.`
+    `${one ? "it has" : "they have"} not been updated for this version of ` +
+    `the game. Switching ${one ? "it" : "them"} off leaves the rest of ` +
+    `your mods alone, and you can switch ${one ? "it" : "them"} back on ` +
+    `once ${one ? "an update arrives" : "updates arrive"}.` +
+    (kept.length
+      ? ` ${kept.slice(0, 2).join(" and ")} also reported errors but ` +
+        `${kept.length === 1 ? "is" : "are"} left on — your other mods ` +
+        `need ${kept.length === 1 ? "it" : "them"}.`
+      : "")
   );
 }
 

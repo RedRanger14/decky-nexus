@@ -4548,6 +4548,97 @@ _OPTIONAL_FAILURE_RE = re.compile(
 )
 
 
+def _godot_mod_manifests(mods_dir: str) -> dict:
+    """Read every installed Godot mod's own manifest.
+
+    Verified against Slay the Spire 2 on device, 2026-08-13. Each mod folder
+    carries a JSON manifest - "mod_manifest.json" or "<Something>.json" -
+    holding the mod's real id, its display name and, crucially, the ids of
+    the mods it depends on. Two of them (BaseLib, TransformOrBanish) are
+    written with a UTF-8 BOM, so utf-8-sig or nothing gets read at all.
+
+    Returns folder -> {"id", "name", "deps"}. Folders with no readable
+    manifest are simply absent; nothing here is load-bearing enough to fail
+    over.
+    """
+    out = {}
+    try:
+        folders = sorted(os.listdir(mods_dir))
+    except OSError:
+        return out
+    for folder in folders:
+        path = os.path.join(mods_dir, folder)
+        if not os.path.isdir(path):
+            continue
+        try:
+            names = sorted(n for n in os.listdir(path)
+                           if n.lower().endswith(".json"))
+        except OSError:
+            continue
+        # mod_manifest.json first where both exist - it is the documented
+        # name, and a mod shipping a second .json for its own data should
+        # not win the coin toss.
+        names.sort(key=lambda n: (n.lower() != "mod_manifest.json", n))
+        for name in names:
+            try:
+                with open(os.path.join(path, name), "r",
+                          encoding="utf-8-sig") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or not data.get("id"):
+                continue
+            deps = data.get("dependencies")
+            out[folder] = {
+                "id": str(data["id"]),
+                "name": str(data.get("name") or data["id"]),
+                "deps": [str(d) for d in deps] if isinstance(deps, list)
+                        else [],
+            }
+            break
+    return out
+
+
+def _tag_names_mod(tag: str, ident: str) -> bool:
+    """Whether a log tag refers to the mod with this id or name.
+
+    Mods log under a logger name they chose, not their id: RitsuLib's id is
+    "STS2-RitsuLib" but it logs as "com.ritsukage.sts2-RitsuLib", and
+    ModConfig logs as "sts2.piyixiajiuhenfen.modconfig". So a tag matches if
+    it IS the id or ENDS with it at a separator - which caught all six
+    blamed tags on device while a short id like "Lib" still cannot claim
+    "BaseLib", because the character before it is a letter.
+    """
+    tag_l = (tag or "").strip().lower()
+    ident_l = (ident or "").strip().lower()
+    if not tag_l or not ident_l:
+        return False
+    if tag_l == ident_l:
+        return True
+    if len(ident_l) < 3 or not tag_l.endswith(ident_l):
+        return False
+    return tag_l[-len(ident_l) - 1] in ".-_ :/"
+
+
+def _mods_needed_by_others(manifests: dict, keeping: set) -> dict:
+    """id -> the folders still relying on it, among mods NOT being switched
+    off.
+
+    BaseLib really did throw a HarmonyException in the session that killed
+    the game, and five installed mods declared it as a dependency. The
+    manifests say so out loud, so there is no need to guess or to keep a
+    hand-written list of which mods are libraries.
+    """
+    needed: dict = {}
+    for folder, info in manifests.items():
+        if folder not in keeping:
+            continue
+        for dep in info.get("deps") or []:
+            needed.setdefault(dep.strip().lower(), []).append(folder)
+    return needed
+
+
+
 def _parse_mod_load_log(lines: list):
     """Turn a game session log into per-mod load outcomes. Returns
     (status dict keyed by normalized mod id, modded_session bool)."""
@@ -4559,6 +4650,10 @@ def _parse_mod_load_log(lines: list):
     loaded: set = set()
     errors: dict = {}
     blamed_counts: dict = {}
+    # The tag a mod logs under is a logger name it picked, not its id:
+    # RitsuLib logs as "com.ritsukage.sts2-RitsuLib". Keeping the raw tag
+    # is what lets it be matched back to an installed folder.
+    raw_tags: dict = {}
     pending_exc = ""
     modded_session = False
     for line in lines:
@@ -4588,11 +4683,13 @@ def _parse_mod_load_log(lines: list):
             if _OPTIONAL_FAILURE_RE.search(m.group(2)):
                 continue
             errors.setdefault(norm(m.group(1)), m.group(2)[:160])
+            raw_tags.setdefault(norm(m.group(1)), m.group(1))
             continue
         # A .NET mod loader names the mod it could not load.
-        m = re.search(r"while loading mod ([A-Za-z0-9_.]+)", line)
+        m = re.search(r"while loading mod ([A-Za-z0-9_.-]+)", line)
         if m:
             errors[norm(m.group(1))] = "failed to load"
+            raw_tags.setdefault(norm(m.group(1)), m.group(1))
             continue
         # An exception block: the FIRST stack frame after it is where the
         # throw happened, so that mod is the culprit. Later frames are the
@@ -4617,6 +4714,7 @@ def _parse_mod_load_log(lines: list):
                         else f"threw {pending_exc}"
                     )
                     errors.setdefault(norm(blamed), detail)
+                    raw_tags.setdefault(norm(blamed), blamed)
                     blamed_counts[norm(blamed)] = (
                         blamed_counts.get(norm(blamed), 0) + 1
                     )
@@ -4628,6 +4726,7 @@ def _parse_mod_load_log(lines: list):
             "state": "error",
             "detail": detail,
             "errors": blamed_counts.get(key, 0),
+            "tag": raw_tags.get(key, key),
         }
     return status, modded_session
 
@@ -10734,7 +10833,7 @@ query Link($slug: String!, $domainName: String!) {
         self, game_domain: str, install_dir: str, mods_subdir: str,
         game_user_dir: str, install_mode: str = "folder", app_id: int = 0,
         plugins_subpath: str = "", plugins_style: str = "starred",
-        protected_ids: list = None,
+        protected_ids: list = None, dry_run: bool = False,
     ) -> dict:
         """Switch off the mods the last session blamed for errors.
 
@@ -10749,10 +10848,16 @@ query Link($slug: String!, $domainName: String!) {
         because a shared dependency appears in every trace as a victim and
         disabling it would take the working mods with it.
 
-        `protected_ids` is the game's ecosystem libraries, from its own
-        config. Those get named as still-erroring rather than switched off:
-        BaseLib genuinely threw a HarmonyException in that session, but 21
-        mods sit on it, so switching it off would break the ones that work.
+        Libraries other mods depend on are named as still-erroring rather
+        than switched off. BaseLib genuinely threw a HarmonyException in the
+        session that killed the game, and five installed mods declare it as
+        a dependency - their own manifests say so, so the plugin does not
+        have to guess which mods are libraries. `protected_ids` is a second
+        belt for games whose mods do not declare dependencies.
+
+        `dry_run` returns exactly the same answer without touching anything,
+        which is what the panel row is built from. The row saying "9 mods
+        broke" and the button switching off 3 was its own bug.
         """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
@@ -10778,17 +10883,60 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": True, "disabled": 0, "names": []}
         records = _load_settings().get("installed", {}).get(game_domain, {})
         keep = {int(m) for m in (protected_ids or []) if m is not None}
-        off, held, errors = [], [], []
-        for key, rec in list(records.items()):
-            hit = (
+        _install, mods_path, _disabled = _game_paths(install_dir, mods_subdir)
+        manifests = _godot_mod_manifests(mods_path)
+
+        def blame_for(key: str, rec: dict):
+            """The log entry naming this installed mod, if any.
+
+            Five of the nine blamed tags on device matched nothing until the
+            manifests were read: the log tag is a logger name, not a mod
+            name, so "com.ritsukage.sts2-RitsuLib" never looked like the
+            folder "RitsuLib".
+            """
+            folder = rec.get("folder") or key
+            info = manifests.get(folder) or {}
+            for hit in blamed.values():
+                tag = hit.get("tag") or ""
+                if (
+                    _tag_names_mod(tag, info.get("id") or "")
+                    or _tag_names_mod(tag, info.get("name") or "")
+                    or _tag_names_mod(tag, folder)
+                ):
+                    return hit
+            # Older games with no manifest: fall back to the loose match
+            # that was here before, so nothing regresses.
+            return (
                 blamed.get(_norm_mod_id(key))
                 or blamed.get(_norm_mod_id(rec.get("name") or ""))
                 or blamed.get(_norm_mod_id(rec.get("folder") or ""))
             )
-            if not hit:
-                continue
-            if rec.get("mod_id") in keep:
+
+        candidates = [
+            (key, rec, hit)
+            for key, rec in list(records.items())
+            for hit in [blame_for(key, rec)]
+            if hit
+        ]
+        # Whatever survives this pass is what dependencies are judged
+        # against: hold back a library only if something staying on needs it.
+        going = {
+            (rec.get("folder") or key) for key, rec, _h in candidates
+            if rec.get("mod_id") not in keep
+        }
+        keeping = {f for f in manifests if f not in going}
+        needed = _mods_needed_by_others(manifests, keeping)
+        off, held, errors = [], [], []
+        for key, rec, hit in candidates:
+            folder = rec.get("folder") or key
+            mod_id = (manifests.get(folder) or {}).get("id") or ""
+            dependents = needed.get(mod_id.strip().lower(), [])
+            if rec.get("mod_id") in keep or dependents:
                 held.append(rec.get("name") or key)
+                continue
+            if dry_run:
+                off.append({"name": rec.get("name") or key,
+                            "why": hit.get("detail") or "errored last run"})
                 continue
             try:
                 result = await self.set_mod_enabled(
@@ -10803,12 +10951,13 @@ query Link($slug: String!, $domainName: String!) {
                             "why": hit.get("detail") or "errored last run"})
             else:
                 errors.append(f"{key}: {result.get('error')}")
-        decky.logger.info(
-            f"disabled {len(off)} mod(s) the last session blamed: "
-            f"{', '.join(m['name'] for m in off[:6])}"
-            + (f"; left {len(held)} other mods depend on: "
-               f"{', '.join(held[:4])}" if held else "")
-        )
+        if not dry_run:
+            decky.logger.info(
+                f"disabled {len(off)} mod(s) the last session blamed: "
+                f"{', '.join(m['name'] for m in off[:6])}"
+                + (f"; left {len(held)} other mods depend on: "
+                   f"{', '.join(held[:4])}" if held else "")
+            )
         return {
             "ok": True,
             "disabled": len(off),
