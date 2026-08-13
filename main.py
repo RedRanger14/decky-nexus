@@ -4810,6 +4810,37 @@ def _godot_mod_manifests(mods_dir: str) -> dict:
     return out
 
 
+def _missing_manifest_deps(manifests: dict) -> list:
+    """Which installed mods declare a dependency that is not installed.
+
+    Read from the manifests alone, so this is knowable the moment a mod is
+    installed. The first version of this check read the session log instead
+    and therefore needed the game to have launched and failed first -
+    Michael installed LustTravel2, opened Fixes, and found nothing, because
+    nothing had gone wrong YET.
+
+    Returns [{"folder", "name", "missing": [ids]}].
+    """
+    have = {
+        (info.get("id") or "").strip().lower()
+        for info in manifests.values()
+        if info.get("id")
+    }
+    out = []
+    for folder, info in sorted(manifests.items()):
+        missing = [
+            dep for dep in info.get("deps") or []
+            if dep.strip().lower() not in have
+        ]
+        if missing:
+            out.append({
+                "folder": folder,
+                "name": info.get("name") or folder,
+                "missing": missing,
+            })
+    return out
+
+
 def _tag_names_mod(tag: str, ident: str) -> bool:
     """Whether a log tag refers to the mod with this id or name.
 
@@ -11604,11 +11635,37 @@ query Link($slug: String!, $domainName: String!) {
             decky.DECKY_USER_HOME, ".local", "share", game_user_dir,
             "logs", "godot.log",
         )
+        # Dependencies are read from the manifests, not the log, so a gap is
+        # knowable before the game has ever run. Michael installed
+        # LustTravel2, opened Fixes and found nothing, because the check
+        # needed a failed launch to have happened first.
+        _inst, mods_now, _dis = _game_paths(install_dir, mods_subdir)
+        gaps = _missing_manifest_deps(_godot_mod_manifests(mods_now))
+        installed_deps = []
+        if gaps:
+            records_now = _load_settings().get("installed", {}).get(
+                game_domain, {}
+            )
+            by_folder = {
+                (rec.get("folder") or key): rec
+                for key, rec in records_now.items()
+            }
+            installed_deps = await self._install_missing_requirements(
+                game_domain, install_dir, mods_subdir, install_mode, app_id,
+                plugins_subpath, plugins_style,
+                [
+                    {"name": g["name"],
+                     "mod_id": (by_folder.get(g["folder"]) or {}).get("mod_id")}
+                    for g in gaps
+                ],
+            )
         try:
             st = os.stat(log_path)
             signature = f"{int(st.st_mtime)}:{st.st_size}"
         except OSError:
             return {"ok": True, "repaired": 0, "names": [], "held": [],
+                    "updated": [], "no_update": [],
+                    "installed_deps": installed_deps,
                     "remaining": [], "note": ""}
         settings = _load_settings()
         seen = (
@@ -11616,7 +11673,7 @@ query Link($slug: String!, $domainName: String!) {
         )
         already = seen.get("log") == signature
         repaired = {"disabled": 0, "names": [], "details": [], "held": []}
-        updated, no_update, installed_deps = [], [], []
+        updated, no_update = [], []
         # The update pass runs every time; the disable pass runs once per
         # session log. They need different guards because they carry
         # different risks: switching a mod off contradicts a user who just
@@ -11642,7 +11699,7 @@ query Link($slug: String!, $domainName: String!) {
                 # broken and does not need switching off - it needs the
                 # library. Done before anything else so the mod is judged
                 # on a run where it had what it asked for.
-                installed_deps = await self._install_missing_requirements(
+                installed_deps += await self._install_missing_requirements(
                     game_domain, install_dir, mods_subdir, install_mode,
                     app_id, plugins_subpath, plugins_style,
                     [

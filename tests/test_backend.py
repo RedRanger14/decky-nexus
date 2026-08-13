@@ -4809,6 +4809,21 @@ class TestAutoRepairFailingMods(unittest.TestCase):
         self.plugin.get_mod_files = fake_files
         self.plugin.install_mod = fake_install
 
+    def test_a_gap_is_filled_before_the_game_has_ever_run(self):
+        # The whole point: no log, nothing has failed, and the library is
+        # still installed because the manifest said it was needed.
+        self._needs_library()
+        os.remove(os.path.join(self.logdir, "godot.log"))
+        os.makedirs(os.path.join(self.mods, "DeadMod"), exist_ok=True)
+        with open(os.path.join(self.mods, "DeadMod", "mod_manifest.json"),
+                  "w", encoding="utf-8") as f:
+            json.dump({"id": "DeadMod", "name": "DeadMod",
+                       "dependencies": [{"id": "STS2-RitsuLib"}]}, f)
+        r = self._repair()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(
+            r["installed_deps"], [{"name": "RitsuLib", "for": "DeadMod"}])
+
     def test_the_missing_library_is_installed(self):
         self._needs_library()
         r = self._repair()
@@ -5421,6 +5436,56 @@ class TestManifestDependencyShapes(unittest.TestCase):
         manifests = main._godot_mod_manifests(self.root)
         needed = main._mods_needed_by_others(manifests, {"A", "BaseLib"})
         self.assertEqual(needed.get("baselib"), ["A"])
+
+
+class TestMissingManifestDeps(unittest.TestCase):
+    """A dependency gap read from the manifests, so it is knowable the
+    moment a mod is installed.
+
+    The first version of this check read the session log, so it needed the
+    game to have launched and failed first. Michael installed LustTravel2,
+    opened Fixes and found nothing - because nothing had gone wrong yet."""
+
+    def test_a_missing_dependency_is_found_with_no_log_at_all(self):
+        gaps = main._missing_manifest_deps({
+            "LustTravel2": {"id": "LustTravel2", "name": "LustTravel2",
+                            "deps": ["STS2-RitsuLib"]},
+        })
+        self.assertEqual(gaps, [{"folder": "LustTravel2",
+                                 "name": "LustTravel2",
+                                 "missing": ["STS2-RitsuLib"]}])
+
+    def test_a_satisfied_dependency_is_not_a_gap(self):
+        self.assertEqual(main._missing_manifest_deps({
+            "LustTravel2": {"id": "LustTravel2", "name": "LustTravel2",
+                            "deps": ["STS2-RitsuLib"]},
+            "RitsuLib": {"id": "STS2-RitsuLib", "name": "RitsuLib",
+                         "deps": []},
+        }), [])
+
+    def test_dependency_ids_match_case_insensitively(self):
+        # The log writes STS2-RitsuLib, the manifest id is STS2-RitsuLib,
+        # and a mod may write either casing.
+        self.assertEqual(main._missing_manifest_deps({
+            "A": {"id": "A", "name": "A", "deps": ["baselib"]},
+            "BaseLib": {"id": "BaseLib", "name": "BaseLib", "deps": []},
+        }), [])
+
+    def test_several_gaps_are_all_reported(self):
+        gaps = main._missing_manifest_deps({
+            "A": {"id": "A", "name": "A", "deps": ["BaseLib"]},
+            "B": {"id": "B", "name": "B", "deps": ["BaseLib", "ModConfig"]},
+        })
+        self.assertEqual(len(gaps), 2)
+        self.assertEqual(gaps[1]["missing"], ["BaseLib", "ModConfig"])
+
+    def test_no_mods_is_no_gaps(self):
+        self.assertEqual(main._missing_manifest_deps({}), [])
+
+    def test_a_mod_with_no_declared_dependencies_is_never_a_gap(self):
+        self.assertEqual(main._missing_manifest_deps({
+            "A": {"id": "A", "name": "A", "deps": []},
+        }), [])
 
 
 class TestLogTagMatching(unittest.TestCase):
