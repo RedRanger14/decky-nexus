@@ -1127,17 +1127,47 @@ def _proton_binary_for(app_id: int):
                 candidates.append(f"Proton {mv.group(1)}.0")
     except OSError:
         pass
-    # Unpinned games run the SteamOS default: Experimental.
-    candidates.append("Proton - Experimental")
+    # The prefix itself is the authority on which build made it, and it
+    # outranks any guess about defaults.
+    #
+    # This used to assume "unpinned = Experimental (the SteamOS default)".
+    # That default has since moved: Fallout 3's prefix on device was built
+    # by Proton 10.0, the patcher was run through Experimental, and mixing
+    # two builds in one prefix wedges its wineserver - the exact failure
+    # the docstring above already warned about, arriving by a route nobody
+    # had thought of. The result was a patched exe that could not boot, and
+    # a morning spent blaming the patcher.
+    #
+    # config_info names the Proton directory outright; the version file is
+    # the fallback.
+    try:
+        with open(
+            os.path.join(compat, "config_info"), "r", encoding="utf-8"
+        ) as f:
+            info = f.read()
+        for line in info.splitlines():
+            m = re.search(r"/common/(Proton[^/]*)/files/", line)
+            if m:
+                candidates.append(m.group(1))
+                break
+    except OSError:
+        pass
     version = ""
     try:
         with open(os.path.join(compat, "version"), "r", encoding="utf-8") as f:
             version = f.read().strip()
     except OSError:
         pass
-    m = re.match(r"(\d+\.\d+)", version)
+    # Experimental next, NOT last: the version file alone is ambiguous -
+    # it reads "11.0-100" for both standalone Proton 11.0 and Experimental,
+    # and trusting it there picked the wrong build and wedged a prefix once
+    # already. config_info above is unambiguous, so it outranks this; the
+    # version file below only gets a say when neither applies.
+    candidates.append("Proton - Experimental")
+    m = re.match(r"(\d+)\.(\d+)", version)
     if m:
-        candidates.append(f"Proton {m.group(1)}")
+        # "10.1000-105" is Proton 10.0, not Proton 10.1000.
+        candidates.append(f"Proton {m.group(1)}.0")
     for name in candidates:
         p = os.path.join(STEAM_COMMON, name, "proton")
         if os.path.isfile(p):

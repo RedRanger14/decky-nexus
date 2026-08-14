@@ -3348,6 +3348,33 @@ class TestProtonPicker(unittest.TestCase):
         self.assertIn("Experimental", proton)
         self.assertEqual(compat, self.compat)
 
+    def test_config_info_outranks_the_default(self):
+        # The failure that cost a morning: Fallout 3's prefix was built by
+        # Proton 10.0, the tool was run through Experimental, and mixing
+        # builds in one prefix wedged its wineserver - so the patched exe
+        # could not boot and the patcher took the blame. config_info names
+        # the directory outright, unlike the ambiguous version file.
+        nl = chr(10)
+        with open(os.path.join(self.compat, "version"), "w") as f:
+            f.write("10.1000-105" + nl)
+        with open(os.path.join(self.compat, "config_info"), "w") as f:
+            f.write(
+                "10.1000-105" + nl
+                + "/home/deck/.local/share/Steam/steamapps/common/"
+                + "Proton 10.0/files/share/fonts/" + nl
+            )
+        p10 = os.path.join(main.STEAM_COMMON, "Proton 10.0")
+        self._mk_proton(p10)
+        self._mk_proton(self.experimental)
+        try:
+            proton, _c, _r, err = main._proton_binary_for(self.APP_ID)
+        finally:
+            # Shared temp root: leaving it behind made the next test find a
+            # Proton it never installed.
+            shutil.rmtree(p10, ignore_errors=True)
+        self.assertEqual(err, "")
+        self.assertIn("Proton 10.0", proton)
+
     def test_version_file_is_the_fallback(self):
         with open(os.path.join(self.compat, "version"), "w") as f:
             f.write("11.0-100\n")
