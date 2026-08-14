@@ -465,18 +465,24 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // the next. Deciding in the shell means installing or removing FOSE
       // later just works, with no step to re-run and no stored state to
       // go stale.
-      // No "=" anywhere in here, and that is not a style choice. The
-      // launch-options plugin this device routes through treats any token
-      // containing "=" as an environment variable, so an earlier version
-      // starting with d=$(dirname ...) was lifted out wholesale and set as
-      // a variable named "d". Steam then ran `bash -c --` with no script,
-      // the game started without FOSE, and the only evidence was a line in
-      // dlo's debug log headed "Applied Environment Variables".
+      // Fallout3.exe, deliberately - NOT fose_loader.exe.
+      //
+      // Fallout 3's stock launcher freezes on this device, so this swaps in
+      // the game exe. When FOSE turned out to be the missing piece of
+      // Fallout Rebirth+ I briefly routed this through fose_loader.exe,
+      // which was wrong and cost a morning: the Fallout Anniversary Patcher
+      // that Step 3 applies "automatically loads FOSE when using
+      // Fallout3.exe to start the game", and it also rewrites the binary to
+      // downgrade it to 1.7.0.3. FOSE's loader then refuses the exe it does
+      // not recognise - "You have an unknown version of Fallout ...
+      // CRC = 6E3D50D1" - and closes the game.
+      //
+      // So the patcher is what loads FOSE here, and this only has to start
+      // the game. FOSE still has to BE installed for the patcher to find,
+      // which is the part that was actually missing.
       launchOptionsTemplate:
-        "bash -c 'if [ -f \"$(dirname \"$" + "{@: -1}\")/fose_loader.exe\" ]; " +
-        "then exec \"$" + "{@/Fallout3Launcher.exe/fose_loader.exe}\"; " +
-        "else exec \"$" + "{@/Fallout3Launcher.exe/Fallout3.exe}\"; fi' " +
-        "-- %command%",
+        "bash -c 'exec \"$" +
+        "{@/Fallout3Launcher.exe/Fallout3.exe}\"' -- %command%",
       seedIni: {
         sourceRel: "Fallout_default.ini",
         prefsSubpath: "Fallout3/FALLOUT.INI",
