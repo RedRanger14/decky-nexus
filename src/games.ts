@@ -73,6 +73,14 @@ export interface SupportedGame {
   /** How to read the game's mod-loader diagnostics. Absent = no
    * load-status badges or game-log viewer for this game. */
   logAdapter?: LogAdapter;
+  /** The game shows its own launcher before starting, so the long grey
+   * screen begins when the user presses Play THERE, not when they press
+   * Launch here. The wait notice has to warn about it in advance. */
+  ownLauncher?: boolean;
+  /** Mod count above which the startup wait is minutes rather than a
+   * moment. Defaults to 400, which was measured on Bethesda games; a game
+   * paying a heavy per-mod startup cost sets its own. */
+  longWaitAtMods?: number;
   /** Required community mod loader, if the game has one */
   framework?: GameFramework;
   /** Additional frameworks beyond the primary (CP77 script mods need
@@ -807,6 +815,17 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // pages call required, boots, and compiles clean - so the health check
     // asks this before calling any of them a fault.
     logAdapter: { kind: "redscript" },
+    // REDlauncher stands between "Launch" here and the game starting.
+    ownLauncher: true,
+    // Measured on device, 2026-08-14, across six collections: at roughly
+    // 270 tracked mods the grey screen after Play ran about two minutes,
+    // while earlier, smaller collections barely paused. Cyberpunk pays a
+    // per-archive startup cost (ArchiveXL and TweakXL both process at
+    // load) that Bethesda games do not - New Vegas at 1,954 mods starts
+    // faster than this at 270 - so the default 400 never fired here on a
+    // setup that plainly needed it. 150 is an estimate from two points on
+    // the curve, not a measurement of the knee.
+    longWaitAtMods: 150,
     framework: {
       name: "Cyber Engine Tweaks",
       // Verified on device 2026-08-14. Exact paths, never prefixes:

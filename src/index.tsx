@@ -661,7 +661,10 @@ function CurrentGameSection() {
     restartGame(game.appId);
     // Said on the way out, because the panel is about to close and the
     // black screen that follows looks exactly like a hang.
-    const wait = launchWaitNotice(modCount ?? 0);
+    const wait = launchWaitNotice(modCount ?? 0, {
+      longWaitAt: game.longWaitAtMods,
+      ownLauncher: game.ownLauncher,
+    });
     if (wait) {
       toaster.toast({
         title: `Starting ${game.displayName}`,

@@ -48,6 +48,10 @@ function capture() {
       return mm ? JSON.parse(mm[1]) : null;
     };
     const has = (key) => new RegExp(`\\b${key}:`).test(body);
+    const num = (key) => {
+      const mm = body.match(new RegExp(`\\b${key}:\\s*(\\d+)`));
+      return mm ? Number(mm[1]) : null;
+    };
     const li = body.indexOf("launchOptionsTemplate:");
     return {
       appId: s.appId,
@@ -66,6 +70,12 @@ function capture() {
       hasLauncherBypass: has("launcherBypass"),
       hasSetupInis: has("setupInis"),
       hasLogAdapter: has("logAdapter"),
+      // Per-game launch-wait tuning. Captured because it is exactly the
+      // kind of single-game number that gets nudged while working on
+      // another game and is never noticed: it only shows up as a toast
+      // that says the wrong thing, minutes after anyone stopped watching.
+      hasOwnLauncher: has("ownLauncher"),
+      longWaitAtMods: num("longWaitAtMods"),
     };
   });
   games.sort((a, b) => Number(a.appId) - Number(b.appId));

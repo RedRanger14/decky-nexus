@@ -459,11 +459,32 @@ def _record_vanilla_baseline(
         if not _safe_rel_path(str(rel)):
             continue
         d = os.path.join(game_root, *str(rel).split("/"))
+        store = settings.setdefault("vanilla_extra_baseline", {}).setdefault(
+            game_domain, {}
+        )
+        if not os.path.exists(d):
+            # A directory a vanilla install does not have provably contains
+            # nothing of the game's, so record that as a fact: an EMPTY
+            # baseline, not a missing one.
+            #
+            # This used to raise and be swallowed, so four of Cyberpunk's
+            # five mod directories had no baseline at all - r6/tweaks,
+            # red4ext/plugins and bin/x64/plugins do not exist until a mod
+            # creates them. Reset skips any directory it has no baseline
+            # for, quite rightly ("we do not know what the GAME put
+            # there"), so anything whose install record was lost in those
+            # directories was an orphan nothing could ever find. That is
+            # exactly the fault that left two .reds files killing the whole
+            # script stack for weeks, with four more places to happen and
+            # CET mods newly landing in one of them.
+            store[str(rel)] = []
+            continue
         try:
-            settings.setdefault("vanilla_extra_baseline", {}).setdefault(
-                game_domain, {}
-            )[str(rel)] = sorted(os.listdir(d))
+            store[str(rel)] = sorted(os.listdir(d))
         except OSError:
+            # Exists but unreadable. NOT the same thing: an empty baseline
+            # here would claim the game owns nothing in a directory we
+            # simply could not open, and reset would delete its contents.
             pass
     if game_root and os.path.isdir(game_root):
         try:
