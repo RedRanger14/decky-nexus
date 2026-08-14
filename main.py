@@ -6242,9 +6242,26 @@ class Plugin:
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return {"ok": True, "status": "unknown"}
         endorsement = body.get("endorsement") or {}
+        status = endorsement.get("endorse_status") or "Undecided"
+        # What we did outranks a stale read.
+        #
+        # Nexus's single-mod endpoint kept reporting "Undecided" for mods
+        # this account had just endorsed successfully, so every deploy - which
+        # remounts the panel and re-reads - showed them as un-endorsed again.
+        # Michael: "surely it should know if I have already endorsed?"
+        #
+        # Only ever upgrades to Endorsed, and only from our own record of a
+        # call that returned 200. If the user abstains we record that too, so
+        # this cannot resurrect an endorsement they took back.
+        if status == "Undecided":
+            mine = (_load_settings().get("endorsed") or {}).get(
+                game_domain, {}
+            ).get(str(int(mod_id)))
+            if mine:
+                status = "Endorsed"
         return {
             "ok": True,
-            "status": endorsement.get("endorse_status") or "Undecided",
+            "status": status,
             # The QAM endorses framework mods (SKSE, SMAPI...) that were
             # installed by a Step button, not browsed for, so nothing on
             # that screen knows the version the endorse call requires.
@@ -6290,6 +6307,13 @@ class Plugin:
                     except Exception:  # noqa: BLE001 - non-JSON error body
                         body = {}
                     if resp.status == 200:
+                        # Remembered because the read-back cannot be relied
+                        # on - see get_endorsement.
+                        settings = _load_settings()
+                        settings.setdefault("endorsed", {}).setdefault(
+                            game_domain, {}
+                        )[str(int(mod_id))] = bool(endorse)
+                        _save_settings(settings)
                         return {
                             "ok": True,
                             "status": "Endorsed" if endorse else "Abstained",
