@@ -8,14 +8,14 @@ tell whose fault it is.
 
 | Game | Mode | Testing state |
 |---|---|---|
-| Stardew Valley | folder | tested |
-| Skyrim SE | dataDir | tested extensively (collection hunt, Aug 2026) |
+| Stardew Valley | folder | **verified 2026-08-14: three collections including the #1 (Stardew Very Expanded), save loaded, health check corroborated against SMAPI's own log** |
+| Skyrim SE | dataDir | **the most heavily tested game here.** Automated crash hunt bisected a 100+ plugin load order to a single culprit; Gate to Sovngarde and Immersive Skyrim collections played. See `gate-to-sovngarde-findings.md` |
 | Fallout 4 | dataDir | tested 2026-08-04, collection worked first time |
 | Fallout: New Vegas | dataDir | tested, pre-adult-content |
-| Slay the Spire 2 | folder | tested, pre-adult-content |
+| Slay the Spire 2 | folder | **verified 2026-08-13 in depth**: #1 collection (Mesugaki the Spire) installs and boots clean - "Loaded 11 mods (11 total)", no errors; a second collection diagnosed to one mod throwing 1,041 exceptions and repaired automatically; individual mods, dependency auto-install and the verdict store all exercised. Most of the log-parsing, verdict and auto-repair machinery was built and proven here |
 | The Witcher 3 | folder | tested 2026-07-24 (script-mod ceiling documented) |
-| Resident Evil 4 | folder | tested WITH adult content |
-| Cyberpunk 2077 | folder+frameworks | tested, pre-adult-content |
+| Resident Evil 4 | folder | **verified 2026-08-14: three collections, all worked. Tested WITH adult content**; endorsement bug found and fixed here |
+| Cyberpunk 2077 | folder+frameworks | **verified 2026-08-14: Welcome to Night City (283 mods) boots** once two orphaned .reds files were removed. Five frameworks install and endorse individually. Health check still over-reports here - see the redscript corroboration job |
 | Elden Ring | me3 | **verified 2026-08-12: Seamless Co-op session played, two players** |
 
 ### Cut from 1.0: Fallout 3
