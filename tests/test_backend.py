@@ -5847,6 +5847,65 @@ class TestDirectDownloadVerification(unittest.TestCase):
         self.assertIn("far larger than declared", src[start:start + 3000])
 
 
+class TestLaunchOptionsStayCurrent(unittest.TestCase):
+    """"Applied ✓" has to mean "applied, and still what we would apply".
+
+    Fallout 3's launch command grew a FOSE branch and the step showed a
+    tick with no button. Michael: "I cant press step 1 again." A tick
+    nobody can undo is worse than no tick."""
+
+    DOMAIN = "lotest"
+    OLD = "bash -c 'exec a' -- %command%"
+    NEW = "bash -c 'exec b' -- %command%"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("framework_setup", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+
+    def test_a_matching_command_reads_as_current(self):
+        run(self.plugin.mark_launch_options_set(self.DOMAIN, self.OLD))
+        r = run(self.plugin.get_framework_setup(self.DOMAIN, self.OLD))
+        self.assertTrue(r["launch_options_set"])
+        self.assertTrue(r["launch_options_current"])
+
+    def test_a_changed_template_offers_the_step_again(self):
+        run(self.plugin.mark_launch_options_set(self.DOMAIN, self.OLD))
+        r = run(self.plugin.get_framework_setup(self.DOMAIN, self.NEW))
+        self.assertTrue(r["launch_options_set"])
+        self.assertFalse(r["launch_options_current"])
+
+    def test_re_applying_makes_it_current_again(self):
+        run(self.plugin.mark_launch_options_set(self.DOMAIN, self.OLD))
+        run(self.plugin.mark_launch_options_set(self.DOMAIN, self.NEW))
+        self.assertTrue(run(self.plugin.get_framework_setup(
+            self.DOMAIN, self.NEW))["launch_options_current"])
+
+    def test_a_setup_from_before_this_existed_is_left_alone(self):
+        # No recorded value means we cannot tell, and nagging every user
+        # who set theirs up months ago would be worse than staying quiet.
+        settings = main._load_settings()
+        settings.setdefault("framework_setup", {})[self.DOMAIN] = {
+            "launch_options_set": True, "enabled": True}
+        main._save_settings(settings)
+        self.assertTrue(run(self.plugin.get_framework_setup(
+            self.DOMAIN, self.NEW))["launch_options_current"])
+
+    def test_no_expectation_never_reports_stale(self):
+        # me3 has no template to compare against.
+        run(self.plugin.mark_launch_options_set(self.DOMAIN, self.OLD))
+        self.assertTrue(run(self.plugin.get_framework_setup(
+            self.DOMAIN, ""))["launch_options_current"])
+
+    def test_whitespace_alone_is_not_a_change(self):
+        run(self.plugin.mark_launch_options_set(self.DOMAIN, self.OLD))
+        self.assertTrue(run(self.plugin.get_framework_setup(
+            self.DOMAIN, f"  {self.OLD}  "))["launch_options_current"])
+
+
 class TestLogTagMatching(unittest.TestCase):
     """Mods log under a logger name they chose, not their id. Five of the
     nine blamed tags in the real crash log matched nothing until this."""
