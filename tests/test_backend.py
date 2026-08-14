@@ -687,11 +687,24 @@ class TestCp77Routing(unittest.TestCase):
             "bin/x64/plugins/cyber_engine_tweaks/mods/mod_two/init.lua",
         ])
 
-    def test_a_lua_file_that_is_not_a_cet_mod_is_still_refused(self):
-        # No init.lua means CET will not load it, so claiming to install it
-        # would be a lie. The message names what was looked for.
+    def test_lua_without_init_is_named_as_a_console_script(self):
+        # Cheat Script (mod 542) ships CheatScript/CheatScript.lua and no
+        # init.lua, because its own page says "just use it with the Cyber
+        # Engine Tweaks console". CET loads init.lua and nothing else, so
+        # refusing it is right - but refusing it as "no Cyberpunk mod layout
+        # found" told Michael the archive was broken when it was doing
+        # exactly what it advertises.
+        self.put("CheatScript/CheatScript.lua")
+        self.put("CheatScript/ReadMe.txt")
+        files, err = main._route_cp77_payload(self.scratch, "Cheat Script 2.2")
+        self.assertEqual(files, [])
+        self.assertEqual(err[0], "console_script")
+        self.assertIn("console", err[1].lower())
+        self.assertIn("Cheat Script 2.2", err[1])
+
+    def test_an_archive_with_nothing_recognisable_still_says_so(self):
         self.put("readme.txt")
-        self.put("scripts/helper.lua")
+        self.put("notes/whatever.txt")
         files, err = main._route_cp77_payload(self.scratch, "Not A Mod")
         self.assertIsNotNone(err)
         self.assertEqual(err[0], "layout")

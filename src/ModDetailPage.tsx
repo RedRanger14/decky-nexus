@@ -36,7 +36,7 @@ import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
 import { popOurPage } from "./Tabs";
 import { getCompatHint } from "./compat";
-import { modeParams } from "./games";
+import { frameworkModIds, modeParams } from "./games";
 import { finishFomod, installLatest } from "./install";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 
@@ -213,10 +213,10 @@ export function ModDetailPage() {
   // One classification, shared by the chips and the install-all button.
   const classifyRequirement = (req: ModRequirement) => {
     const external = !req.modId || req.modId <= 0;
-    const fwIds = [
-      game.framework?.nexusModId,
-      ...(game.framework?.aliasModIds ?? []),
-    ].filter(Boolean);
+    // Every framework, not just the primary one. Cyberpunk needs five and
+    // Step 1 installs them together; counting only CET left the other four
+    // showing orange on every mod page that required them.
+    const fwIds = frameworkModIds(game);
     const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
     const have =
       !external &&

@@ -3723,6 +3723,23 @@ def _route_cp77_payload(scratch: str, mod_name: str):
                     "a mod the game loads - it needs a desktop setup, so "
                     "it was skipped.",
                 )
+    # Lua, but not a CET mod. Cyber Engine Tweaks loads init.lua and nothing
+    # else, so a .lua file without one is a script you paste into the CET
+    # console rather than a mod anything installs. Cheat Script (mod 542) is
+    # the case: it ships CheatScript/CheatScript.lua and its own page says
+    # "just use it with the Cyber Engine Tweaks console". Refusing it is
+    # right; refusing it as "no Cyberpunk mod layout found" told Michael the
+    # archive was broken when it was doing exactly what it advertises.
+    for root_, _dirs, names in os.walk(scratch):
+        for n in names:
+            if n.lower().endswith(".lua"):
+                return [], (
+                    "console_script",
+                    f"{mod_name} is a console script, not an installable "
+                    "mod - it has no init.lua, so Cyber Engine Tweaks will "
+                    "not load it on its own. Open the CET console in game "
+                    "and run it from there.",
+                )
     tops = ", ".join(sorted(os.listdir(scratch))[:6])
     return [], (
         "layout",

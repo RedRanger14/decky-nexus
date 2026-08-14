@@ -33,7 +33,7 @@ import {
 
 import { getHealthCheck, getModDetails } from "./api";
 import { PageBackdrop, SectionHeading, StatChip } from "./chrome";
-import { SupportedGame, getActiveGame } from "./games";
+import { SupportedGame, frameworkModIds, getActiveGame } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 import { healthVerdict } from "./panelRules";
 import { installLatest } from "./install";
@@ -246,14 +246,7 @@ export default function HealthCheckPage() {
     // are not tracked mods. Without telling the check about them, every
     // SMAPI mod reads as missing SMAPI - 77 of them on a Stardew setup that
     // booted perfectly.
-    const frameworkIds = [
-      game.framework?.nexusModId,
-      ...(game.framework?.aliasModIds ?? []),
-      ...(game.extraFrameworks ?? []).flatMap((fw) => [
-        fw.nexusModId,
-        ...(fw.aliasModIds ?? []),
-      ]),
-    ].filter((id): id is number => typeof id === "number");
+    const frameworkIds = frameworkModIds(game);
     getHealthCheck(
       game.nexusDomain,
       game.installDirName,

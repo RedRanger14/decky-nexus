@@ -270,6 +270,34 @@ test("the endorse pill has a gamepad focus style", () => {
   );
 });
 
+test("every framework counts as installed, not just the primary one", () => {
+  // Michael, on Cyberpunk mod pages: "some required mods that are installed
+  // are being marked as orange (needs installing), ArchiveXL, RED4ext for
+  // example". Step 1 installs five frameworks; the mod page counted only
+  // game.framework, so the other four read as missing on every page that
+  // required them. The health check had it right, which is exactly how the
+  // two drifted - so there is now one function and no second copy.
+  const games = read("games.ts");
+  assert.ok(
+    games.includes("export function frameworkModIds"),
+    "no shared framework-id helper"
+  );
+  assert.ok(
+    games.includes("extraFrameworks"),
+    "the helper ignores extraFrameworks, which is the whole bug"
+  );
+  for (const file of ["ModDetailPage.tsx", "HealthCheckPage.tsx"]) {
+    assert.ok(
+      read(file).includes("frameworkModIds("),
+      `${file} builds its own framework list instead of sharing one`
+    );
+  }
+  assert.ok(
+    !read("ModDetailPage.tsx").includes("game.framework?.aliasModIds"),
+    "ModDetailPage still has its own primary-only copy of the list"
+  );
+});
+
 test("health check findings are openable and show gamepad focus", () => {
   // Michael: "I think the items in the health report should be clickable as
   // a user might want to read instructions on a mod". Same class of bug as

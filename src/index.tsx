@@ -656,12 +656,22 @@ function CurrentGameSection() {
 
   /** Launching is the end of what the panel is for - leaving it open just
    * puts something over the game that has to be dismissed. */
-  const launchGame = () => {
+  const launchGame = async () => {
     if (!game) return;
+    // The count is fetched when the panel opens, so pressing Launch before
+    // it lands meant modCount was undefined, `?? 0` made it zero, and a
+    // 268-mod Cyberpunk setup got no notice at all. Ask now rather than
+    // silently decide there is nothing to say.
+    let count = modCount;
+    if (count === undefined) {
+      count = await getInstalledCount(game.nexusDomain)
+        .then((r) => (r.ok ? r.mods : undefined))
+        .catch(() => undefined);
+    }
     restartGame(game.appId);
     // Said on the way out, because the panel is about to close and the
     // black screen that follows looks exactly like a hang.
-    const wait = launchWaitNotice(modCount ?? 0, {
+    const wait = launchWaitNotice(count ?? 0, {
       longWaitAt: game.longWaitAtMods,
       ownLauncher: game.ownLauncher,
     });
