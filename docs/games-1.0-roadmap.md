@@ -146,15 +146,52 @@ deliberate sabotage. The Better Armor Tooltip one was removed afterwards -
 **a verdict earned from a synthetic failure is a false record**, and a
 harness that breaks things to test them will generate these constantly.
 
-### Known gap: Cyberpunk CET Lua mods
+### RESOLVED (v0.184.0): Cyberpunk CET Lua mods now install
 
-`_route_cp77_payload` recognises game-root prefixes (archive/bin/red4ext/
-r6/engine) and bare `.archive` files. A CET mod that ships only a Lua
-folder - no `bin/` prefix, destined for
-`bin/x64/plugins/cyber_engine_tweaks/mods/<name>/` - matches none of
-those and is refused as "no Cyberpunk mod layout found". CET mods are a
-large Nexus category for this game; worth deciding before 1.0 whether to
-route them or keep refusing them with a clearer message.
+`_route_cp77_payload` recognised game-root prefixes and bare `.archive`
+files, so a CET mod shipping only its Lua folder matched nothing and was
+refused as "no Cyberpunk mod layout found" - a large Nexus category for this
+game turned away.
+
+Structure taken from the CET wiki's own Mod Structure page rather than
+inferred: mods live in `bin/x64/plugins/cyber_engine_tweaks/mods/<my_mod>/`,
+`init.lua` is the entry point CET looks for, and extra files may sit in that
+folder or a subfolder of it. So **init.lua is the detector** - the one file
+every CET mod must have.
+
+- The author's folder name is preserved. It IS the mod's name to CET and to
+  anything referencing it; a name derived from the Nexus page would break
+  both. A name is derived only when `init.lua` sits at the archive root with
+  no folder of its own.
+- Checked BEFORE the bare-archive sweep, and archives inside a CET mod stay
+  with it. Otherwise a mod shipping both would have had its `.archive` taken
+  and its Lua left behind - half a mod installed, reported as success.
+- A mod already shipping the full `bin/...` path still routes as a `bin`
+  root, so it is not nested inside itself.
+- No `init.lua` is still refused, and the message now names what was looked
+  for.
+
+**Not yet run on device.** Unit-tested only (9 tests).
+
+### Known gap: reset cannot sweep most of Cyberpunk's mod directories
+
+Found while adding the above. `modWriteDirs` lists five directories, but the
+device's `vanilla_extra_baseline` for cyberpunk2077 holds **only
+`r6/scripts`** - because the other four do not exist in a vanilla install,
+so there was nothing to capture. The sweep deliberately skips any directory
+with no baseline ("we do not know what the GAME put there"), which is the
+right call for a directory that might hold game files, and the wrong one for
+a directory that vanilla does not have at all.
+
+The consequence: a CET mod, RED4ext plugin or tweak whose install record is
+lost is an orphan no reset can ever find - exactly the failure that left two
+`.reds` files killing the script stack for weeks, now with four more
+directories able to produce it.
+
+The fix is to record an **empty list** for a modWriteDir that is absent at
+baseline time, so "vanilla had nothing here" is stated rather than
+indistinguishable from "never looked". Not done here: it changes reset, and
+reset is the one operation where being wrong deletes someone's game.
 
 ## Decky store submission: pre-PR checklist (researched 2026-08-11)
 
