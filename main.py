@@ -10035,21 +10035,54 @@ query Link($slug: String!, $domainName: String!) {
         except OSError as e:
             return {"ok": False, "error": str(e)}
 
-    async def get_framework_setup(self, game_domain: str) -> dict:
+    async def get_framework_setup(
+        self, game_domain: str, expected: str = ""
+    ) -> dict:
+        """Whether the launch command has been set, and whether what was
+        set is still what we would set today.
+
+        The flag used to mean only "we did this once", so a changed
+        template could never be applied: Fallout 3's launch command grew a
+        FOSE branch, and the step showed "Launch fix applied" with no
+        button to press. Michael: "I cant press step 1 again."
+
+        `expected` is what the game's template produces now. When it
+        differs from what was written, the step offers itself again -
+        which is the difference between a tick that means "done" and one
+        that means "done, once, to a value nobody remembers".
+        """
         state = _load_settings().get("framework_setup", {}).get(game_domain, {})
         launch_set = bool(state.get("launch_options_set"))
+        stored = state.get("launch_options_value") or ""
+        # No expectation asked for, or nothing recorded from before this
+        # existed: fall back to the old meaning rather than nagging every
+        # user who set theirs up months ago.
+        current = True
+        if launch_set and expected and stored:
+            current = stored.strip() == expected.strip()
         return {
             "ok": True,
             "launch_options_set": launch_set,
+            "launch_options_current": current,
+            "launch_options_value": stored,
             "enabled": bool(state.get("enabled", launch_set)),
         }
 
-    async def mark_launch_options_set(self, game_domain: str) -> dict:
+    async def mark_launch_options_set(
+        self, game_domain: str, options: str = ""
+    ) -> dict:
+        """Record that the launch command was set, and WHAT was set.
+
+        The value is the point: without it "applied ✓" cannot be checked
+        against a template that has since changed, and the step becomes a
+        tick nobody can undo.
+        """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         settings = _load_settings()
         settings.setdefault("framework_setup", {})[game_domain] = {
             "launch_options_set": True,
+            "launch_options_value": options or "",
             "enabled": True,
             "at": int(time.time()),
         }
@@ -10084,6 +10117,13 @@ query Link($slug: String!, $domainName: String!) {
         ok, previous = _dlo_set_original(
             _dlo_settings_path(), app_id, options
         )
+        if ok:
+            settings = _load_settings()
+            state = settings.setdefault("framework_setup", {}).setdefault(
+                game_domain, {}
+            )
+            state["launch_options_value"] = options or ""
+            _save_settings(settings)
         if not ok:
             return {
                 "ok": False,

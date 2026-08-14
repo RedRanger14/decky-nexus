@@ -591,8 +591,18 @@ function CurrentGameSection() {
         );
       }
       if (game.framework || game.launcherBypass) {
-        getFrameworkSetup(game.nexusDomain).then((r) =>
-          setLaunchOptionsSet(Boolean(r.launch_options_set))
+        // "Applied ✓" has to mean "applied, and still what we would apply".
+        // Fallout 3's launch command grew a FOSE branch and the step showed
+        // a tick with no button, so there was no way to take the new one.
+        const expected =
+          game.launcherBypass?.launchOptionsTemplate ??
+          game.framework?.launchOptionsTemplate ??
+          "";
+        getFrameworkSetup(game.nexusDomain, expected).then((r) =>
+          setLaunchOptionsSet(
+            Boolean(r.launch_options_set) &&
+              r.launch_options_current !== false
+          )
         );
       }
       if (game.prefixTools) {
@@ -612,7 +622,7 @@ function CurrentGameSection() {
         getMe3State(game.nexusDomain, game.installDirName, game.appId).then(
           setMe3
         );
-        getFrameworkSetup(game.nexusDomain).then((r) =>
+        getFrameworkSetup(game.nexusDomain, "").then((r) =>
           setLaunchOptionsSet(Boolean(r.launch_options_set))
         );
         getMe3CoopPassword(game.nexusDomain).then((r) => {
@@ -625,7 +635,15 @@ function CurrentGameSection() {
 
   const markDone = () => {
     if (game) {
-      markLaunchOptionsSet(game.nexusDomain).then(() => setLaunchOptionsSet(true));
+      // Record the value, not just the fact. Without it "applied ✓" cannot
+      // be checked against a template that changes later.
+      const applied =
+        game.launcherBypass?.launchOptionsTemplate ??
+        game.framework?.launchOptionsTemplate ??
+        "";
+      markLaunchOptionsSet(game.nexusDomain, applied).then(() =>
+        setLaunchOptionsSet(true)
+      );
     }
   };
 
@@ -2059,7 +2077,7 @@ function InstalledModsSection() {
           game.modsSubdir,
           game.framework.detectFile
         ).then(setFwStatus);
-        getFrameworkSetup(game.nexusDomain).then((r) =>
+        getFrameworkSetup(game.nexusDomain, "").then((r) =>
           setFwEnabled(r.enabled !== false)
         );
       }
@@ -2098,7 +2116,10 @@ function InstalledModsSection() {
       return;
     }
     if (enabled) {
-      await markLaunchOptionsSet(game.nexusDomain);
+      await markLaunchOptionsSet(
+        game.nexusDomain,
+        game.framework?.launchOptionsTemplate ?? ""
+      );
     } else {
       await setFrameworkEnabled(game.nexusDomain, false);
     }

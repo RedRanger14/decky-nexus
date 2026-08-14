@@ -365,12 +365,24 @@ export const registerCollection = callable<
 >("register_collection");
 
 export const getFrameworkSetup = callable<
-  [game_domain: string],
-  { ok: boolean; launch_options_set?: boolean; enabled?: boolean }
+  [
+    game_domain: string,
+    /** What the game's template produces NOW. If what was written differs,
+     * launch_options_current comes back false and the step offers itself
+     * again instead of showing an uncorrectable tick. */
+    expected: string
+  ],
+  {
+    ok: boolean;
+    launch_options_set?: boolean;
+    launch_options_current?: boolean;
+    launch_options_value?: string;
+    enabled?: boolean;
+  }
 >("get_framework_setup");
 
 export const markLaunchOptionsSet = callable<
-  [game_domain: string],
+  [game_domain: string, options: string],
   { ok: boolean; error?: string }
 >("mark_launch_options_set");
 
