@@ -249,3 +249,23 @@ test("framework endorse rows are not packed into one focus target", () => {
       "first one can be endorsed with a controller"
   );
 });
+
+test("the endorse pill has a gamepad focus style", () => {
+  // Once each Cyberpunk framework got its own row they became individually
+  // selectable and completely invisible - you pressed down five times
+  // through nothing before the cursor reappeared. Michael: "it doesnt have
+  // any hover effect now so you cant tell when they are selected".
+  const theme = read("theme.ts");
+  assert.ok(
+    theme.includes("ENDORSE_PILL_CLASS"),
+    "no dedicated class for the endorse pill"
+  );
+  assert.ok(
+    theme.includes("${ENDORSE_PILL_CLASS}.gpfocus"),
+    "the pill has no gpfocus rule, so gamepad focus is invisible"
+  );
+  assert.ok(
+    read("EndorseButton.tsx").includes("className={ENDORSE_PILL_CLASS}"),
+    "the pill does not carry the class its focus style targets"
+  );
+});

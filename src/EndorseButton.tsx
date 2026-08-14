@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { FaThumbsUp } from "react-icons/fa";
 
 import { getEndorsement, setEndorsement } from "./api";
+import { ENDORSE_PILL_CLASS } from "./theme";
 import { endorseControl } from "./panelRules";
 
 const NEXUS_ORANGE = "#da8e35";
@@ -55,6 +56,7 @@ export function EndorsePill({
       };
   return (
     <Focusable
+      className={ENDORSE_PILL_CLASS}
       onActivate={() => {
         if (!busy) onActivate();
       }}
@@ -114,6 +116,7 @@ export function EndorsableFrameworkRow({
   modId,
   modName,
   installedMinutesAgo,
+  showHint = true,
 }: {
   text: string;
   gameDomain: string;
@@ -123,6 +126,10 @@ export function EndorsableFrameworkRow({
   /** Drives the cooldown wording. Undefined means unknown, which is the
    * common case and errs towards explaining the 15 minutes. */
   installedMinutesAgo?: number;
+  /** Cyberpunk installs five frameworks, so the 15-minute cooldown note
+   * appeared five times in a column. It is one fact about Nexus, not one
+   * per author - the caller says once. */
+  showHint?: boolean;
 }) {
   const [status, setStatus] = useState<string | undefined>();
   const [version, setVersion] = useState("");
@@ -178,7 +185,7 @@ export function EndorsableFrameworkRow({
           />
         )}
       </div>
-      {control.hint && (
+      {showHint && control.hint && (
         <div
           style={{
             marginTop: "6px",

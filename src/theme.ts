@@ -14,6 +14,8 @@ export const ACCENT_DANGER = "#ff6b6b";
 // Injected once per page that uses the primary button. Hover covers desktop
 // pointers; gpfocus is Steam's gamepad-focus class - the Gaming Mode "hover".
 export const PRIMARY_BUTTON_CLASS = "nexus-mods-primary-btn";
+/** Endorse pill - needs its own focus ring so a column of them can be navigated. */
+export const ENDORSE_PILL_CLASS = "nexus-endorse-pill";
 // Secondary action buttons need explicit focus states too: inline styles
 // override Steam's focus background, leaving text unreadable on focus.
 const WHITE_BUTTON_CLASS_NAME = "nexus-mods-white-btn";
@@ -63,6 +65,24 @@ export const PRIMARY_BUTTON_CSS = `
   background: #4aa9ff !important;
   color: #08243a !important;
   font-weight: 600;
+}
+
+/* The endorse pill has to show focus, or a column of them is unnavigable.
+   Cyberpunk installs five frameworks: once each got its own row they were
+   individually selectable and completely invisible, so you pressed down
+   five times through nothing before the cursor reappeared below. Steam
+   adds gpfocus/gpfocuswithin to whatever the gamepad is on. */
+.${ENDORSE_PILL_CLASS}.gpfocus,
+.${ENDORSE_PILL_CLASS}.gpfocuswithin,
+.${ENDORSE_PILL_CLASS}:hover {
+  background: rgba(218, 142, 53, 0.42) !important;
+  border-color: ${NEXUS_ORANGE} !important;
+  box-shadow: 0 0 0 2px rgba(218, 142, 53, 0.55);
+  transform: scale(1.04);
+}
+.${ENDORSE_PILL_CLASS} {
+  transition: background 0.12s ease, box-shadow 0.12s ease,
+    transform 0.12s ease;
 }
 `;
 
