@@ -1317,7 +1317,9 @@ def _parked_files_dir(game_domain: str, record_key: str) -> str:
     )
 
 
-def _shared_paths(records: dict, record_key: str, also_off=()) -> set:
+def _shared_paths(
+    records: dict, record_key: str, also_off=(), modes=("dataDir",)
+) -> set:
     """Recorded paths that another ACTIVE mod also provides.
 
     Moving one of these away takes the other mod's copy with it - whoever
@@ -1333,12 +1335,18 @@ def _shared_paths(records: dict, record_key: str, also_off=()) -> set:
     movable and stayed fully active - keeping the one file that stops the
     game starting. `also_off` is the rest of the group, plus anything
     already parked.
+
+    `modes` is which install modes count as a rival claim. It defaults to
+    dataDir alone so nothing that relied on this changes; Cyberpunk's
+    "files" mode passes its own, and it needs this every bit as much - 283
+    mods dropping files into five shared game directories is exactly the
+    situation where two records name the same path.
     """
     ignore = {k.lower() for k in also_off} | {record_key.lower()}
     mine = {f.lower() for f in (records.get(record_key) or {}).get("files") or []}
     shared = set()
     for key, rec in records.items():
-        if key.lower() in ignore or rec.get("mode") != "dataDir":
+        if key.lower() in ignore or rec.get("mode") not in modes:
             continue
         if rec.get("parked"):
             continue
@@ -4844,6 +4852,33 @@ def _known_broken_mods(
     }
 
 
+def _verdicts_for_build(game_domain: str, build: str) -> dict:
+    """Every verdict that still applies to this build, whatever its state.
+
+    _known_broken_mods answers "what should be switched off", so it filters
+    to one state. This answers "what do we already know about this mod",
+    which is a different question and has one job: never recommend
+    installing something this device has already watched fail.
+
+    Michael's Cyberpunk health check spent a day telling him to install
+    General Shadows Fixes. Its script was the one failing to compile, and a
+    single bad .reds takes every script mod with it - so the fix on offer
+    was the cause of the fault.
+    """
+    if not build:
+        return {}
+    store = (_load_settings().get("mod_verdicts") or {}).get(game_domain) or {}
+    out = {}
+    for mid, v in store.items():
+        if not isinstance(v, dict) or v.get("build") != build:
+            continue
+        try:
+            out[int(mid)] = v
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _is_unambiguously_broken(info: dict) -> bool:
     """Whether this blame needs no judgement call.
 
@@ -4949,7 +4984,32 @@ _REDS_ERROR_RE = re.compile(
     r"UNRESOLVED_FN|UNRESOLVED_TYPE)\]\s+At\s+(.+?\.reds)\s*:",
     re.IGNORECASE,
 )
-_REDS_SYMBOL_RE = re.compile(r"unresolved \w+ '([^']+)'", re.IGNORECASE)
+# Both shapes the message takes, read off the real log rather than guessed:
+#
+#   unresolved reference 'JobQueue'                     (UNRESOLVED_REF)
+#   method 'GetStatValue' not found on 'GameObject'     (UNRESOLVED_METHOD)
+#
+# The second was missed by the first version of this, so every
+# UNRESOLVED_METHOD came back with no symbol at all - which is the half of
+# the evidence that says WHAT the script wanted from a game it no longer
+# matches.
+_REDS_SYMBOL_RE = re.compile(
+    r"unresolved \w+ '([^']+)'|(?:method|member|field|function|type) "
+    r"'([^']+)' not found",
+    re.IGNORECASE,
+)
+
+# The message sits on the third line after the error - code, carets, then
+# the reason - so a symbol further away than this belongs to something else.
+# Without a bound, a file whose error carries no message at all keeps
+# claiming lines until the next error, and inherits a symbol from a script
+# hundreds of lines below it.
+_REDS_SYMBOL_WINDOW = 4
+
+
+def _redscript_symbol(line: str) -> str:
+    m = _REDS_SYMBOL_RE.search(line)
+    return (m.group(1) or m.group(2)) if m else ""
 
 
 def _parse_redscript_log(lines: list) -> dict:
@@ -4961,6 +5021,7 @@ def _parse_redscript_log(lines: list) -> dict:
     """
     out = {}
     pending = None
+    since = 0
     for line in lines:
         m = _REDS_ERROR_RE.search(line)
         if m:
@@ -4971,17 +5032,94 @@ def _parse_redscript_log(lines: list) -> dict:
                 "symbol": "", "count": 0,
             })
             entry["count"] += 1
-            pending = entry
-            sym = _REDS_SYMBOL_RE.search(line)
+            pending, since = entry, 0
+            sym = _redscript_symbol(line)
             if sym and not entry["symbol"]:
-                entry["symbol"] = sym.group(1)
+                entry["symbol"] = sym
             continue
-        if pending is not None and not pending["symbol"]:
-            sym = _REDS_SYMBOL_RE.search(line)
+        if pending is None:
+            continue
+        since += 1
+        if since > _REDS_SYMBOL_WINDOW:
+            pending = None
+            continue
+        if not pending["symbol"]:
+            sym = _redscript_symbol(line)
             if sym:
-                pending["symbol"] = sym.group(1)
+                pending["symbol"] = sym
                 pending = None
     return out
+
+
+# redscript ends a successful run with this and omits it when the compile
+# dies. Verified against both logs on device: the clean one carries it and
+# reports zero errors, the one from before the orphaned scripts were removed
+# carries six errors and no completion line at all.
+_REDS_DONE = "compilation complete"
+
+
+def _redscript_log_path(install_path: str) -> str:
+    return os.path.join(install_path, "r6", "logs", "redscript_rCURRENT.log")
+
+
+def _redscript_report(install_path: str, records: dict) -> dict:
+    """What the game itself said about its script mods, last time it ran.
+
+    This is the discriminator the health check had been missing. Everything
+    else it knows comes from mod pages - what an author says their mod
+    needs - and a curator who deliberately omits a requirement looks
+    identical to a user who forgot one. The game's own compiler does not
+    have opinions about either: it names the file that failed.
+
+    Only redscript_rCURRENT.log is read. redscript rotates the previous
+    session out under a timestamped name, and those are full of problems
+    that have since been fixed - reporting one would be the same bug as a
+    stale "already fixed" line contradicting the findings above it.
+
+    Returns {"ran", "compiled", "failures", "orphans"}. A failure carries
+    the record that owns the file where one does; an orphan is a failing
+    script no install record claims, which is how two dead files sat in
+    r6/scripts for weeks with nothing accountable for them.
+    """
+    path = _redscript_log_path(install_path)
+    if not os.path.isfile(path):
+        return {"ran": False, "compiled": False, "failures": [], "orphans": []}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return {"ran": False, "compiled": False, "failures": [], "orphans": []}
+    compiled = any(_REDS_DONE in ln.lower() for ln in lines)
+    blamed = _parse_redscript_log(lines)
+    # Which record owns each .reds on disk. Basename only: the log prints a
+    # path under r6/scripts while a record stores the path it installed to,
+    # and a mod may ship its scripts in a subfolder of its own.
+    owner = {}
+    for key, rec in (records or {}).items():
+        for rel in rec.get("files") or []:
+            name = str(rel).replace(chr(92), "/").rsplit("/", 1)[-1]
+            if name.lower().endswith(".reds"):
+                owner.setdefault(name.lower(), (key, rec))
+    failures, orphans = [], []
+    for low, info in sorted(blamed.items()):
+        hit = owner.get(low)
+        entry = {
+            "script": info["script"],
+            "kind": info["kind"],
+            "symbol": info["symbol"],
+            "count": info["count"],
+            "mod": (hit[1].get("name") or hit[0]) if hit else "",
+            "record_key": hit[0] if hit else "",
+            "mod_id": (hit[1].get("mod_id") or 0) if hit else 0,
+            "version": (hit[1].get("version") or "") if hit else "",
+        }
+        (failures if hit else orphans).append(entry)
+    return {
+        "ran": True,
+        "compiled": compiled,
+        "failures": failures,
+        "orphans": orphans,
+    }
 
 
 def _missing_manifest_deps(manifests: dict) -> list:
@@ -12266,6 +12404,18 @@ query Link($slug: String!, $domainName: String!) {
         matters most for Bethesda games, where a missing expansion is not
         discoverable until the game refuses to start, and where Michael
         lost a day to exactly that on New Vegas.
+
+        Where the game keeps a log we can read, what the game said beats
+        what a mod page implies. Welcome to Night City installs 283 mods and
+        deliberately omits seven the pages call required; it boots, and its
+        script stack compiles clean. Those seven are the curator's decision,
+        not a fault - and one of them, General Shadows Fixes, is the mod
+        whose script was breaking the game. Reported as problems, they sent
+        Michael to install the cause of the fault. So a requirement a
+        collection left out is only a problem when the game complains about
+        it, and Stardew is the case that proves it cuts both ways: SMAPI's
+        log confirmed a collection there genuinely had left out something
+        needed.
         """
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
@@ -12274,8 +12424,15 @@ query Link($slug: String!, $domainName: String!) {
             key: rec for key, rec in records.items()
             if rec.get("mod_id") and rec.get("enabled") is not False
         }
-        _install, _mods_path, _dis = _game_paths(install_dir, mods_subdir)
+        install_path, _mods_path, _dis = _game_paths(install_dir, mods_subdir)
         data_path = _game_paths(install_dir, mods_subdir)[1]
+        build = _steam_build_id(app_id)
+        # Asked of every record, not just the enabled ones: a failing script
+        # belonging to a mod already switched off is exactly what we must
+        # not report again, and one belonging to no record at all is the
+        # orphan case that cost weeks.
+        script = _redscript_report(install_path, records)
+        verdicts = _verdicts_for_build(game_domain, build)
         have_ids = {int(rec["mod_id"]) for rec in tracked.values()}
         # The framework is installed, but not as a tracked mod - it arrives
         # through Step 1, not the mod list. Without this every SMAPI mod
@@ -12338,8 +12495,14 @@ query Link($slug: String!, $domainName: String!) {
                 and not _MANAGER_REQUIREMENT_RE.search(r.get("modName") or "")
             ]
             if missing:
-                needs_mods.append({"name": name, "mod_id": rec["mod_id"],
-                                   "missing": missing})
+                needs_mods.append({
+                    "name": name, "mod_id": rec["mod_id"], "missing": missing,
+                    # Who put this mod here. A curator who leaves a
+                    # requirement out of a 283-mod set that boots has made a
+                    # decision; a user installing one mod by hand has not.
+                    "from_collection": rec.get("source") == "collection",
+                    "record_key": key,
+                })
             # "or BaseLib on Github (declared version in description of my
             # files)" is an alternative SOURCE for a mod already installed
             # from Nexus, not a second thing to go and get. Authors write
@@ -12368,9 +12531,123 @@ query Link($slug: String!, $domainName: String!) {
                 ]
                 if short:
                     needs_dlc.append({"name": name, "dlc": short})
+
+        # An orphaned .reds nobody owns, whose filename IS the name of a mod
+        # we are about to recommend, is that mod's script left behind by an
+        # install whose record was lost. Verified on device: the file was
+        # GeneralShadowsFixes.reds and the requirement is mod 20405 "General
+        # Shadows Fixes". So the mod has already been tried here and its
+        # script does not compile against this game build - which is a
+        # verdict, and the strongest reason there is not to suggest it.
+        wanted_names = {
+            _norm_mod_id(m["name"]): m
+            for f in needs_mods for m in f["missing"] if m.get("mod_id")
+        }
+        learned = []
+        for orphan in script["orphans"]:
+            stem = _norm_mod_id(orphan["script"].rsplit(".", 1)[0])
+            want = wanted_names.get(stem)
+            if not want:
+                continue
+            why = (
+                f"{orphan['script']} does not compile on this game build"
+                + (f" - {orphan['kind'].lower().replace('_', ' ')} "
+                   f"{orphan['symbol']}" if orphan["symbol"] else "")
+            )
+            learned.append({"mod_id": want["mod_id"], "name": want["name"],
+                            "why": why, "version": ""})
+        if learned:
+            _record_mod_verdicts(game_domain, build, learned)
+            verdicts = _verdicts_for_build(game_domain, build)
+
+        # Never recommend a mod this device has already watched fail.
+        known_bad = []
+        for finding in needs_mods:
+            kept = []
+            for m in finding["missing"]:
+                v = verdicts.get(int(m.get("mod_id") or 0))
+                if v:
+                    known_bad.append({
+                        "name": v.get("name") or m["name"],
+                        "for": finding["name"],
+                        "why": v.get("why") or "",
+                    })
+                else:
+                    kept.append(m)
+            finding["missing"] = kept
+        needs_mods = [f for f in needs_mods if f["missing"]]
+
+        # The corroboration. A requirement a collection deliberately omitted
+        # is informational UNLESS the game's own log complains about that
+        # mod - and only where there is a log to ask. No log means nothing
+        # has changed for the eight games that have no redscript at all.
+        blamed_keys = {
+            f["record_key"] for f in script["failures"] if f["record_key"]
+        }
+        needs_mods_info = []
+        if script["ran"] and script["compiled"]:
+            keep = []
+            for finding in needs_mods:
+                if (finding["from_collection"]
+                        and finding["record_key"] not in blamed_keys):
+                    needs_mods_info.append(finding)
+                else:
+                    keep.append(finding)
+            needs_mods = keep
+
+        # One bad .reds stops EVERY script mod loading, so a mod that owns a
+        # failing script is not a judgement call - it is the thing standing
+        # between the user and every other script mod they installed. It
+        # goes off, and the page says so afterwards.
+        #
+        # Only when the compile actually DIED. Both logs on device are
+        # unambiguous - six errors and no completion line, or zero errors
+        # and one - but "errored and finished anyway" has never been seen
+        # here, and switching a mod off on a guess about a state nobody has
+        # observed is how a check starts crying wolf. That case gets
+        # reported and left alone.
+        switched_off = []
+        for fail in (script["failures"] if not script["compiled"] else []):
+            rec = records.get(fail["record_key"]) or {}
+            if rec.get("enabled") is False or rec.get("parked"):
+                continue
+            result = await self.set_mod_enabled(
+                install_dir, mods_subdir, fail["record_key"], False,
+                "folder", game_domain, app_id, "", "starred", None,
+            )
+            if not result.get("ok"):
+                errors.append(f"{fail['record_key']}: {result.get('error')}")
+                continue
+            switched_off.append({"name": fail["mod"], "script": fail["script"],
+                                 "why": fail["symbol"] or fail["kind"]})
+            if fail["mod_id"]:
+                _record_mod_verdicts(game_domain, build, [{
+                    "mod_id": fail["mod_id"], "name": fail["mod"],
+                    "version": fail["version"],
+                    "why": f"{fail['script']} failed to compile",
+                }])
+            decky.logger.warning(
+                f"switched off {fail['mod']!r}: {fail['script']} failed to "
+                f"compile, which stops every script mod loading"
+            )
         return {
             "ok": True,
             "checked": len(tracked),
+            # What the game itself reported, and the only part of this
+            # report that is evidence rather than inference.
+            "script_log": {
+                "ran": script["ran"],
+                "compiled": script["compiled"],
+                "failures": script["failures"][:10],
+                "orphans": script["orphans"][:10],
+                "switched_off": switched_off[:10],
+            },
+            # Requirements a collection left out that the game has not
+            # complained about. Shown, because silence is a bug - but not
+            # as faults, because they are not faults.
+            "needs_mods_info": needs_mods_info[:20],
+            # Mods we will not recommend, and why.
+            "known_bad": known_bad[:10],
             # What the plugin already put right on its own. Without this the
             # page reads as broken: Michael installed LustTravel2 without its
             # libraries, opened the QAM - which installed them - then ran the
@@ -13484,12 +13761,16 @@ query Link($slug: String!, $domainName: String!) {
                 results.append(
                     {
                         "folder": key,
-                        "enabled": True,
+                        "enabled": rec.get("enabled") is not False,
                         "tracked": True,
                         "name": rec.get("name") or key,
                         "version": rec.get("version") or "",
                         "mod_id": rec.get("mod_id"),
-                        "togglable": False,
+                        # Game-root-relative files can be parked outside the
+                        # game and put back, so they toggle. Anything routed
+                        # into a single subdirectory (Palworld's LogicMods)
+                        # still cannot.
+                        "togglable": target == ".",
                         "source": rec.get("source") or "",
                         "collection_slug": rec.get("collection_slug") or "",
                     }
@@ -13660,12 +13941,57 @@ query Link($slug: String!, $domainName: String!) {
             if game_domain
             else None
         )
+        if rec and rec.get("mode") == "files" and rec.get("target") == ".":
+            # Cyberpunk. Its mods are loose files scattered across five game
+            # directories, so there is no folder to move aside - which is
+            # why this used to answer "no toggle, uninstall it instead".
+            #
+            # Gated on target "." - game-root-relative paths - because
+            # "files" mode is shared with Palworld's LogicMods, which route
+            # into one subdirectory and are deliberately untogglable. That
+            # game has never been run on device, and a change to it riding
+            # along with a Cyberpunk fix is the most expensive kind of bug
+            # there is.
+            #
+            # That was the wrong answer to a real question. One .reds that
+            # will not compile takes EVERY script mod down with it, and the
+            # remedy for that is to stop loading one file, not to throw away
+            # a download. The dataDir tier has parked files outside the game
+            # for exactly this reason since New Vegas; the only difference
+            # here is that the paths are relative to the install root rather
+            # than to Data.
+            settings = _load_settings()
+            records = settings.get("installed", {}).get(game_domain, {})
+            rec = records.get(folder) or rec
+            install_path = os.path.join(STEAM_COMMON, install_dir)
+            park = _parked_files_dir(game_domain, folder)
+            shared = _shared_paths(records, folder, modes=("files",))
+            movable = [
+                r for r in (rec.get("files") or [])
+                if r.lower() not in shared
+            ]
+            if enabled:
+                moved = _move_mod_files(park, install_path, movable)
+                _force_rmtree(park)
+                rec.pop("parked", None)
+                rec.pop("disabled_reason", None)
+            else:
+                moved = _move_mod_files(install_path, park, movable)
+                # Marked off even when nothing moved, for the same reason
+                # the dataDir tier does: a file another record also claims
+                # stays put, and a mod made only of those would otherwise
+                # read as still on.
+                rec["parked"] = True
+            rec["enabled"] = bool(enabled)
+            _save_settings(settings)
+            decky.logger.info(
+                f"{'enabled' if enabled else 'disabled'} files-mode mod "
+                f"{folder!r}: {moved} file(s) moved"
+                + (f", {len(shared)} left (another mod provides them)"
+                   if shared else "")
+            )
+            return {"ok": True, "moved": moved, "shared": len(shared)}
         if rec and rec.get("target"):
-            if rec.get("mode") == "files":
-                return {
-                    "ok": False,
-                    "error": "This mod has no toggle - uninstall it instead",
-                }
             install_path = os.path.join(STEAM_COMMON, install_dir)
             base = os.path.join(install_path, *rec["target"].split("/"))
             real = rec.get("folder") or folder

@@ -1062,6 +1062,15 @@ export const getHealthCheck = callable<
       mod_id?: number;
       missing?: { name: string; mod_id?: number; notes?: string }[];
     }[];
+    /** Requirements a COLLECTION left out that the game has not complained
+     * about. A curator omitting seven mods from a 283-mod set that boots
+     * has made a decision, not a mistake - so these are shown, because
+     * silence is a bug, but not counted as faults. */
+    needs_mods_info?: {
+      name: string;
+      mod_id?: number;
+      missing?: { name: string; mod_id?: number; notes?: string }[];
+    }[];
     needs_dlc?: { name: string; dlc?: string[] }[];
     needs_external?: {
       name: string;
@@ -1071,6 +1080,24 @@ export const getHealthCheck = callable<
     /** Libraries the plugin installed on a mod's behalf before you asked.
      * Shown so a clean report cannot be mistaken for a broken check. */
     already_fixed?: { name: string; for: string }[];
+    /** Mods we refuse to recommend because this device has already watched
+     * them fail. The health check spent a day telling Michael to install
+     * the very mod whose script was breaking his game. */
+    known_bad?: { name: string; for: string; why: string }[];
+    /** What the game's own compiler said, last time it ran. */
+    script_log?: {
+      ran: boolean;
+      compiled: boolean;
+      failures: {
+        script: string;
+        kind: string;
+        symbol: string;
+        count: number;
+        mod: string;
+      }[];
+      orphans: { script: string; kind: string; symbol: string }[];
+      switched_off: { name: string; script: string; why: string }[];
+    };
     errors?: string[];
     error?: string;
   }

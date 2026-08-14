@@ -1179,6 +1179,28 @@ test("no mods installed is not a clean bill of health", () => {
   assert.equal(v.clean, false);
 });
 
+// A dead script stack outranks any count of missing requirements: one .reds
+// that will not compile stops EVERY script mod loading, not just its own.
+// Two orphaned files did exactly that to every Cyberpunk collection Michael
+// installed, and nothing anywhere said so.
+test("a dead script stack outranks a clean requirement check", () => {
+  const v = healthVerdict(283, 0, false, true);
+  assert.match(v.headline, /script mods are not running/);
+  assert.equal(v.clean, false);
+});
+
+test("a dead script stack also outranks a count of problems", () => {
+  const v = healthVerdict(283, 7, false, true);
+  assert.match(v.headline, /script mods are not running/);
+});
+
+test("games with no script compiler are unaffected", () => {
+  // The flag is optional, so the eight games with no redscript at all get
+  // exactly the verdict they got before.
+  assert.equal(healthVerdict(12, 0, false).clean, true);
+  assert.equal(healthVerdict(283, 0, false, false).clean, true);
+});
+
 // --- directNote -----------------------------------------------------------
 // Fallout Rebirth+ lists FOSE as a plain URL rather than a Nexus file.
 // Without it 168 mods installed perfectly and the game crashed on launch.
