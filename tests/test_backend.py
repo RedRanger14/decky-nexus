@@ -5643,6 +5643,51 @@ class TestEndorseRegistersDownload(unittest.TestCase):
         self.assertIn("download_link.json", body)
 
 
+class TestRedscriptLogParsing(unittest.TestCase):
+    """Lines lifted from the real r6/logs/redscript log on device.
+
+    A single failing .reds blocks EVERY redscript mod, which is why two
+    orphaned files killed the whole script stack of every Cyberpunk
+    collection Michael installed - and why naming them matters."""
+
+    LINES = [
+        "[ERROR - Fri, 14 Aug 2026 15:44:08 +0100] [UNRESOLVED_REF] At "
+        "S:" + chr(92) + "steamapps" + chr(92) + "common" + chr(92) + "Cyberpunk 2077" + chr(92)
+        + "r6" + chr(92) + "scripts" + chr(92) + "GeneralShadowsFixes.reds:7094:20:",
+        "unresolved reference 'JobQueue'",
+        "[ERROR - Fri] [UNRESOLVED_METHOD] At S:" + chr(92) + "r6" + chr(92) + "scripts"
+        + chr(92) + "QuickMelee Sandevistan Fix.reds:4:28:",
+    ]
+
+    def test_it_names_the_script_that_failed(self):
+        got = main._parse_redscript_log(self.LINES)
+        self.assertEqual(
+            got["generalshadowsfixes.reds"]["script"],
+            "GeneralShadowsFixes.reds")
+        self.assertIn("quickmelee sandevistan fix.reds", got)
+
+    def test_it_captures_the_symbol_from_the_next_line(self):
+        # The reference is on the line AFTER the error, which is what makes
+        # this "built for a different game version" rather than "broken".
+        got = main._parse_redscript_log(self.LINES)
+        self.assertEqual(got["generalshadowsfixes.reds"]["symbol"], "JobQueue")
+
+    def test_repeats_of_one_script_are_counted_not_duplicated(self):
+        got = main._parse_redscript_log(self.LINES + self.LINES)
+        self.assertEqual(got["generalshadowsfixes.reds"]["count"], 2)
+        self.assertEqual(len(got), 2)
+
+    def test_a_clean_log_blames_nothing(self):
+        self.assertEqual(main._parse_redscript_log(
+            ["[INFO] Compilation complete", ""]), {})
+
+    def test_the_error_kind_is_kept(self):
+        got = main._parse_redscript_log(self.LINES)
+        self.assertEqual(
+            got["quickmelee sandevistan fix.reds"]["kind"],
+            "UNRESOLVED_METHOD")
+
+
 class TestHealthCheck(unittest.TestCase):
     """The screen Michael asked for months ago and was talked out of.
 

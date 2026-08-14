@@ -4933,6 +4933,57 @@ def _godot_mod_manifests(mods_dir: str) -> dict:
     return out
 
 
+# redscript writes its compilation errors to r6/logs, naming the .reds file
+# and the symbol it could not resolve. Verbatim shape from device, with the
+# path separators shown as forward slashes:
+#
+#   [ERROR ...] [UNRESOLVED_REF] At .../r6/scripts/GeneralShadowsFixes.reds:
+#   7094:20: unresolved reference 'JobQueue'
+#
+# An unresolved reference to a GAME symbol means the script was built against
+# a different game version. It matters more here than anywhere else because a
+# single failing .reds blocks EVERY redscript mod - two orphaned files killed
+# the whole script stack of every Cyberpunk collection Michael installed.
+_REDS_ERROR_RE = re.compile(
+    r"\[(UNRESOLVED_REF|UNRESOLVED_METHOD|SYNTAX_ERROR|TYPE_ERROR|"
+    r"UNRESOLVED_FN|UNRESOLVED_TYPE)\]\s+At\s+(.+?\.reds)\s*:",
+    re.IGNORECASE,
+)
+_REDS_SYMBOL_RE = re.compile(r"unresolved \w+ '([^']+)'", re.IGNORECASE)
+
+
+def _parse_redscript_log(lines: list) -> dict:
+    """Which .reds files failed to compile, and why.
+
+    Returns {script basename lowered: {"script", "kind", "symbol", "count"}}.
+    Keyed by file rather than by mod because that is all the log knows - the
+    caller matches those names against install records.
+    """
+    out = {}
+    pending = None
+    for line in lines:
+        m = _REDS_ERROR_RE.search(line)
+        if m:
+            raw = m.group(2).replace(chr(92), "/")
+            name = raw.rsplit("/", 1)[-1]
+            entry = out.setdefault(name.lower(), {
+                "script": name, "kind": m.group(1).upper(),
+                "symbol": "", "count": 0,
+            })
+            entry["count"] += 1
+            pending = entry
+            sym = _REDS_SYMBOL_RE.search(line)
+            if sym and not entry["symbol"]:
+                entry["symbol"] = sym.group(1)
+            continue
+        if pending is not None and not pending["symbol"]:
+            sym = _REDS_SYMBOL_RE.search(line)
+            if sym:
+                pending["symbol"] = sym.group(1)
+                pending = None
+    return out
+
+
 def _missing_manifest_deps(manifests: dict) -> list:
     """Which installed mods declare a dependency that is not installed.
 
