@@ -3,6 +3,32 @@
 
 import type { InstallMode } from "./api";
 
+/** Every Nexus mod id that IS a framework for this game: the primary one,
+ * the extras, and every alias of both.
+ *
+ * Frameworks arrive through Step 1, not the mod list, so anything asking
+ * "is this installed?" has to count them or it reports the game's own
+ * foundations as missing. The health check learned this when it called all
+ * 77 of a Stardew setup's mods broken for want of SMAPI; the mod page had
+ * the same bug for longer and more quietly, because it only counted the
+ * PRIMARY framework - so Cyberpunk's CET read as present while RED4ext,
+ * ArchiveXL, TweakXL and redscript all showed as "needs installing" on
+ * every mod page that required them. Michael found it: "some required mods
+ * that are installed are being marked as orange".
+ *
+ * One function, every caller, so the two can never disagree again.
+ */
+export function frameworkModIds(game: SupportedGame): number[] {
+  return [
+    game.framework?.nexusModId,
+    ...(game.framework?.aliasModIds ?? []),
+    ...(game.extraFrameworks ?? []).flatMap((fw) => [
+      fw.nexusModId,
+      ...(fw.aliasModIds ?? []),
+    ]),
+  ].filter((id): id is number => typeof id === "number");
+}
+
 export type LogAdapter =
   /** Godot games: ~/.local/share/<userDirName>/logs/godot.log */
   | { kind: "godot"; userDirName: string }
