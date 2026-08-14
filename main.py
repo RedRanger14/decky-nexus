@@ -439,6 +439,25 @@ def _record_vanilla_baseline(
         have[game_domain] = sorted(os.listdir(mods_path))
     except OSError:
         return
+    # And the game's own folder, not just its mod folder.
+    #
+    # Script extenders, audio libraries and ENBs install BESIDE the game
+    # exe, and reset only ever looked at Data - so they survived every
+    # reset ever performed. Michael's Fallout 3 still had three mod DLLs
+    # (bass.dll, bassenc.dll, bassmix.dll) in the game root after several
+    # "clean" resets, which means no baseline he ever tested from was
+    # actually clean.
+    root = os.path.dirname(mods_path.rstrip(os.sep))
+    if root and os.path.isdir(root):
+        try:
+            settings.setdefault("vanilla_root_baseline", {})[game_domain] = (
+                sorted(
+                    n for n in os.listdir(root)
+                    if os.path.isfile(os.path.join(root, n))
+                )
+            )
+        except OSError:
+            pass
     # Which build it describes. A later reset can then tell whether the
     # game itself has changed underneath the baseline.
     build = _steam_build_id(app_id)
@@ -9078,6 +9097,11 @@ query Link($slug: String!, $domainName: String!) {
                             "already staged from an earlier run - reusing it"
                         )
                         exe_path = dst
+                        # Staged, therefore ours to remove. Leaving it out
+                        # of this list is why Patcher.exe, its readme and
+                        # xdelta3.* sat in Michael's Fallout 3 folder for
+                        # days after the run that put them there.
+                        staged.append(dst)
                     continue
                 _makedirs_for(dst)
                 shutil.copy2(src, dst)
@@ -10319,6 +10343,7 @@ query Link($slug: String!, $domainName: String!) {
         removed = 0
         errors = []
         restored = []
+        root_leftovers = []
         for key, rec in sorted(records.items()):
             try:
                 mode = rec.get("mode") or "folder"
@@ -10562,6 +10587,28 @@ query Link($slug: String!, $domainName: String!) {
                 leftovers = sorted(set(os.listdir(mods_path)) - set(baseline))
             except OSError:
                 leftovers = []
+        # Files a mod left BESIDE the game exe. Reported, never deleted:
+        # the game's own files live here too, and the baseline may predate
+        # a game update. Michael's Fallout 3 carried three mod DLLs through
+        # several "clean" resets because nothing ever looked here.
+        root_baseline = (
+            _load_settings().get("vanilla_root_baseline", {}).get(game_domain)
+        )
+        if root_baseline:
+            try:
+                now = {
+                    n for n in os.listdir(install_path)
+                    if os.path.isfile(os.path.join(install_path, n))
+                }
+                root_leftovers = sorted(now - set(root_baseline))
+            except OSError:
+                root_leftovers = []
+            if root_leftovers:
+                decky.logger.warning(
+                    f"reset {game_domain!r}: {len(root_leftovers)} file(s) "
+                    f"in the game folder that vanilla did not have: "
+                    f"{', '.join(root_leftovers[:8])}"
+                )
         # Deliberately NOT "mod_verdicts". Reset means start the mods
         # clean, not forget what the game can run - and those two got
         # confused once already: Michael reset, reinstalled, and the game
@@ -10676,6 +10723,10 @@ query Link($slug: String!, $domainName: String!) {
             # that no record accounted for. Zero means the reset is
             # verified, not merely finished.
             "leftovers": len(leftovers),
+            # The same question asked of the GAME folder, where script
+            # extenders and audio DLLs live. Named rather than deleted -
+            # the game's own files are in there too.
+            "root_leftovers": root_leftovers[:12],
             "swept": removed_leftovers,
             # True when the game has been patched or gained DLC since the
             # baseline, so untracked files were listed rather than
