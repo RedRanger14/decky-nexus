@@ -13,7 +13,13 @@
 // text is the last thing that helps. So the page leads with a verdict big
 // enough to read from a sofa, and only then the detail.
 
-import { DialogButton, Focusable, ScrollPanelGroup } from "@decky/ui";
+import {
+  DialogButton,
+  Focusable,
+  Navigation,
+  ScrollPanelGroup,
+} from "@decky/ui";
+import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 import {
   FaBoxOpen,
@@ -25,12 +31,14 @@ import {
   FaSyncAlt,
 } from "react-icons/fa";
 
-import { getHealthCheck } from "./api";
+import { getHealthCheck, getModDetails } from "./api";
 import { PageBackdrop, SectionHeading, StatChip } from "./chrome";
 import { SupportedGame, getActiveGame } from "./games";
-import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
+import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 import { healthVerdict } from "./panelRules";
 import { installLatest } from "./install";
+import { LINK_CHIP_CLASS } from "./theme";
+import { setDetailOrigin, setSelectedMod } from "./state";
 
 const WARN = "230, 180, 80";
 const NEXUS_ORANGE = "#da8e35";
@@ -87,6 +95,61 @@ interface Finding {
   missing?: { name: string; mod_id?: number; notes?: string }[];
   dlc?: string[];
   files?: { name: string; url: string }[];
+}
+
+/** Open a mod's own page inside the plugin.
+ *
+ * Michael, after reading a finding he could do nothing with: "I think the
+ * items in the health report should be clickable as a user might want to
+ * read instructions on a mod". Staying in the plugin beats the browser
+ * wherever we can - the page has the description, the requirements and an
+ * install button, and the user never leaves Gaming Mode.
+ */
+async function openMod(game: SupportedGame, modId: number, name: string) {
+  const result = await getModDetails(game.nexusDomain, modId);
+  if (result.ok && result.mod) {
+    setSelectedMod({ game, mod: result.mod });
+    setDetailOrigin("browse"); // B pops back to where we came from
+    pushOurPage("/nexus-mods/mod");
+  } else {
+    toaster.toast({ title: "Could not open mod", body: result.error ?? name });
+  }
+}
+
+/** A finding you can act on. Each one is its own focus target with its own
+ * ring: a card can name several mods, and packing them into one target is
+ * the bug that left four of Cyberpunk's five authors unthankable. */
+function LinkChip({
+  label,
+  icon,
+  onOpen,
+}: {
+  label: string;
+  icon?: string;
+  onOpen: () => void;
+}) {
+  return (
+    <Focusable
+      className={LINK_CHIP_CLASS}
+      onActivate={onOpen}
+      style={{
+        display: "inline-block",
+        padding: "3px 12px",
+        margin: "4px 6px 0 0",
+        borderRadius: "999px",
+        fontSize: "12px",
+        maxWidth: "100%",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        background: "rgba(218, 142, 53, 0.15)",
+        border: `1px solid ${NEXUS_ORANGE}88`,
+      }}
+    >
+      {icon ? `${icon} ` : ""}
+      {label}
+    </Focusable>
+  );
 }
 
 /** One problem, as a card. Cards rather than list rows because each finding
@@ -158,7 +221,7 @@ export default function HealthCheckPage() {
     needs_external: Finding[];
     owned_dlc: string[];
     already_fixed: { name: string; for: string }[];
-    known_bad: { name: string; for: string; why: string }[];
+    known_bad: { name: string; for: string; why: string; mod_id?: number }[];
     script_log?: {
       ran: boolean;
       compiled: boolean;
@@ -481,14 +544,24 @@ export default function HealthCheckPage() {
                 title={f.name}
                 detail={
                   <>
-                    Needs{" "}
-                    <b>
-                      {(f.missing ?? []).map((m) => m.name).join(", ")}
-                    </b>
-                    , which {(f.missing ?? []).length === 1 ? "is" : "are"} not
+                    Needs {(f.missing ?? []).length === 1 ? "this" : "these"},
+                    which {(f.missing ?? []).length === 1 ? "is" : "are"} not
                     installed. Without{" "}
                     {(f.missing ?? []).length === 1 ? "it" : "them"} this mod
                     may do nothing at all, and the game will not always say so.
+                    <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
+                      {(f.missing ?? []).map((m) =>
+                        m.mod_id && game ? (
+                          <LinkChip
+                            key={m.mod_id}
+                            label={m.name}
+                            onOpen={() => openMod(game, m.mod_id!, m.name)}
+                          />
+                        ) : (
+                          <b key={m.name}>{m.name}</b>
+                        )
+                      )}
+                    </Focusable>
                   </>
                 }
               />
@@ -530,13 +603,26 @@ export default function HealthCheckPage() {
                 title={f.name}
                 detail={
                   <>
-                    Needs{" "}
-                    <b>{(f.files ?? []).map((x) => x.name).join(", ")}</b>,
-                    hosted somewhere we cannot download from. Get{" "}
-                    {(f.files ?? []).length === 1 ? "it" : "them"} from{" "}
-                    {(f.files ?? []).map((x) => x.url).join(", ")} on a
-                    computer and copy{" "}
-                    {(f.files ?? []).length === 1 ? "it" : "them"} across.
+                    Needs {(f.files ?? []).length === 1 ? "a file" : "files"}{" "}
+                    hosted somewhere we cannot download from. Open{" "}
+                    {(f.files ?? []).length === 1 ? "it" : "them"} to read the
+                    page, then get the file on a computer and copy it across.
+                    <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
+                      {(f.files ?? []).map((x) =>
+                        x.url ? (
+                          <LinkChip
+                            key={x.url}
+                            icon="🌐"
+                            label={x.name}
+                            onOpen={() =>
+                              Navigation.NavigateToExternalWeb(x.url)
+                            }
+                          />
+                        ) : (
+                          <b key={x.name}>{x.name}</b>
+                        )
+                      )}
+                    </Focusable>
                   </>
                 }
               />
@@ -557,7 +643,16 @@ export default function HealthCheckPage() {
                   <>
                     <b>{k.for}</b> lists this as required, and we are not
                     suggesting it: {k.why || "it has already failed on this device"}.
-                    Installing it would break more than it fixes.
+                    Installing it would break more than it fixes — open it if
+                    you want to judge for yourself.
+                    {k.mod_id && game ? (
+                      <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
+                        <LinkChip
+                          label={k.name}
+                          onOpen={() => openMod(game, k.mod_id!, k.name)}
+                        />
+                      </Focusable>
+                    ) : null}
                   </>
                 }
               />
@@ -577,12 +672,25 @@ export default function HealthCheckPage() {
                 detail={
                   <>
                     Its page lists{" "}
-                    <b>{(f.missing ?? []).map((m) => m.name).join(", ")}</b> as
+                    {(f.missing ?? []).length === 1 ? "this" : "these"} as
                     required, and the collection you installed left{" "}
                     {(f.missing ?? []).length === 1 ? "it" : "them"} out. The
                     game has not complained, so this is the curator's choice
                     rather than a fault — nothing to do unless something is
                     actually missing in-game.
+                    <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
+                      {(f.missing ?? []).map((m) =>
+                        m.mod_id && game ? (
+                          <LinkChip
+                            key={m.mod_id}
+                            label={m.name}
+                            onOpen={() => openMod(game, m.mod_id!, m.name)}
+                          />
+                        ) : (
+                          <b key={m.name}>{m.name}</b>
+                        )
+                      )}
+                    </Focusable>
                   </>
                 }
               />

@@ -1083,7 +1083,12 @@ export const getHealthCheck = callable<
     /** Mods we refuse to recommend because this device has already watched
      * them fail. The health check spent a day telling Michael to install
      * the very mod whose script was breaking his game. */
-    known_bad?: { name: string; for: string; why: string }[];
+    known_bad?: {
+      name: string;
+      for: string;
+      why: string;
+      mod_id?: number;
+    }[];
     /** What the game's own compiler said, last time it ran. */
     script_log?: {
       ran: boolean;

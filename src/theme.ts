@@ -16,6 +16,8 @@ export const ACCENT_DANGER = "#ff6b6b";
 export const PRIMARY_BUTTON_CLASS = "nexus-mods-primary-btn";
 /** Endorse pill - needs its own focus ring so a column of them can be navigated. */
 export const ENDORSE_PILL_CLASS = "nexus-endorse-pill";
+/** Health-check finding chip - opens the mod's page, or an off-Nexus link. */
+export const LINK_CHIP_CLASS = "nexus-link-chip";
 // Secondary action buttons need explicit focus states too: inline styles
 // override Steam's focus background, leaving text unreadable on focus.
 const WHITE_BUTTON_CLASS_NAME = "nexus-mods-white-btn";
@@ -81,6 +83,23 @@ export const PRIMARY_BUTTON_CSS = `
   transform: scale(1.04);
 }
 .${ENDORSE_PILL_CLASS} {
+  transition: background 0.12s ease, box-shadow 0.12s ease,
+    transform 0.12s ease;
+}
+/* Health-check findings are chips you can open: a missing mod goes to its
+   page inside the plugin, an off-Nexus file to the browser. Michael asked
+   for it after reading a finding he could do nothing with - "a user might
+   want to read instructions on a mod". Same focus convention as the endorse
+   pill, for the same reason: several per card, in a column. */
+.${LINK_CHIP_CLASS}.gpfocus,
+.${LINK_CHIP_CLASS}.gpfocuswithin,
+.${LINK_CHIP_CLASS}:hover {
+  background: rgba(218, 142, 53, 0.42) !important;
+  border-color: ${NEXUS_ORANGE} !important;
+  box-shadow: 0 0 0 2px rgba(218, 142, 53, 0.55);
+  transform: scale(1.04);
+}
+.${LINK_CHIP_CLASS} {
   transition: background 0.12s ease, box-shadow 0.12s ease,
     transform 0.12s ease;
 }
