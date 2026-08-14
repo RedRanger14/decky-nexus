@@ -1114,13 +1114,16 @@ function CurrentGameSection() {
                     All {allFrameworks.length} installed ✓
                   </Field>
                 </PanelSectionRow>
-                {allFrameworks.map((f) => (
+                {allFrameworks.map((f, i) => (
                   <PanelSectionRow key={f.nexusModId ?? f.name}>
                     <EndorsableFrameworkRow
                       text={`${f.name} ✓`}
                       gameDomain={game.nexusDomain}
                       modId={f.nexusModId}
                       modName={f.name}
+                      /* The cooldown note is one fact about Nexus, not one
+                         per author - five copies of it was just noise. */
+                      showHint={i === allFrameworks.length - 1}
                     />
                   </PanelSectionRow>
                 ))}
