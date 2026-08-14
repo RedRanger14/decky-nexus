@@ -5559,6 +5559,50 @@ class TestMissingManifestDeps(unittest.TestCase):
         }), [])
 
 
+class TestEndorsementIsRemembered(unittest.TestCase):
+    """Nexus kept reporting "Undecided" for mods this account had just
+    endorsed, so every deploy - which remounts the panel and re-reads -
+    showed them un-endorsed again. Michael asked, fairly, whether it should
+    not already know that he had endorsed them."""
+
+    DOMAIN = "endtest"
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("endorsed", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+
+    def _remember(self, mod_id, value):
+        settings = main._load_settings()
+        settings.setdefault("endorsed", {}).setdefault(
+            self.DOMAIN, {})[str(mod_id)] = value
+        main._save_settings(settings)
+
+    def test_our_own_endorsement_beats_an_undecided_read(self):
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def get_endorsement")
+        body = src[start:src.index(chr(10) + "    async def ", start + 10)]
+        self.assertIn('if status == "Undecided":', body)
+        self.assertIn('status = "Endorsed"', body)
+
+    def test_it_only_ever_upgrades(self):
+        # A remote "Endorsed" or "Abstained" must pass through untouched, so
+        # this can never contradict Nexus in the other direction.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def get_endorsement")
+        body = src[start:src.index(chr(10) + "    async def ", start + 10)]
+        self.assertNotIn('status = "Undecided"', body.split(
+            'if status == "Undecided":')[1])
+
+    def test_abstaining_is_recorded_too(self):
+        # Otherwise taking an endorsement back would be undone by the very
+        # memory meant to preserve it.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def set_endorsement")
+        body = src[start:src.index(chr(10) + "    async def ", start + 10)]
+        self.assertIn("] = bool(endorse)", body)
+
+
 class TestEndorseRegistersDownload(unittest.TestCase):
     """Endorsing a mod Nexus has no download for.
 
