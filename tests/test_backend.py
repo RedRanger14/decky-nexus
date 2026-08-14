@@ -5753,6 +5753,16 @@ class TestPrefixToolRestaging(unittest.TestCase):
         # set by something that is genuinely a problem.
         self.assertNotIn('stage_err = (', window)
 
+    def test_a_reused_file_is_still_cleaned_up_afterwards(self):
+        # v0.154.0 stopped the run failing on an already-staged exe but
+        # never added it back to the unstage list, so Patcher.exe, its
+        # readme and xdelta3.* accumulated in the game folder for days.
+        body = open(os.path.join(REPO_ROOT, "main.py"),
+                    encoding="utf-8").read()
+        start = body.index("already staged from an earlier run")
+        window = body[start:start + 700]
+        self.assertIn("staged.append(dst)", window)
+
     def test_it_reuses_rather_than_skipping_silently(self):
         # Reusing means pointing exe_path at the staged copy. Skipping
         # without that leaves the tool with nothing to run, which would be
@@ -5961,6 +5971,67 @@ class TestPrefixToolEarlyFinish(unittest.TestCase):
         body = self._body()
         self.assertEqual(body.count("_kill_tree()"), 3)
         self.assertIn("os.killpg", body)
+
+
+class TestResetSeesTheGameFolder(unittest.TestCase):
+    """Reset only ever looked at the mod folder.
+
+    Script extenders, audio libraries and ENBs install BESIDE the game exe,
+    so they survived every reset ever performed. Michael's Fallout 3 still
+    had bass.dll, bassenc.dll and bassmix.dll in the game root after
+    several "clean" resets - which means no baseline he tested from was
+    ever actually clean, on any Bethesda game."""
+
+    GAME = "Root Baseline Test"
+    DOMAIN = "rootbase"
+
+    def setUp(self):
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        os.makedirs(os.path.join(self.root, "Data"))
+        for n in ("Game.exe", "binkw32.dll"):
+            with open(os.path.join(self.root, n), "w") as f:
+                f.write("vanilla")
+        settings = main._load_settings()
+        settings.get("vanilla_baseline", {}).pop(self.DOMAIN, None)
+        settings.get("vanilla_root_baseline", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("vanilla_baseline", {}).pop(self.DOMAIN, None)
+        settings.get("vanilla_root_baseline", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_the_baseline_records_the_game_folder_too(self):
+        main._record_vanilla_baseline(
+            self.DOMAIN, os.path.join(self.root, "Data"), 0)
+        got = (main._load_settings().get("vanilla_root_baseline") or {}).get(
+            self.DOMAIN)
+        self.assertEqual(got, ["Game.exe", "binkw32.dll"])
+
+    def test_a_dll_dropped_beside_the_exe_is_noticed(self):
+        main._record_vanilla_baseline(
+            self.DOMAIN, os.path.join(self.root, "Data"), 0)
+        with open(os.path.join(self.root, "bass.dll"), "w") as f:
+            f.write("a mod put this here")
+        base = set((main._load_settings().get("vanilla_root_baseline") or {})
+                   .get(self.DOMAIN) or [])
+        now = {n for n in os.listdir(self.root)
+               if os.path.isfile(os.path.join(self.root, n))}
+        self.assertEqual(sorted(now - base), ["bass.dll"])
+
+    def test_the_game_folder_baseline_is_only_taken_once(self):
+        # Otherwise a mod's files become "vanilla" the moment they land.
+        d = os.path.join(self.root, "Data")
+        main._record_vanilla_baseline(self.DOMAIN, d, 0)
+        with open(os.path.join(self.root, "bass.dll"), "w") as f:
+            f.write("x")
+        main._record_vanilla_baseline(self.DOMAIN, d, 0)
+        got = (main._load_settings().get("vanilla_root_baseline") or {}).get(
+            self.DOMAIN)
+        self.assertNotIn("bass.dll", got)
 
 
 class TestResetUndoesModdingTools(unittest.TestCase):
