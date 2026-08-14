@@ -7,7 +7,14 @@ export type LogAdapter =
   /** Godot games: ~/.local/share/<userDirName>/logs/godot.log */
   | { kind: "godot"; userDirName: string }
   /** SMAPI games: ~/.config/<configDirName>/ErrorLogs/SMAPI-latest.txt */
-  | { kind: "smapi"; configDirName: string };
+  | { kind: "smapi"; configDirName: string }
+  /** redscript games (Cyberpunk): <install>/r6/logs/redscript_rCURRENT.log.
+   * No field needed - the log lives inside the game folder, which the
+   * backend already knows. Read by the health check rather than by the
+   * load-status badges: redscript reports on FILES, not on mods, so it
+   * answers "did your script stack compile" rather than "did this mod
+   * load". */
+  | { kind: "redscript" };
 
 export interface GameFramework {
   /** Community mod loader most mods require (e.g. SMAPI) */
@@ -795,6 +802,11 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     prefixRuntimeFix: true,
     moddedSaveWarning: false,
     processName: "Cyberpunk2077.exe",
+    // The game's own compiler, and the only thing here that is evidence
+    // rather than inference. Welcome to Night City omits seven mods their
+    // pages call required, boots, and compiles clean - so the health check
+    // asks this before calling any of them a fault.
+    logAdapter: { kind: "redscript" },
     framework: {
       name: "Cyber Engine Tweaks",
       // Verified on device 2026-08-14. Exact paths, never prefixes:

@@ -5687,6 +5687,137 @@ class TestRedscriptLogParsing(unittest.TestCase):
             got["quickmelee sandevistan fix.reds"]["kind"],
             "UNRESOLVED_METHOD")
 
+    def test_an_unresolved_method_says_what_it_wanted(self):
+        # The other message shape, verbatim from the same log. The first
+        # version of this only matched "unresolved reference 'X'", so every
+        # UNRESOLVED_METHOD came back with no symbol - losing the half of
+        # the evidence that says what the script wanted from a game it no
+        # longer matches.
+        got = main._parse_redscript_log(self.LINES + [
+            " let x = scriptInterface.executionOwner.GetStatValue(\"S\");",
+            "                         ^^^^^^^^^^^^^^",
+            "method 'GetStatValue' not found on 'GameObject'",
+        ])
+        self.assertEqual(
+            got["quickmelee sandevistan fix.reds"]["symbol"], "GetStatValue")
+
+    def test_a_distant_symbol_is_not_attributed_to_an_earlier_script(self):
+        # The message sits three lines under its error. Without a bound, a
+        # script whose error carries no message keeps claiming lines until
+        # the next error and inherits a symbol from somewhere else entirely.
+        got = main._parse_redscript_log([
+            self.LINES[2],
+            "code", "carets", "", "", "", "", "",
+            "unresolved reference 'SomethingElse'",
+        ])
+        self.assertEqual(
+            got["quickmelee sandevistan fix.reds"]["symbol"], "")
+
+
+class TestRedscriptReport(unittest.TestCase):
+    """Matching what the compiler said against what we installed.
+
+    The health check had no way to tell a curator's deliberate omission
+    from a user's mistake, so it reported seven of Welcome to Night City's
+    283 mods as faults - including the one whose orphaned script was
+    breaking the game."""
+
+    GAME = "Redscript Test"
+
+    ERRORS = [
+        "[ERROR - Fri] [UNRESOLVED_REF] At S:" + chr(92) + "r6" + chr(92)
+        + "scripts" + chr(92) + "GeneralShadowsFixes.reds:7094:20:",
+        "    let jobQueue = JobQueue.Create();",
+        "                   ^^^^^^^^",
+        "unresolved reference 'JobQueue'",
+    ]
+    DONE = ["[INFO - Fri] Compilation complete",
+            "[INFO - Fri] Output successfully saved to final.redscripts.modded"]
+
+    def setUp(self):
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        os.makedirs(os.path.join(self.root, "r6", "logs"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _log(self, lines):
+        with open(main._redscript_log_path(self.root), "w",
+                  encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+    def test_no_log_means_the_game_has_not_been_asked(self):
+        # The state every game without a script compiler is permanently in.
+        # It must never be confused with "the game said nothing is wrong".
+        r = main._redscript_report(self.root, {})
+        self.assertFalse(r["ran"])
+        self.assertFalse(r["compiled"])
+
+    def test_a_clean_log_is_a_positive_answer(self):
+        self._log(["[INFO] Compiling files"] + self.DONE)
+        r = main._redscript_report(self.root, {})
+        self.assertTrue(r["ran"])
+        self.assertTrue(r["compiled"])
+        self.assertEqual(r["failures"], [])
+
+    def test_a_failed_compile_has_no_completion_line(self):
+        # Verified against both real logs on device: six errors and no
+        # completion, or zero errors and one.
+        self._log(self.ERRORS)
+        r = main._redscript_report(self.root, {})
+        self.assertTrue(r["ran"])
+        self.assertFalse(r["compiled"])
+
+    def test_a_failing_script_is_matched_to_the_mod_that_owns_it(self):
+        self._log(self.ERRORS)
+        r = main._redscript_report(self.root, {
+            "Shadow Fixes": {
+                "name": "Shadow Fixes", "mod_id": 20405, "version": "1.2",
+                "files": ["r6/scripts/GeneralShadowsFixes.reds"],
+            },
+        })
+        self.assertEqual(len(r["failures"]), 1)
+        self.assertEqual(r["failures"][0]["mod"], "Shadow Fixes")
+        self.assertEqual(r["failures"][0]["mod_id"], 20405)
+        self.assertEqual(r["orphans"], [])
+
+    def test_a_failing_script_nobody_owns_is_an_orphan(self):
+        # The case that cost weeks: two .reds files left by installs whose
+        # records were lost, failing every compile with nothing accountable.
+        self._log(self.ERRORS)
+        r = main._redscript_report(self.root, {})
+        self.assertEqual(r["failures"], [])
+        self.assertEqual(r["orphans"][0]["script"], "GeneralShadowsFixes.reds")
+        self.assertEqual(r["orphans"][0]["symbol"], "JobQueue")
+
+    def test_a_mod_shipping_its_script_in_a_subfolder_still_matches(self):
+        # The log prints a path under r6/scripts; the record stores where it
+        # installed to, and many mods use a folder of their own.
+        self._log([
+            "[ERROR] [SYNTAX_ERROR] At S:" + chr(92) + "r6" + chr(92)
+            + "scripts" + chr(92) + "VendorsXL" + chr(92) + "VendorsXL.reds:1:1:",
+        ])
+        r = main._redscript_report(self.root, {
+            "VendorsXL": {"name": "VendorsXL", "mod_id": 19679,
+                          "files": ["r6/scripts/VendorsXL/VendorsXL.reds"]},
+        })
+        self.assertEqual(r["failures"][0]["mod"], "VendorsXL")
+
+    def test_only_the_current_log_is_read(self):
+        # redscript rotates the previous session out under a timestamped
+        # name. Those are full of problems that have since been fixed, and
+        # reporting one is the same bug as a stale "already fixed" line
+        # contradicting the findings above it.
+        self._log(self.DONE)
+        with open(os.path.join(self.root, "r6", "logs",
+                               "redscript_r2026-08-14_15-48-23.log"),
+                  "w", encoding="utf-8") as f:
+            f.write("\n".join(self.ERRORS))
+        r = main._redscript_report(self.root, {})
+        self.assertTrue(r["compiled"])
+        self.assertEqual(r["orphans"], [])
+
 
 class TestHealthCheck(unittest.TestCase):
     """The screen Michael asked for months ago and was talked out of.
@@ -5957,6 +6088,289 @@ class TestHealthCheck(unittest.TestCase):
             settings.get("auto_fixed", {}).pop("newvegas", None)
             settings.get("mod_verdicts", {}).pop("newvegas", None)
             main._save_settings(settings)
+
+
+class TestHealthCheckCorroboration(unittest.TestCase):
+    """Ask the game, do not infer.
+
+    Welcome to Night City installs 283 Cyberpunk mods and deliberately omits
+    seven their pages call required. It boots, and its script stack compiles
+    clean. Reported as faults, those seven sent Michael to install General
+    Shadows Fixes - whose orphaned .reds was the thing breaking his game.
+    A curator's omissions are not the discriminator; the game's log is."""
+
+    GAME = "Corroboration Test"
+    DONE = ["[INFO] Compiling files", "[INFO] Compilation complete"]
+    BROKEN = [
+        "[ERROR] [UNRESOLVED_REF] At S:" + chr(92) + "r6" + chr(92)
+        + "scripts" + chr(92) + "GeneralShadowsFixes.reds:7094:20:",
+        "    let jobQueue = JobQueue.Create();",
+        "                   ^^^^^^^^",
+        "unresolved reference 'JobQueue'",
+    ]
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        os.makedirs(os.path.join(self.root, "r6", "logs"))
+        os.makedirs(os.path.join(self.root, "archive", "pc", "mod"))
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["cyberpunk2077"] = {
+            "One More Light": {
+                "mod_id": 9001, "name": "One More Light", "mode": "files",
+                "target": ".",
+                "source": "collection", "collection_slug": "iszwwe",
+                "files": ["archive/pc/mod/oml.archive"],
+            },
+        }
+        settings.pop("mod_verdicts", None)
+        main._save_settings(settings)
+        main._GAME_ID_CACHE["cyberpunk2077"] = 3333
+        self._orig_gql = main._gql_query
+        self._orig_build = main._steam_build_id
+        main._steam_build_id = lambda app_id: "23811903"
+        # The real finding: mod 20405 "General Shadows Fixes", required by
+        # exactly one installed mod, absent from a 283-mod set that boots.
+        self.reqs = {9001: [
+            {"modName": "General Shadows Fixes", "modId": 20405,
+             "notes": "", "url": ""},
+        ]}
+
+        async def fake_gql(query, api_key=None):
+            ids = [int(m) for m in re.findall(r"modId: (\d+)", query)]
+            return {"legacyMods": {"nodes": [{
+                "modId": mid,
+                "modRequirements": {
+                    "nexusRequirements": {"nodes": self.reqs.get(mid, [])},
+                    "dlcRequirements": [],
+                },
+            } for mid in ids]}}
+
+        main._gql_query = fake_gql
+
+    def tearDown(self):
+        main._gql_query = self._orig_gql
+        main._steam_build_id = self._orig_build
+        main._GAME_ID_CACHE.pop("cyberpunk2077", None)
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("cyberpunk2077", None)
+        settings.get("mod_verdicts", {}).pop("cyberpunk2077", None)
+        main._save_settings(settings)
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(
+            os.path.join(main.decky.DECKY_PLUGIN_RUNTIME_DIR, "parked",
+                         "cyberpunk2077"),
+            ignore_errors=True)
+
+    def _log(self, lines):
+        with open(main._redscript_log_path(self.root), "w",
+                  encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+    def _check(self):
+        return run(self.plugin.get_health_check(
+            "cyberpunk2077", self.GAME, "archive/pc/mod", 1091500, None))
+
+    # --- the discriminator ------------------------------------------------
+
+    def test_no_log_leaves_the_finding_exactly_as_it_was(self):
+        # The state the other nine games are permanently in. Nothing about
+        # this work may change what they report.
+        r = self._check()
+        self.assertEqual(len(r["needs_mods"]), 1)
+        self.assertEqual(r["needs_mods_info"], [])
+        self.assertFalse(r["script_log"]["ran"])
+
+    def test_a_clean_compile_demotes_a_collections_omission(self):
+        self._log(self.DONE)
+        r = self._check()
+        self.assertEqual(r["needs_mods"], [])
+        self.assertEqual(len(r["needs_mods_info"]), 1)
+        self.assertEqual(
+            r["needs_mods_info"][0]["missing"][0]["name"],
+            "General Shadows Fixes")
+
+    def test_a_hand_installed_mod_is_still_a_problem(self):
+        # The curator's decision is the whole justification for demoting
+        # this. Somebody who installed one mod themselves has made no such
+        # decision and genuinely is missing a dependency.
+        settings = main._load_settings()
+        rec = settings["installed"]["cyberpunk2077"]["One More Light"]
+        rec["source"] = ""
+        rec.pop("collection_slug", None)
+        main._save_settings(settings)
+        self._log(self.DONE)
+        r = self._check()
+        self.assertEqual(len(r["needs_mods"]), 1)
+        self.assertEqual(r["needs_mods_info"], [])
+
+    def test_a_blamed_mod_stays_a_problem_even_from_a_collection(self):
+        # Corroboration cuts both ways: the game complaining about this
+        # mod's own script is exactly when a collection's omission IS the
+        # fault, which is the Stardew case in Cyberpunk's clothing.
+        settings = main._load_settings()
+        settings["installed"]["cyberpunk2077"]["One More Light"]["files"] = [
+            "r6/scripts/GeneralShadowsFixes.reds"]
+        main._save_settings(settings)
+        self._log(self.BROKEN)
+        r = self._check()
+        self.assertEqual(r["needs_mods_info"], [])
+
+    # --- never recommend the thing that broke the game --------------------
+
+    def test_an_orphan_named_after_a_required_mod_becomes_a_verdict(self):
+        # GeneralShadowsFixes.reds, owned by no record, and mod 20405
+        # "General Shadows Fixes" listed as required. The file is that mod's
+        # script left behind by an install whose record was lost - so the
+        # mod has already been tried here and does not compile.
+        self._log(self.BROKEN)
+        r = self._check()
+        self.assertIn(20405,
+                      main._verdicts_for_build("cyberpunk2077", "23811903"))
+        suggested = [
+            m["name"] for f in r["needs_mods"] for m in f["missing"]
+        ]
+        self.assertNotIn("General Shadows Fixes", suggested)
+        self.assertEqual(r["known_bad"][0]["name"], "General Shadows Fixes")
+
+    def test_a_mod_with_a_verdict_is_never_suggested_again(self):
+        main._record_mod_verdicts("cyberpunk2077", "23811903", [
+            {"mod_id": 20405, "name": "General Shadows Fixes",
+             "version": "", "why": "its script does not compile"}])
+        r = self._check()
+        self.assertEqual(r["needs_mods"], [])
+        self.assertEqual(r["known_bad"][0]["for"], "One More Light")
+
+    def test_a_verdict_from_another_build_does_not_silence_the_check(self):
+        # A game update is the most likely thing to have fixed a mod, so the
+        # verdict retires with the build rather than becoming a blacklist.
+        main._record_mod_verdicts("cyberpunk2077", "OLD", [
+            {"mod_id": 20405, "name": "General Shadows Fixes",
+             "version": "", "why": "x"}])
+        self.assertEqual(len(self._check()["needs_mods"]), 1)
+
+    # --- acting on it -----------------------------------------------------
+
+    def test_a_mod_whose_script_killed_the_compile_is_switched_off(self):
+        # One bad .reds stops EVERY script mod loading, so this is not a
+        # judgement call - it is the single mod standing between the user
+        # and everything else they installed.
+        settings = main._load_settings()
+        settings["installed"]["cyberpunk2077"]["One More Light"]["files"] = [
+            "r6/scripts/GeneralShadowsFixes.reds"]
+        main._save_settings(settings)
+        os.makedirs(os.path.join(self.root, "r6", "scripts"), exist_ok=True)
+        open(os.path.join(self.root, "r6", "scripts",
+                          "GeneralShadowsFixes.reds"), "w").close()
+        self._log(self.BROKEN)
+        r = self._check()
+        self.assertEqual(r["script_log"]["switched_off"][0]["name"],
+                         "One More Light")
+        after = main._load_settings()["installed"]["cyberpunk2077"]
+        self.assertIs(after["One More Light"]["enabled"], False)
+        # And the file is genuinely out of the game's way, not just flagged.
+        self.assertFalse(os.path.exists(os.path.join(
+            self.root, "r6", "scripts", "GeneralShadowsFixes.reds")))
+
+    def test_nothing_is_switched_off_when_the_compile_finished(self):
+        # "errored but finished anyway" has never been observed on device.
+        # Acting on a state nobody has seen is how a check starts crying
+        # wolf, so that case is reported and left alone.
+        settings = main._load_settings()
+        settings["installed"]["cyberpunk2077"]["One More Light"]["files"] = [
+            "r6/scripts/GeneralShadowsFixes.reds"]
+        main._save_settings(settings)
+        self._log(self.BROKEN + ["[INFO] Compilation complete"])
+        r = self._check()
+        self.assertEqual(r["script_log"]["switched_off"], [])
+        self.assertEqual(len(r["script_log"]["failures"]), 1)
+
+    def test_a_mod_already_switched_off_is_not_switched_off_again(self):
+        # The log does not change when a mod is disabled - the session that
+        # blamed it already happened - so without this every check would
+        # report the same repair for ever.
+        settings = main._load_settings()
+        rec = settings["installed"]["cyberpunk2077"]["One More Light"]
+        rec["files"] = ["r6/scripts/GeneralShadowsFixes.reds"]
+        rec["enabled"] = False
+        main._save_settings(settings)
+        self._log(self.BROKEN)
+        self.assertEqual(self._check()["script_log"]["switched_off"], [])
+
+
+class TestFilesModeToggle(unittest.TestCase):
+    """Cyberpunk mods are loose files across five game directories, so there
+    is no folder to move aside - and this used to answer "no toggle,
+    uninstall it instead".
+
+    That was the wrong answer to a real question: one .reds that will not
+    compile takes every script mod with it, and the remedy is to stop
+    loading one file, not to throw away a download."""
+
+    GAME = "Files Mode Test"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        os.makedirs(os.path.join(self.root, "r6", "scripts"))
+        for name in ("a.reds", "b.reds"):
+            open(os.path.join(self.root, "r6", "scripts", name), "w").close()
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["filestest"] = {
+            "Mod A": {"mod_id": 1, "name": "Mod A", "mode": "files",
+                      "target": ".",
+                      "files": ["r6/scripts/a.reds"]},
+            "Mod B": {"mod_id": 2, "name": "Mod B", "mode": "files",
+                      "target": ".",
+                      "files": ["r6/scripts/b.reds"]},
+        }
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("filestest", None)
+        main._save_settings(settings)
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(
+            os.path.join(main.decky.DECKY_PLUGIN_RUNTIME_DIR, "parked",
+                         "filestest"),
+            ignore_errors=True)
+
+    def _set(self, folder, enabled):
+        return run(self.plugin.set_mod_enabled(
+            self.GAME, "archive/pc/mod", folder, enabled, "folder",
+            "filestest", 0, "", "starred", None))
+
+    def test_switching_off_moves_the_files_out_of_the_game(self):
+        self.assertTrue(self._set("Mod A", False)["ok"])
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, "r6", "scripts", "a.reds")))
+        # And only its own: the other mod is untouched.
+        self.assertTrue(os.path.exists(
+            os.path.join(self.root, "r6", "scripts", "b.reds")))
+
+    def test_switching_back_on_puts_them_where_they_were(self):
+        self._set("Mod A", False)
+        self.assertTrue(self._set("Mod A", True)["ok"])
+        self.assertTrue(os.path.exists(
+            os.path.join(self.root, "r6", "scripts", "a.reds")))
+        rec = main._load_settings()["installed"]["filestest"]["Mod A"]
+        self.assertIsNot(rec.get("parked"), True)
+
+    def test_a_file_another_mod_also_claims_is_left_alone(self):
+        # 283 mods dropping files into five shared directories is exactly
+        # where two records name the same path, and whoever wrote last owns
+        # the copy on disk. Moving it would gut the other mod.
+        settings = main._load_settings()
+        settings["installed"]["filestest"]["Mod B"]["files"] = [
+            "r6/scripts/b.reds", "r6/scripts/a.reds"]
+        main._save_settings(settings)
+        r = self._set("Mod A", False)
+        self.assertEqual(r["shared"], 1)
+        self.assertTrue(os.path.exists(
+            os.path.join(self.root, "r6", "scripts", "a.reds")))
 
 
 class TestPrefixToolRestaging(unittest.TestCase):

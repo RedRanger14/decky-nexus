@@ -377,7 +377,13 @@ export function installedDepsNote(
 export function healthVerdict(
   checked: number,
   problems: number,
-  busy: boolean
+  busy: boolean,
+  /** The game's own script compiler died, so EVERY script mod is off - not
+   * the one that broke, all of them. It outranks any count of missing
+   * requirements: two orphaned .reds files killed the whole script stack of
+   * every Cyberpunk collection Michael installed, and nothing anywhere said
+   * so. Optional, so the eight games with no script compiler are unchanged. */
+  scriptStackDead = false
 ): { headline: string; detail: string; tone: string; clean: boolean } {
   if (busy) {
     return {
@@ -396,6 +402,17 @@ export function healthVerdict(
         "Install some mods and come back — this screen checks that each " +
         "one has what it needs to actually work.",
       tone: "255, 255, 255",
+      clean: false,
+    };
+  }
+  if (scriptStackDead) {
+    return {
+      headline: "Your script mods are not running",
+      detail:
+        "One script failed to compile, and the game stops loading all of " +
+        "them when that happens — not just the one that broke. It has been " +
+        "switched off for you, so start the game once and check back.",
+      tone: "220, 110, 110",
       clean: false,
     };
   }

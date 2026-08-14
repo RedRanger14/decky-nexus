@@ -153,10 +153,25 @@ export default function HealthCheckPage() {
   const [report, setReport] = useState<{
     checked: number;
     needs_mods: Finding[];
+    needs_mods_info: Finding[];
     needs_dlc: Finding[];
     needs_external: Finding[];
     owned_dlc: string[];
     already_fixed: { name: string; for: string }[];
+    known_bad: { name: string; for: string; why: string }[];
+    script_log?: {
+      ran: boolean;
+      compiled: boolean;
+      failures: {
+        script: string;
+        kind: string;
+        symbol: string;
+        count: number;
+        mod: string;
+      }[];
+      orphans: { script: string; kind: string; symbol: string }[];
+      switched_off: { name: string; script: string; why: string }[];
+    };
   }>();
   const [busy, setBusy] = useState(false);
   const [fixing, setFixing] = useState("");
@@ -189,10 +204,13 @@ export default function HealthCheckPage() {
             ? {
                 checked: r.checked ?? 0,
                 needs_mods: r.needs_mods ?? [],
+                needs_mods_info: r.needs_mods_info ?? [],
                 needs_dlc: r.needs_dlc ?? [],
                 needs_external: r.needs_external ?? [],
                 owned_dlc: r.owned_dlc ?? [],
                 already_fixed: r.already_fixed ?? [],
+                known_bad: r.known_bad ?? [],
+                script_log: r.script_log,
               }
             : undefined
         )
@@ -202,12 +220,17 @@ export default function HealthCheckPage() {
 
   useEffect(run, [game?.appId]);
 
+  const log = report?.script_log;
+  // The compiler ran and did not finish: every script mod is off, whatever
+  // else this page found.
+  const stackDead = Boolean(log?.ran && !log.compiled);
   const verdict = healthVerdict(
     report?.checked ?? 0,
     (report?.needs_mods.length ?? 0) +
       (report?.needs_dlc.length ?? 0) +
       (report?.needs_external.length ?? 0),
-    busy
+    busy,
+    stackDead
   );
 
   /** Install every missing required mod the check found. The whole point of
@@ -354,6 +377,62 @@ export default function HealthCheckPage() {
           </DialogButton>
         </Focusable>
 
+        {/* What the game itself said. This goes ABOVE the mod-page findings
+            on purpose: everything below is inference from what an author
+            wrote, and this is the only part that is evidence. */}
+        {shown && log?.ran && (
+          <>
+            <SectionHeading title="What the game said" />
+            {log.switched_off.map((s) => (
+              <FindingCard
+                key={`off:${s.name}`}
+                tone="143, 212, 143"
+                icon={<FaCheck size={14} />}
+                title={`${s.name} — switched off`}
+                detail={
+                  <>
+                    Its script <b>{s.script}</b> would not compile, and the
+                    game stops loading <b>every</b> script mod when one fails
+                    — so this single mod was stopping all the others. It has
+                    been switched off for you. Start the game once and the
+                    rest should come back.
+                  </>
+                }
+              />
+            ))}
+            {log.orphans.map((o) => (
+              <FindingCard
+                key={`orphan:${o.script}`}
+                tone={WARN}
+                icon={<FaPuzzlePiece size={16} />}
+                title={o.script}
+                detail={
+                  <>
+                    This script is failing to compile and no installed mod
+                    owns it — it was left behind by an install whose record
+                    was lost. It stops every other script mod loading. Use{" "}
+                    <b>Reset modding</b> in Settings to clear it out.
+                  </>
+                }
+              />
+            ))}
+            {log.compiled && log.failures.length === 0 && (
+              <FindingCard
+                tone="143, 212, 143"
+                icon={<FaCheck size={14} />}
+                title="Your script mods all compiled"
+                detail={
+                  <>
+                    The game read every script mod you have installed and
+                    accepted all of them. This is the game's own answer, not
+                    a guess — which is why anything below it is worth less.
+                  </>
+                }
+              />
+            )}
+          </>
+        )}
+
         {missingCount > 0 && shown && (
           <>
             <SectionHeading
@@ -441,6 +520,52 @@ export default function HealthCheckPage() {
           </>
         )}
 
+        {(shown?.known_bad.length ?? 0) > 0 && (
+          <>
+            <SectionHeading title="Not recommending these" />
+            {report!.known_bad.map((k, i) => (
+              <FindingCard
+                key={`bad:${k.name}:${i}`}
+                tone="150, 160, 220"
+                icon={<FaPuzzlePiece size={16} />}
+                title={k.name}
+                detail={
+                  <>
+                    <b>{k.for}</b> lists this as required, and we are not
+                    suggesting it: {k.why || "it has already failed on this device"}.
+                    Installing it would break more than it fixes.
+                  </>
+                }
+              />
+            ))}
+          </>
+        )}
+
+        {(shown?.needs_mods_info.length ?? 0) > 0 && (
+          <>
+            <SectionHeading title="Left out on purpose" />
+            {report!.needs_mods_info.map((f) => (
+              <FindingCard
+                key={`info:${f.name}`}
+                tone="150, 160, 220"
+                icon={<FaPuzzlePiece size={16} />}
+                title={f.name}
+                detail={
+                  <>
+                    Its page lists{" "}
+                    <b>{(f.missing ?? []).map((m) => m.name).join(", ")}</b> as
+                    required, and the collection you installed left{" "}
+                    {(f.missing ?? []).length === 1 ? "it" : "them"} out. The
+                    game has not complained, so this is the curator's choice
+                    rather than a fault — nothing to do unless something is
+                    actually missing in-game.
+                  </>
+                }
+              />
+            ))}
+          </>
+        )}
+
         {(shown?.already_fixed.length ?? 0) > 0 && (
           <>
             <SectionHeading title="Sorted out already" />
@@ -472,10 +597,20 @@ export default function HealthCheckPage() {
               lineHeight: 1.5,
             }}
           >
-            Every installed mod has what it says it needs, and every DLC any
-            of them asks for is present.
-            <br />
-            Nothing here needs your attention.
+            {(shown?.needs_mods_info.length ?? 0) > 0 ? (
+              <>
+                Nothing here needs your attention. The mods listed above are
+                ones your collection chose to leave out, and the game is
+                running them as the curator intended.
+              </>
+            ) : (
+              <>
+                Every installed mod has what it says it needs, and every DLC
+                any of them asks for is present.
+                <br />
+                Nothing here needs your attention.
+              </>
+            )}
           </div>
         )}
       </Scroller>
