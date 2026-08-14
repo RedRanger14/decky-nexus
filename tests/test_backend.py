@@ -591,6 +591,112 @@ class TestCp77Routing(unittest.TestCase):
         self.assertIsNotNone(err)
         self.assertEqual(err[0], "tool")
 
+    # --- CET Lua mods ----------------------------------------------------
+    # Structure taken from the CET wiki's own Mod Structure page:
+    # bin/x64/plugins/cyber_engine_tweaks/mods/<my_mod>/init.lua, where
+    # init.lua is the entry point CET looks for and extra files may sit in
+    # that folder or a subfolder. These matched none of the known roots and
+    # were refused as "no Cyberpunk mod layout found" - a large category of
+    # this game's mods turned away.
+
+    def test_cet_mod_folder_routes_to_the_cet_mods_dir(self):
+        self.put("betterVehicleFirstPerson/init.lua")
+        self.put("betterVehicleFirstPerson/config.json")
+        files, err = main._route_cp77_payload(self.scratch, "Better Vehicle FP")
+        self.assertIsNone(err)
+        self.assertEqual(self.rels(files), [
+            "bin/x64/plugins/cyber_engine_tweaks/mods/"
+            "betterVehicleFirstPerson/config.json",
+            "bin/x64/plugins/cyber_engine_tweaks/mods/"
+            "betterVehicleFirstPerson/init.lua",
+        ])
+
+    def test_the_authors_folder_name_is_preserved(self):
+        # It IS the mod's name to CET and to any mod that references it, so
+        # renaming it to the Nexus mod name would break both.
+        self.put("cyber_vehicle_overhaul/init.lua")
+        files, _err = main._route_cp77_payload(
+            self.scratch, "Cyber Vehicle Overhaul REDUX v2")
+        self.assertIn("mods/cyber_vehicle_overhaul/init.lua", files[0][0])
+
+    def test_subfolders_of_a_cet_mod_are_kept(self):
+        self.put("my_mod/init.lua")
+        self.put("my_mod/modules/ui.lua")
+        self.put("my_mod/data/en-us.json")
+        files, err = main._route_cp77_payload(self.scratch, "My Mod")
+        self.assertIsNone(err)
+        self.assertEqual(self.rels(files), [
+            "bin/x64/plugins/cyber_engine_tweaks/mods/my_mod/data/en-us.json",
+            "bin/x64/plugins/cyber_engine_tweaks/mods/my_mod/init.lua",
+            "bin/x64/plugins/cyber_engine_tweaks/mods/my_mod/modules/ui.lua",
+        ])
+
+    def test_a_bare_init_lua_gets_a_folder_from_the_mod_name(self):
+        # Nothing else to name it after. CET requires the mod to live in a
+        # folder, so one is made rather than refusing a valid mod.
+        self.put("init.lua")
+        files, err = main._route_cp77_payload(self.scratch, "Cheat Script")
+        self.assertIsNone(err)
+        self.assertEqual(self.rels(files), [
+            "bin/x64/plugins/cyber_engine_tweaks/mods/cheat_script/init.lua",
+        ])
+
+    def test_a_mod_shipping_the_full_cet_path_is_unchanged(self):
+        # This shape already worked as a "bin" root and must keep working -
+        # routing it twice would nest it inside itself.
+        self.put("bin/x64/plugins/cyber_engine_tweaks/mods/thing/init.lua")
+        files, err = main._route_cp77_payload(self.scratch, "Thing")
+        self.assertIsNone(err)
+        self.assertEqual(self.rels(files), [
+            "bin/x64/plugins/cyber_engine_tweaks/mods/thing/init.lua",
+        ])
+
+    def test_a_cet_mod_shipping_archives_too_installs_both(self):
+        # Half a mod installed with a success report is the worst kind of
+        # report. The archive sweep used to take the .archive and leave the
+        # Lua behind.
+        self.put("hud_mod/init.lua")
+        self.put("hud_mod.archive")
+        files, err = main._route_cp77_payload(self.scratch, "HUD Mod")
+        self.assertIsNone(err)
+        self.assertEqual(self.rels(files), [
+            "archive/pc/mod/hud_mod.archive",
+            "bin/x64/plugins/cyber_engine_tweaks/mods/hud_mod/init.lua",
+        ])
+
+    def test_an_archive_inside_a_cet_mod_stays_with_the_mod(self):
+        # A mod's own asset must not be torn out into archive/pc/mod - CET
+        # mods can carry data files of any extension.
+        self.put("some_mod/init.lua")
+        self.put("some_mod/data/bundled.archive")
+        files, err = main._route_cp77_payload(self.scratch, "Some Mod")
+        self.assertIsNone(err)
+        self.assertEqual(self.rels(files), [
+            "bin/x64/plugins/cyber_engine_tweaks/mods/some_mod/data/"
+            "bundled.archive",
+            "bin/x64/plugins/cyber_engine_tweaks/mods/some_mod/init.lua",
+        ])
+
+    def test_several_cet_mods_in_one_archive_all_install(self):
+        self.put("mod_one/init.lua")
+        self.put("mod_two/init.lua")
+        files, err = main._route_cp77_payload(self.scratch, "Bundle")
+        self.assertIsNone(err)
+        self.assertEqual(self.rels(files), [
+            "bin/x64/plugins/cyber_engine_tweaks/mods/mod_one/init.lua",
+            "bin/x64/plugins/cyber_engine_tweaks/mods/mod_two/init.lua",
+        ])
+
+    def test_a_lua_file_that_is_not_a_cet_mod_is_still_refused(self):
+        # No init.lua means CET will not load it, so claiming to install it
+        # would be a lie. The message names what was looked for.
+        self.put("readme.txt")
+        self.put("scripts/helper.lua")
+        files, err = main._route_cp77_payload(self.scratch, "Not A Mod")
+        self.assertIsNotNone(err)
+        self.assertEqual(err[0], "layout")
+        self.assertIn("init.lua", err[1])
+
 
 class TestResetGameModding(unittest.TestCase):
     """One-button vanilla reset: records of every mode uninstall, the

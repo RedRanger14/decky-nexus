@@ -3571,6 +3571,24 @@ def _route_witcher_payload(
 CP77_ROOTS = ("archive", "bin", "red4ext", "r6", "engine")
 CP77_ARCHIVE_DIR = "archive/pc/mod"
 
+# Cyber Engine Tweaks Lua mods. Verified against the CET wiki's own
+# "Mod Structure" page rather than inferred:
+#
+#   Cyberpunk 2077/bin/x64/plugins/cyber_engine_tweaks/mods/<my_mod>/init.lua
+#
+# "CET will be looking for an init.lua file inside your mod folder. This is
+# the entry point of your mod, and gets executed when the game is launched."
+# Extra files are allowed in that folder or a subfolder of it.
+#
+# So init.lua IS the detector, and it is a strong one: it is the one file CET
+# requires and the one every CET mod therefore has. Mods that ship the whole
+# bin/... path already routed as a "bin" root and still do - this covers the
+# ones that ship only their own folder, which matched none of the known roots
+# and were refused as "no Cyberpunk mod layout found". CET mods are a large
+# category for this game, so that refusal was turning away real mods.
+CP77_CET_DIR = "bin/x64/plugins/cyber_engine_tweaks/mods"
+CP77_CET_ENTRY = "init.lua"
+
 
 def _route_cp77_payload(scratch: str, mod_name: str):
     """Classify a CP77 archive. Returns (files, err) where files is a
@@ -3634,16 +3652,47 @@ def _route_cp77_payload(scratch: str, mod_name: str):
                         "support yet. Many mods offer a classic version "
                         "as a separate file.",
                     )
+    # CET Lua mods: a folder holding init.lua, destined for
+    # bin/x64/plugins/cyber_engine_tweaks/mods/<folder>/.
+    #
+    # Checked before the bare-archive sweep because a CET mod may ship
+    # .archive files alongside its Lua, and the sweep would take those and
+    # leave the Lua behind - installing half a mod and reporting success,
+    # which is the worst kind of report.
+    cet_dirs = []
+    for root_, dirs, names in os.walk(scratch):
+        if any(n.lower() == CP77_CET_ENTRY for n in names):
+            cet_dirs.append(root_)
+            # Its subfolders belong to it, so stop descending.
+            dirs[:] = []
+    cet_files, claimed = [], set()
+    for d in cet_dirs:
+        # The folder the author shipped IS the mod's name to CET and to
+        # every mod that references it, so it is preserved. Only when
+        # init.lua sits at the very top of the archive, with no folder of
+        # its own, is a name derived from the Nexus mod name.
+        folder = (
+            _safe_name(mod_name).replace(" ", "_").lower()
+            if os.path.normpath(d) == os.path.normpath(scratch)
+            else os.path.basename(d)
+        )
+        for sub_root, _sub_dirs, names in os.walk(d):
+            for n in names:
+                src = os.path.join(sub_root, n)
+                inner = os.path.relpath(src, d).replace(os.sep, "/")
+                rel = f"{CP77_CET_DIR}/{folder}/{inner}"
+                if _safe_rel_path(rel):
+                    cet_files.append((rel, src))
+                    claimed.add(src)
     # bare archive files (the classic drop-in tier)
     flat = []
     for root_, _dirs, names in os.walk(scratch):
         for n in names:
-            if n.lower().endswith((".archive", ".xl")):
-                flat.append(
-                    (f"{CP77_ARCHIVE_DIR}/{n}", os.path.join(root_, n))
-                )
-    if flat:
-        return flat, None
+            src = os.path.join(root_, n)
+            if n.lower().endswith((".archive", ".xl")) and src not in claimed:
+                flat.append((f"{CP77_ARCHIVE_DIR}/{n}", src))
+    if cet_files or flat:
+        return cet_files + flat, None
     for root_, _dirs, names in os.walk(scratch):
         for n in names:
             if n.lower().endswith(".exe"):
@@ -3657,8 +3706,8 @@ def _route_cp77_payload(scratch: str, mod_name: str):
     return [], (
         "layout",
         "No Cyberpunk mod layout found in this archive (expected "
-        "archive/bin/red4ext/r6/engine roots or .archive files). "
-        f"It contains: {tops}",
+        "archive/bin/red4ext/r6/engine roots, .archive files, or a CET "
+        f"mod folder with init.lua). It contains: {tops}",
     )
 
 
