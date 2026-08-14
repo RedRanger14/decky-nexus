@@ -225,6 +225,7 @@ export default function HealthCheckPage() {
     script_log?: {
       ran: boolean;
       compiled: boolean;
+      stale?: boolean;
       failures: {
         script: string;
         kind: string;
@@ -279,7 +280,13 @@ export default function HealthCheckPage() {
   const log = report?.script_log;
   // The compiler ran and did not finish: every script mod is off, whatever
   // else this page found.
-  const stackDead = Boolean(log?.ran && !log.compiled);
+  // Stale = the game has not run since the mods changed, so the log
+  // describes a setup that no longer exists. Michael uninstalled the
+  // collection that failed, installed one he knew worked, and the page
+  // still reported the failure: "I booted the game to check and it booted
+  // fine so the health report was stale."
+  const staleLog = Boolean(log?.ran && log.stale);
+  const stackDead = Boolean(log?.ran && !log.compiled && !staleLog);
   const verdict = healthVerdict(
     report?.checked ?? 0,
     (report?.needs_mods.length ?? 0) +
@@ -439,6 +446,21 @@ export default function HealthCheckPage() {
         {shown && log?.ran && (
           <>
             <SectionHeading title="What the game said" />
+            {staleLog && (
+              <FindingCard
+                tone={WARN}
+                icon={<FaSyncAlt size={14} />}
+                title="The game hasn't run since you changed your mods"
+                detail={
+                  <>
+                    Everything below describes the last time it started, which
+                    was before your latest change — so it may name mods you
+                    have since removed. Launch the game once and come back,
+                    and this section will describe what you actually have.
+                  </>
+                }
+              />
+            )}
             {log.switched_off.map((s) => (
               <FindingCard
                 key={`off:${s.name}`}
@@ -472,7 +494,7 @@ export default function HealthCheckPage() {
                 }
               />
             ))}
-            {log.compiled && log.failures.length === 0 && (
+            {log.compiled && !staleLog && log.failures.length === 0 && (
               <FindingCard
                 tone="143, 212, 143"
                 icon={<FaCheck size={14} />}

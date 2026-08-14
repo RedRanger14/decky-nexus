@@ -5169,7 +5169,7 @@ def _redscript_report(install_path: str, records: dict) -> dict:
     r6/scripts for weeks with nothing accountable for them.
     """
     empty = {"ran": False, "compiled": False, "failures": [], "orphans": [],
-             "stamp": ""}
+             "stamp": "", "stale": False}
     path = _redscript_log_path(install_path)
     if not os.path.isfile(path):
         return empty
@@ -5185,6 +5185,23 @@ def _redscript_report(install_path: str, records: dict) -> dict:
     stamp = f"{int(st.st_mtime)}:{st.st_size}"
     compiled = any(_REDS_DONE in ln.lower() for ln in lines)
     blamed = _parse_redscript_log(lines)
+    # Evidence has a shelf life. A log describes the mods that were
+    # installed when the game last RAN, and the moment anything is
+    # installed or removed it stops describing what is there now.
+    #
+    # Michael hit this exactly: a collection failed to compile blaming
+    # ScorpionTank, he uninstalled it, installed one he knew worked, and
+    # the health check still reported the failure - "I booted the game to
+    # check and it booted fine so the health report was stale". Worse than
+    # the wrong display, it had already written a verdict against a mod
+    # that was no longer installed.
+    newest = 0
+    for rec in (records or {}).values():
+        try:
+            newest = max(newest, int(rec.get("installed_at") or 0))
+        except (TypeError, ValueError):
+            continue
+    stale = bool(newest and newest > st.st_mtime)
     # Which record owns each .reds on disk. Basename only: the log prints a
     # path under r6/scripts while a record stores the path it installed to,
     # and a mod may ship its scripts in a subfolder of its own.
@@ -5194,8 +5211,23 @@ def _redscript_report(install_path: str, records: dict) -> dict:
             name = str(rel).replace(chr(92), "/").rsplit("/", 1)[-1]
             if name.lower().endswith(".reds"):
                 owner.setdefault(name.lower(), (key, rec))
+    # Where a .reds could still be sitting. An uninstall does not rewrite
+    # the log, so a script the log blames may simply be gone - and a
+    # failure whose file no longer exists cannot still be breaking
+    # anything. This is the other half of staleness, and the half that
+    # catches an uninstall (which leaves no record, so no timestamp moves).
+    on_disk = set()
+    for sub in ("r6/scripts", "red4ext/plugins"):
+        d = os.path.join(install_path, *sub.split("/"))
+        for root_, _dirs, names in os.walk(d):
+            for n in names:
+                if n.lower().endswith(".reds"):
+                    on_disk.add(n.lower())
     failures, orphans = [], []
     for low, info in sorted(blamed.items()):
+        if low not in on_disk:
+            # Named by the log, no longer on disk: already dealt with.
+            continue
         hit = owner.get(low)
         entry = {
             "script": info["script"],
@@ -5214,6 +5246,7 @@ def _redscript_report(install_path: str, records: dict) -> dict:
         "failures": failures,
         "orphans": orphans,
         "stamp": stamp,
+        "stale": stale,
     }
 
 
@@ -12638,8 +12671,10 @@ query Link($slug: String!, $domainName: String!) {
             _norm_mod_id(m["name"]): m
             for f in needs_mods for m in f["missing"] if m.get("mod_id")
         }
+        # A log written before the mods changed says nothing about the mods
+        # that are there now, so it earns no verdicts and moves nothing.
         learned = []
-        for orphan in script["orphans"]:
+        for orphan in ([] if script["stale"] else script["orphans"]):
             stem = _norm_mod_id(orphan["script"].rsplit(".", 1)[0])
             want = wanted_names.get(stem)
             if not want:
@@ -12684,7 +12719,7 @@ query Link($slug: String!, $domainName: String!) {
             f["record_key"] for f in script["failures"] if f["record_key"]
         }
         needs_mods_info = []
-        if script["ran"] and script["compiled"]:
+        if script["ran"] and script["compiled"] and not script["stale"]:
             keep = []
             for finding in needs_mods:
                 if (finding["from_collection"]
@@ -12706,7 +12741,11 @@ query Link($slug: String!, $domainName: String!) {
         # observed is how a check starts crying wolf. That case gets
         # reported and left alone.
         switched_off = []
-        for fail in (script["failures"] if not script["compiled"] else []):
+        for fail in (
+            script["failures"]
+            if not script["compiled"] and not script["stale"]
+            else []
+        ):
             rec = records.get(fail["record_key"]) or {}
             if rec.get("enabled") is False or rec.get("parked"):
                 continue
@@ -12751,6 +12790,11 @@ query Link($slug: String!, $domainName: String!) {
             "script_log": {
                 "ran": script["ran"],
                 "compiled": script["compiled"],
+                # The game has not run since the mods changed, so nothing
+                # here describes what is installed now. Said out loud
+                # rather than silently suppressed: silence is a bug, and
+                # "launch it once" is a thing the user can actually do.
+                "stale": script["stale"],
                 "failures": script["failures"][:10],
                 "orphans": script["orphans"][:10],
                 "switched_off": switched_off[:10],

@@ -1093,6 +1093,9 @@ export const getHealthCheck = callable<
     script_log?: {
       ran: boolean;
       compiled: boolean;
+      /** The game has not run since the mods changed, so nothing in here
+       * describes what is installed now. */
+      stale?: boolean;
       failures: {
         script: string;
         kind: string;
