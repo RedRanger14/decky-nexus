@@ -1127,29 +1127,33 @@ def _proton_binary_for(app_id: int):
                 candidates.append(f"Proton {mv.group(1)}.0")
     except OSError:
         pass
-    # The prefix itself is the authority on which build made it, and it
-    # outranks any guess about defaults.
+    # Steam's own default comes BEFORE anything read out of the prefix.
     #
-    # This used to assume "unpinned = Experimental (the SteamOS default)".
-    # That default has since moved: Fallout 3's prefix on device was built
-    # by Proton 10.0, the patcher was run through Experimental, and mixing
-    # two builds in one prefix wedges its wineserver - the exact failure
-    # the docstring above already warned about, arriving by a route nobody
-    # had thought of. The result was a patched exe that could not boot, and
-    # a morning spent blaming the patcher.
+    # I got this backwards in v0.165.0 and made it worse. config_info in
+    # Fallout 3's prefix said "Proton 10.0", so the picker started choosing
+    # 10.0 for tools - while the GAME was running under Experimental, which
+    # is what Steam actually defaults to here. Running the exe by hand
+    # printed the proof:
     #
-    # config_info names the Proton directory outright; the version file is
-    # the fallback.
+    #   Proton: Upgrading prefix from 10.1000-105 to 11.0-100
+    #
+    # Experimental had been silently upgrading that prefix for weeks. So
+    # what is written in the prefix describes what BUILT it, not what runs
+    # it now, and preferring it guarantees exactly the mismatch this
+    # function exists to avoid.
+    candidates.append("Proton - Experimental")
+    # Only as a last resort, for a device whose default is not Experimental:
+    # config_info names a directory outright, the version file is ambiguous
+    # ("11.0-100" is both standalone 11.0 and Experimental).
     try:
         with open(
             os.path.join(compat, "config_info"), "r", encoding="utf-8"
         ) as f:
-            info = f.read()
-        for line in info.splitlines():
-            m = re.search(r"/common/(Proton[^/]*)/files/", line)
-            if m:
-                candidates.append(m.group(1))
-                break
+            for line in f.read().splitlines():
+                m = re.search(r"/common/(Proton[^/]*)/files/", line)
+                if m:
+                    candidates.append(m.group(1))
+                    break
     except OSError:
         pass
     version = ""
@@ -1158,15 +1162,8 @@ def _proton_binary_for(app_id: int):
             version = f.read().strip()
     except OSError:
         pass
-    # Experimental next, NOT last: the version file alone is ambiguous -
-    # it reads "11.0-100" for both standalone Proton 11.0 and Experimental,
-    # and trusting it there picked the wrong build and wedged a prefix once
-    # already. config_info above is unambiguous, so it outranks this; the
-    # version file below only gets a say when neither applies.
-    candidates.append("Proton - Experimental")
     m = re.match(r"(\d+)\.(\d+)", version)
     if m:
-        # "10.1000-105" is Proton 10.0, not Proton 10.1000.
         candidates.append(f"Proton {m.group(1)}.0")
     for name in candidates:
         p = os.path.join(STEAM_COMMON, name, "proton")

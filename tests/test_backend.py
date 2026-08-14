@@ -3348,12 +3348,14 @@ class TestProtonPicker(unittest.TestCase):
         self.assertIn("Experimental", proton)
         self.assertEqual(compat, self.compat)
 
-    def test_config_info_outranks_the_default(self):
-        # The failure that cost a morning: Fallout 3's prefix was built by
-        # Proton 10.0, the tool was run through Experimental, and mixing
-        # builds in one prefix wedged its wineserver - so the patched exe
-        # could not boot and the patcher took the blame. config_info names
-        # the directory outright, unlike the ambiguous version file.
+    def test_the_default_outranks_what_built_the_prefix(self):
+        # I had this the other way round in v0.165.0 and made things worse.
+        # config_info describes what BUILT the prefix, not what runs it now:
+        # Fallout 3's said "Proton 10.0" while Experimental had been quietly
+        # upgrading that prefix for weeks ("Proton: Upgrading prefix from
+        # 10.1000-105 to 11.0-100"). Preferring it made the picker choose a
+        # build the game was not using - the exact mismatch this function
+        # exists to prevent. config_info is a last resort only.
         nl = chr(10)
         with open(os.path.join(self.compat, "version"), "w") as f:
             f.write("10.1000-105" + nl)
@@ -3371,6 +3373,25 @@ class TestProtonPicker(unittest.TestCase):
         finally:
             # Shared temp root: leaving it behind made the next test find a
             # Proton it never installed.
+            shutil.rmtree(p10, ignore_errors=True)
+        self.assertEqual(err, "")
+        self.assertIn("Experimental", proton)
+
+    def test_config_info_is_used_when_experimental_is_absent(self):
+        # A device whose default is not Experimental still gets a sensible
+        # answer rather than the first Proton on disk.
+        nl = chr(10)
+        with open(os.path.join(self.compat, "config_info"), "w") as f:
+            f.write(
+                "10.1000-105" + nl
+                + "/home/deck/.local/share/Steam/steamapps/common/"
+                + "Proton 10.0/files/share/fonts/" + nl
+            )
+        p10 = os.path.join(main.STEAM_COMMON, "Proton 10.0")
+        self._mk_proton(p10)
+        try:
+            proton, _c, _r, err = main._proton_binary_for(self.APP_ID)
+        finally:
             shutil.rmtree(p10, ignore_errors=True)
         self.assertEqual(err, "")
         self.assertIn("Proton 10.0", proton)
