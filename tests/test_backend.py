@@ -5906,6 +5906,79 @@ class TestLaunchOptionsStayCurrent(unittest.TestCase):
             self.DOMAIN, f"  {self.OLD}  "))["launch_options_current"])
 
 
+class TestResetUndoesModdingTools(unittest.TestCase):
+    """Reset has to return the setup steps to honest, not just remove mods.
+
+    Michael reset Fallout 3 and Steps 2 and 3 stayed ticked. Both were
+    factually true - the game had been booted, and the Anniversary Patcher
+    really had rewritten Fallout3.exe - and both were useless, because
+    nothing he could press would redo them."""
+
+    GAME = "Reset Tools Test"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        os.makedirs(os.path.join(self.root, "Data"))
+        with open(os.path.join(self.root, "Game.exe"), "w") as f:
+            f.write("patched")
+        with open(os.path.join(self.root, "Game_backup.exe"), "w") as f:
+            f.write("original")
+        settings = main._load_settings()
+        settings.setdefault("prefix_tools", {})["resettools"] = {
+            "24913": {"at": 1, "changed": ["Game.exe"]}}
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("prefix_tools", {}).pop("resettools", None)
+        settings.get("vanilla_baseline", {}).pop("resettools", None)
+        main._save_settings(settings)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _reset(self, pairs):
+        return run(self.plugin.reset_game_modding(
+            "resettools", self.GAME, "Data", "dataDir", 0, "", "starred",
+            None, False, None, pairs))
+
+    def test_the_game_exe_is_put_back_from_the_tools_backup(self):
+        r = self._reset([["Game_backup.exe", "Game.exe"]])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["restored"], ["Game.exe"])
+        with open(os.path.join(self.root, "Game.exe")) as f:
+            self.assertEqual(f.read(), "original")
+
+    def test_the_backup_is_consumed_so_it_cannot_be_applied_twice(self):
+        self._reset([["Game_backup.exe", "Game.exe"]])
+        self.assertFalse(
+            os.path.exists(os.path.join(self.root, "Game_backup.exe")))
+
+    def test_the_tool_becomes_available_again(self):
+        self._reset([["Game_backup.exe", "Game.exe"]])
+        done = (main._load_settings().get("prefix_tools") or {}).get(
+            "resettools")
+        self.assertIsNone(done, "Step 3 would still show as applied")
+
+    def test_a_missing_backup_is_not_an_error(self):
+        os.remove(os.path.join(self.root, "Game_backup.exe"))
+        r = self._reset([["Game_backup.exe", "Game.exe"]])
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["restored"], [])
+
+    def test_nothing_declared_means_nothing_touched(self):
+        r = self._reset(None)
+        self.assertEqual(r["restored"], [])
+        with open(os.path.join(self.root, "Game.exe")) as f:
+            self.assertEqual(f.read(), "patched")
+
+    def test_a_path_outside_the_game_is_refused(self):
+        r = self._reset([["../../../etc/passwd", "Game.exe"]])
+        self.assertEqual(r["restored"], [])
+        with open(os.path.join(self.root, "Game.exe")) as f:
+            self.assertEqual(f.read(), "patched")
+
+
 class TestLogTagMatching(unittest.TestCase):
     """Mods log under a logger name they chose, not their id. Five of the
     nine blamed tags in the real crash log matched nothing until this."""

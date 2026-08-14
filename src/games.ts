@@ -205,6 +205,12 @@ export interface SupportedGame {
     avoidFileKeywords?: string[];
     /** Game-root-relative files whose change proves the tool worked */
     verifyChangedFiles: string[];
+    /** What this tool backed up, and where it goes, so reset can undo it:
+     * [backup, original]. Reset removes mods; a tool that rewrote the game
+     * exe is not a mod, and leaving it in place made "reset game modding"
+     * come back with Step 3 still ticked and nothing a user could do about
+     * it. Only set this where the tool makes the backup itself. */
+    restoreOnReset?: [string, string];
     timeoutSec?: number;
   }>;
   /** Games whose built-in gamepad support is broken/removed (FO3 lost
@@ -571,6 +577,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       {
         name: "Fallout Anniversary Patcher",
         nexusModId: 24913, // verified live: MAIN v1.1
+        // The patcher writes Fallout3_backup.exe before replacing the exe,
+        // which is what lets a reset genuinely undo it.
+        restoreOnReset: ["Fallout3_backup.exe", "Fallout3.exe"],
         description:
           "Patches the game exe: 4GB memory, crash fixes, and FOSE "
           + "support - the community's standard stability fix.",

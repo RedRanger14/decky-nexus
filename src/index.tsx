@@ -429,7 +429,13 @@ function ResetGameRow({
           ...(game.extraFrameworks ?? []).flatMap(
             (fw) => fw.frameworkModFolders ?? []
           ),
-        ]
+        ],
+        // Put back anything a modding tool rewrote, from the backup the
+        // tool made. Without this a reset left the game exe patched and
+        // Step 3 ticked, so the setup could not honestly be redone.
+        (game.prefixTools ?? [])
+          .map((t) => t.restoreOnReset)
+          .filter((p): p is [string, string] => Boolean(p))
       );
       if (result.ok && result.use_steam_client) {
         setLaunchOptions(game.appId, "");
