@@ -5318,6 +5318,17 @@ async def _wait_while_paused(mod_id: int, pct: int) -> None:
         await asyncio.sleep(0.4)
 
 
+# How long a tool's output files must sit unchanged before the tool is
+# treated as finished with them.
+#
+# Set after killing the Fallout Anniversary Patcher the instant Fallout3.exe
+# changed size, which produced a 15MB executable that was the right length
+# and not a working program. Twelve seconds is far longer than the gap
+# between writes inside a single patch pass, and still well under the
+# three-minute timeout it replaces.
+_TOOL_QUIET_SECONDS = 12
+
+
 async def _download_direct_file(url: str, md5: str, size: int):
     """Fetch a collection's "direct" download and prove it is what the
     curator published. Returns (error, path).
@@ -9172,7 +9183,20 @@ query Link($slug: String!, $domainName: String!) {
                 except (OSError, ProcessLookupError):
                     proc.kill()
 
+            def _fingerprint_now():
+                out = []
+                for rel in before:
+                    fp = os.path.join(install_path, *rel.split("/"))
+                    try:
+                        st2 = os.stat(fp)
+                        out.append((rel, st2.st_mtime_ns, st2.st_size))
+                    except OSError:
+                        out.append((rel, 0, 0))
+                return tuple(out)
+
             waited = 0.0
+            quiet = 0
+            last_seen = None
             budget = max(30, int(timeout_sec))
             while True:
                 done_set, _pending = await asyncio.wait({comm}, timeout=2)
@@ -9181,11 +9205,29 @@ query Link($slug: String!, $domainName: String!) {
                     rc = proc.returncode
                     break
                 waited += 2
+                # Changed is NOT finished. A file changes the moment writing
+                # STARTS, and killing on that wrote a 15MB exe half way
+                # through: right size, wrong contents, and a game that hung
+                # on the Steam spinner. Michael, correctly: "you have just
+                # broken the modding tools somehow."
+                #
+                # So wait for the files to go QUIET - unchanged across
+                # several polls after having changed - before deciding the
+                # tool is done with them.
                 if before and _changed_now():
+                    fingerprint = _fingerprint_now()
+                    if fingerprint == last_seen:
+                        quiet += 2
+                    else:
+                        quiet = 0
+                        last_seen = fingerprint
+                    if quiet < _TOOL_QUIET_SECONDS:
+                        continue
                     decky.logger.info(
                         f"prefix tool {game_domain}/{mod_id}: files changed "
-                        f"after {int(waited)}s - the tool has done its job, "
-                        "closing it rather than waiting out the timeout"
+                        f"and have been still for {quiet}s after "
+                        f"{int(waited)}s - closing the tool rather than "
+                        "waiting out the timeout"
                     )
                     _kill_tree()
                     try:
