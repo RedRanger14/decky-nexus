@@ -11,13 +11,35 @@ tell whose fault it is.
 | Stardew Valley | folder | tested |
 | Skyrim SE | dataDir | tested extensively (collection hunt, Aug 2026) |
 | Fallout 4 | dataDir | tested 2026-08-04, collection worked first time |
-| Fallout 3 | dataDir | tested, pre-adult-content |
 | Fallout: New Vegas | dataDir | tested, pre-adult-content |
 | Slay the Spire 2 | folder | tested, pre-adult-content |
 | The Witcher 3 | folder | tested 2026-07-24 (script-mod ceiling documented) |
 | Resident Evil 4 | folder | tested WITH adult content |
 | Cyberpunk 2077 | folder+frameworks | tested, pre-adult-content |
 | Elden Ring | me3 | **verified 2026-08-12: Seamless Co-op session played, two players** |
+
+### Cut from 1.0: Fallout 3
+
+Michael, 14 August 2026: "Lets remove fallout 3 from the 1.0 list."
+
+It is the only supported game whose required modding tool cannot be made to
+work here. The Anniversary Patcher downgrades Fallout3.exe to 1.7.0.3 so
+FOSE can hook it, and on this device the patched exe does not boot - through
+Proton Experimental, 9, 10 or 8, on a repaired prefix, with the game folder
+cleaned and the load order verified empty. The patcher's output is
+byte-identical every run, so it is not corruption.
+
+Without that patcher there is no FOSE, and without FOSE most Fallout 3
+collections - including Fallout Rebirth+, its most popular - do nothing.
+
+What was learned here still applies to every other Bethesda game and is
+already shipped: reset now sees the game folder, tools run under the Proton
+the game uses, staged tool files are cleaned up, direct (non-Nexus) sources
+in collections install, and deploy refuses to interrupt a running tool.
+
+Worth revisiting after 1.0 if the patcher gains a Linux-friendly build or
+FOSE supports 1.7.0.4 - neither is in our control.
+
 
 **Moved to post-1.0** (built, never run on device): Hollow Knight
 Silksong, Palworld, Mount & Blade II: Bannerlord.
