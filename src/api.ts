@@ -1046,7 +1046,10 @@ export const getHealthCheck = callable<
     game_domain: string,
     install_dir: string,
     mods_subdir: string,
-    app_id: number
+    app_id: number,
+    /** Frameworks arrive through Step 1, not the mod list, so they are not
+     * tracked mods - without these every SMAPI mod reads as missing SMAPI. */
+    framework_ids: number[]
   ],
   {
     ok: boolean;

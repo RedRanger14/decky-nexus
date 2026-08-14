@@ -1275,12 +1275,12 @@ function CurrentGameSection() {
                   doesn't start. One tap writes it down. */}
               <PanelSectionRow>
                 {protonChosen || me3?.compat_tool ? (
-                  <Field label="Step 1">
+                  <Field label={`Step ${fwSteps.install}`}>
                     Compatibility set ✓ ({protonChosen ?? me3?.compat_tool})
                   </Field>
                 ) : (
                   <ButtonItem
-                    label="Step 1"
+                    label={`Step ${fwSteps.install}`}
                     layout="below"
                     disabled={me3?.protons?.length === 0}
                     description={

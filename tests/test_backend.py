@@ -5627,9 +5627,58 @@ class TestHealthCheck(unittest.TestCase):
         shutil.rmtree(os.path.join(main.STEAM_COMMON, self.GAME),
                       ignore_errors=True)
 
-    def _check(self):
+    def _check(self, framework_ids=None):
         return run(self.plugin.get_health_check(
-            "newvegas", self.GAME, "Data", 1))
+            "newvegas", self.GAME, "Data", 1, framework_ids))
+
+    def test_a_mod_manager_is_not_a_missing_dependency(self):
+        # Resident Evil 4 mods list Fluffy Mod Manager as required. It is a
+        # Windows app for installing mods, which is what this plugin does -
+        # so there is nothing to fetch, and Michael's three RE4 collections
+        # all worked while the health check complained about it.
+        for name in ("Fluffy Mod Manager", "Vortex", "Mod Organizer 2"):
+            self.reqs[44757]["requirements"] = [
+                {"modName": name, "modId": 99, "notes": "", "url": ""}]
+            missing = [
+                m["name"] for f in self._check()["needs_mods"]
+                for m in f["missing"]
+            ]
+            self.assertEqual(missing, [], name)
+
+    def test_a_real_mod_with_manager_in_its_name_is_still_checked(self):
+        # "Generic Mod Config Menu" must not be swept up by the same rule.
+        self.reqs[44757]["requirements"] = [
+            {"modName": "Generic Mod Config Menu", "modId": 99,
+             "notes": "", "url": ""}]
+        missing = [
+            m["name"] for f in self._check()["needs_mods"]
+            for m in f["missing"]
+        ]
+        self.assertEqual(missing, ["Generic Mod Config Menu"])
+
+    def test_the_framework_is_not_reported_missing(self):
+        # It arrives through Step 1, not the mod list, so it is not a
+        # tracked mod. Michael's Stardew reported all 77 of its mods as
+        # missing SMAPI on a setup that booted perfectly and showed every
+        # mod in the config menu. A check that cries wolf 77 times is
+        # worse than no check.
+        self.reqs[44757]["requirements"].append(
+            {"modName": "SMAPI", "modId": 2400, "notes": "", "url": ""})
+        missing = [
+            m["name"] for f in self._check([2400])["needs_mods"]
+            for m in f["missing"]
+        ]
+        self.assertNotIn("SMAPI", missing)
+
+    def test_a_framework_that_is_not_declared_is_still_reported(self):
+        # Passing no framework ids must not silently excuse anything.
+        self.reqs[44757]["requirements"].append(
+            {"modName": "SMAPI", "modId": 2400, "notes": "", "url": ""})
+        missing = [
+            m["name"] for f in self._check()["needs_mods"]
+            for m in f["missing"]
+        ]
+        self.assertIn("SMAPI", missing)
 
     def test_it_asks_in_pages_not_once_per_mod(self):
         # The point of the change: a 500-mod Fallout 3 collection was going

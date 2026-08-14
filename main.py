@@ -1887,6 +1887,24 @@ def _load_order_report(data_path: str, names: list, cache: dict = None) -> int:
 # not own. Named so the panel can say "Dead Money" rather than
 # "DeadMoney.esm", which nobody can act on without already knowing it maps
 # to a Steam DLC.
+# Requirements that are desktop mod MANAGERS, not mods.
+#
+# Resident Evil 4 mods routinely list Fluffy Mod Manager as required. It is
+# a Windows application for installing mods - which is what this plugin
+# does - so the requirement is satisfied by the mod already being
+# installed, and there is nothing to fetch. REFramework's built-in
+# LooseFileLoader covers the Fluffy layout, which is why Michael's three
+# RE4 collections all worked while the health check complained.
+#
+# Matched on name because these are listed as ordinary Nexus mods with real
+# mod ids; nothing in the API marks them as tooling.
+_MANAGER_REQUIREMENT_RE = re.compile(
+    r"fluffy\s*(mod\s*)?manager|vortex|mod\s*organizer|MO2|"
+    r"nexus\s*mod\s*manager|NMM",
+    re.IGNORECASE,
+)
+
+
 def _dlc_checkable(game_domain: str) -> bool:
     """Whether a missing DLC can be proved rather than guessed.
 
@@ -11966,7 +11984,7 @@ query Link($slug: String!, $domainName: String!) {
 
     async def get_health_check(
         self, game_domain: str, install_dir: str, mods_subdir: str,
-        app_id: int = 0,
+        app_id: int = 0, framework_ids: list = None,
     ) -> dict:
         """What is wrong with this setup that the user cannot see.
 
@@ -11993,6 +12011,16 @@ query Link($slug: String!, $domainName: String!) {
         _install, _mods_path, _dis = _game_paths(install_dir, mods_subdir)
         data_path = _game_paths(install_dir, mods_subdir)[1]
         have_ids = {int(rec["mod_id"]) for rec in tracked.values()}
+        # The framework is installed, but not as a tracked mod - it arrives
+        # through Step 1, not the mod list. Without this every SMAPI mod
+        # reads as missing SMAPI: 77 of them on Michael's Stardew, on a
+        # setup that booted perfectly and showed every mod in the config
+        # menu. A health check that cries wolf 77 times is worse than none.
+        for fid in framework_ids or []:
+            try:
+                have_ids.add(int(fid))
+            except (TypeError, ValueError):
+                pass
         # Which DLC the user actually owns, read from disk rather than from
         # the store: a master file present in Data is the only proof that
         # survives a reinstall, a family share or a regional edition.
@@ -12039,6 +12067,9 @@ query Link($slug: String!, $domainName: String!) {
                 if (r.get("modId") or 0) > 0
                 and int(r["modId"]) not in have_ids
                 and not re.search(r"optional", r.get("notes") or "", re.I)
+                # A mod manager is not a missing dependency: this plugin IS
+                # the manager, and the mod is already installed.
+                and not _MANAGER_REQUIREMENT_RE.search(r.get("modName") or "")
             ]
             if missing:
                 needs_mods.append({"name": name, "mod_id": rec["mod_id"],
