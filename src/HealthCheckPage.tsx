@@ -164,11 +164,24 @@ export default function HealthCheckPage() {
   const run = () => {
     if (!game) return;
     setBusy(true);
+    // Frameworks are installed by Step 1, not through the mod list, so they
+    // are not tracked mods. Without telling the check about them, every
+    // SMAPI mod reads as missing SMAPI - 77 of them on a Stardew setup that
+    // booted perfectly.
+    const frameworkIds = [
+      game.framework?.nexusModId,
+      ...(game.framework?.aliasModIds ?? []),
+      ...(game.extraFrameworks ?? []).flatMap((fw) => [
+        fw.nexusModId,
+        ...(fw.aliasModIds ?? []),
+      ]),
+    ].filter((id): id is number => typeof id === "number");
     getHealthCheck(
       game.nexusDomain,
       game.installDirName,
       game.modsSubdir,
-      game.appId
+      game.appId,
+      frameworkIds
     )
       .then((r) =>
         setReport(
