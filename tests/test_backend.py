@@ -5559,6 +5559,46 @@ class TestMissingManifestDeps(unittest.TestCase):
         }), [])
 
 
+class TestEndorseRegistersDownload(unittest.TestCase):
+    """Endorsing a mod Nexus has no download for.
+
+    Michael could not endorse REFramework after installing it twice. The
+    API said NOT_DOWNLOADED_MOD for every version string tried, because
+    _download_archive short-circuits on a cached archive and never requests
+    a download link - and requesting the link is what registers a download.
+    He cares because it costs mod authors their endorsements."""
+
+    def test_the_repair_runs_once_and_only_on_that_error(self):
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def set_endorsement")
+        body = src[start:src.index(chr(10) + "    async def ", start + 10)]
+        self.assertIn('if "NOT_DOWNLOADED_MOD" in message and not _retried:',
+                      body)
+        self.assertIn("_register_download(", body)
+        # Exactly one retry: a loop here would inflate download counts.
+        self.assertEqual(body.count("_retried=True"), 1)
+
+    def test_registering_never_raises(self):
+        # It only ever runs as a repair on a path that has already failed,
+        # so an exception there would replace a useful message with a stack
+        # trace.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def _register_download")
+        body = src[start:start + 2200]
+        self.assertIn("except (aiohttp.ClientError", body)
+        self.assertIn("return False", body)
+
+    def test_it_asks_for_the_newest_main_file(self):
+        # The endorsement check is per MOD, so any real file registers it -
+        # but picking the newest MAIN keeps it the same file an install
+        # would have fetched.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def _register_download")
+        body = src[start:start + 2200]
+        self.assertIn('category_name") == "MAIN"', body)
+        self.assertIn("download_link.json", body)
+
+
 class TestHealthCheck(unittest.TestCase):
     """The screen Michael asked for months ago and was talked out of.
 
