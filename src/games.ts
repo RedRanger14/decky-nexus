@@ -779,6 +779,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     processName: "Cyberpunk2077.exe",
     framework: {
       name: "Cyber Engine Tweaks",
+      // Verified on device 2026-08-14. Exact paths, never prefixes:
+      // "bin" as a prefix would delete the game.
+      cleanupPrefixes: ["bin/x64/plugins", "bin/x64/version.dll"],
       // CET hooks via its own version.dll; RED4ext via winmm.dll -
       // Proton needs both preferred over Wine's builtins. redscript
       // needs no override (the game invokes its compiler natively).
@@ -792,6 +795,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     extraFrameworks: [
       {
         name: "RED4ext",
+        cleanupPrefixes: ["red4ext", "bin/x64/winmm.dll"],
         detectFile: "red4ext/RED4ext.dll",
         url: "docs.red4ext.com",
         nexusModId: 2380, // verified live
@@ -799,6 +803,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       },
       {
         name: "ArchiveXL",
+        // Inside RED4ext's tree, declared anyway so reset does not
+        // depend on which loader is removed first.
+        cleanupPrefixes: ["red4ext/plugins/ArchiveXL"],
         detectFile: "red4ext/plugins/ArchiveXL/ArchiveXL.dll",
         url: "github.com/psiberx/cp2077-archive-xl",
         nexusModId: 4198, // verified live
@@ -806,6 +813,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       },
       {
         name: "TweakXL",
+        cleanupPrefixes: ["red4ext/plugins/TweakXL"],
         detectFile: "red4ext/plugins/TweakXL/TweakXL.dll",
         url: "github.com/psiberx/cp2077-tweak-xl",
         nexusModId: 4197, // verified live
@@ -813,6 +821,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       },
       {
         name: "redscript",
+        // engine/tools only. r6/ and engine/ are vanilla and
+        // r6/scripts holds other mods' scripts, so neither is claimed.
+        cleanupPrefixes: ["engine/tools"],
         detectFile: "engine/tools/scc.exe",
         url: "github.com/jac3km4/redscript",
         nexusModId: 1511, // verified live

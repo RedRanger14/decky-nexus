@@ -6154,6 +6154,73 @@ class TestPrefixToolEarlyFinish(unittest.TestCase):
         self.assertIn("os.killpg", body)
 
 
+class TestResetRemovesNestedFrameworkFiles(unittest.TestCase):
+    """Cyberpunk's five loaders install into bin/x64 and red4ext, and the
+    cleanup loop was top-level only - so none of them could be declared and
+    every reset left all five behind with Step 1 still ticked.
+
+    Matched EXACTLY when a path contains a slash, never by prefix: "bin" as
+    a prefix would delete the game."""
+
+    GAME = "Nested FW Test"
+
+    def setUp(self):
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        for d in ("Data", "bin/x64/plugins", "red4ext/plugins/TweakXL",
+                  "engine/tools"):
+            os.makedirs(os.path.join(self.root, *d.split("/")))
+        for f in ("bin/x64/version.dll", "bin/x64/Game.exe",
+                  "engine/keep.txt"):
+            with open(os.path.join(self.root, *f.split("/")), "w") as fh:
+                fh.write("x")
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("vanilla_baseline", {}).pop("nestfw", None)
+        settings.get("vanilla_root_baseline", {}).pop("nestfw", None)
+        main._save_settings(settings)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _reset(self, prefixes):
+        return run(main.Plugin().reset_game_modding(
+            "nestfw", self.GAME, "Data", "dataDir", 0, "", "starred",
+            prefixes, False, None, None))
+
+    def test_a_nested_directory_is_removed(self):
+        r = self._reset(["bin/x64/plugins", "red4ext/plugins/TweakXL"])
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(os.path.isdir(
+            os.path.join(self.root, "bin", "x64", "plugins")))
+        self.assertFalse(os.path.isdir(
+            os.path.join(self.root, "red4ext", "plugins", "TweakXL")))
+
+    def test_a_nested_file_is_removed(self):
+        self._reset(["bin/x64/version.dll"])
+        self.assertFalse(os.path.isfile(
+            os.path.join(self.root, "bin", "x64", "version.dll")))
+
+    def test_the_game_survives(self):
+        # The whole point: bin/ and engine/ are vanilla.
+        self._reset(["bin/x64/plugins", "engine/tools",
+                     "bin/x64/version.dll"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.root, "bin", "x64", "Game.exe")))
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "bin")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.root, "engine", "keep.txt")))
+
+    def test_a_nested_path_is_never_prefix_matched(self):
+        # "bin/x64/plug" must not take bin/x64/plugins with it.
+        self._reset(["bin/x64/plug"])
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.root, "bin", "x64", "plugins")))
+
+    def test_traversal_is_refused(self):
+        self._reset(["../../../etc"])
+        self.assertTrue(os.path.isdir(self.root))
+
+
 class TestResetSeesTheGameFolder(unittest.TestCase):
     """Reset only ever looked at the mod folder.
 

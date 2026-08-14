@@ -10538,7 +10538,30 @@ query Link($slug: String!, $domainName: String!) {
         framework_files = []
         for prefix in framework_file_prefixes or []:
             pl = str(prefix).lower()
-            if not pl or "/" in pl or "\\" in pl or pl.startswith("."):
+            if not pl or pl.startswith("."):
+                continue
+            # A prefix with a slash is an EXACT relative path, not a prefix.
+            #
+            # Cyberpunk's five loaders install into bin/x64 and red4ext, and
+            # this loop was top-level only - so none of them could be
+            # declared and every reset left all five behind with Step 1 still
+            # ticked. Matched exactly rather than by prefix on purpose: "bin"
+            # as a prefix would delete the game.
+            if "/" in pl or "\\" in pl:
+                rel = str(prefix).replace("\\", "/")
+                if not _safe_rel_path(rel):
+                    continue
+                target = os.path.join(install_path, *rel.split("/"))
+                if not os.path.lexists(target):
+                    continue
+                try:
+                    if os.path.isdir(target) and not os.path.islink(target):
+                        _force_rmtree(target)
+                    else:
+                        os.remove(target)
+                    framework_files.append(rel)
+                except OSError as e:
+                    errors.append(f"{rel}: {e}")
                 continue
             for name in sorted(os.listdir(install_path)):
                 p = os.path.join(install_path, name)
