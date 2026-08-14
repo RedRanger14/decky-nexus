@@ -12628,6 +12628,10 @@ query Link($slug: String!, $domainName: String!) {
                         "name": v.get("name") or m["name"],
                         "for": finding["name"],
                         "why": v.get("why") or "",
+                        # Carried so the page can open it. A user told not to
+                        # install something is exactly the user who wants to
+                        # read its page and decide for themselves.
+                        "mod_id": int(m.get("mod_id") or 0),
                     })
                 else:
                     kept.append(m)

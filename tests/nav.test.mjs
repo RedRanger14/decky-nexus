@@ -269,3 +269,28 @@ test("the endorse pill has a gamepad focus style", () => {
     "the pill does not carry the class its focus style targets"
   );
 });
+
+test("health check findings are openable and show gamepad focus", () => {
+  // Michael: "I think the items in the health report should be clickable as
+  // a user might want to read instructions on a mod". Same class of bug as
+  // the endorse pills - several chips per card, in a column - so the focus
+  // ring is not optional.
+  const theme = read("theme.ts");
+  const page = read("HealthCheckPage.tsx");
+  assert.ok(
+    theme.includes("${LINK_CHIP_CLASS}.gpfocus"),
+    "the finding chip has no gpfocus rule, so gamepad focus is invisible"
+  );
+  assert.ok(
+    page.includes("className={LINK_CHIP_CLASS}"),
+    "the chip does not carry the class its focus style targets"
+  );
+  assert.ok(
+    page.includes("Navigation.NavigateToExternalWeb"),
+    "off-Nexus files have nowhere to go - that was the original request"
+  );
+  assert.ok(
+    page.includes("pushOurPage(\"/nexus-mods/mod\")"),
+    "a Nexus mod should open in the plugin, not the browser"
+  );
+});
