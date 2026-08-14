@@ -10204,6 +10204,7 @@ query Link($slug: String!, $domainName: String!) {
         framework_file_prefixes: list = None,
         witcher_layout: bool = False,
         framework_mod_folders: list = None,
+        restore_on_reset: list = None,
     ) -> dict:
         """One-button return to vanilla: uninstall every tracked mod (all
         record modes), remove framework loader files by prefix (copyRoot
@@ -10227,6 +10228,7 @@ query Link($slug: String!, $domainName: String!) {
         records = dict(settings.get("installed", {}).get(game_domain, {}))
         removed = 0
         errors = []
+        restored = []
         for key, rec in sorted(records.items()):
             try:
                 mode = rec.get("mode") or "folder"
@@ -10482,9 +10484,37 @@ query Link($slug: String!, $domainName: String!) {
         # auto_fixed is a list of things done to THIS install. Keeping it
         # across a reset made the health check contradict itself - "RitsuLib
         # sorted out already" directly above "LustTravel2 needs RitsuLib".
+        # Undo anything a modding tool did to the GAME itself, using the
+        # backup the tool made. Reset removes mods, and a rewritten game exe
+        # is not a mod - so it used to survive, and "reset game modding"
+        # came back with Step 3 still ticked and no way for the user to
+        # redo it. Only restores from a backup the tool wrote itself.
+        for pair in restore_on_reset or []:
+            try:
+                backup, original = pair[0], pair[1]
+            except (TypeError, IndexError):
+                continue
+            if not (_safe_rel_path(backup) and _safe_rel_path(original)):
+                continue
+            src = os.path.join(install_path, *backup.split("/"))
+            dst = os.path.join(install_path, *original.split("/"))
+            if not os.path.isfile(src):
+                continue
+            try:
+                shutil.copy2(src, dst)
+                os.remove(src)
+                restored.append(original)
+                decky.logger.info(
+                    f"reset restored {original!r} from {backup!r}"
+                )
+            except OSError as e:
+                errors.append(f"{original}: {e}")
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges", "skipped",
-                        "auto_fixed", "update_attempts"):
+                        "auto_fixed", "update_attempts",
+                        # Cleared only because the game files those tools
+                        # changed have just been put back above.
+                        "prefix_tools", "prefix_tools_skipped"):
             settings.get(section, {}).pop(game_domain, None)
         # Re-take the baseline now, because THIS is the only moment we can
         # be sure what vanilla looks like.
@@ -10545,6 +10575,9 @@ query Link($slug: String!, $domainName: String!) {
         return {
             "ok": True,
             "removed": removed,
+            # Game files a modding tool had rewritten, put back from the
+            # tool's own backup, so the setup steps become honest again.
+            "restored": restored,
             "framework_files": framework_files,
             "cleared_dlo": cleared_dlo,
             "use_steam_client": bool(app_id) and not cleared_dlo,

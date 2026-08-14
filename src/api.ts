@@ -292,7 +292,10 @@ export const resetGameModding = callable<
     plugins_style: "starred" | "listed",
     framework_file_prefixes: string[],
     witcher_layout: boolean,
-    framework_mod_folders: string[]
+    framework_mod_folders: string[],
+    /** [backup, original] pairs a modding tool made, restored so the setup
+     * steps are honest again after a reset. */
+    restore_on_reset: [string, string][]
   ],
   {
     ok: boolean;
