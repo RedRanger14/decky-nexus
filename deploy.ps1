@@ -11,7 +11,10 @@
 
 param(
     [switch]$SkipBuild,
-    [switch]$PackOnly
+    [switch]$PackOnly,
+    # Deploy even if the device is mid-download or mid-patch. Restarting
+    # Decky kills that work, so this is off by default.
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -101,6 +104,49 @@ foreach ($i in 1..3) {
     Start-Sleep -Seconds 4
 }
 if (-not $target) { throw "cannot reach $($hosts -join ' / ') - wake the device and re-run" }
+
+# Refuse to deploy over work in progress.
+#
+# Deploying restarts Decky, which kills whatever the plugin was doing. On
+# 2026-08-14 that happened mid-run of the Fallout 3 Anniversary Patcher: the
+# task died before recording its result, the patcher was orphaned, and the
+# half-written Fallout3.exe left the game hanging on the Steam spinner. It
+# cost a morning to find, and the deploy could simply have said no.
+#
+# -Force overrides, because sometimes killing a stuck run is the point.
+if (-not $Force) {
+    # One line, no quotes the remote shell can trip over: a here-string
+    # version of this failed to parse and silently checked nothing.
+    # Three traps found writing this probe, so it is base64'd rather than
+    # quoted: PowerShell strips the quotes before ssh sees them, pgrep -f
+    # matches the probe's OWN command line, and an abandoned .part file
+    # lingers for ever. So: match on process NAME, skip the wine services
+    # that are always up, and only count a download whose file was written
+    # in the last minute.
+    $script = @(
+        'b=',
+        'ps -eo comm | grep -iE "[.]exe$" | grep -viE "^(services|winedevice|plugplay|explorer|rpcss|svchost|conhost|tabtip|start|wineboot)[.]exe$" | head -1 | grep -q . && b=tool',
+        '[ -n "$(find /home/deck/homebrew/data/Nexus-Mods/downloads -name "*.part" -mmin -1 2>/dev/null)" ] && b=download',
+        'echo $b'
+    ) -join "`n"
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script))
+    $probe = "echo $b64 | base64 -d | sh"
+    $busy = (ssh -p $cfg.deckport -o ConnectTimeout=8 @keepAlive $target $probe) -join ''
+    if ($busy.Trim() -eq 'tool') {
+        Write-Host ""
+        Write-Host "REFUSING TO DEPLOY - a modding tool is running on the device." -ForegroundColor Red
+        Write-Host "Restarting Decky now kills it mid-write. That is exactly how" -ForegroundColor Yellow
+        Write-Host "Fallout3.exe ended up half-patched on 2026-08-14." -ForegroundColor Yellow
+        Write-Host "Wait for it to finish, or re-run with -Force." -ForegroundColor Yellow
+        exit 1
+    }
+    if ($busy.Trim() -eq 'download') {
+        Write-Host ""
+        Write-Host "REFUSING TO DEPLOY - a download is in progress." -ForegroundColor Red
+        Write-Host "Restarting Decky abandons it. Re-run with -Force to override." -ForegroundColor Yellow
+        exit 1
+    }
+}
 
 Write-Host "Copying to $target ..." -ForegroundColor Cyan
 scp -P $cfg.deckport -o ConnectTimeout=10 @keepAlive $tarball $remoteScriptPath "${target}:/tmp/"

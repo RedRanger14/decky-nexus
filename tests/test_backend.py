@@ -5915,27 +5915,50 @@ class TestPrefixToolEarlyFinish(unittest.TestCase):
     stayed busy for the full three minutes. Michael: "step 3 seems to have
     gotten stuck"."""
 
-    def test_it_watches_the_verify_files_rather_than_the_process(self):
+    @staticmethod
+    def _body():
+        """The whole function, not a fixed-size slice of it.
+
+        These tests used to read src[start:start + 14000] and started
+        failing the moment the function grew past that - which looked like
+        a broken timeout rather than a short window."""
         src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
         start = src.index("async def run_prefix_tool")
-        body = src[start:start + 14000]
+        end = src.index(chr(10) + "    async def ", start + 10)
+        return src[start:end]
+
+    def test_it_watches_the_verify_files_rather_than_the_process(self):
+        body = self._body()
         self.assertIn("_changed_now", body)
-        self.assertIn("closing it rather than waiting out the timeout", body)
+        self.assertIn("closing the tool rather than", body)
+
+    def test_it_waits_for_the_files_to_go_quiet_not_merely_change(self):
+        # The regression this replaced: killing on first change wrote a
+        # 15MB exe half way through, right size and not a program.
+        body = self._body()
+        self.assertIn("_TOOL_QUIET_SECONDS", body)
+        self.assertIn("quiet < _TOOL_QUIET_SECONDS", body)
+        self.assertIn("_fingerprint_now", body)
+
+    def test_the_quiet_period_is_longer_than_a_poll(self):
+        # A one-poll wait would be no better than killing on first change.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        self.assertIn("_TOOL_QUIET_SECONDS = ", src)
+        value = int(
+            src.split("_TOOL_QUIET_SECONDS = ")[1].split(chr(10))[0]
+        )
+        self.assertGreaterEqual(value, 6)
 
     def test_the_timeout_is_still_enforced(self):
         # A tool that changes nothing must still be killed, or the step
         # hangs forever instead of failing honestly.
-        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
-        start = src.index("async def run_prefix_tool")
-        body = src[start:start + 14000]
+        body = self._body()
         self.assertIn("if waited >= budget:", body)
         self.assertIn("timed_out = True", body)
 
     def test_the_process_tree_is_killed_either_way(self):
         # Killing only the proton wrapper orphaned Patcher.exe on device.
-        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
-        start = src.index("async def run_prefix_tool")
-        body = src[start:start + 14000]
+        body = self._body()
         self.assertEqual(body.count("_kill_tree()"), 3)
         self.assertIn("os.killpg", body)
 

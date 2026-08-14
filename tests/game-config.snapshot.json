@@ -1,0 +1,250 @@
+[
+  {
+    "appId": "22370",
+    "displayName": "Fallout 3",
+    "nexusDomain": "fallout3",
+    "installDirName": "Fallout 3 goty",
+    "modsSubdir": "Data",
+    "pluginsTxtSubpath": "Fallout3/Plugins.txt",
+    "pluginsTxtStyle": "listed",
+    "installMode": "dataDir",
+    "frameworkName": null,
+    "launchOptionsTemplate": "bash -c 'exec \"${@/Fallout3Launcher.exe/Fallout3.exe}\"' -- %command%",
+    "prefixTools": [
+      "24913",
+      "25717"
+    ],
+    "manualTools": 1,
+    "hasLauncherBypass": true,
+    "hasSetupInis": true,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "22380",
+    "displayName": "Fallout: New Vegas",
+    "nexusDomain": "newvegas",
+    "installDirName": "Fallout New Vegas",
+    "modsSubdir": "Data",
+    "pluginsTxtSubpath": "FalloutNV/Plugins.txt",
+    "pluginsTxtStyle": "listed",
+    "installMode": "dataDir",
+    "frameworkName": "xNVSE",
+    "launchOptionsTemplate": "bash -c 'exec \"${@/FalloutNVLauncher.exe/nvse_loader.exe}\"' -- %command%",
+    "prefixTools": [
+      "67883"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": true,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "261550",
+    "displayName": "Mount & Blade II: Bannerlord",
+    "nexusDomain": "mountandblade2bannerlord",
+    "installDirName": "Mount & Blade II Bannerlord",
+    "modsSubdir": "Modules",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "BLSE",
+    "launchOptionsTemplate": null,
+    "prefixTools": [
+      "1"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "292030",
+    "displayName": "The Witcher 3",
+    "nexusDomain": "witcher3",
+    "installDirName": "The Witcher 3",
+    "modsSubdir": "mods",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "377160",
+    "displayName": "Fallout 4",
+    "nexusDomain": "fallout4",
+    "installDirName": "Fallout 4",
+    "modsSubdir": "Data",
+    "pluginsTxtSubpath": "Fallout4/Plugins.txt",
+    "pluginsTxtStyle": "starred",
+    "installMode": "dataDir",
+    "frameworkName": "F4SE",
+    "launchOptionsTemplate": "bash -c 'exec \"${@/Fallout4Launcher.exe/f4se_loader.exe}\"' -- %command%",
+    "prefixTools": [
+      "42147"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": true,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "413150",
+    "displayName": "Stardew Valley",
+    "nexusDomain": "stardewvalley",
+    "installDirName": "Stardew Valley",
+    "modsSubdir": "Mods",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "SMAPI",
+    "launchOptionsTemplate": "{install_path}/StardewModdingAPIStardewModdingAPIsmapi-internalSaveBackupConsoleCommandsErrorHandleruninstall allSaveBackupConsoleCommandsErrorHandlersmapiStardewValley",
+    "prefixTools": [
+      "2400"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": true
+  },
+  {
+    "appId": "489830",
+    "displayName": "Skyrim Special Edition",
+    "nexusDomain": "skyrimspecialedition",
+    "installDirName": "Skyrim Special Edition",
+    "modsSubdir": "Data",
+    "pluginsTxtSubpath": "Skyrim Special Edition/Plugins.txt",
+    "pluginsTxtStyle": null,
+    "installMode": "dataDir",
+    "frameworkName": "SKSE64",
+    "launchOptionsTemplate": "bash -c 'exec \"${@/SkyrimSELauncher.exe/skse64_loader.exe}\"' -- %command%",
+    "prefixTools": [
+      "30379"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "1030300",
+    "displayName": "Hollow Knight: Silksong",
+    "nexusDomain": "hollowknightsilksong",
+    "installDirName": "Hollow Knight Silksong",
+    "modsSubdir": "BepInEx/plugins",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "BepInEx",
+    "launchOptionsTemplate": "winhttp=n,bUnityPlayer.soproton_experimental",
+    "prefixTools": [
+      "26"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "1091500",
+    "displayName": "Cyberpunk 2077",
+    "nexusDomain": "cyberpunk2077",
+    "installDirName": "Cyberpunk 2077",
+    "modsSubdir": "archive/pc/mod",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "Cyber Engine Tweaks",
+    "launchOptionsTemplate": "version=n,b;winmm=n,bRED4extred4ext/RED4ext.dlldocs.red4ext.comcopyRootArchiveXLred4ext/plugins/ArchiveXL/ArchiveXL.dllgithub.com/psiberx/cp2077-archive-xlcopyRootTweakXLred4ext/plugins/TweakXL/TweakXL.dllgithub.com/psiberx/cp2077-tweak-xlcopyRootredscriptengine/tools/scc.exegithub.com/jac3km4/redscriptcopyRootstarredlisted",
+    "prefixTools": [
+      "107",
+      "2380",
+      "4198",
+      "4197",
+      "1511"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "1245620",
+    "displayName": "Elden Ring",
+    "nexusDomain": "eldenring",
+    "installDirName": "ELDEN RING",
+    "modsSubdir": "._nexus_mods_unused",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": "me3",
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "1623730",
+    "displayName": "Palworld",
+    "nexusDomain": "palworld",
+    "installDirName": "Palworld",
+    "modsSubdir": "Pal/Content/Paks/~mods",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "UE4SS",
+    "launchOptionsTemplate": "dwmapi=n,bPal/Binaries/Win64/ue4ss/ModsPal/Content/Paks/LogicMods",
+    "prefixTools": [
+      "3405"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "2050650",
+    "displayName": "Resident Evil 4",
+    "nexusDomain": "residentevil42023",
+    "installDirName": "RESIDENT EVIL 4  BIOHAZARD RE4",
+    "modsSubdir": "._nexus_mods_unused",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "REFramework",
+    "launchOptionsTemplate": "dinput8=n,bdinput8",
+    "prefixTools": [
+      "12"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false
+  },
+  {
+    "appId": "2868840",
+    "displayName": "Slay the Spire 2",
+    "nexusDomain": "slaythespire2",
+    "installDirName": "Slay the Spire 2",
+    "modsSubdir": "mods",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "BaseLib",
+    "launchOptionsTemplate": null,
+    "prefixTools": [
+      "103"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": true
+  }
+]
