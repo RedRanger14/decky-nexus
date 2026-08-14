@@ -183,11 +183,21 @@ export interface SupportedGame {
     name: string;
     nexusModId: number;
     description: string;
-    /** Escape hatch for tools that genuinely can't run headless: shows
-     * Desktop-Mode instructions instead of a launch button. Unused - the
-     * FO3 patchers DO work in-prefix (verified: exe downgraded to
-     * 1.7.0.3 on device), the apparent freeze was a dropped SSH session
-     * during diagnosis, not the compositor. */
+    /** This tool cannot run headless, so it is never launched
+     * automatically - it is listed as an optional manual job instead.
+     *
+     * Used by the Fallout 3 ESM Patcher, which its own page describes as
+     * "run the exe installer ... both destination locations in the
+     * installer are towards your Fallout 3 Data folder": a GUI with two
+     * path fields. It is a bespoke Delphi program with no command line at
+     * all - no Inno or NSIS silent switch to reach for - so feeding it
+     * Enter presses does nothing and it sat there for the full five-minute
+     * timeout, producing no output and changing nothing, while Step 3
+     * reported "(1)" forever.
+     *
+     * The Anniversary Patcher next to it DOES work headless (verified: exe
+     * downgraded to 1.7.0.3 on device), so this is per-tool rather than
+     * per-game. */
     needsDesktopMode?: boolean;
     /** Substring picking the tool exe inside the archive */
     exeHint?: string;
@@ -571,7 +581,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       },
       {
         name: "Unofficial Fallout 3 ESM Patcher",
-        nexusModId: 25717, // verified live: paired EN/FR mains - avoid FR
+        nexusModId: 25717,
+        // A GUI installer asking for two destination paths. Nothing here
+        // can drive it, and it is an optimisation patch rather than
+        // something the game needs to start - so it is offered as an
+        // optional manual job instead of a step that can never complete.
+        needsDesktopMode: true, // verified live: paired EN/FR mains - avoid FR
         description:
           "Repairs errors inside the game's own master files - required "
           + "by the Updated Unofficial Fallout 3 Patch.",

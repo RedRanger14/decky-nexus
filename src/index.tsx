@@ -832,6 +832,17 @@ function CurrentGameSection() {
     ? [game.framework, ...(game.extraFrameworks ?? [])]
     : [];
   const isMultiFw = (game?.extraFrameworks?.length ?? 0) > 0;
+  // Tools the plugin can actually run, and tools that need a person.
+  // Fallout 3 has one of each: the Anniversary Patcher works headless, the
+  // ESM Patcher is a GUI installer asking for two paths. Treating them as
+  // one group meant either blocking the working one or forever reporting
+  // "(1)" for the one that can never finish.
+  const autoTools = (game?.prefixTools ?? []).filter(
+    (t) => !t.needsDesktopMode
+  );
+  const manualTools = (game?.prefixTools ?? []).filter(
+    (t) => t.needsDesktopMode
+  );
   // Step numbers follow what renders. BaseLib needs no launch command, so
   // hardcoded labels produced "Step 1" followed by "Step 3".
   const fwSteps = frameworkStepNumbers(
@@ -1428,15 +1439,15 @@ function CurrentGameSection() {
                   transition: background 0.5s linear;
                 }
               `}</style>
-              {game.prefixTools.every(
+              {autoTools.every(
                 (t) => toolsDone[t.nexusModId] || toolsSkipped[t.nexusModId]
               ) &&
-              game.prefixTools.some((t) => toolsSkipped[t.nexusModId]) ? (
+              autoTools.some((t) => toolsSkipped[t.nexusModId]) ? (
                 /* Skipped: say plainly what it costs, and offer the way back. */
                 <div>
                   <Field label="Step 3">
                     Modding tools skipped — mods that need{" "}
-                    {game.prefixTools
+                    {autoTools
                       .filter((t) => toolsSkipped[t.nexusModId])
                       .map((t) => t.name)
                       .join(" or ")}{" "}
@@ -1449,7 +1460,7 @@ function CurrentGameSection() {
                     onClick={async () => {
                       await skipPrefixTools(
                         game.nexusDomain,
-                        game.prefixTools!.map((t) => t.nexusModId),
+                        autoTools.map((t) => t.nexusModId),
                         false
                       );
                       refreshStatus();
@@ -1458,21 +1469,15 @@ function CurrentGameSection() {
                     Un-skip modding tools
                   </ButtonItem>
                 </div>
-              ) : game.prefixTools.some((t) => t.needsDesktopMode) &&
-              !game.prefixTools.every((t) => toolsDone[t.nexusModId]) ? (
+              ) : autoTools.length === 0 ? (
                 <Field label="Step 3">
-                  ⚠ {game.displayName} needs{" "}
-                  {game.prefixTools.map((t) => t.name).join(" and ")} - these
-                  are Windows tools with their own windows, and launching them
-                  from Gaming Mode has frozen handhelds. Run them from Desktop
-                  Mode instead: download from Nexus Mods, unpack into the game
-                  folder next to the game exe, and run the patcher there.
-                  Everything else on this list works from here.
+                  ⚠ {game.displayName}'s tools have their own windows and
+                  cannot be run from here.
                 </Field>
-              ) : game.prefixTools.every((t) => toolsDone[t.nexusModId]) ? (
+              ) : autoTools.every((t) => toolsDone[t.nexusModId]) ? (
                 <Field label="Step 3">
                   Modding tools applied ✓ (
-                  {game.prefixTools.map((t) => t.name).join(", ")})
+                  {autoTools.map((t) => t.name).join(", ")})
                 </Field>
               ) : (
                 <div
@@ -1501,7 +1506,7 @@ function CurrentGameSection() {
                         color: "#1c1c1c",
                       }}
                       onClick={async () => {
-                    for (const tool of game.prefixTools!) {
+                    for (const tool of autoTools) {
                       if (toolsDone[tool.nexusModId]) continue;
                       toolClock.current = {
                         start: Date.now(),
@@ -1554,7 +1559,7 @@ function CurrentGameSection() {
                     >
                       {toolsBusy ??
                         `Apply modding tools (${
-                          game.prefixTools.filter(
+                          autoTools.filter(
                             (t) => !toolsDone[t.nexusModId]
                           ).length
                         })`}
@@ -1571,7 +1576,7 @@ function CurrentGameSection() {
                         onClick={async () => {
                           await skipPrefixTools(
                             game.nexusDomain,
-                            game.prefixTools!
+                            autoTools
                               .filter((t) => !toolsDone[t.nexusModId])
                               .map((t) => t.nexusModId),
                             true
@@ -1644,6 +1649,26 @@ function CurrentGameSection() {
                     ))}
                 </div>
               )}
+            </PanelSectionRow>
+          )}
+          {/* Tools nothing here can drive. Said once, plainly, as optional -
+              not as a step that can never be completed. */}
+          {manualTools.length > 0 && status?.installed && (
+            <PanelSectionRow>
+              <Field label="Optional, and only from Desktop Mode" childrenLayout="below">
+                {manualTools.map((t) => t.name).join(" and ")}{" "}
+                {manualTools.length === 1 ? "is a Windows installer" : "are Windows installers"}{" "}
+                with {manualTools.length === 1 ? "its" : "their"} own window,
+                so {manualTools.length === 1 ? "it" : "they"} cannot be run
+                from Gaming Mode. Nothing needs{" "}
+                {manualTools.length === 1 ? "it" : "them"} to play — mods
+                install and the game starts without{" "}
+                {manualTools.length === 1 ? "it" : "them"}. If you want{" "}
+                {manualTools.length === 1 ? "it" : "them"}, switch to Desktop
+                Mode, download from Nexus Mods and run{" "}
+                {manualTools.length === 1 ? "it" : "them"} against your Data
+                folder.
+              </Field>
             </PanelSectionRow>
           )}
           {game.controllerNotice && status?.installed && (
