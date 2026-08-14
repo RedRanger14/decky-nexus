@@ -22,6 +22,7 @@ import {
   isRemaining,
 
   preDisabledNote,
+  directNote,
   isGoneFromNexus,
   unavailableNote,} from "./panelRules";
 
@@ -29,6 +30,7 @@ import {
   endorseCollection,
   applyKnownPrerequisites,
   applyKnownVerdicts,
+  installCollectionDirect,
   getCollectionExtras,
   getCollectionSupport,
   disableBlockedPlugins,
@@ -164,6 +166,8 @@ export function CollectionPage() {
   const [preDisabled, setPreDisabled] = useState<string[]>([]);
   // Mods this collection lists that Nexus will not serve any more.
   const [unavailable, setUnavailable] = useState<string[]>([]);
+  // Files fetched from a URL the collection supplied rather than Nexus.
+  const [directInstalled, setDirectInstalled] = useState<string[]>([]);
   // Known not to work here. Said before the download, not after - the TTW
   // collection is 42 GB and needs a conversion Gaming Mode cannot build.
   const [unsupported, setUnsupported] = useState("");
@@ -325,6 +329,29 @@ export function CollectionPage() {
     if (!sel) return;
     const { game, collection } = sel;
     setFinalising("Finishing off — this takes a minute, don't close the page");
+    // Before the bundles: FOSE and its kind are the layer everything else
+    // loads through, and Fallout Rebirth+ installed 168 mods without it and
+    // then crashed on launch with nothing to look at.
+    try {
+      setFinalising("Downloading the files this collection links to…");
+      const direct = await installCollectionDirect(
+        collection.slug,
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        game.appId,
+        game.pluginsTxtSubpath ?? "",
+        game.pluginsTxtStyle ?? "starred"
+      );
+      if (direct.ok && (direct.names?.length ?? 0) > 0) {
+        setDirectInstalled(direct.names ?? []);
+      }
+      for (const e of direct.errors ?? []) {
+        toaster.toast({ title: "Could not install a linked file", body: e });
+      }
+    } catch {
+      /* the extras note still names what is missing */
+    }
     try {
       setFinalising("Installing the mods this collection ships itself…");
       const bundles = await installCollectionBundles(
@@ -1510,6 +1537,21 @@ export function CollectionPage() {
               installed - only the missing ones will download.
             </div>
           )}
+        {directInstalled.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              margin: "-6px 0 12px",
+              padding: "8px 10px",
+              borderRadius: "4px",
+              background: "rgba(143, 212, 143, 0.10)",
+              border: "1px solid rgba(143, 212, 143, 0.35)",
+              lineHeight: 1.45,
+            }}
+          >
+            {directNote(directInstalled)}
+          </div>
+        )}
         {unavailable.length > 0 && !installing && (
           <div
             style={{

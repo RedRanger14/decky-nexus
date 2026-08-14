@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   crashHuntVerdict,
   cancellableDownload,
+  directNote,
   disableFailingOutcome,
   failingProblem,
   frameworkStepNumbers,
@@ -1176,4 +1177,27 @@ test("no mods installed is not a clean bill of health", () => {
   const v = healthVerdict(0, 0, false);
   assert.match(v.headline, /Nothing installed/);
   assert.equal(v.clean, false);
+});
+
+// --- directNote -----------------------------------------------------------
+// Fallout Rebirth+ lists FOSE as a plain URL rather than a Nexus file.
+// Without it 168 mods installed perfectly and the game crashed on launch.
+
+test("nothing fetched says nothing", () => {
+  assert.equal(directNote([]), "");
+  assert.equal(directNote([""]), "");
+});
+
+test("one file names it and says where it came from", () => {
+  const msg = directNote(["Fallout Script Extender (FOSE)"]);
+  assert.match(msg, /Also installed Fallout Script Extender \(FOSE\)/);
+  assert.match(msg, /links to directly rather than hosting on Nexus/);
+  // The verification is the reason this is safe, so it is stated.
+  assert.match(msg, /It was checked against the fingerprint/);
+});
+
+test("several read in the plural and count the rest", () => {
+  const msg = directNote(["A", "B", "C", "D"]);
+  assert.match(msg, /A, B, C and 1 more/);
+  assert.match(msg, /They were checked/);
 });
