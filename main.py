@@ -5081,14 +5081,21 @@ def _redscript_report(install_path: str, records: dict) -> dict:
     script no install record claims, which is how two dead files sat in
     r6/scripts for weeks with nothing accountable for them.
     """
+    empty = {"ran": False, "compiled": False, "failures": [], "orphans": [],
+             "stamp": ""}
     path = _redscript_log_path(install_path)
     if not os.path.isfile(path):
-        return {"ran": False, "compiled": False, "failures": [], "orphans": []}
+        return empty
     try:
+        st = os.stat(path)
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             lines = f.read().splitlines()
     except OSError:
-        return {"ran": False, "compiled": False, "failures": [], "orphans": []}
+        return empty
+    # Which log this is. A session that blamed a mod already happened, and
+    # reading it again does not make it happen twice - so whatever we do
+    # about it, we do once. See the auto-disable.
+    stamp = f"{int(st.st_mtime)}:{st.st_size}"
     compiled = any(_REDS_DONE in ln.lower() for ln in lines)
     blamed = _parse_redscript_log(lines)
     # Which record owns each .reds on disk. Basename only: the log prints a
@@ -5119,6 +5126,7 @@ def _redscript_report(install_path: str, records: dict) -> dict:
         "compiled": compiled,
         "failures": failures,
         "orphans": orphans,
+        "stamp": stamp,
     }
 
 
@@ -12611,6 +12619,14 @@ query Link($slug: String!, $domainName: String!) {
             rec = records.get(fail["record_key"]) or {}
             if rec.get("enabled") is False or rec.get("parked"):
                 continue
+            # Acted on this log already. The session that blamed the mod
+            # already happened and re-reading it does not make it happen
+            # again - so a user who decides they want the mod anyway and
+            # switches it back on would otherwise lose it the moment they
+            # reopened this page, with nothing to explain why. They get it
+            # back when the game next runs and says so again.
+            if rec.get("auto_off_log") == script["stamp"]:
+                continue
             result = await self.set_mod_enabled(
                 install_dir, mods_subdir, fail["record_key"], False,
                 "folder", game_domain, app_id, "", "starred", None,
@@ -12620,6 +12636,12 @@ query Link($slug: String!, $domainName: String!) {
                 continue
             switched_off.append({"name": fail["mod"], "script": fail["script"],
                                  "why": fail["symbol"] or fail["kind"]})
+            stamped = _load_settings()
+            target = (stamped.get("installed", {}).get(game_domain, {})
+                      .get(fail["record_key"]))
+            if target is not None:
+                target["auto_off_log"] = script["stamp"]
+                _save_settings(stamped)
             if fail["mod_id"]:
                 _record_mod_verdicts(game_domain, build, [{
                     "mod_id": fail["mod_id"], "name": fail["mod"],
