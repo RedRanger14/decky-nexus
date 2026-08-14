@@ -6286,6 +6286,58 @@ class TestHealthCheckCorroboration(unittest.TestCase):
         self.assertEqual(r["script_log"]["switched_off"], [])
         self.assertEqual(len(r["script_log"]["failures"]), 1)
 
+    def test_a_mod_the_user_turned_back_on_is_left_on(self):
+        # The fight a user cannot win. We switch a mod off, they decide they
+        # want it anyway and switch it back on - and the very next look at
+        # this page switches it off again, because the log has not changed
+        # and cannot until the game runs. Nothing on screen would explain
+        # it. Acted-on-once per log; the next session gets a fresh say.
+        settings = main._load_settings()
+        settings["installed"]["cyberpunk2077"]["One More Light"]["files"] = [
+            "r6/scripts/GeneralShadowsFixes.reds"]
+        main._save_settings(settings)
+        os.makedirs(os.path.join(self.root, "r6", "scripts"), exist_ok=True)
+        open(os.path.join(self.root, "r6", "scripts",
+                          "GeneralShadowsFixes.reds"), "w").close()
+        self._log(self.BROKEN)
+        self.assertEqual(
+            len(self._check()["script_log"]["switched_off"]), 1)
+        # The user turns it back on.
+        settings = main._load_settings()
+        rec = settings["installed"]["cyberpunk2077"]["One More Light"]
+        rec["enabled"] = True
+        rec.pop("parked", None)
+        main._save_settings(settings)
+        self.assertEqual(self._check()["script_log"]["switched_off"], [])
+        after = main._load_settings()["installed"]["cyberpunk2077"]
+        self.assertIsNot(after["One More Light"]["enabled"], False)
+
+    def test_a_fresh_session_that_still_fails_switches_it_off_again(self):
+        # The other half: the guard is per LOG, not permanent. If the game
+        # runs again and says the same thing, that is a new statement.
+        settings = main._load_settings()
+        settings["installed"]["cyberpunk2077"]["One More Light"]["files"] = [
+            "r6/scripts/GeneralShadowsFixes.reds"]
+        main._save_settings(settings)
+        os.makedirs(os.path.join(self.root, "r6", "scripts"), exist_ok=True)
+        open(os.path.join(self.root, "r6", "scripts",
+                          "GeneralShadowsFixes.reds"), "w").close()
+        self._log(self.BROKEN)
+        self._check()
+        settings = main._load_settings()
+        rec = settings["installed"]["cyberpunk2077"]["One More Light"]
+        rec["enabled"] = True
+        rec.pop("parked", None)
+        main._save_settings(settings)
+        # A new session writes a new log - different size is enough here.
+        self._log(self.BROKEN + ["[INFO] another line from a later run"])
+        # Parking pruned the empty directory on the way out.
+        os.makedirs(os.path.join(self.root, "r6", "scripts"), exist_ok=True)
+        open(os.path.join(self.root, "r6", "scripts",
+                          "GeneralShadowsFixes.reds"), "w").close()
+        self.assertEqual(
+            len(self._check()["script_log"]["switched_off"]), 1)
+
     def test_a_mod_already_switched_off_is_not_switched_off_again(self):
         # The log does not change when a mod is disabled - the session that
         # blamed it already happened - so without this every check would

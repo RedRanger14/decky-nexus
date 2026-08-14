@@ -438,17 +438,41 @@ export default function HealthCheckPage() {
             <SectionHeading
               title="Mods that need other mods"
               right={
-                <DialogButton
-                  style={{ width: "auto", minWidth: "190px" }}
-                  disabled={Boolean(fixing)}
-                  onClick={installAllMissing}
-                >
-                  {fixing
-                    ? `Installing ${fixing}…`
-                    : `Install the ${missingCount} missing`}
-                </DialogButton>
+                // Never while the script stack is dead. A broken script
+                // suspends the only evidence that says whether these matter
+                // at all - the collection that omitted them boots fine when
+                // the game compiles - so the button would be offering to
+                // install six mods a curator deliberately left out, on top
+                // of a setup that is already not running. Michael caught
+                // this live: "am I clicking install the 6 missing?"
+                stackDead ? undefined : (
+                  <DialogButton
+                    style={{ width: "auto", minWidth: "190px" }}
+                    disabled={Boolean(fixing)}
+                    onClick={installAllMissing}
+                  >
+                    {fixing
+                      ? `Installing ${fixing}…`
+                      : `Install the ${missingCount} missing`}
+                  </DialogButton>
+                )
               }
             />
+            {stackDead && (
+              <div
+                style={{
+                  fontSize: "12.5px",
+                  opacity: 0.7,
+                  lineHeight: 1.45,
+                  margin: "-2px 0 10px",
+                }}
+              >
+                Sort the script problem above out first. Until the game can
+                compile again there is no way to tell whether any of these
+                actually matter — and installing them now would add mods on
+                top of a setup that is not running.
+              </div>
+            )}
             {report!.needs_mods.map((f) => (
               <FindingCard
                 key={f.name}
