@@ -157,3 +157,40 @@ test("never pops past our own pages", () => {
 test("the health check returns to the QAM, because that is where it opens", () => {
   assert.equal(backAction("health"), "open-qam");
 });
+
+// --- launch templates must survive the launch-options plugin -------------
+// This device routes Steam's launch options through decky-launch-options,
+// which treats ANY token containing "=" (with no "/" before it) as an
+// environment variable. Fallout 3's FOSE-aware command began with
+// d=$(dirname ...) and was lifted out wholesale and set as a variable named
+// "d". Steam ran `bash -c --` with no script, the game started without FOSE
+// and crashed, and the only trace was one line in a debug log.
+
+const GAMES_SRC = read("games.ts");
+
+test("no bash launch template starts with an assignment", () => {
+  const bad = GAMES_SRC.match(/bash -c '[A-Za-z_][A-Za-z0-9_]*=/);
+  assert.equal(
+    bad,
+    null,
+    `a launch template opens with ${bad && bad[0]} - decky-launch-options ` +
+      `reads that as an environment variable and strips the whole script ` +
+      `out of the command`
+  );
+});
+
+test("every launch template hands off to %command%", () => {
+  // The interface declares the field too; only the ones with a value are
+  // templates.
+  const lines = GAMES_SRC.split("launchOptionsTemplate")
+    .slice(1)
+    .filter((c) => !/^\??:\s*string/.test(c));
+  assert.ok(lines.length >= 2, `only ${lines.length} templates found`);
+  for (const chunk of lines) {
+    const upto = chunk.slice(0, 700);
+    assert.ok(
+      upto.includes("%command%"),
+      `a launch template never reaches %command%: ${upto.slice(0, 120)}`
+    );
+  }
+});
