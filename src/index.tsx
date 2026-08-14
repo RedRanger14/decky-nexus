@@ -1101,25 +1101,34 @@ function CurrentGameSection() {
             /* Multi-framework games (CP77): one button installs the whole
                stack; each framework still downloads individually from
                Nexus Mods so every author gets the download credit. */
-            <PanelSectionRow>
-              {missingFrameworks.length === 0 ? (
-                <Field label="Step 1" childrenLayout="below">
-                  {/* One row each, not one line listing all of them: a
-                      single thumbs-up beside "4 frameworks installed"
-                      cannot say whose author it thanks. */}
-                  {allFrameworks.map((f) => (
+            missingFrameworks.length === 0 ? (
+              /* One PanelSectionRow PER framework, not one holding all of
+                 them. Steam treats a row as a single focus target, so five
+                 endorse buttons in one row could not be reached
+                 individually with a controller - the D-pad highlighted the
+                 whole block and A always endorsed the first author.
+                 Cyberpunk has five, so four of them were unreachable. */
+              <>
+                <PanelSectionRow>
+                  <Field label={`Step ${fwSteps.install}`}>
+                    All {allFrameworks.length} installed ✓
+                  </Field>
+                </PanelSectionRow>
+                {allFrameworks.map((f) => (
+                  <PanelSectionRow key={f.nexusModId ?? f.name}>
                     <EndorsableFrameworkRow
-                      key={f.nexusModId ?? f.name}
-                      text={`${f.name} installed ✓`}
+                      text={`${f.name} ✓`}
                       gameDomain={game.nexusDomain}
                       modId={f.nexusModId}
                       modName={f.name}
                     />
-                  ))}
-                </Field>
-              ) : (
+                  </PanelSectionRow>
+                ))}
+              </>
+            ) : (
+              <PanelSectionRow>
                 <ButtonItem
-                  label="Step 1"
+                  label={`Step ${fwSteps.install}`}
                   layout="below"
                   disabled={frameworkBusy}
                   description={`Installs everything ${game.displayName} mods need: ${missingFrameworks
@@ -1137,8 +1146,8 @@ function CurrentGameSection() {
                       ? `Install all frameworks (${allFrameworks.length})`
                       : `Install remaining frameworks (${missingFrameworks.length})`}
                 </ButtonItem>
-              )}
-            </PanelSectionRow>
+              </PanelSectionRow>
+            )
           ) : (
             <PanelSectionRow>
               {status.framework_installed ? (

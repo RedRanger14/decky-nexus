@@ -230,3 +230,22 @@ test("every game with prefix tools has at least one it can run", () => {
     );
   }
 });
+
+// --- every endorse button must be reachable with a controller ------------
+// Cyberpunk installs five frameworks. All five endorse rows were inside ONE
+// PanelSectionRow, and Steam treats a row as a single focus target - so the
+// D-pad highlighted the whole block and A always endorsed the first author.
+// Four of the five were unreachable. Michael: "i can only highlight all 5
+// frameworks and it just endorses the first one".
+
+test("framework endorse rows are not packed into one focus target", () => {
+  const src = read("index.tsx");
+  const i = src.indexOf("allFrameworks.map(");
+  assert.ok(i > 0, "the multi-framework list is gone - re-check this test");
+  const block = src.slice(i, i + 500);
+  assert.ok(
+    block.includes("<PanelSectionRow"),
+    "each framework must sit in its own PanelSectionRow, or only the " +
+      "first one can be endorsed with a controller"
+  );
+});
