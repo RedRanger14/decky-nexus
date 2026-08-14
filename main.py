@@ -5393,6 +5393,51 @@ async def _wait_while_paused(mod_id: int, pct: int) -> None:
 _TOOL_QUIET_SECONDS = 12
 
 
+async def _register_download(game_domain: str, mod_id: int, api_key) -> bool:
+    """Ask Nexus for a download link so the download is on record.
+
+    Requesting the link is what registers a download against an account -
+    it is how every client does it - and the plugin skips it whenever the
+    archive is already cached. That is invisible until somebody tries to
+    endorse and is told they have not downloaded the mod.
+
+    Uses the mod's newest file, because the endorsement check is per MOD,
+    not per file. Returns whether a link came back; never raises, since
+    this only ever runs as a repair on a path that has already failed.
+    """
+    try:
+        headers = _api_headers(api_key)
+        base = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{int(mod_id)}"
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=20)
+        ) as session:
+            async with session.get(
+                f"{base}/files.json", headers=headers, ssl=SSL_CONTEXT
+            ) as resp:
+                if resp.status != 200:
+                    return False
+                files = (await resp.json()).get("files") or []
+            newest = max(
+                (f for f in files if f.get("category_name") == "MAIN") or files,
+                key=lambda f: int(f.get("file_id") or 0),
+                default=None,
+            )
+            if not newest:
+                return False
+            async with session.get(
+                f"{base}/files/{int(newest['file_id'])}/download_link.json",
+                headers=headers, ssl=SSL_CONTEXT,
+            ) as resp:
+                ok = resp.status == 200
+        decky.logger.info(
+            f"registered a download for {game_domain}/{mod_id} so it can be "
+            f"endorsed (cached install never asked for a link): ok={ok}"
+        )
+        return ok
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError):
+        return False
+
+
 async def _download_direct_file(url: str, md5: str, size: int):
     """Fetch a collection's "direct" download and prove it is what the
     curator published. Returns (error, path).
@@ -6207,7 +6252,8 @@ class Plugin:
         }
 
     async def set_endorsement(
-        self, game_domain: str, mod_id: int, version: str, endorse: bool
+        self, game_domain: str, mod_id: int, version: str, endorse: bool,
+        _retried: bool = False,
     ) -> dict:
         """Endorse or abstain. Nexus Mods enforces its own rules (must have
         downloaded the mod, a cool-down after downloading, not your own mod)
@@ -6249,6 +6295,24 @@ class Plugin:
                             "status": "Endorsed" if endorse else "Abstained",
                         }
                     message = str(body.get("message") or body.get("error") or "")
+                    # NOT_DOWNLOADED_MOD on a mod that IS installed means we
+                    # never asked Nexus for a download link - the archive
+                    # cache short-circuits before that call, so nothing was
+                    # ever registered. Michael could not endorse REFramework
+                    # after installing it twice, and the API said
+                    # NOT_DOWNLOADED_MOD for every version string tried.
+                    #
+                    # Registering it now is the honest repair: the download
+                    # genuinely happened, the author is owed the count, and
+                    # this is the same request the install would have made
+                    # had it not been served from cache. Once only - a retry
+                    # loop here would inflate somebody's download numbers.
+                    if "NOT_DOWNLOADED_MOD" in message and not _retried:
+                        if await _register_download(game_domain, mod_id, api_key):
+                            return await self.set_endorsement(
+                                game_domain, mod_id, version, endorse,
+                                _retried=True,
+                            )
                     friendly = {
                         # Nexus registers a download some minutes after
                         # it happens, so pressing endorse right after a
