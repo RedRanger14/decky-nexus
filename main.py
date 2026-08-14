@@ -413,7 +413,8 @@ def _steam_build_id(app_id: int) -> str:
 
 
 def _record_vanilla_baseline(
-    game_domain: str, mods_path: str, app_id: int = 0
+    game_domain: str, mods_path: str, app_id: int = 0, extra_dirs: list = None,
+    root: str = "",
 ) -> None:
     """Snapshot what the game's mod folder held before we touched it.
 
@@ -447,13 +448,29 @@ def _record_vanilla_baseline(
     # (bass.dll, bassenc.dll, bassmix.dll) in the game root after several
     # "clean" resets, which means no baseline he ever tested from was
     # actually clean.
-    root = os.path.dirname(mods_path.rstrip(os.sep))
-    if root and os.path.isdir(root):
+    # And every other directory this game's mods write into, so reset can
+    # tell an orphan from a game file there too.
+    # The game root has to be passed in, not derived: Cyberpunk's mods dir
+    # is archive/pc/mod, so one dirname lands three levels short and the
+    # baseline recorded nothing - which let a reset delete the game's own
+    # r6/scripts content as an "orphan".
+    game_root = root or os.path.dirname(mods_path.rstrip(os.sep))
+    for rel in extra_dirs or []:
+        if not _safe_rel_path(str(rel)):
+            continue
+        d = os.path.join(game_root, *str(rel).split("/"))
+        try:
+            settings.setdefault("vanilla_extra_baseline", {}).setdefault(
+                game_domain, {}
+            )[str(rel)] = sorted(os.listdir(d))
+        except OSError:
+            pass
+    if game_root and os.path.isdir(game_root):
         try:
             settings.setdefault("vanilla_root_baseline", {})[game_domain] = (
                 sorted(
-                    n for n in os.listdir(root)
-                    if os.path.isfile(os.path.join(root, n))
+                    n for n in os.listdir(game_root)
+                    if os.path.isfile(os.path.join(game_root, n))
                 )
             )
         except OSError:
@@ -10452,6 +10469,7 @@ query Link($slug: String!, $domainName: String!) {
         witcher_layout: bool = False,
         framework_mod_folders: list = None,
         restore_on_reset: list = None,
+        mod_write_dirs: list = None,
     ) -> dict:
         """One-button return to vanilla: uninstall every tracked mod (all
         record modes), remove framework loader files by prefix (copyRoot
@@ -10743,6 +10761,71 @@ query Link($slug: String!, $domainName: String!) {
                 leftovers = sorted(set(os.listdir(mods_path)) - set(baseline))
             except OSError:
                 leftovers = []
+        # Directories a game's mods write into that are NOT the mods folder.
+        #
+        # Cyberpunk mods land in five places - archive/pc/mod, r6/scripts,
+        # r6/tweaks, red4ext/plugins, bin/x64/plugins - and reset only ever
+        # looked at the first. Files there are normally removed by install
+        # record, so an ordinary uninstall works; but a record lost to an
+        # interrupted install or an older build leaves a file no reset can
+        # ever find. Two such orphans in r6/scripts
+        # (GeneralShadowsFixes.reds, QuickMelee Sandevistan Fix.reds) had
+        # been failing redscript compilation for weeks - and one bad .reds
+        # disables EVERY script mod, so the whole stack was dead with
+        # nothing owning the cause.
+        #
+        # Swept on the same terms as the mods folder: only what the baseline
+        # did not have and no record claims, and never when the game itself
+        # has changed underneath the baseline.
+        extra_leftovers = []
+        base_extra = (
+            _load_settings().get("vanilla_extra_baseline", {}).get(game_domain)
+            or {}
+        )
+        owned_names = set()
+        for rec in (records or {}).values():
+            for f in rec.get("files") or []:
+                owned_names.add(
+                    os.path.basename(str(f).replace("\\", "/")).lower()
+                )
+        for rel in mod_write_dirs or []:
+            if not _safe_rel_path(str(rel)):
+                continue
+            d = os.path.join(install_path, *str(rel).split("/"))
+            if not os.path.isdir(d):
+                continue
+            # No baseline for this directory means we do not know what the
+            # GAME put there, and everything in it would read as an orphan.
+            # Skipping is the only safe answer: deleting r6/scripts because
+            # nobody had recorded it would break the game outright.
+            if str(rel) not in base_extra:
+                continue
+            known = {n.lower() for n in (base_extra.get(str(rel)) or [])}
+            try:
+                names = sorted(os.listdir(d))
+            except OSError:
+                continue
+            for n in names:
+                if n.lower() in known or n.lower() in owned_names:
+                    continue
+                extra_leftovers.append(f"{rel}/{n}")
+                if game_changed:
+                    continue
+                try:
+                    t = os.path.join(d, n)
+                    if os.path.isdir(t) and not os.path.islink(t):
+                        _force_rmtree(t)
+                    else:
+                        os.remove(t)
+                    removed_leftovers += 1
+                except OSError as e:
+                    errors.append(f"{rel}/{n}: {e}")
+        if extra_leftovers:
+            decky.logger.info(
+                f"reset {game_domain!r}: {len(extra_leftovers)} unaccounted "
+                f"entry(ies) outside the mods folder: "
+                f"{', '.join(extra_leftovers[:6])}"
+            )
         # Files a mod left BESIDE the game exe. Reported, never deleted:
         # the game's own files live here too, and the baseline may predate
         # a game update. Michael's Fallout 3 carried three mod DLLs through
@@ -10840,6 +10923,24 @@ query Link($slug: String!, $domainName: String!) {
                 fresh = []
             if fresh:
                 settings.setdefault("vanilla_baseline", {})[game_domain] = fresh
+                # The other mod directories get their baseline at the same
+                # moment, for the same reason. Recorded HERE rather than at
+                # install time because install has no idea which directories
+                # a game's mods can write into - and without a baseline the
+                # sweep above refuses to touch them at all, so the first
+                # reset teaches it and every later one can find orphans.
+                for rel in mod_write_dirs or []:
+                    if not _safe_rel_path(str(rel)):
+                        continue
+                    d = os.path.join(install_path, *str(rel).split("/"))
+                    try:
+                        settings.setdefault(
+                            "vanilla_extra_baseline", {}
+                        ).setdefault(game_domain, {})[str(rel)] = sorted(
+                            os.listdir(d)
+                        )
+                    except OSError:
+                        pass
                 build = _steam_build_id(app_id)
                 if build:
                     settings.setdefault("baseline_build", {})[game_domain] = build
@@ -10883,6 +10984,9 @@ query Link($slug: String!, $domainName: String!) {
             # extenders and audio DLLs live. Named rather than deleted -
             # the game's own files are in there too.
             "root_leftovers": root_leftovers[:12],
+            # Unaccounted entries in the OTHER directories a game's mods
+            # write into (r6/scripts, red4ext/plugins ...).
+            "extra_leftovers": extra_leftovers[:12],
             "swept": removed_leftovers,
             # True when the game has been patched or gained DLC since the
             # baseline, so untracked files were listed rather than
