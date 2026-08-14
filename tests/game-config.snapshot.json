@@ -160,7 +160,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "Cyber Engine Tweaks",
-    "launchOptionsTemplate": "version=n,b;winmm=n,bRED4extred4ext/RED4ext.dlldocs.red4ext.comcopyRootArchiveXLred4ext/plugins/ArchiveXL/ArchiveXL.dllgithub.com/psiberx/cp2077-archive-xlcopyRootTweakXLred4ext/plugins/TweakXL/TweakXL.dllgithub.com/psiberx/cp2077-tweak-xlcopyRootredscriptengine/tools/scc.exegithub.com/jac3km4/redscriptcopyRootstarredlisted",
+    "launchOptionsTemplate": "version=n,b;winmm=n,bRED4extred4extbin/x64/winmm.dllred4ext/RED4ext.dlldocs.red4ext.comcopyRootArchiveXLred4ext/plugins/ArchiveXLred4ext/plugins/ArchiveXL/ArchiveXL.dllgithub.com/psiberx/cp2077-archive-xlcopyRootTweakXLred4ext/plugins/TweakXLred4ext/plugins/TweakXL/TweakXL.dllgithub.com/psiberx/cp2077-tweak-xlcopyRootredscript",
     "prefixTools": [
       "107",
       "2380",
