@@ -295,7 +295,10 @@ export const resetGameModding = callable<
     framework_mod_folders: string[],
     /** [backup, original] pairs a modding tool made, restored so the setup
      * steps are honest again after a reset. */
-    restore_on_reset: [string, string][]
+    restore_on_reset: [string, string][],
+    /** Directories besides modsSubdir that this game's mods write into, so
+     * reset can find orphans no install record owns. */
+    mod_write_dirs: string[]
   ],
   {
     ok: boolean;

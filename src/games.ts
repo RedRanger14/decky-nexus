@@ -213,6 +213,16 @@ export interface SupportedGame {
     restoreOnReset?: [string, string];
     timeoutSec?: number;
   }>;
+  /** Every directory this game's mods write into, relative to the game
+   * root and BESIDES modsSubdir.
+   *
+   * Reset removes mod files by install record, so an ordinary uninstall is
+   * fine - but a record lost to an interrupted install leaves a file no
+   * reset can find. Two orphaned .reds files in Cyberpunk's r6/scripts had
+   * been failing redscript compilation for weeks, and one bad .reds
+   * disables EVERY script mod. Declared here so the baseline covers them
+   * and reset can tell an orphan from a game file. */
+  modWriteDirs?: string[];
   /** Games whose built-in gamepad support is broken/removed (FO3 lost
    * its when GFWL was excised): a persistent note telling the user how
    * to play on controller. */
@@ -768,6 +778,14 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     displayName: "Cyberpunk 2077",
     nexusDomain: "cyberpunk2077", // verified: game id 3333
     installDirName: "Cyberpunk 2077",
+    // Verified on device: mods land in five places, and reset only ever
+    // looked at archive/pc/mod.
+    modWriteDirs: [
+      "r6/scripts",
+      "r6/tweaks",
+      "red4ext/plugins",
+      "bin/x64/plugins",
+    ],
     modsSubdir: "archive/pc/mod",
     // Framework + archive tiers: payloads route by their game-root
     // prefix (bin/red4ext/r6/engine/archive); bare .archive files still

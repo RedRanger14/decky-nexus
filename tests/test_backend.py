@@ -6154,6 +6154,108 @@ class TestPrefixToolEarlyFinish(unittest.TestCase):
         self.assertIn("os.killpg", body)
 
 
+class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
+    """Cyberpunk mods write into five directories and reset looked at one.
+
+    Two orphaned .reds files in r6/scripts - owned by no install record,
+    left by an install whose record was lost - had been failing redscript
+    compilation for weeks. One bad .reds disables EVERY script mod, so the
+    whole script stack was dead with nothing accounting for the cause, and
+    no reset could find them."""
+
+    GAME = "Orphan Test"
+    DOMAIN = "orphantest"
+    DIRS = ["r6/scripts", "red4ext/plugins"]
+
+    def setUp(self):
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        for d in ["archive/pc/mod"] + self.DIRS:
+            os.makedirs(os.path.join(self.root, *d.split("/")))
+        # Vanilla content in one of them, recorded before any mod lands.
+        with open(os.path.join(self.root, "r6", "scripts", "vanilla.reds"),
+                  "w") as f:
+            f.write("game")
+        main._record_vanilla_baseline(
+            self.DOMAIN, os.path.join(self.root, "archive", "pc", "mod"),
+            0, self.DIRS, self.root)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        for k in ("vanilla_baseline", "vanilla_root_baseline",
+                  "vanilla_extra_baseline", "installed"):
+            settings.get(k, {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _orphan(self, rel, name):
+        with open(os.path.join(self.root, *rel.split("/"), name), "w") as f:
+            f.write("orphan")
+
+    def _reset(self):
+        return run(main.Plugin().reset_game_modding(
+            self.DOMAIN, self.GAME, "archive/pc/mod", "folder", 0, "",
+            "starred", None, False, None, None, self.DIRS))
+
+    def test_an_orphan_no_record_owns_is_found_and_removed(self):
+        self._orphan("r6/scripts", "GeneralShadowsFixes.reds")
+        r = self._reset()
+        self.assertTrue(r["ok"], r)
+        self.assertIn("r6/scripts/GeneralShadowsFixes.reds",
+                      r["extra_leftovers"])
+        self.assertFalse(os.path.exists(os.path.join(
+            self.root, "r6", "scripts", "GeneralShadowsFixes.reds")))
+
+    def test_the_games_own_files_survive(self):
+        self._orphan("r6/scripts", "orphan.reds")
+        self._reset()
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.root, "r6", "scripts", "vanilla.reds")))
+
+    def test_a_file_an_install_record_owns_is_left_to_the_record(self):
+        # Removing it here would double-handle it and could beat the
+        # record's own cleanup to the punch.
+        self._orphan("red4ext/plugins", "MineNow.dll")
+        settings = main._load_settings()
+        settings.setdefault("installed", {})[self.DOMAIN] = {
+            "Some Mod": {"mode": "folder", "name": "Some Mod",
+                         "files": ["red4ext/plugins/MineNow.dll"]}}
+        main._save_settings(settings)
+        r = self._reset()
+        self.assertNotIn("red4ext/plugins/MineNow.dll",
+                         r["extra_leftovers"])
+
+    def test_nothing_declared_means_nothing_swept(self):
+        self._orphan("r6/scripts", "orphan.reds")
+        r = run(main.Plugin().reset_game_modding(
+            self.DOMAIN, self.GAME, "archive/pc/mod", "folder", 0, "",
+            "starred", None, False, None, None, None))
+        self.assertEqual(r["extra_leftovers"], [])
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.root, "r6", "scripts", "orphan.reds")))
+
+    def test_traversal_is_refused(self):
+        r = run(main.Plugin().reset_game_modding(
+            self.DOMAIN, self.GAME, "archive/pc/mod", "folder", 0, "",
+            "starred", None, False, None, None, ["../../etc"]))
+        self.assertEqual(r["extra_leftovers"], [])
+
+    def test_a_directory_with_no_baseline_is_left_completely_alone(self):
+        # The dangerous case. With no record of what the GAME put there,
+        # every file reads as an orphan - and deleting r6/scripts because
+        # nobody had baselined it would break the game outright.
+        settings = main._load_settings()
+        settings.get("vanilla_extra_baseline", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        self._orphan("r6/scripts", "orphan.reds")
+        r = self._reset()
+        self.assertEqual(r["extra_leftovers"], [])
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.root, "r6", "scripts", "vanilla.reds")))
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.root, "r6", "scripts", "orphan.reds")))
+
+
 class TestResetRemovesNestedFrameworkFiles(unittest.TestCase):
     """Cyberpunk's five loaders install into bin/x64 and red4ext, and the
     cleanup loop was top-level only - so none of them could be declared and
