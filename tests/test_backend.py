@@ -5861,6 +5861,14 @@ class TestRedscriptReport(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
+    def _put_script(self, rel="r6/scripts/GeneralShadowsFixes.reds"):
+        """The blamed .reds, on disk. A failure whose file has been deleted
+        is not reported: an uninstall leaves no record behind, so nothing
+        else would say the problem is gone."""
+        p = os.path.join(self.root, *rel.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w").close()
+
     def _log(self, lines):
         with open(main._redscript_log_path(self.root), "w",
                   encoding="utf-8") as f:
@@ -5889,6 +5897,7 @@ class TestRedscriptReport(unittest.TestCase):
         self.assertFalse(r["compiled"])
 
     def test_a_failing_script_is_matched_to_the_mod_that_owns_it(self):
+        self._put_script()
         self._log(self.ERRORS)
         r = main._redscript_report(self.root, {
             "Shadow Fixes": {
@@ -5901,9 +5910,20 @@ class TestRedscriptReport(unittest.TestCase):
         self.assertEqual(r["failures"][0]["mod_id"], 20405)
         self.assertEqual(r["orphans"], [])
 
+    def test_a_deleted_script_is_no_longer_reported(self):
+        # An uninstall does not rewrite the log and leaves no record behind,
+        # so a blamed .reds that has since been removed would otherwise be
+        # reported for ever. Michael: "even after I uninstalled it ... the
+        # collection is still reporting a script failure".
+        self._log(self.ERRORS)
+        r = main._redscript_report(self.root, {})
+        self.assertEqual(r["failures"], [])
+        self.assertEqual(r["orphans"], [])
+
     def test_a_failing_script_nobody_owns_is_an_orphan(self):
         # The case that cost weeks: two .reds files left by installs whose
         # records were lost, failing every compile with nothing accountable.
+        self._put_script()
         self._log(self.ERRORS)
         r = main._redscript_report(self.root, {})
         self.assertEqual(r["failures"], [])
@@ -5917,6 +5937,7 @@ class TestRedscriptReport(unittest.TestCase):
             "[ERROR] [SYNTAX_ERROR] At S:" + chr(92) + "r6" + chr(92)
             + "scripts" + chr(92) + "VendorsXL" + chr(92) + "VendorsXL.reds:1:1:",
         ])
+        self._put_script("r6/scripts/VendorsXL/VendorsXL.reds")
         r = main._redscript_report(self.root, {
             "VendorsXL": {"name": "VendorsXL", "mod_id": 19679,
                           "files": ["r6/scripts/VendorsXL/VendorsXL.reds"]},
@@ -6282,6 +6303,17 @@ class TestHealthCheckCorroboration(unittest.TestCase):
                          "cyberpunk2077"),
             ignore_errors=True)
 
+    def _put_script(self, name="GeneralShadowsFixes.reds"):
+        """The blamed .reds, actually on disk.
+
+        A failure whose file has been deleted is not reported any more - an
+        uninstall leaves no record behind, so nothing else would tell us the
+        problem is gone.
+        """
+        d = os.path.join(self.root, "r6", "scripts")
+        os.makedirs(d, exist_ok=True)
+        open(os.path.join(d, name), "w").close()
+
     def _log(self, lines):
         with open(main._redscript_log_path(self.root), "w",
                   encoding="utf-8") as f:
@@ -6332,6 +6364,7 @@ class TestHealthCheckCorroboration(unittest.TestCase):
         settings["installed"]["cyberpunk2077"]["One More Light"]["files"] = [
             "r6/scripts/GeneralShadowsFixes.reds"]
         main._save_settings(settings)
+        self._put_script()
         self._log(self.BROKEN)
         r = self._check()
         self.assertEqual(r["needs_mods_info"], [])
@@ -6343,6 +6376,7 @@ class TestHealthCheckCorroboration(unittest.TestCase):
         # "General Shadows Fixes" listed as required. The file is that mod's
         # script left behind by an install whose record was lost - so the
         # mod has already been tried here and does not compile.
+        self._put_script()
         self._log(self.BROKEN)
         r = self._check()
         self.assertIn(20405,
@@ -6400,6 +6434,7 @@ class TestHealthCheckCorroboration(unittest.TestCase):
         settings["installed"]["cyberpunk2077"]["One More Light"]["files"] = [
             "r6/scripts/GeneralShadowsFixes.reds"]
         main._save_settings(settings)
+        self._put_script()
         self._log(self.BROKEN + ["[INFO] Compilation complete"])
         r = self._check()
         self.assertEqual(r["script_log"]["switched_off"], [])
@@ -6456,6 +6491,69 @@ class TestHealthCheckCorroboration(unittest.TestCase):
                           "GeneralShadowsFixes.reds"), "w").close()
         self.assertEqual(
             len(self._check()["script_log"]["switched_off"]), 1)
+
+    # --- evidence has a shelf life -----------------------------------------
+
+    def _install_after_the_log(self):
+        """Make the newest install newer than the log, as installing a
+        collection does."""
+        settings = main._load_settings()
+        rec = settings["installed"]["cyberpunk2077"]["One More Light"]
+        rec["installed_at"] = int(os.path.getmtime(
+            main._redscript_log_path(self.root))) + 60
+        main._save_settings(settings)
+
+    def test_a_log_older_than_the_last_install_is_marked_stale(self):
+        # Michael: a collection failed to compile blaming ScorpionTank, he
+        # uninstalled it, installed one he knew worked, and the page still
+        # reported the failure. "I booted the game to check and it booted
+        # fine so the health report was stale."
+        self._log(self.BROKEN)
+        self._install_after_the_log()
+        r = self._check()
+        self.assertTrue(r["script_log"]["stale"])
+
+    def test_a_stale_log_writes_no_verdicts(self):
+        # The durable harm. A verdict from a log describing mods that are no
+        # longer installed blacklists a mod for the whole game build.
+        self._log(self.BROKEN)
+        self._install_after_the_log()
+        self._check()
+        self.assertEqual(
+            main._verdicts_for_build("cyberpunk2077", "23811903"), {})
+
+    def test_a_stale_log_switches_nothing_off(self):
+        settings = main._load_settings()
+        settings["installed"]["cyberpunk2077"]["One More Light"]["files"] = [
+            "r6/scripts/GeneralShadowsFixes.reds"]
+        main._save_settings(settings)
+        os.makedirs(os.path.join(self.root, "r6", "scripts"), exist_ok=True)
+        open(os.path.join(self.root, "r6", "scripts",
+                          "GeneralShadowsFixes.reds"), "w").close()
+        self._log(self.BROKEN)
+        self._install_after_the_log()
+        r = self._check()
+        self.assertEqual(r["script_log"]["switched_off"], [])
+        after = main._load_settings()["installed"]["cyberpunk2077"]
+        self.assertIsNot(after["One More Light"].get("enabled"), False)
+
+    def test_a_stale_clean_log_does_not_vouch_for_the_new_mods(self):
+        # The demotion rests on the game having said it is happy WITH THESE
+        # mods. A clean compile from before they arrived says nothing.
+        self._log(self.DONE)
+        self._install_after_the_log()
+        r = self._check()
+        self.assertEqual(r["needs_mods_info"], [])
+        self.assertEqual(len(r["needs_mods"]), 1)
+
+    def test_a_failure_whose_script_is_gone_is_not_reported(self):
+        # The other half of staleness, and the one an uninstall causes: no
+        # record is left behind, so no timestamp moves, but the .reds the
+        # log blames has been deleted and cannot still break anything.
+        self._log(self.BROKEN)
+        r = self._check()
+        self.assertEqual(r["script_log"]["orphans"], [])
+        self.assertEqual(r["script_log"]["failures"], [])
 
     def test_a_mod_already_switched_off_is_not_switched_off_again(self):
         # The log does not change when a mod is disabled - the session that
