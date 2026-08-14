@@ -194,3 +194,39 @@ test("every launch template hands off to %command%", () => {
     );
   }
 });
+
+// --- a step must be completable -------------------------------------------
+// Fallout 3's ESM Patcher is a GUI installer asking for two paths, with no
+// command line at all. It was in the automatic tool list, so Step 3 reported
+// "(1)" after every attempt and could never reach zero. Michael: "the first
+// basic steps still dont work before installing any mods. Its not a standard
+// I am willing to accept."
+
+test("the automatic tool list excludes tools that need a person", () => {
+  const src = read("index.tsx");
+  assert.ok(
+    src.includes("const autoTools = (game?.prefixTools ?? []).filter("),
+    "autoTools is not derived from prefixTools"
+  );
+  assert.ok(
+    src.includes("for (const tool of autoTools) {"),
+    "the apply loop still iterates every prefixTool, including ones that " +
+      "cannot run headless"
+  );
+});
+
+test("every game with prefix tools has at least one it can run", () => {
+  // Otherwise Step 3 exists purely to announce it can do nothing.
+  const games = read("games.ts");
+  const blocks = games.split("prefixTools:").slice(1);
+  for (const b of blocks) {
+    const upto = b.slice(0, 2500);
+    const tools = (upto.match(/nexusModId:/g) || []).length;
+    const manual = (upto.match(/needsDesktopMode: true/g) || []).length;
+    assert.ok(
+      tools === 0 || manual < tools,
+      "a game's prefixTools are all needsDesktopMode - Step 3 would have " +
+        "nothing to do"
+    );
+  }
+});
