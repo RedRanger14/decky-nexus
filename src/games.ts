@@ -465,10 +465,16 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // the next. Deciding in the shell means installing or removing FOSE
       // later just works, with no step to re-run and no stored state to
       // go stale.
+      // No "=" anywhere in here, and that is not a style choice. The
+      // launch-options plugin this device routes through treats any token
+      // containing "=" as an environment variable, so an earlier version
+      // starting with d=$(dirname ...) was lifted out wholesale and set as
+      // a variable named "d". Steam then ran `bash -c --` with no script,
+      // the game started without FOSE, and the only evidence was a line in
+      // dlo's debug log headed "Applied Environment Variables".
       launchOptionsTemplate:
-        "bash -c 'd=$(dirname \"$" + "{@: -1}\"); " +
-        "if [ -f \"$d/fose_loader.exe\" ]; then " +
-        "exec \"$" + "{@/Fallout3Launcher.exe/fose_loader.exe}\"; " +
+        "bash -c 'if [ -f \"$(dirname \"$" + "{@: -1}\")/fose_loader.exe\" ]; " +
+        "then exec \"$" + "{@/Fallout3Launcher.exe/fose_loader.exe}\"; " +
         "else exec \"$" + "{@/Fallout3Launcher.exe/Fallout3.exe}\"; fi' " +
         "-- %command%",
       seedIni: {
