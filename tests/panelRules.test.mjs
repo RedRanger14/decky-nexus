@@ -168,6 +168,40 @@ test("every notice says not to quit - that is the whole point", () => {
   }
 });
 
+// Cyberpunk, six collections on device: the grey screen starts when you
+// press Play in REDlauncher, not when you press Launch in the panel - so a
+// notice describing the wait as happening NOW is both wrong and gone by the
+// time it matters. And at ~270 mods it ran two minutes, where the default
+// 400-mod threshold said "a moment".
+test("a game with its own launcher names the button the wait follows", () => {
+  const n = launchWaitNotice(270, { ownLauncher: true, longWaitAt: 150 });
+  assert.match(n, /after Play/i);
+  assert.match(n, /minutes/);
+  assert.ok(n.startsWith("Don't quit"), n);
+  assert.ok(n.length <= 44, `${n.length} chars - "${n}"`);
+});
+
+test("a per-game threshold changes what counts as a long wait", () => {
+  // The same 270 mods: minutes on Cyberpunk, a moment on the default curve.
+  assert.match(launchWaitNotice(270, { longWaitAt: 150 }), /a few minutes/);
+  assert.match(launchWaitNotice(270), /a moment/);
+});
+
+test("a launcher game still says nothing for a light setup", () => {
+  assert.equal(
+    launchWaitNotice(10, { ownLauncher: true, longWaitAt: 150 }),
+    undefined
+  );
+});
+
+test("launcher notices fit in a toast at every size", () => {
+  for (const count of [50, 150, 5000]) {
+    const n = launchWaitNotice(count, { ownLauncher: true, longWaitAt: 150 });
+    assert.ok(n.length <= 44, `${count}: ${n.length} chars - "${n}"`);
+    assert.ok(!n.includes("—"), `${count}: em dash eats width`);
+  }
+});
+
 // Two faults, one row. Both crash the game while it loads, and neither
 // is the user's doing, so the wording leads with the consequence.
 test("a healthy load order says nothing", () => {

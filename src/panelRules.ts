@@ -46,12 +46,30 @@ export function maskCoopPassword(saved: string, revealed: boolean): boolean {
  * device's Gate To Sovngarde install (1,954 mods / 2,367 plugins) taking
  * a bit over three minutes to reach the main menu. Below ~50 mods the
  * wait is unremarkable and a notice would just be noise. */
-export function launchWaitNotice(modCount: number): string | undefined {
+export function launchWaitNotice(
+  modCount: number,
+  opts: { longWaitAt?: number; ownLauncher?: boolean } = {}
+): string | undefined {
+  const { longWaitAt = 400, ownLauncher = false } = opts;
   if (modCount < 50) return undefined;
+  const long = modCount >= longWaitAt;
+  // Games with their own launcher (Cyberpunk's REDlauncher) hide the wait
+  // behind a second button: the panel closes, the launcher appears, and the
+  // grey screen only starts when the user presses Play in it - by which
+  // time this toast is long gone. Michael, on six collections: "the grey
+  // screen was after you click play in the CDPR launcher... some stayed on
+  // the screen for about 2 minutes". So the notice cannot describe the wait
+  // as happening now; it has to say what is about to happen, and name the
+  // button it happens after. Naming the moment beats naming the mod count.
+  if (ownLauncher) {
+    return long
+      ? "Don't quit, grey for minutes after Play."
+      : "Don't quit, grey for a moment after Play.";
+  }
   // Steam's toast truncates hard, and twice now the half that mattered
   // was the half cut off. Instruction first, comma not em dash (the dash
   // ate width for nothing), and short enough to survive.
-  const wait = modCount >= 400 ? "a few minutes" : "a moment";
+  const wait = long ? "a few minutes" : "a moment";
   return `Don't quit, ${modCount.toLocaleString()} mods take ${wait}.`;
 }
 

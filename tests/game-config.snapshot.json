@@ -17,7 +17,9 @@
     "manualTools": 1,
     "hasLauncherBypass": true,
     "hasSetupInis": true,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "22380",
@@ -36,7 +38,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": true,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "261550",
@@ -55,7 +59,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "292030",
@@ -72,7 +78,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "377160",
@@ -91,7 +99,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": true,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "413150",
@@ -110,7 +120,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": true
+    "hasLogAdapter": true,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "489830",
@@ -129,7 +141,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "1030300",
@@ -148,7 +162,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "1091500",
@@ -171,7 +187,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": true
+    "hasLogAdapter": true,
+    "hasOwnLauncher": true,
+    "longWaitAtMods": 150
   },
   {
     "appId": "1245620",
@@ -188,7 +206,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "1623730",
@@ -207,7 +227,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "2050650",
@@ -226,7 +248,9 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": false
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   },
   {
     "appId": "2868840",
@@ -245,6 +269,8 @@
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
-    "hasLogAdapter": true
+    "hasLogAdapter": true,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null
   }
 ]

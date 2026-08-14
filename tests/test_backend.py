@@ -6782,12 +6782,18 @@ class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
 
     GAME = "Orphan Test"
     DOMAIN = "orphantest"
-    DIRS = ["r6/scripts", "red4ext/plugins"]
+    DIRS = ["r6/scripts", "red4ext/plugins", "r6/tweaks"]
+    # Declared as a directory this game's mods write into, but one a VANILLA
+    # install does not have - which is true of four of Cyberpunk's five, and
+    # was the whole reason they never got a baseline.
+    ABSENT = "r6/tweaks"
 
     def setUp(self):
         self.root = os.path.join(main.STEAM_COMMON, self.GAME)
         shutil.rmtree(self.root, ignore_errors=True)
-        for d in ["archive/pc/mod"] + self.DIRS:
+        for d in ["archive/pc/mod"] + [
+            x for x in self.DIRS if x != self.ABSENT
+        ]:
             os.makedirs(os.path.join(self.root, *d.split("/")))
         # Vanilla content in one of them, recorded before any mod lands.
         with open(os.path.join(self.root, "r6", "scripts", "vanilla.reds"),
@@ -6856,6 +6862,56 @@ class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
             self.DOMAIN, self.GAME, "archive/pc/mod", "folder", 0, "",
             "starred", None, False, None, None, ["../../etc"]))
         self.assertEqual(r["extra_leftovers"], [])
+
+    def test_a_directory_vanilla_does_not_have_is_baselined_as_empty(self):
+        # The gap this closes. Four of Cyberpunk's five mod directories do
+        # not exist in a vanilla install - r6/tweaks, red4ext/plugins and
+        # bin/x64/plugins are created by the first mod - so os.listdir
+        # raised, the error was swallowed, and they got no baseline at all.
+        # Reset then skipped them for ever, and anything in them whose
+        # install record was lost was an orphan nothing could find.
+        #
+        # "Vanilla does not have this directory" is a FACT worth recording,
+        # and it is not the same as "we never looked".
+        settings = main._load_settings()
+        base = settings["vanilla_extra_baseline"][self.DOMAIN]
+        self.assertEqual(base.get("r6/tweaks"), [])
+        self.assertEqual(base.get("r6/scripts"), ["vanilla.reds"])
+
+    def test_an_orphan_in_a_never_vanilla_directory_is_now_found(self):
+        # The consequence: this file used to be permanently unreachable.
+        os.makedirs(os.path.join(self.root, "r6", "tweaks"), exist_ok=True)
+        self._orphan("r6/tweaks", "leftover.yaml")
+        r = self._reset()
+        self.assertIn("r6/tweaks/leftover.yaml", r["extra_leftovers"])
+        self.assertFalse(os.path.exists(os.path.join(
+            self.root, "r6", "tweaks", "leftover.yaml")))
+
+    def test_an_unreadable_directory_is_still_left_alone(self):
+        # Exists but cannot be listed is NOT "vanilla has nothing here".
+        # Claiming empty there would have reset delete the contents of a
+        # directory we simply could not open.
+        real = os.listdir
+
+        def boom(path):
+            if path.replace(os.sep, "/").endswith("r6/scripts"):
+                raise PermissionError("nope")
+            return real(path)
+
+        main.os.listdir = boom
+        try:
+            main._record_vanilla_baseline(
+                "unreadtest",
+                os.path.join(self.root, "archive", "pc", "mod"),
+                0, ["r6/scripts"], self.root)
+        finally:
+            main.os.listdir = real
+        base = (main._load_settings().get("vanilla_extra_baseline", {})
+                .get("unreadtest") or {})
+        self.assertNotIn("r6/scripts", base)
+        settings = main._load_settings()
+        settings.get("vanilla_extra_baseline", {}).pop("unreadtest", None)
+        main._save_settings(settings)
 
     def test_a_directory_with_no_baseline_is_left_completely_alone(self):
         # The dangerous case. With no record of what the GAME put there,
