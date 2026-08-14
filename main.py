@@ -1,5 +1,6 @@
 import asyncio
 import glob
+import hashlib
 import json
 import os
 import re
@@ -5317,6 +5318,59 @@ async def _wait_while_paused(mod_id: int, pct: int) -> None:
         await asyncio.sleep(0.4)
 
 
+async def _download_direct_file(url: str, md5: str, size: int):
+    """Fetch a collection's "direct" download and prove it is what the
+    curator published. Returns (error, path).
+
+    This is the only place the plugin fetches from a host that is not
+    Nexus, over a URL written by a third party, and FOSE's own site is
+    plain HTTP with no certificate to check. The manifest's md5 is what
+    makes that defensible, so a mismatch fails outright rather than
+    warning - a file that is not the one the curator hashed has no
+    business being unpacked into somebody's game folder.
+    """
+    if not re.match(r"https?://", url or "", re.I):
+        return "Not an http(s) URL", ""
+    stem = hashlib.md5((url or "").encode()).hexdigest()
+    dest = os.path.join(DOWNLOADS_DIR, f"direct-{stem}.bin")
+    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    digest = hashlib.md5()
+    got = 0
+    try:
+        timeout = aiohttp.ClientTimeout(total=600, sock_connect=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                url, headers=APP_HEADERS, ssl=SSL_CONTEXT,
+                allow_redirects=True,
+            ) as resp:
+                if resp.status != 200:
+                    return f"download failed (HTTP {resp.status})", ""
+                with open(dest, "wb") as out:
+                    async for chunk in resp.content.iter_chunked(1 << 18):
+                        out.write(chunk)
+                        digest.update(chunk)
+                        got += len(chunk)
+                        # A curator-declared size is also a ceiling. Without
+                        # it a redirect to something enormous would fill the
+                        # deck before anything checked the hash.
+                        if size and got > max(size * 4, size + (1 << 20)):
+                            raise ValueError("file is far larger than declared")
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError,
+            ValueError) as e:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return f"{type(e).__name__}: {e}", ""
+    if size and got != size:
+        os.remove(dest)
+        return f"wrong size ({got} bytes, expected {size})", ""
+    if md5 and digest.hexdigest().lower() != md5.lower():
+        os.remove(dest)
+        return "checksum did not match what the collection published", ""
+    return "", dest
+
+
 async def _download_archive(
     game_domain: str,
     mod_id: int,
@@ -5876,8 +5930,14 @@ def _collection_extras(manifest: dict) -> dict:
     - "bundle": shipped INSIDE the collection archive, already downloaded
       by the time we read the manifest. Nothing needed fetching and we
       still did not install them.
+    - "direct": a plain URL the curator supplied, with an md5 to check it
+      against. Fallout Rebirth+ has exactly one - FOSE, the Fallout script
+      extender - marked optional: false, and it is the layer the whole
+      collection runs on. Dropping it produced a collection that installed
+      "with no mods left hanging" and then crashed on launch, which is the
+      worst possible way to fail: nothing to see, and no clue why.
     """
-    browse, bundle = [], []
+    browse, bundle, direct = [], [], []
     for mod in manifest.get("mods") or []:
         source = mod.get("source") or {}
         kind = source.get("type")
@@ -5901,7 +5961,20 @@ def _collection_extras(manifest: dict) -> dict:
                     "optional": bool(mod.get("optional")),
                 }
             )
-    return {"browse": browse, "bundle": bundle}
+        elif kind == "direct" and source.get("url"):
+            direct.append(
+                {
+                    "name": mod.get("name") or "",
+                    "url": source.get("url") or "",
+                    "md5": (source.get("md5") or "").lower(),
+                    "size": int(source.get("fileSize") or 0),
+                    "optional": bool(mod.get("optional")),
+                    # "dinput" is a DLL injector that lives beside the game
+                    # exe, not in Data. FOSE is one.
+                    "kind": ((mod.get("details") or {}).get("type") or ""),
+                }
+            )
+    return {"browse": browse, "bundle": bundle, "direct": direct}
 
 
 class Plugin:
@@ -6534,9 +6607,133 @@ query Link($slug: String!, $domainName: String!) {
                 _force_rmtree(scratch)
         decky.logger.info(
             f"collection extras {slug!r}: {len(extras['browse'])} manual "
-            f"download(s), {len(extras['bundle'])} bundled mod(s)"
+            f"download(s), {len(extras['bundle'])} bundled mod(s), "
+            f"{len(extras['direct'])} direct download(s)"
         )
         return {"ok": True, **extras}
+
+    async def install_collection_direct(
+        self, slug: str, game_domain: str, install_dir: str,
+        mods_subdir: str = "Data", app_id: int = 0,
+        plugins_subpath: str = "", plugins_style: str = "starred",
+    ) -> dict:
+        """Install a collection's "direct" mods - a plain URL the curator
+        supplied rather than a Nexus file.
+
+        Fallout Rebirth+ has one: FOSE, from fose.silverlock.org, marked
+        optional: false. It is the script extender the entire collection
+        runs on, and it was being dropped without a word - so 168 mods
+        installed "with no mods left hanging" and the game then crashed on
+        launch with nothing to look at.
+
+        The manifest supplies an md5 and a byte count for each, and both
+        are checked. That matters more here than anywhere else in the
+        plugin: this is the one place we fetch from a host that is not
+        Nexus, over a URL a third party wrote, and FOSE's own site is
+        plain HTTP with no certificate to trust. A hash the curator
+        published is what makes that safe - so a mismatch is a hard
+        failure, never a warning.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        api_key = _load_settings().get("api_key")
+        scratch = None
+        try:
+            scratch, manifest = await _fetch_collection_manifest(
+                slug, game_domain, api_key
+            )
+            wanted = _collection_extras(manifest)["direct"]
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                KeyError, ValueError) as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        finally:
+            if scratch:
+                _force_rmtree(scratch)
+        if not wanted:
+            return {"ok": True, "installed": 0, "names": [], "errors": []}
+        install_path = os.path.join(STEAM_COMMON, install_dir)
+        if not os.path.isdir(install_path):
+            return {"ok": False, "error": "Game install folder not found"}
+        done, errors, skipped = [], [], []
+        for entry in wanted:
+            name = entry["name"] or "a direct download"
+            err, path = await _download_direct_file(
+                entry["url"], entry["md5"], entry["size"]
+            )
+            if err:
+                (skipped if entry["optional"] else errors).append(
+                    f"{name}: {err}"
+                )
+                continue
+            work = os.path.join(DOWNLOADS_DIR, f"direct-{abs(hash(name))}")
+            _force_rmtree(work)
+            os.makedirs(work)
+            exerr = await _extract_archive(path, work)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            if exerr:
+                _force_rmtree(work)
+                errors.append(f"{name}: could not unpack ({exerr})")
+                continue
+            # A "dinput" injector sits beside the game exe; anything else
+            # is ordinary mod content and belongs under the mods dir.
+            target = (
+                install_path if entry["kind"] == "dinput"
+                else os.path.join(install_path, mods_subdir)
+            )
+            # Case-merged against what is on disk, same as every other
+            # install path: a directory that differs only in case is a
+            # different directory to us and the same one to Wine, and that
+            # split the script extender's plugin folder in two once already.
+            files, case_cache = [], {}
+            copy_err = ""
+            for root, _dirs, names in os.walk(work):
+                for n in names:
+                    full = os.path.join(root, n)
+                    rel = os.path.relpath(full, work).replace(os.sep, "/")
+                    if not _safe_rel_path(rel):
+                        continue
+                    rel = _case_merge_rel(target, rel, case_cache)
+                    dst = os.path.join(target, *rel.split("/"))
+                    try:
+                        _makedirs_for(dst)
+                        shutil.copy2(full, dst)
+                    except OSError as e:
+                        copy_err = f"{rel}: {e}"
+                        break
+                    files.append(rel)
+                if copy_err:
+                    break
+            _force_rmtree(work)
+            if copy_err:
+                errors.append(f"{name}: {copy_err}")
+                continue
+            settings = _load_settings()
+            records = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            records[name] = _merge_install_record(records.get(name), {
+                "name": name,
+                "mode": "dataDir" if entry["kind"] != "dinput" else "files",
+                "files": files,
+                "source": "collection",
+                "collection_slug": slug,
+                "direct_url": entry["url"],
+                "version": "",
+                "installed_at": int(time.time()),
+            })
+            _save_settings(settings)
+            done.append(name)
+            decky.logger.info(
+                f"installed direct download {name!r} ({len(files)} file(s)) "
+                f"from {entry['url']}"
+            )
+        return {"ok": True, "installed": len(done), "names": done,
+                "skipped": skipped[:4], "errors": errors[:4]}
 
     async def install_collection_bundles(
         self, slug: str, game_domain: str, install_dir: str,

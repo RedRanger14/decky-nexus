@@ -454,9 +454,23 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // BEFORE creating FALLOUT.INI - boot the game exe directly and seed
     // the ini from the game's own defaults.
     launcherBypass: {
+      // Runs whichever exe is actually there, decided at launch rather
+      // than when this was written.
+      //
+      // Fallout 3's stock launcher freezes on this device, so the original
+      // form of this swapped in Fallout3.exe. Then Fallout Rebirth+ turned
+      // out to need FOSE - which only loads when the game is STARTED
+      // through fose_loader.exe - and a static substitution would have
+      // meant a setting that is right for one collection and wrong for
+      // the next. Deciding in the shell means installing or removing FOSE
+      // later just works, with no step to re-run and no stored state to
+      // go stale.
       launchOptionsTemplate:
-        "bash -c 'exec \"$" +
-        "{@/Fallout3Launcher.exe/Fallout3.exe}\"' -- %command%",
+        "bash -c 'd=$(dirname \"$" + "{@: -1}\"); " +
+        "if [ -f \"$d/fose_loader.exe\" ]; then " +
+        "exec \"$" + "{@/Fallout3Launcher.exe/fose_loader.exe}\"; " +
+        "else exec \"$" + "{@/Fallout3Launcher.exe/Fallout3.exe}\"; fi' " +
+        "-- %command%",
       seedIni: {
         sourceRel: "Fallout_default.ini",
         prefsSubpath: "Fallout3/FALLOUT.INI",

@@ -966,6 +966,28 @@ export const getModSupport = callable<
   }
 >("get_mod_support");
 
+// Install a collection's "direct" mods - a plain URL the curator supplied
+// rather than a Nexus file, verified against the md5 the manifest publishes.
+export const installCollectionDirect = callable<
+  [
+    slug: string,
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    app_id: number,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed"
+  ],
+  {
+    ok: boolean;
+    installed?: number;
+    names?: string[];
+    skipped?: string[];
+    errors?: string[];
+    error?: string;
+  }
+>("install_collection_direct");
+
 // Switch off mods already known not to run on the installed game build,
 // before the user ever launches. The step that stops the first crash.
 export const applyKnownVerdicts = callable<

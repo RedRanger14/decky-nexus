@@ -4083,7 +4083,8 @@ class TestCollectionExtras(unittest.TestCase):
 
     def test_an_empty_manifest_is_not_an_error(self):
         self.assertEqual(
-            main._collection_extras({}), {"browse": [], "bundle": []}
+            main._collection_extras({}),
+            {"browse": [], "bundle": [], "direct": []},
         )
 
     def test_a_mod_with_no_source_is_ignored(self):
@@ -5759,6 +5760,91 @@ class TestPrefixToolRestaging(unittest.TestCase):
         body = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
         start = body.index("already staged from an earlier run")
         self.assertIn("exe_path = dst", body[start:start + 400])
+
+
+class TestDirectCollectionSources(unittest.TestCase):
+    """A collection can list a plain URL instead of a Nexus file, and
+    those were being dropped without a word.
+
+    Fallout Rebirth+ has exactly one: FOSE, from fose.silverlock.org,
+    marked optional: false. It is the script extender the whole collection
+    runs on. 168 mods installed "with no mods left hanging" and the game
+    crashed on launch with nothing to look at."""
+
+    ENTRY = {
+        "name": "Fallout Script Extender (FOSE)",
+        "optional": False,
+        "details": {"type": "dinput"},
+        "source": {
+            "type": "direct",
+            "url": "http://fose.silverlock.org/beta/fose_v1_3_beta2.7z",
+            "md5": "a4672b55b502de3482ecc71f27bd174a",
+            "fileSize": 360250,
+        },
+    }
+
+    def test_a_direct_source_is_seen_at_all(self):
+        got = main._collection_extras({"mods": [self.ENTRY]})["direct"]
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["name"], "Fallout Script Extender (FOSE)")
+        self.assertEqual(got[0]["md5"],
+                         "a4672b55b502de3482ecc71f27bd174a")
+        self.assertEqual(got[0]["size"], 360250)
+        self.assertFalse(got[0]["optional"])
+
+    def test_a_dinput_injector_is_marked_as_one(self):
+        # FOSE lives beside the game exe, not in Data. Putting it in Data
+        # would install it precisely nowhere useful.
+        got = main._collection_extras({"mods": [self.ENTRY]})["direct"]
+        self.assertEqual(got[0]["kind"], "dinput")
+
+    def test_a_direct_entry_with_no_url_is_ignored(self):
+        entry = json.loads(json.dumps(self.ENTRY))
+        entry["source"]["url"] = ""
+        self.assertEqual(
+            main._collection_extras({"mods": [entry]})["direct"], [])
+
+    def test_the_other_source_types_still_work(self):
+        got = main._collection_extras({"mods": [
+            self.ENTRY,
+            {"name": "B", "source": {"type": "browse", "url": "x"}},
+            {"name": "C", "source": {"type": "bundle",
+                                     "fileExpression": "c"}},
+            {"name": "D", "source": {"type": "nexus"}},
+        ]})
+        self.assertEqual(len(got["direct"]), 1)
+        self.assertEqual(len(got["browse"]), 1)
+        self.assertEqual(len(got["bundle"]), 1)
+
+
+class TestDirectDownloadVerification(unittest.TestCase):
+    """The one place the plugin fetches from a host that is not Nexus,
+    over a URL a third party wrote, to a site with no certificate to
+    check. The curator's md5 is what makes that defensible."""
+
+    def test_a_non_http_url_is_refused(self):
+        for url in ("file:///etc/passwd", "ftp://x/y", "", "javascript:x"):
+            err, path = run(main._download_direct_file(url, "", 0))
+            self.assertTrue(err, url)
+            self.assertEqual(path, "")
+
+    def test_the_checks_are_ordered_size_then_hash(self):
+        # Both must be capable of failing the download on their own.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def _download_direct_file")
+        body = src[start:start + 3000]
+        self.assertIn("wrong size", body)
+        self.assertIn("checksum did not match", body)
+        # And a mismatch must delete the file rather than leave it around
+        # for something else to find.
+        self.assertEqual(body.count("os.remove(dest)"), 3)
+
+    def test_a_declared_size_is_also_a_ceiling(self):
+        # Without it a redirect to something enormous fills the deck
+        # before anything gets as far as checking the hash.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def _download_direct_file")
+        self.assertIn("far larger than declared", src[start:start + 3000])
 
 
 class TestLogTagMatching(unittest.TestCase):

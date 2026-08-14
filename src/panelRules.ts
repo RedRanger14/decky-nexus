@@ -419,6 +419,27 @@ export function healthVerdict(
   };
 }
 
+/** What the collection page says about files fetched from a URL the
+ * curator supplied rather than from Nexus.
+ *
+ * Worth saying out loud because it is the one thing here that did not come
+ * from Nexus, and because its absence is invisible: Fallout Rebirth+ lists
+ * FOSE this way, and without it 168 mods install perfectly and the game
+ * crashes on launch with nothing to look at.
+ */
+export function directNote(names: string[]): string {
+  const got = names.filter(Boolean);
+  if (!got.length) return "";
+  const one = got.length === 1;
+  return (
+    `Also installed ${got.slice(0, 3).join(", ")}` +
+    `${got.length > 3 ? ` and ${got.length - 3} more` : ""}, ` +
+    `which this collection links to directly rather than hosting on Nexus. ` +
+    `${one ? "It was" : "They were"} checked against the fingerprint the ` +
+    `collection publishes.`
+  );
+}
+
 /** A plain readout of what the game itself reported last run.
  *
  * Michael, 2026-08-13: "it doesnt say there are 23 errors, just 23 mods
