@@ -16,7 +16,7 @@ tell whose fault it is.
 | The Witcher 3 | folder | tested 2026-07-24 (script-mod ceiling documented) |
 | Resident Evil 4 | folder | **verified 2026-08-14: three collections, all worked. Tested WITH adult content**; endorsement bug found and fixed here |
 | Cyberpunk 2077 | folder+frameworks | **verified 2026-08-14: Welcome to Night City (283 mods) boots** once two orphaned .reds files were removed. Five frameworks install and endorse individually. Health check still over-reports here - see the redscript corroboration job |
-| Elden Ring | me3 | **verified 2026-08-12: Seamless Co-op session played, two players** |
+| Elden Ring | me3 | **verified 2026-08-12: Seamless Co-op played between this Deck and a real Windows player.** The strongest result here - it proves the me3 route (real exe, EAC never bootstrapped) produces a client Windows players can actually host with, not just a game that launches. Unblocks DS3, Sekiro, AC6 and Nightreign, which share the loader |
 
 ### Cut from 1.0: Fallout 3
 
