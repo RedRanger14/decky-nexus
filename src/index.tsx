@@ -1116,6 +1116,11 @@ function CurrentGameSection() {
                 </PanelSectionRow>
                 {allFrameworks.map((f, i) => (
                   <PanelSectionRow key={f.nexusModId ?? f.name}>
+                    {/* Breathing room, including above the first: five
+                        focus rings stacked flush against each other read as
+                        one block, which is the thing that made these look
+                        unselectable in the first place. */}
+                    <div style={{ margin: i === 0 ? "10px 0 5px" : "5px 0" }}>
                     <EndorsableFrameworkRow
                       text={`${f.name} ✓`}
                       gameDomain={game.nexusDomain}
@@ -1125,6 +1130,7 @@ function CurrentGameSection() {
                          per author - five copies of it was just noise. */
                       showHint={i === allFrameworks.length - 1}
                     />
+                    </div>
                   </PanelSectionRow>
                 ))}
               </>
