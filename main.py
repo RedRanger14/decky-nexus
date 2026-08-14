@@ -9137,23 +9137,71 @@ query Link($slug: String!, $domainName: String!) {
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            try:
-                # A stream of ENTERs answers the 'press any key to
-                # continue' prompts these console patchers open with.
-                output, _ = await asyncio.wait_for(
-                    proc.communicate(input=b"\r\n" * 8),
-                    timeout=max(30, int(timeout_sec)),
-                )
-                rc = proc.returncode
-            except asyncio.TimeoutError:
-                timed_out = True
+            # A stream of ENTERs answers the 'press any key to continue'
+            # prompts these console patchers open with. Some never take the
+            # hint: the Anniversary Patcher finishes its work in about 90
+            # seconds and then sits at a prompt, so waiting for the process
+            # to exit meant waiting out the whole timeout behind a button
+            # that looked frozen. Michael, watching it: "step 3 seems to
+            # have gotten stuck".
+            #
+            # The verify files are the real signal - they are what decides
+            # success afterwards anyway - so poll them and stop as soon as
+            # the work is visibly done.
+            comm = asyncio.ensure_future(
+                proc.communicate(input=b"\r\n" * 8)
+            )
+
+            def _changed_now():
+                for rel, snap in before.items():
+                    fp = os.path.join(install_path, *rel.split("/"))
+                    try:
+                        st2 = os.stat(fp)
+                        now = (st2.st_mtime_ns, st2.st_size)
+                    except OSError:
+                        now = None
+                    if now != snap:
+                        return True
+                return False
+
+            def _kill_tree():
                 try:
                     import signal
 
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 except (OSError, ProcessLookupError):
                     proc.kill()
-                await proc.wait()
+
+            waited = 0.0
+            budget = max(30, int(timeout_sec))
+            while True:
+                done_set, _pending = await asyncio.wait({comm}, timeout=2)
+                if comm in done_set:
+                    output, _ = comm.result()
+                    rc = proc.returncode
+                    break
+                waited += 2
+                if before and _changed_now():
+                    decky.logger.info(
+                        f"prefix tool {game_domain}/{mod_id}: files changed "
+                        f"after {int(waited)}s - the tool has done its job, "
+                        "closing it rather than waiting out the timeout"
+                    )
+                    _kill_tree()
+                    try:
+                        output, _ = await asyncio.wait_for(comm, timeout=15)
+                    except (asyncio.TimeoutError, OSError):
+                        output = b""
+                    rc = 0
+                    break
+                if waited >= budget:
+                    timed_out = True
+                    _kill_tree()
+                    try:
+                        await asyncio.wait_for(comm, timeout=15)
+                    except (asyncio.TimeoutError, OSError):
+                        pass
+                    break
         except OSError as e:
             _unstage()
             await _emit_progress(mod_id, "error", 0, str(e))

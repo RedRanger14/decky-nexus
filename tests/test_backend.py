@@ -5906,6 +5906,40 @@ class TestLaunchOptionsStayCurrent(unittest.TestCase):
             self.DOMAIN, f"  {self.OLD}  "))["launch_options_current"])
 
 
+class TestPrefixToolEarlyFinish(unittest.TestCase):
+    """A patcher that finishes its work and then sits at a prompt must not
+    hold the step open for the whole timeout.
+
+    The Anniversary Patcher rewrote Fallout3.exe about 90 seconds in and
+    then waited at "press any key" that never comes headless, so the button
+    stayed busy for the full three minutes. Michael: "step 3 seems to have
+    gotten stuck"."""
+
+    def test_it_watches_the_verify_files_rather_than_the_process(self):
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def run_prefix_tool")
+        body = src[start:start + 14000]
+        self.assertIn("_changed_now", body)
+        self.assertIn("closing it rather than waiting out the timeout", body)
+
+    def test_the_timeout_is_still_enforced(self):
+        # A tool that changes nothing must still be killed, or the step
+        # hangs forever instead of failing honestly.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def run_prefix_tool")
+        body = src[start:start + 14000]
+        self.assertIn("if waited >= budget:", body)
+        self.assertIn("timed_out = True", body)
+
+    def test_the_process_tree_is_killed_either_way(self):
+        # Killing only the proton wrapper orphaned Patcher.exe on device.
+        src = open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8").read()
+        start = src.index("async def run_prefix_tool")
+        body = src[start:start + 14000]
+        self.assertEqual(body.count("_kill_tree()"), 3)
+        self.assertIn("os.killpg", body)
+
+
 class TestResetUndoesModdingTools(unittest.TestCase):
     """Reset has to return the setup steps to honest, not just remove mods.
 
