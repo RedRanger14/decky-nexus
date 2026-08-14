@@ -15,7 +15,7 @@ tell whose fault it is.
 | Slay the Spire 2 | folder | **verified 2026-08-13 in depth**: #1 collection (Mesugaki the Spire) installs and boots clean - "Loaded 11 mods (11 total)", no errors; a second collection diagnosed to one mod throwing 1,041 exceptions and repaired automatically; individual mods, dependency auto-install and the verdict store all exercised. Most of the log-parsing, verdict and auto-repair machinery was built and proven here |
 | The Witcher 3 | folder | tested 2026-07-24 (script-mod ceiling documented) |
 | Resident Evil 4 | folder | **verified 2026-08-14: three collections, all worked. Tested WITH adult content**; endorsement bug found and fixed here |
-| Cyberpunk 2077 | folder+frameworks | **verified 2026-08-14: Welcome to Night City (283 mods) boots** once two orphaned .reds files were removed. Five frameworks install and endorse individually. Health check still over-reports here - see the redscript corroboration job |
+| Cyberpunk 2077 | folder+frameworks | **verified 2026-08-14: Welcome to Night City (283 mods) boots** once two orphaned .reds files were removed. Five frameworks install and endorse individually. **Health check corroborated against redscript's own log, verified by deliberately breaking a compile on device** - see below |
 | Elden Ring | me3 | **verified 2026-08-12: Seamless Co-op played between this Deck and a real Windows player.** The strongest result here - it proves the me3 route (real exe, EAC never bootstrapped) produces a client Windows players can actually host with, not just a game that launches. Unblocks DS3, Sekiro, AC6 and Nightreign, which share the loader |
 
 ### Cut from 1.0: Fallout 3
@@ -58,6 +58,93 @@ The adult-content gate became account-driven in v0.37.0 (site preference
 smaller catalogue than users will, so browse/search/install needs
 re-running on: Stardew, Fallout 3, Fallout NV, Slay the Spire 2,
 Cyberpunk 2077. RE4 was tested after the change and does not need it.
+
+## RESOLVED (v0.182.0/v0.183.0): the health check was recommending the mod
+## that broke the game
+
+Welcome to Night City installs 283 mods and deliberately omits seven their
+Nexus pages call required. The health check reported all seven as faults -
+including **General Shadows Fixes**, whose orphaned `.reds` had been failing
+every compile for weeks and taking the entire script stack with it. The fix
+on offer was the cause of the fault.
+
+The discriminator is not the curator's choices. It is the game's own log.
+
+Established before writing any code, by rerunning the health check's own
+query against all 268 Cyberpunk records on device:
+
+| mod id | name | wanted by |
+|---|---|---|
+| 23074 | Romanced Enhanced Showers Feature | 4 |
+| 5145 | Wardrobe Anywhere | 1 |
+| **20405** | **General Shadows Fixes** | 1 |
+| 9496 | Enable Finisher Ragdolls | 1 |
+| 4789 | Cookedprefabs Nulled | 1 |
+| 790 | Appearance Menu Mod | 1 |
+| 14130 | Bug Fix - Base Fists and Arm Cyberware Attack Speed Fix | 1 |
+
+Exactly seven, and mod 20405 is literally named "General Shadows Fixes"
+against an orphaned file called `GeneralShadowsFixes.reds` - so the name
+match the design needed was confirmed rather than assumed. A second rule
+("the required mod is already on disk under another name") was designed and
+then **dropped**: none of the seven matches anything in r6/scripts or any
+record, so it would have been a guess.
+
+What shipped:
+
+- **`_redscript_report`** reads only `redscript_rCURRENT.log` - the rotated
+  logs are full of problems since fixed - and matches failing `.reds`
+  basenames against install records.
+- **A collection's omission is informational unless the game complains.**
+  Gated on a *positive* clean compile, so with no log nothing changes and
+  the other nine games report exactly what they did before.
+- **No completion line = every script mod is off**, not just the broken one.
+  That is the page's headline and outranks any count of missing
+  requirements.
+- **An orphaned script named after a mod we were about to recommend becomes
+  a verdict.** This is the loop closing: the plugin refuses on evidence
+  instead of re-learning by breaking the game.
+- **A mod owning a script that killed the compile is switched off**, not
+  offered - one bad `.reds` is the single mod standing between the user and
+  everything else. Only when the compile actually died; "errored but
+  finished anyway" has never been observed, and acting on an unobserved
+  state is how a check starts crying wolf.
+- **Cyberpunk mods can be switched off at all now.** `mode: "files"` used to
+  answer "no toggle - uninstall it instead", which was the wrong answer to a
+  real question. They park outside the game like the dataDir tier. Gated on
+  `target: "."` because Palworld's LogicMods share the mode and are
+  deliberately untogglable - the suite caught that regression.
+
+### Verified on device 2026-08-14, by breaking a compile on purpose
+
+A planted orphan plus four bad lines appended to a real mod's script, with a
+backup, then restored byte-identically afterwards. Every path exercised:
+
+| behaviour | result |
+|---|---|
+| clean log demotes the seven | ✅ |
+| dead compile headline | ✅ |
+| orphan → verdict for mod 20405 | ✅ |
+| owned failing script switched off (all 3 files parked) | ✅ |
+| files-mode toggle off, then back on | ✅ both directions |
+| verdict outlives the file that created it | ✅ |
+
+**Two defects the tests could not have found**, both from Michael running it:
+
+1. *"am I clicking install the 6 missing?"* - with the stack dead, the six
+   omissions revert to looking like faults (correctly: there is no clean-log
+   evidence either way), and the page offered to bulk-install six mods a
+   curator deliberately left out on top of a setup that was not running.
+   The button is now suppressed while the stack is dead.
+2. The auto-disable acted on every read of the same log, so a user who
+   switched a mod back on would lose it again the moment they reopened the
+   page, with nothing explaining why. Now stamped and acted on once per log;
+   a later session that says the same thing acts again.
+
+Note for Crucible: both verdicts written during this test were artefacts of
+deliberate sabotage. The Better Armor Tooltip one was removed afterwards -
+**a verdict earned from a synthetic failure is a false record**, and a
+harness that breaks things to test them will generate these constantly.
 
 ### Known gap: Cyberpunk CET Lua mods
 

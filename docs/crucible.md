@@ -71,8 +71,14 @@ loop and record what the existing one says.
 |---|---|---|
 | Godot/.NET (StS2) | **Strong** - log names the mod and counts its exceptions | per-mod verdict with evidence |
 | SMAPI (Stardew) | **Strong** - `_parse_smapi_log`, SMAPI names the mod | per-mod verdict with evidence |
+| redscript (CP77) | **Strong, but per FILE** - `_parse_redscript_log` names the `.reds` and the symbol it could not resolve | verdict once the file is matched to an install record; and a whole-stack pass/fail from the completion line |
 | Bethesda (SSE/FNV/FO3/FO4) | **Weak** - no attribution | reached-menu yes/no, missing masters, plugin count, script-extender plugin failures |
 | Everything else | **None yet** | reached-menu only |
+
+The redscript row has a property the others do not: **one bad file fails
+everything**. A harness testing mods one at a time will not notice, but any
+run testing combinations has to treat "the stack did not compile" as a
+result about the SET, not about the last mod added.
 
 Be honest about the weak row. For Bethesda games a verdict is "this mod
 alone did not stop the game starting", which is real but much less than "this
@@ -157,6 +163,15 @@ Verdict vocabulary, deliberately small:
 log line that justifies it. Anything that failed for a reason we cannot name
 is `unknown`, never `broken`. A wrong "incompatible" label costs a mod
 author downloads and costs us the right to publish these at all.
+
+*Corollary found the hard way, 14 August 2026.* Verifying the Cyberpunk
+corroboration meant deliberately breaking a real mod's script on device. It
+worked - and left a `broken` verdict against Better Armor Tooltip, a mod
+with nothing wrong with it, which would have switched it off the next time a
+collection installed it. The verdict had a log line and was still false,
+because **the evidence was manufactured**. A harness whose whole method is
+breaking things will generate these constantly, so a verdict needs to record
+not just its evidence but whether the harness caused the failure it observed.
 
 **2. Not on the only test device.** The harness holds a machine at full duty
 and constantly rewrites a game install. Sharing that with the device used
@@ -305,6 +320,8 @@ without a human having to crash a game to add a row.**
 |---|---|
 | verdict engine (Godot) | `_parse_mod_load_log`, `disable_failing_mods` |
 | verdict engine (SMAPI) | `_parse_smapi_log`, `get_smapi_load_status` |
+| verdict engine (redscript) | `_parse_redscript_log`, `_redscript_report` |
+| verdicts, any state, for a build | `_verdicts_for_build` |
 | mod manifests + dependency graph | `_godot_mod_manifests`, `_mods_needed_by_others` |
 | clean baseline + restore | `reset_game_modding`, build-id guard |
 | install / uninstall one mod | `install_mod`, `uninstall_mod` |
