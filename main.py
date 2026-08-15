@@ -5757,6 +5757,12 @@ _HTTP_SESSION = None
 # AND a healthy 4 GB file on slow hotel wifi got killed at thirty minutes
 # for no reason. sock_read is the right instrument - it measures silence,
 # not duration.
+# How many source pages a browse row may read while backfilling what the
+# highlights filter removed. Bounded: a game whose entire catalogue is
+# filtered must not spin the API forever - it shows a short row instead,
+# which is honest.
+COLLECTION_BACKFILL_ROUNDS = 4
+
 DOWNLOAD_STALL_SECONDS = 45
 
 # How many transport failures to absorb before giving up on a file. Three
@@ -6670,65 +6676,100 @@ class Plugin:
             if sort == "trending"
             else None
         )
-        variables = {
-            "domain": game_domain,
-            "count": count,
-            "offset": offset,
-        }
-        if trending_since is None:
-            variables["sort"] = [{sort: {"direction": "DESC"}}]
-        if search:
-            variables["search"] = search
-        payload = {
-            "query": _build_mods_query(
-                bool(search),
-                trending_since,
-                include_adult=_show_adult(),
-                language=_user_prefs()["mod_language"],
-            ),
-            "variables": variables,
-        }
         headers = {
             **_api_headers(_load_settings().get("api_key")),
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        try:
+
+        async def _fetch(off, take):
+            variables = {
+                "domain": game_domain,
+                "count": take,
+                "offset": off,
+            }
+            if trending_since is None:
+                variables["sort"] = [{sort: {"direction": "DESC"}}]
+            if search:
+                variables["search"] = search
+            payload = {
+                "query": _build_mods_query(
+                    bool(search),
+                    trending_since,
+                    include_adult=_show_adult(),
+                    language=_user_prefs()["mod_language"],
+                ),
+                "variables": variables,
+            }
             async with aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=20)
             ) as session:
                 async with session.post(
-                    NEXUS_V2_GRAPHQL, json=payload, headers=headers, ssl=SSL_CONTEXT
+                    NEXUS_V2_GRAPHQL, json=payload, headers=headers,
+                    ssl=SSL_CONTEXT,
                 ) as resp:
                     if resp.status != 200:
-                        return {
-                            "ok": False,
-                            "error": f"Nexus Mods API error (HTTP {resp.status})",
-                        }
-                    body = await resp.json()
+                        raise RuntimeError(
+                            f"Nexus Mods API error (HTTP {resp.status})"
+                        )
+                    return await resp.json()
+
+        # Same backfill as the collections rows, and for the same reason:
+        # a row that drops entries has to refill from further down the list
+        # rather than come back short. Two filters shorten these pages - the
+        # adult gate and the known-broken one - so this was already possible
+        # before anything was hidden for being uninstallable.
+        wanted = max(int(count), 1)
+        src_offset = int(offset)
+        mods, hidden, total = [], [], 0
+        try:
+            for _round in range(COLLECTION_BACKFILL_ROUNDS):
+                if len(mods) >= wanted:
+                    break
+                take = min(wanted * 2, 50)
+                body = await _fetch(src_offset, take)
+                if body.get("errors"):
+                    msg = body["errors"][0].get(
+                        "message", "unknown GraphQL error"
+                    )
+                    decky.logger.warning(f"get_mods GraphQL error: {msg}")
+                    return {
+                        "ok": False,
+                        "error": f"Nexus Mods query error: {msg}",
+                    }
+                page = body["data"]["mods"]
+                total = page["nodesCount"]
+                raw = page["nodes"]
+                src_offset += len(raw)
+                kept, dropped = _hide_known_broken(
+                    game_domain, app_id, _gate_adult_nodes(raw)
+                )
+                mods.extend(kept)
+                hidden.extend(dropped)
+                if len(raw) < take:
+                    break  # source exhausted, not merely filtered
         except aiohttp.ClientError as e:
             return {"ok": False, "error": f"Network error: {type(e).__name__}"}
         except asyncio.TimeoutError:
             return {"ok": False, "error": "Nexus Mods API timed out"}
-
-        if body.get("errors"):
-            msg = body["errors"][0].get("message", "unknown GraphQL error")
-            decky.logger.warning(f"get_mods GraphQL error: {msg}")
-            return {"ok": False, "error": f"Nexus Mods query error: {msg}"}
-
-        page = body["data"]["mods"]
-        mods = _gate_adult_nodes(page["nodes"])
-        decky.logger.info(
-            f"get_mods({game_domain!r}, sort={sort}): "
-            f"{len(mods)}/{page['nodesCount']} mods returned"
-        )
-        mods, hidden = _hide_known_broken(game_domain, app_id, mods)
+        except (RuntimeError, KeyError) as e:
+            return {"ok": False, "error": str(e)}
+        mods = mods[:wanted]
         if hidden:
             decky.logger.info(
                 f"get_mods({game_domain!r}): hid {len(hidden)} mod(s) known "
                 f"broken on this build: {', '.join(hidden[:5])}"
             )
-        return {"ok": True, "total": page["nodesCount"], "mods": mods}
+        decky.logger.info(
+            f"get_mods({game_domain!r}, sort={sort}): "
+            f"{len(mods)}/{total} mods returned"
+        )
+        return {
+            "ok": True,
+            "total": total,
+            "mods": mods,
+            "next_offset": src_offset,
+        }
 
     async def get_endorsement(self, game_domain: str, mod_id: int) -> dict:
         """The signed-in user's endorsement state for a mod. The v1
@@ -6967,52 +7008,78 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                 "" if _show_adult() else "adultContent: [{ value: false }]",
             )
         )
-        variables = {
-            "gameDomain": game_domain,
-            "count": int(count),
-            "offset": int(offset),
-        }
-        if search:
-            variables["search"] = search
+        # Filtering a fixed page leaves holes in it. Hiding the two
+        # Fallout 4 collections that need an older game turned a row of
+        # eight into a row of three, which is a worse page than the one
+        # that offered things you cannot install. Michael: "it should fill
+        # with the top collections that can be installed".
+        #
+        # So the source is read in pages until the ROW is full, and the
+        # offset actually consumed goes back to the caller - otherwise a
+        # short page reads as "end of list" and paging stops early.
+        wanted = max(int(count), 1)
+        src_offset = int(offset)
+        out = []
+        hidden = []
         try:
-            data = await _gql_query_vars(query, variables, api_key)
-            out = []
-            hidden = []
-            for n in data["collectionsV2"]["nodes"]:
-                rev = n.get("latestPublishedRevision") or {}
-                # A collection that needs an older game cannot be installed
-                # here at all, so it does not belong on a page of things to
-                # install. Michael: "its kind of a highlights page and we
-                # shouldn't show things you can't install".
-                #
-                # Free to check: `description` comes back on the SAME list
-                # query, so this costs no extra requests. Hidden here only -
-                # search still finds it, and its own page still explains
-                # why, so this is a highlights decision rather than a
-                # pretence that the collection does not exist.
-                slug = n.get("slug") or ""
-                if _collection_downgrade_reason(n.get("description") or ""):
-                    hidden.append(f"{n.get('name') or slug} ({slug})")
-                    continue
-                out.append(
-                    {
-                        "name": n.get("name") or "",
-                        "slug": n.get("slug") or "",
-                        "summary": n.get("summary") or "",
-                        "endorsements": n.get("endorsements") or 0,
-                        "author": (n.get("user") or {}).get("name") or "",
-                        "thumbnailUrl": (n.get("tileImage") or {}).get(
-                            "thumbnailUrl"
-                        ),
-                        "modCount": rev.get("modCount") or 0,
-                        "totalSize": int(rev.get("totalSize") or 0),
-                    }
-                )
+            for _round in range(COLLECTION_BACKFILL_ROUNDS):
+                if len(out) >= wanted:
+                    break
+                # Over-fetch, because some of what comes back is dropped.
+                # Not unboundedly: descriptions are large and this runs on
+                # every browse-page open.
+                take = min(wanted * 2, 30)
+                variables = {
+                    "gameDomain": game_domain,
+                    "count": take,
+                    "offset": src_offset,
+                }
+                if search:
+                    variables["search"] = search
+                data = await _gql_query_vars(query, variables, api_key)
+                nodes = data["collectionsV2"]["nodes"]
+                src_offset += len(nodes)
+                for n in nodes:
+                    rev = n.get("latestPublishedRevision") or {}
+                    # A collection that needs an older game cannot be
+                    # installed here at all, so it does not belong on a
+                    # page of things to install. Michael: "its kind of a
+                    # highlights page and we shouldn't show things you
+                    # can't install".
+                    #
+                    # Free to check: `description` comes back on the SAME
+                    # list query, so this costs no extra requests. Hidden
+                    # from the HIGHLIGHTS only - search still finds it and
+                    # its own page still explains why it is blocked, so
+                    # nobody is told it does not exist.
+                    slug = n.get("slug") or ""
+                    if _collection_downgrade_reason(
+                        n.get("description") or ""
+                    ):
+                        hidden.append(f"{n.get('name') or slug} ({slug})")
+                        continue
+                    out.append(
+                        {
+                            "name": n.get("name") or "",
+                            "slug": slug,
+                            "summary": n.get("summary") or "",
+                            "endorsements": n.get("endorsements") or 0,
+                            "author": (n.get("user") or {}).get("name") or "",
+                            "thumbnailUrl": (n.get("tileImage") or {}).get(
+                                "thumbnailUrl"
+                            ),
+                            "modCount": rev.get("modCount") or 0,
+                            "totalSize": int(rev.get("totalSize") or 0),
+                        }
+                    )
+                if len(nodes) < take:
+                    break  # the source is exhausted, not just filtered
+            out = out[:wanted]
             if hidden:
                 # Logged, never silent: a curator whose collection stops
                 # appearing deserves a reason that exists somewhere, and
                 # the next person debugging "why is X missing" should find
-                # it in one grep rather than reading this function.
+                # it in one grep rather than by reading this function.
                 decky.logger.info(
                     f"get_collections({game_domain!r}): hid "
                     f"{len(hidden)} collection(s) needing an older game "
@@ -7021,7 +7088,15 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
             decky.logger.info(
                 f"get_collections({game_domain!r}): {len(out)} returned"
             )
-            return {"ok": True, "collections": out, "hidden": len(hidden)}
+            return {
+                "ok": True,
+                "collections": out,
+                "hidden": len(hidden),
+                # Where the SOURCE got to, which is further than len(out)
+                # whenever something was dropped. Without it the caller
+                # re-requests rows it has already seen.
+                "next_offset": src_offset,
+            }
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 

@@ -35,6 +35,11 @@ export interface ModsResult {
   ok: boolean;
   total?: number;
   mods?: NexusMod[];
+  /** How far into the SOURCE list the backend actually got. Larger than
+   * the number of mods returned whenever entries were filtered out (adult
+   * gate, or known-broken on this build), so paging must advance by this
+   * rather than by page size or it re-requests rows already shown. */
+  next_offset?: number;
   error?: string;
 }
 

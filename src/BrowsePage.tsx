@@ -539,9 +539,16 @@ export function BrowsePage() {
       if (result.ok) {
         setError(undefined);
         setTotal(result.total);
-        nextOffset.current = offset + PAGE_SIZE;
+        // Advance by what the SOURCE consumed, not by page size: the
+        // backend backfills over filtered entries, so those two differ
+        // whenever anything was hidden and the difference is rows shown
+        // twice.
+        nextOffset.current = result.next_offset ?? offset + PAGE_SIZE;
         // A short page means the well is dry regardless of what the
         // total claims (search totals can be stale or absent).
+        // A short page now means the source ran dry, not that the
+        // filter took a few - the backend keeps reading until the row is
+        // full or there is nothing left.
         setLastPageFull((result.mods ?? []).length >= PAGE_SIZE);
         setMods((prev) => (append ? [...prev, ...(result.mods ?? [])] : result.mods ?? []));
       } else {
