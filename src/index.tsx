@@ -217,7 +217,7 @@ function resolveGameContext(): GameContext {
   if (last) return { game: last };
   return { neutral: true };
 }
-import { pushOurPage, resetTabStack } from "./Tabs";
+import { PANEL_TOP_CLASS, pushOurPage, resetTabStack } from "./Tabs";
 import { BrowsePage } from "./BrowsePage";
 import { EndorsableFrameworkRow } from "./EndorseButton";
 import { CollectionPage } from "./CollectionPage";
@@ -3886,7 +3886,10 @@ function ScrollToTopOnMount() {
       el = el.parentElement;
     }
   }, []);
-  return <div ref={ref} />;
+  // Carries the class so returning from a tab page can find the top of the
+  // panel again - coming back from a full-screen page does NOT remount
+  // this, so the effect above never runs a second time.
+  return <div ref={ref} className={PANEL_TOP_CLASS} />;
 }
 
 function Content() {

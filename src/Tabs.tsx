@@ -73,6 +73,45 @@ export function switchTab(currentId: string, direction: 1 | -1): void {
 /** The tabbed pages' exit: open the QAM (so gamepad focus lands inside
  * it), then unwind the ENTIRE tab stack - the original page plus one
  * push per tab switch. */
+/** Put the QAM back at the top of our panel.
+ *
+ * Michael: "when I press back to go back to the QAM, it puts me at the
+ * bottom of the nexus mods menu". Two causes, and the scroll is the lesser
+ * one - Steam restores gamepad focus to whatever was last focused, which is
+ * the button near the bottom that opened the page, and focusing it scrolls
+ * it back into view. So scrolling alone does not hold; focus has to move
+ * too.
+ *
+ * Deliberately best-effort and silent. This reaches into Steam's own DOM,
+ * which we do not own and which changes between client builds, so every
+ * step is optional and a failure just leaves the panel where it was.
+ */
+export function scrollQamPanelToTop(): void {
+  try {
+    const top = document.querySelector(`.${PANEL_TOP_CLASS}`);
+    if (!top) return;
+    let el: HTMLElement | null = top.parentElement;
+    let scroller: HTMLElement | null = null;
+    while (el) {
+      if (el.scrollHeight > el.clientHeight) scroller = el;
+      el.scrollTop = 0;
+      el = el.parentElement;
+    }
+    // Focus the first thing the D-pad can land on, so Steam does not
+    // scroll straight back down to where we were.
+    const first = (scroller ?? document).querySelector<HTMLElement>(
+      '[tabindex]:not([tabindex="-1"])'
+    );
+    first?.focus();
+    if (scroller) scroller.scrollTop = 0;
+  } catch {
+    /* never let a cosmetic nicety break going back */
+  }
+}
+
+/** Marks the top of our QAM panel so the scroll reset can find it. */
+export const PANEL_TOP_CLASS = "nexus-panel-top";
+
 export function exitTabsToQam(): void {
   // Exactly as deep as we actually are - not depth+1, which over-popped
   // whenever the page had been reached without a counted push. Rule and
@@ -82,6 +121,8 @@ export function exitTabsToQam(): void {
   Navigation.OpenQuickAccessMenu(QuickAccessTab.Decky);
   setTimeout(() => {
     for (let i = 0; i < pops; i++) Navigation.NavigateBack();
+    // After the pops, not before: each NavigateBack can move focus itself.
+    setTimeout(scrollQamPanelToTop, 60);
   }, 50);
 }
 
