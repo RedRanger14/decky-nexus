@@ -11250,13 +11250,23 @@ query Link($slug: String!, $domainName: String!) {
                     if not _safe_rel_path(str(rel)):
                         continue
                     d = os.path.join(install_path, *str(rel).split("/"))
+                    extra = settings.setdefault(
+                        "vanilla_extra_baseline", {}
+                    ).setdefault(game_domain, {})
+                    if not os.path.exists(d):
+                        # Same rule as the first-install recorder, and this
+                        # is the path that actually runs for a device that
+                        # has already been modded: a directory that is not
+                        # there once the mods are gone is one the GAME does
+                        # not have, so record that as an empty baseline
+                        # rather than swallowing the error and leaving the
+                        # directory permanently unsweepable.
+                        extra[str(rel)] = []
+                        continue
                     try:
-                        settings.setdefault(
-                            "vanilla_extra_baseline", {}
-                        ).setdefault(game_domain, {})[str(rel)] = sorted(
-                            os.listdir(d)
-                        )
+                        extra[str(rel)] = sorted(os.listdir(d))
                     except OSError:
+                        # Exists but unreadable - never claim it is empty.
                         pass
                 build = _steam_build_id(app_id)
                 if build:

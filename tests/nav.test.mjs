@@ -270,6 +270,33 @@ test("the endorse pill has a gamepad focus style", () => {
   );
 });
 
+test("going back to the QAM lands at the top of the panel", () => {
+  // Michael: "when I press back to go back to the QAM, it puts me at the
+  // bottom of the nexus mods menu". Scrolling alone does not hold it -
+  // Steam restores focus to the button that opened the page, near the
+  // bottom, and focusing it scrolls straight back down. So the reset has to
+  // move focus too, and has to run AFTER the NavigateBack pops, each of
+  // which can move focus itself.
+  const tabs = read("Tabs.tsx");
+  assert.ok(
+    tabs.includes("export function scrollQamPanelToTop"),
+    "no scroll-to-top on the way back to the QAM"
+  );
+  assert.ok(
+    /\.focus\(\)/.test(tabs),
+    "scrolling without moving focus is undone by Steam's focus restore"
+  );
+  const exit = tabs.slice(tabs.indexOf("export function exitTabsToQam"));
+  assert.ok(
+    exit.indexOf("NavigateBack") < exit.indexOf("scrollQamPanelToTop"),
+    "the reset runs before the pops, which then move focus again"
+  );
+  assert.ok(
+    read("index.tsx").includes("className={PANEL_TOP_CLASS}"),
+    "the panel top is unmarked, so the reset cannot find it"
+  );
+});
+
 test("every framework counts as installed, not just the primary one", () => {
   // Michael, on Cyberpunk mod pages: "some required mods that are installed
   // are being marked as orange (needs installing), ArchiveXL, RED4ext for
