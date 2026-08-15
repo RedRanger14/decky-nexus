@@ -3961,7 +3961,8 @@ export default definePlugin(() => {
         p.percent,
         p.bytes_done,
         p.bytes_total,
-        p.bps
+        p.bps,
+        p.message
       )
   );
 

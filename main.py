@@ -6237,11 +6237,21 @@ async def _download_archive(
                     f"({transport_failures}/{DOWNLOAD_TRANSPORT_RETRIES}) - "
                     "resuming from the part file, not restarting"
                 )
+                # What is on DISK now, not what was there when this
+                # attempt started. part_now is zero for a file being
+                # fetched for the first time, so reporting it reset the bar
+                # to 0% at the exact moment the user most needs to see that
+                # their progress is safe. Michael: "the currently
+                # downloading mod reset to 0 (visually)".
+                try:
+                    have = os.path.getsize(part_path)
+                except OSError:
+                    have = part_now
                 await _emit_progress(
                     mod_id, "downloading",
-                    int(part_now * 100 / known_total) if known_total else 0,
+                    int(have * 100 / known_total) if known_total else 0,
                     message=f"connection lost - retrying in {wait:.0f}s",
-                    bytes_done=part_now,
+                    bytes_done=have,
                     bytes_total=known_total or None,
                 )
                 await asyncio.sleep(wait)

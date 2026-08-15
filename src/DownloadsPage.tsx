@@ -668,7 +668,15 @@ export function DownloadsPage() {
                           d.bytesDone !== undefined && d.bytesTotal
                             ? `${formatBytes(d.bytesDone)} / ${formatBytes(d.bytesTotal)}`
                             : `${d.percent}%`,
-                          d.bps ? formatSpeed(d.bps) : undefined,
+                          // A retry notice replaces the speed rather than
+                          // sitting beside it: there IS no speed while the
+                          // connection is gone, and the bytes stay so the
+                          // user can see their progress is not lost.
+                          d.message
+                            ? `⚠ ${d.message}`
+                            : d.bps
+                            ? formatSpeed(d.bps)
+                            : undefined,
                         ]
                           .filter(Boolean)
                           .join(" · ")

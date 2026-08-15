@@ -270,6 +270,28 @@ test("the endorse pill has a gamepad focus style", () => {
   );
 });
 
+test("a download row can say what went wrong, not just how fast", () => {
+  // Michael turned the wifi off mid-download: the retry notice was emitted
+  // by the backend and never seen, because nothing between the event and
+  // the row carried a message field at all.
+  assert.ok(
+    read("state.ts").includes("message?: string"),
+    "ActiveDownload cannot hold a message"
+  );
+  assert.ok(
+    /updateDownload\([^)]*message/s.test(read("state.ts")),
+    "updateDownload drops the message"
+  );
+  assert.ok(
+    /p\.bps,\s*p\.message/s.test(read("index.tsx")),
+    "the progress listener does not forward the message"
+  );
+  assert.ok(
+    read("DownloadsPage.tsx").includes("d.message"),
+    "the download row never renders the message"
+  );
+});
+
 test("going back to the QAM lands at the top of the panel", () => {
   // Michael: "when I press back to go back to the QAM, it puts me at the
   // bottom of the nexus mods menu". Scrolling alone does not hold it -
