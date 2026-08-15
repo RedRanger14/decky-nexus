@@ -11017,7 +11017,16 @@ query Link($slug: String!, $domainName: String!) {
         # put, and the only thing that caught it was the main menu looking
         # wrong. Reporting a success we have not verified is worse than
         # reporting a partial failure.
-        baseline = settings.get("vanilla_baseline", {}).get(game_domain) or []
+        # "Recorded as empty" and "never recorded" are different facts, and
+        # `or []` collapsed them into one. Every test below was written as
+        # `if baseline`, so a game whose mods folder the GAME does not ship -
+        # Cyberpunk's archive/pc/mod, Slay the Spire 2's mods - baselined
+        # correctly as [] and then had its sweep silently switched off. The
+        # empty baseline is the whole point of those two: it says the game
+        # owns nothing here, so anything present arrived with modding.
+        _baseline_raw = settings.get("vanilla_baseline", {}).get(game_domain)
+        have_baseline = _baseline_raw is not None
+        baseline = _baseline_raw or []
         leftovers = []
         removed_leftovers = 0
         # A baseline describes one build of the game. Games gain files
@@ -11062,7 +11071,7 @@ query Link($slug: String!, $domainName: String!) {
                 f"{baseline_build} -> {now_build} since the baseline, so "
                 "untracked files are reported rather than swept"
             )
-        if baseline and not game_changed and os.path.isdir(mods_path):
+        if have_baseline and not game_changed and os.path.isdir(mods_path):
             try:
                 leftovers = sorted(
                     set(os.listdir(mods_path)) - set(baseline)
@@ -11097,7 +11106,7 @@ query Link($slug: String!, $domainName: String!) {
                     removed_leftovers += 1
                 except OSError as e:
                     errors.append(f"{name}: {e}")
-        if baseline and game_changed and os.path.isdir(mods_path):
+        if have_baseline and game_changed and os.path.isdir(mods_path):
             try:
                 leftovers = sorted(set(os.listdir(mods_path)) - set(baseline))
             except OSError:
@@ -11375,7 +11384,7 @@ query Link($slug: String!, $domainName: String!) {
             # deleted. The UI must not call that a failed reset.
             "game_changed": game_changed,
             "leftover_examples": leftovers[:8],
-            "verified": bool(baseline),
+            "verified": have_baseline,
         }
 
     async def uninstall_collection(

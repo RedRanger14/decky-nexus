@@ -7068,6 +7068,41 @@ class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
                  .get("vanilla_root_baseline", {}).get(self.DOMAIN))
         self.assertIn("Game.exe", after)
 
+    def test_an_empty_mods_baseline_still_sweeps(self):
+        # "Recorded as empty" is not "never recorded", and `or []` had
+        # collapsed the two. Cyberpunk's archive/pc/mod and Slay the Spire
+        # 2's mods folder are not shipped by their games, so both baseline
+        # correctly as [] - and both then had their sweep switched off, on
+        # the very games the baseline work had just been done for.
+        #
+        # An empty baseline is the strongest statement there is: the game
+        # owns nothing here, so anything present arrived with modding.
+        settings = main._load_settings()
+        settings.setdefault("vanilla_baseline", {})[self.DOMAIN] = []
+        main._save_settings(settings)
+        mods = os.path.join(self.root, "archive", "pc", "mod")
+        os.makedirs(mods, exist_ok=True)
+        with open(os.path.join(mods, "orphan.archive"), "w") as f:
+            f.write("x")
+        r = self._reset()
+        self.assertTrue(r["ok"], r)
+        self.assertTrue(r["verified"])
+        self.assertFalse(os.path.exists(os.path.join(mods, "orphan.archive")))
+
+    def test_a_never_recorded_baseline_is_still_left_alone(self):
+        # The other side of the same distinction: no baseline at all means
+        # we do not know what the game put there, and nothing is touched.
+        settings = main._load_settings()
+        settings.get("vanilla_baseline", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        mods = os.path.join(self.root, "archive", "pc", "mod")
+        os.makedirs(mods, exist_ok=True)
+        with open(os.path.join(mods, "unknown.archive"), "w") as f:
+            f.write("x")
+        r = self._reset()
+        self.assertFalse(r["verified"])
+        self.assertTrue(os.path.exists(os.path.join(mods, "unknown.archive")))
+
     def test_an_unstamped_baseline_reports_instead_of_sweeping(self):
         # Skyrim SE on device, 2026-08-15: baseline_build was None, because
         # the baseline predates the stamp. The guard read that as "the game

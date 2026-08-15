@@ -227,6 +227,63 @@ and until now nothing could repair one. Any long-standing install may have
 the same problem, and the remedy is the same - reset, which now re-takes all
 three baselines honestly.
 
+### Baseline health, all games (audited on device 2026-08-15)
+
+The audit found the same defect three more times, each in a different place
+where an absent or empty value was read as "no information":
+
+| where | absent/empty meant | now |
+|---|---|---|
+| `vanilla_extra_baseline[dir]` | directory never swept | absent = game owns nothing there |
+| `vanilla_root_baseline` | game-folder check silently off | re-taken on every reset |
+| `baseline_build` | **"the game has not changed"** | unknown = report, never delete |
+| `vanilla_baseline == []` | mods folder never swept | recorded-empty is a real baseline |
+
+The `baseline_build` one was the dangerous one: Skyrim SE's was unstamped,
+so a Bethesda patch followed by a reset would have swept the new vanilla
+files as orphans, on the most heavily tested game here.
+
+State after the audit:
+
+| game | records | baseline | note |
+|---|---|---|---|
+| Cyberpunk 2077 | live | ✅ stamped, all 4 extra dirs | done first, three defects found doing it |
+| Skyrim SE | 0 | ✅ stamped 13189953 | Data was provably vanilla (36 = 36) |
+| Slay the Spire 2 | 0 | ✅ stamped 23811903 | mods folder empty |
+| Fallout 4 | 148 | ⚠ none at all | 486 files in Data; reset sweeps nothing today |
+| Stardew | 85 | ⚠ unstamped | live setup |
+| Witcher 3 | 77 | ⚠ unstamped | live setup |
+| Elden Ring | 1 | ⚠ unstamped | me3 keeps mods outside the game folder - low impact |
+| New Vegas | 0 | ❌ polluted | ~16 of 52 entries are TTW mod files, on disk AND baselined |
+| Fallout 3 | 0 | n/a | cut from 1.0, game not installed |
+
+The ⚠ rows are **safe, not broken**: an unstamped baseline now reports
+rather than deletes. They self-heal the next time each game is reset for a
+real reason, so there is no case for destroying a tested setup to fix one.
+
+New Vegas is the only one needing a reinstall - a reset cannot help, because
+the mod files are on disk and baselined, and Steam's verify restores missing
+files without removing extra ones.
+
+### How a baseline gets polluted, and why that is the safe error
+
+After a game update, reset reports leftovers instead of deleting them (it
+cannot tell a new game file from a mod orphan) and then re-takes the
+baseline from the folder as it stands - which blesses any orphan still
+there. That is almost certainly how New Vegas ended up with Tale of Two
+Wastelands content in its baseline.
+
+It stays that way on purpose. Blessing an orphan leaves an untidy folder;
+excluding it risks deleting genuine new game content on the next reset.
+Those are not comparable.
+
+**Consequence for early-access games** (Michael, 2026-08-15: "sts2 is in
+early access so it will get frequent updates"): every update moves the build
+id, so the first reset after each one reports rather than sweeps, and
+re-stamps. The cheap habit that avoids drift is to reset while nothing is
+installed - the folder is then unambiguously clean, so there is no orphan to
+bless. That is exactly the state StS2 was reset in.
+
 ## Decky store submission: pre-PR checklist (researched 2026-08-11)
 
 Sources: decky-plugin-database README + `.github/PULL_REQUEST_TEMPLATE/
