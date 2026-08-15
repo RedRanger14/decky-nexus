@@ -11233,12 +11233,26 @@ query Link($slug: String!, $domainName: String!) {
         if os.path.isdir(parked_root):
             _force_rmtree(parked_root)
             decky.logger.info(f"reset {game_domain!r}: cleared parked files")
-        if os.path.isdir(mods_path) and not errors:
-            try:
-                fresh = sorted(os.listdir(mods_path))
-            except OSError:
+        if not errors:
+            # An ABSENT or EMPTY mods folder is a fact about vanilla, not a
+            # reason to skip. Cyberpunk's mods folder is archive/pc/mod,
+            # which the game does not ship and reset therefore removes
+            # entirely - so this whole block was skipped on the one game it
+            # was most needed for, and the stale baseline (16 .archive mod
+            # files, captured when the game was already modded) survived a
+            # clean reset. Same for a folder that exists and is empty:
+            # "nothing here" is exactly what a baseline should say.
+            #
+            # Unreadable is still the one case we refuse to guess about.
+            fresh = None
+            if os.path.isdir(mods_path):
+                try:
+                    fresh = sorted(os.listdir(mods_path))
+                except OSError:
+                    fresh = None
+            elif not os.path.exists(mods_path):
                 fresh = []
-            if fresh:
+            if fresh is not None:
                 settings.setdefault("vanilla_baseline", {})[game_domain] = fresh
                 # The other mod directories get their baseline at the same
                 # moment, for the same reason. Recorded HERE rather than at

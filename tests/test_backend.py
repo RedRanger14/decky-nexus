@@ -7024,6 +7024,31 @@ class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
         settings.get("vanilla_extra_baseline", {}).pop("unreadtest", None)
         main._save_settings(settings)
 
+    def test_reset_rebaselines_even_when_the_mods_folder_is_gone(self):
+        # Found on device, 2026-08-15, doing this for real. Cyberpunk's mods
+        # folder is archive/pc/mod - the game does not ship it, so reset
+        # removes it entirely - and the re-take was gated on that folder
+        # existing and being non-empty. So the one game most in need of a
+        # fresh baseline was the one game that never got one, and a stale
+        # baseline holding 16 .archive MOD files survived a clean reset,
+        # protecting every one of them from all future sweeps.
+        #
+        # An absent or empty mods folder is a fact about vanilla, not a
+        # reason to skip.
+        settings = main._load_settings()
+        settings.setdefault("vanilla_baseline", {})[self.DOMAIN] = [
+            "someones-mod.archive"]
+        main._save_settings(settings)
+        shutil.rmtree(os.path.join(self.root, "archive"), ignore_errors=True)
+        r = self._reset()
+        self.assertTrue(r["ok"], r)
+        after = main._load_settings()
+        self.assertEqual(after["vanilla_baseline"][self.DOMAIN], [])
+        # And the extra directories are baselined in the same pass, which is
+        # the whole point of doing it here.
+        extra = after["vanilla_extra_baseline"][self.DOMAIN]
+        self.assertEqual(extra.get(self.ABSENT), [])
+
     def test_a_directory_with_no_baseline_is_left_completely_alone(self):
         # The dangerous case. With no record of what the GAME put there,
         # every file reads as an orphan - and deleting r6/scripts because
@@ -7728,9 +7753,20 @@ class TestBaselineRetakenOnReset(unittest.TestCase):
     def test_it_does_not_retake_after_a_failed_reset(self):
         # A reset that hit errors may have left mods behind; recording
         # those as "vanilla" would make them permanent.
+        #
+        # Asserted on the guard itself rather than on a source substring:
+        # this used to match the literal "and not errors", which broke the
+        # moment the condition moved onto its own line - a test failing for
+        # a reformat teaches nothing.
         import inspect
         src = inspect.getsource(main.Plugin.reset_game_modding)
-        self.assertIn("and not errors", src)
+        head = src[: src.index("re-took the vanilla baseline")]
+        guard = head.rindex("if not errors:")
+        retake = head.rindex('settings.setdefault("vanilla_baseline"')
+        self.assertLess(
+            guard, retake,
+            "the baseline re-take is no longer behind the no-errors guard",
+        )
 
 
 class TestGameOwnedContent(unittest.TestCase):
