@@ -791,7 +791,10 @@ function CurrentGameSection() {
             game.framework.installKind ?? "smapi",
             game.framework.detectFile,
             game.framework.avoidFileKeywords ?? [],
-            game.framework.installSubdir ?? ""
+            game.framework.installSubdir ?? "",
+            // So the vanilla baseline is taken before the framework lands.
+            game.modsSubdir,
+            game.appId
           );
       // Some games need ini blocks before mods load at all (e.g. FO4's
       // archive invalidation) - apply them as part of framework setup.
@@ -909,7 +912,9 @@ function CurrentGameSection() {
           fw.installKind ?? (isMain ? "smapi" : "copyRoot"),
           fw.detectFile,
           fw.avoidFileKeywords ?? [],
-          fw.installSubdir ?? ""
+          fw.installSubdir ?? "",
+          game.modsSubdir,
+          game.appId
         );
         if (!result.ok) {
           failed++;
