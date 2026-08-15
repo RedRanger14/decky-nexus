@@ -10,13 +10,61 @@ tell whose fault it is.
 |---|---|---|
 | Stardew Valley | folder | **verified 2026-08-14: three collections including the #1 (Stardew Very Expanded), save loaded, health check corroborated against SMAPI's own log** |
 | Skyrim SE | dataDir | **the most heavily tested game here.** Automated crash hunt bisected a 100+ plugin load order to a single culprit; Gate to Sovngarde and Immersive Skyrim collections played. See `gate-to-sovngarde-findings.md` |
-| Fallout 4 | dataDir | **PARTIAL (2026-08-15).** Small collections work (Historical Arsenal, 2026-08-04, first time). Large ones install correctly and then misbehave in-game, because a collection's load ORDER is not applied - see "modRules" below. Vault Boy 101 (521 mods) installed, booted after a long black screen, and hung on Unlimited Companion Framework's load-order warning |
+| Fallout 4 | dataDir | **verified 2026-08-15: Vault Boy 101 Total Overhaul (521 mods, 119 GB) installs, orders, boots and renders correctly.** Took five fixes to get there - see below. Historical Arsenal also worked first time, 2026-08-04. Remaining gap: `modRules` (which mod's files win a conflict) is still unread, so file conflicts inside a collection are unresolved |
 | Fallout: New Vegas | dataDir | tested, pre-adult-content |
 | Slay the Spire 2 | folder | **verified 2026-08-13 in depth**: #1 collection (Mesugaki the Spire) installs and boots clean - "Loaded 11 mods (11 total)", no errors; a second collection diagnosed to one mod throwing 1,041 exceptions and repaired automatically; individual mods, dependency auto-install and the verdict store all exercised. Most of the log-parsing, verdict and auto-repair machinery was built and proven here |
 | The Witcher 3 | folder | tested 2026-07-24 (script-mod ceiling documented) |
 | Resident Evil 4 | folder | **verified 2026-08-14: three collections, all worked. Tested WITH adult content**; endorsement bug found and fixed here |
 | Cyberpunk 2077 | folder+frameworks | **verified 2026-08-14: Welcome to Night City (283 mods) boots** once two orphaned .reds files were removed. Five frameworks install and endorse individually. **Health check corroborated against redscript's own log, verified by deliberately breaking a compile on device** - see below |
 | Elden Ring | me3 | **verified 2026-08-12: Seamless Co-op played between this Deck and a real Windows player.** The strongest result here - it proves the me3 route (real exe, EAC never bootstrapped) produces a client Windows players can actually host with, not just a game that launches. Unblocks DS3, Sekiro, AC6 and Nightreign, which share the loader |
+
+### Vault Boy 101: what a 521-mod collection took (2026-08-15)
+
+The largest thing this plugin has run, and every failure was ours rather
+than the collection's. Kept because the list is the argument for testing at
+this scale.
+
+1. **A dropped wifi link froze four downloads for two and a half hours.**
+   No `sock_read` timeout, so a silent socket was only noticed by a 30-minute
+   total - and pause could not break it either, because the pause flag is
+   checked per chunk and no chunk ever arrived (v0.200.0).
+2. **The same drop then ate 47 mods in five minutes.** Link resolution had
+   no retry, and "the network went away" was not a reason any branch
+   recognised, so they failed silently and became "still to install" with
+   nothing parked (v0.203.0).
+3. **Four deleted mods came back as "remaining" every session**, because the
+   skip lived in React state and a 404 was not recognised as gone (v0.204.0).
+4. **The load order was never applied.** The manifest ships `plugins` - 417
+   entries in the curator's order - and we read it as a SET to decide what
+   to enable, discarding the sequence. The game hung on Unlimited Companion
+   Framework's own warning to "move EFF further down your load order"
+   (v0.206.0).
+5. **Every vanilla texture archive had been deleted.** See below. The game
+   booted, started a new game, and rendered every surface magenta.
+
+Michael, on the screenshot: *"I think we jumped the gun on celebrating the
+install"*. He was right, and it is the strongest argument there is for the
+**"Verified on Deck"** badge meaning *someone played it* rather than *it
+installed*. This collection installed 451 of 454, ordered them correctly,
+booted and reached a new game - and was visibly broken.
+
+### A mod's install record could delete the game's own files
+
+The magenta was `Fallout4 - Textures1.ba2` through `Textures9.ba2` - every
+vanilla texture the game ships - missing. Mod-supplied hair and eyes drew
+correctly, which is what made it look like a mod problem.
+
+A mod that ships a replacement for a vanilla archive records that path as
+one of ITS files, so uninstalling it takes the game's copy. A reset removing
+148 records did exactly that, and the baseline taken afterwards recorded a
+Data folder already missing them - so every later check looked healthy.
+
+`_game_owned_name` already recognised them; it guarded the leftover sweep
+and was never asked during record removal (fixed v0.209.0).
+
+**Recovery for a device in this state:** Steam's "Verify integrity of game
+files". It restored 16 files and left all 451 mod records untouched - the
+same property that makes it useless for cleaning a modded install.
 
 ### The biggest open gap: collection load ORDER (modRules)
 
