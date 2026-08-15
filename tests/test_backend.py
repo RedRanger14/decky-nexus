@@ -6782,6 +6782,88 @@ class TestCollectionNeedsDowngrade(unittest.TestCase):
         self.assertEqual(names, ["Such Fallout 4"])
         self.assertEqual(r["hidden"], 1)
 
+    def test_the_row_refills_instead_of_coming_back_short(self):
+        # Hiding two of Fallout 4's top collections turned a row of eight
+        # into a row of three. Michael: "it should fill with the top
+        # collections that can be installed". The filter must cost the
+        # blocked entries their place, not the whole row its size.
+        plugin = main.Plugin()
+        orig = main._gql_query_vars
+        seen = []
+
+        async def fake(query, variables, api_key=None):
+            off = variables["offset"]
+            take = variables["count"]
+            seen.append((off, take))
+            nodes = []
+            for i in range(off, off + take):
+                bad = i % 3 == 0          # every third needs a downgrade
+                nodes.append({
+                    "name": f"C{i}", "slug": f"s{i}",
+                    "description": self.REAL if bad else "Just install it.",
+                    "latestPublishedRevision": {"modCount": 10},
+                })
+            return {"collectionsV2": {"nodes": nodes}}
+
+        main._gql_query_vars = fake
+        try:
+            r = run(plugin.get_collections("fallout4", 8, "", "endorsements", 0))
+        finally:
+            main._gql_query_vars = orig
+        self.assertEqual(len(r["collections"]), 8, "row came back short")
+        self.assertTrue(all("C" in c["name"] for c in r["collections"]))
+        # And it reports how far the SOURCE got, or the caller re-requests
+        # rows it has already shown.
+        self.assertGreater(r["next_offset"], 8)
+        self.assertGreaterEqual(len(seen), 1)
+
+    def test_it_stops_rather_than_spinning_when_everything_is_blocked(self):
+        # A game whose whole catalogue needs a downgrade must produce a
+        # short row, not an endless walk down the list.
+        plugin = main.Plugin()
+        orig = main._gql_query_vars
+        calls = []
+
+        async def all_bad(query, variables, api_key=None):
+            calls.append(variables["offset"])
+            return {"collectionsV2": {"nodes": [
+                {"name": f"B{i}", "slug": f"b{i}",
+                 "description": self.REAL,
+                 "latestPublishedRevision": {"modCount": 1}}
+                for i in range(variables["count"])
+            ]}}
+
+        main._gql_query_vars = all_bad
+        try:
+            r = run(plugin.get_collections("fallout4", 8, "", "endorsements", 0))
+        finally:
+            main._gql_query_vars = orig
+        self.assertEqual(r["collections"], [])
+        self.assertLessEqual(len(calls), main.COLLECTION_BACKFILL_ROUNDS)
+
+    def test_it_stops_when_the_source_runs_out(self):
+        # A short page from the API means there is no more list, and asking
+        # again for the same nothing is just latency.
+        plugin = main.Plugin()
+        orig = main._gql_query_vars
+        calls = []
+
+        async def few(query, variables, api_key=None):
+            calls.append(variables["offset"])
+            return {"collectionsV2": {"nodes": [
+                {"name": "Only", "slug": "only",
+                 "description": "fine",
+                 "latestPublishedRevision": {"modCount": 1}}
+            ]}}
+
+        main._gql_query_vars = few
+        try:
+            r = run(plugin.get_collections("fallout4", 8, "", "endorsements", 0))
+        finally:
+            main._gql_query_vars = orig
+        self.assertEqual(len(r["collections"]), 1)
+        self.assertEqual(len(calls), 1, "kept asking after the list ended")
+
     def test_the_hand_written_table_still_wins(self):
         # VeryLastKiss's TTW is refused for a different reason entirely, and
         # a network lookup must not get the chance to overrule it.
