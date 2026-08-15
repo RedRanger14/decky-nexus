@@ -5744,6 +5744,36 @@ def _archive_cache_path(mod_id: int, file_id: int, file_name: str) -> str:
 _HTTP_SESSION = None
 
 
+# How long a transfer may produce NOTHING before we call it dead.
+#
+# Michael's device dropped off the wifi 79% into a 521-mod collection. Four
+# downloads froze at 12:35 and were still frozen at 15:07, and pause/resume
+# could not shift them - the pause flag is checked once per chunk, and no
+# chunk ever arrived, so the coroutine never regained control to see it.
+#
+# A dropped wifi link does not close the socket, it just stops answering, so
+# only a read timeout can notice. There was none: the request carried
+# total=1800, which meant a dead connection sat there for up to half an hour
+# AND a healthy 4 GB file on slow hotel wifi got killed at thirty minutes
+# for no reason. sock_read is the right instrument - it measures silence,
+# not duration.
+DOWNLOAD_STALL_SECONDS = 45
+
+# How many transport failures to absorb before giving up on a file. Three
+# attempts two seconds apart covers a hiccup and nothing else; a wifi
+# reconnect on this hardware takes tens of seconds, so the whole collection
+# died to an outage shorter than a kettle boil. Backoff below turns this
+# into roughly four minutes of patience, and the .part file means every
+# retry resumes rather than restarts.
+DOWNLOAD_TRANSPORT_RETRIES = 7
+
+
+def _transport_backoff(attempt: int) -> float:
+    """Seconds to wait before retry `attempt` (1-based). Capped, so a long
+    outage settles into a steady poll instead of doubling into hours."""
+    return float(min(2 ** attempt, 60))
+
+
 async def _http_session():
     global _HTTP_SESSION
     if _HTTP_SESSION is None or _HTTP_SESSION.closed:
@@ -6070,7 +6100,11 @@ async def _download_archive(
             disk_low = False
             paused = False
             try:
-                timeout = aiohttp.ClientTimeout(total=1800, sock_connect=30)
+                timeout = aiohttp.ClientTimeout(
+                    total=None,
+                    sock_connect=30,
+                    sock_read=DOWNLOAD_STALL_SECONDS,
+                )
                 session = await _http_session()
                 async with session.get(
                     _safe_uri(uri), headers=req_headers, timeout=timeout
@@ -6182,11 +6216,29 @@ async def _download_archive(
                 return "", archive_path
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 transport_failures += 1
-                if transport_failures >= 3:
+                if transport_failures >= DOWNLOAD_TRANSPORT_RETRIES:
                     # The .part stays: the next attempt (tonight or next
                     # week) resumes from it instead of starting over.
-                    return f"Download failed: {type(e).__name__}", ""
-                await asyncio.sleep(2)
+                    return (
+                        f"Download failed after "
+                        f"{transport_failures} attempts: {type(e).__name__}",
+                        "",
+                    )
+                wait = _transport_backoff(transport_failures)
+                decky.logger.info(
+                    f"mod {mod_id}: {type(e).__name__} at "
+                    f"{part_now / 1048576:.0f} MB, retrying in {wait:.0f}s "
+                    f"({transport_failures}/{DOWNLOAD_TRANSPORT_RETRIES}) - "
+                    "resuming from the part file, not restarting"
+                )
+                await _emit_progress(
+                    mod_id, "downloading",
+                    int(part_now * 100 / known_total) if known_total else 0,
+                    message=f"connection lost - retrying in {wait:.0f}s",
+                    bytes_done=part_now,
+                    bytes_total=known_total or None,
+                )
+                await asyncio.sleep(wait)
                 continue
     except _DownloadCancelled:
         try:
