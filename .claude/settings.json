@@ -7,7 +7,10 @@
       "Bash(grep -viE \"^\\\\s*//\")",
       "Bash(scp -o ConnectTimeout=25 /c/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/fo4_health.py deck@steamdeck.local:/tmp/fo4_health.py)",
       "Bash(scp -o ConnectTimeout=25 /c/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/ba2_orphans.py deck@steamdeck.local:/tmp/ba2_orphans.py)",
-      "Bash(python -m unittest tests.test_backend -k \"EatsGame\")"
+      "Bash(python -m unittest tests.test_backend -k \"EatsGame\")",
+      "Bash(grep -viE \"^\\\\s*//|moddedSave\")",
+      "Bash(grep -n 'r.%s.\\\\\\\\\\\\\\\\s' main.py)",
+      "Bash(python -m unittest tests.test_backend -k \"Verified\")"
     ]
   }
 }

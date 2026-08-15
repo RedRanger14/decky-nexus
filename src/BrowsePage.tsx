@@ -7,7 +7,7 @@ import {
   TextField,
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
-import { FaArrowDown, FaThumbsUp } from "react-icons/fa";
+import { FaArrowDown, FaCheck, FaThumbsUp } from "react-icons/fa";
 
 import {
   CollectionSummary,
@@ -19,6 +19,8 @@ import {
   getModsByIds,
   getShowAdult,
   getTrendingMods,
+  CollectionVerdictState,
+  getCollectionVerdicts,
 } from "./api";
 import { SupportedGame, getActiveGame, modeParams } from "./games";
 import {
@@ -58,16 +60,58 @@ const PAGE_SIZE = 24;
 const ROW_SIZE = 5;
 const TILE_WIDTH = 195;
 
+/** The badge, and the rule behind it.
+ *
+ * Michael asked for a "Verified on Deck" mark like the site's EASY INSTALL
+ * one. The bar is deliberately high: Fallout 4's Vault Boy 101 installed
+ * 451 of 454 mods, applied its load order, booted and started a new game
+ * while rendering every surface magenta - so "it installed" is worth
+ * showing and is NOT verification. Only real playtime after the install
+ * earns the green mark, and that evidence comes from Steam, not from us.
+ */
+function VerifiedBadge({ state }: { state: CollectionVerdictState }) {
+  const look =
+    state === "played"
+      ? { text: "VERIFIED ON DECK", bg: "rgba(70, 170, 90, 0.92)" }
+      : state === "booted"
+      ? { text: "BOOTED HERE", bg: "rgba(90, 130, 200, 0.9)" }
+      : { text: "INSTALLED HERE", bg: "rgba(255, 255, 255, 0.16)" };
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "4px",
+        alignSelf: "flex-start",
+        marginTop: "3px",
+        padding: "1px 7px",
+        borderRadius: "3px",
+        fontSize: "9.5px",
+        fontWeight: 700,
+        letterSpacing: "0.4px",
+        background: look.bg,
+        color: "#fff",
+      }}
+    >
+      {state === "played" && <FaCheck size={8} />}
+      {look.text}
+    </div>
+  );
+}
+
 function CollectionCard({
   game,
   c,
   fromList,
+  verdict,
 }: {
   game: SupportedGame;
   c: CollectionSummary;
   /** Opened from the all-collections list: B on the collection page
    * must return THERE, not to the store home. */
   fromList?: boolean;
+  /** What this device has done with it, if anything. */
+  verdict?: CollectionVerdictState;
 }) {
   return (
     <Focusable
@@ -115,6 +159,7 @@ function CollectionCard({
             ? `${(c.totalSize / (1 << 30)).toFixed(1)} GB`
             : `${Math.round(c.totalSize / (1 << 20))} MB`}
         </div>
+        {verdict && <VerifiedBadge state={verdict} />}
       </div>
     </Focusable>
   );
@@ -405,6 +450,12 @@ export function BrowsePage() {
   const [total, setTotal] = useState<number | undefined>(restored?.total);
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
+  // What this device has actually done with each collection. Read on
+  // every visit rather than cached: the answer changes when the user
+  // plays, which has nothing to do with this page.
+  const [verdicts, setVerdicts] = useState<
+    Record<string, CollectionVerdictState>
+  >({});
   const nextOffset = useRef(restored?.nextOffset ?? 0);
   // Skip the mount fetch ONLY when the restored state is list-mode; a
   // home-mode restore never fetches, so the pending skip used to eat the
@@ -578,6 +629,17 @@ export function BrowsePage() {
     getCollections(game.nexusDomain, 5, "", "endorsements", 0).then((r) => {
       if (!cancelled && r.ok) setCollections(r.collections ?? []);
     });
+    // Badges for every list on this page, fetched once per game.
+    getCollectionVerdicts(game.nexusDomain, game.appId)
+      .then((r) => {
+        if (cancelled || !r.ok) return;
+        const map: Record<string, CollectionVerdictState> = {};
+        for (const [slug, v] of Object.entries(r.verdicts ?? {})) {
+          map[slug] = v.state;
+        }
+        setVerdicts(map);
+      })
+      .catch(() => undefined);
     if (game.recommendedModIds?.length) {
       getModsByIds(game.nexusDomain, game.recommendedModIds).then(
         apply(setRecommended)
@@ -802,7 +864,13 @@ export function BrowsePage() {
               }}
             >
               {allCollections.map((c) => (
-                <CollectionCard key={c.slug} game={game} c={c} fromList />
+                <CollectionCard
+                  key={c.slug}
+                  game={game}
+                  c={c}
+                  fromList
+                  verdict={verdicts[c.slug]}
+                />
               ))}
             </Focusable>
             {allCollections.length === 0 && (
@@ -887,7 +955,12 @@ export function BrowsePage() {
                   }}
                 >
                   {collections.map((c) => (
-                    <CollectionCard key={c.slug} game={game} c={c} />
+                    <CollectionCard
+                      key={c.slug}
+                      game={game}
+                      c={c}
+                      verdict={verdicts[c.slug]}
+                    />
                   ))}
                   <Focusable
                     onActivate={() => setCollectionsMode(true)}
@@ -996,7 +1069,12 @@ export function BrowsePage() {
                 }}
               >
                 {searchCollections.map((c) => (
-                  <CollectionCard key={c.slug} game={game} c={c} />
+                  <CollectionCard
+                      key={c.slug}
+                      game={game}
+                      c={c}
+                      verdict={verdicts[c.slug]}
+                    />
                 ))}
                 {searchCollections.length === 0 && (
                   <div style={{ opacity: 0.7, fontSize: "13px" }}>
