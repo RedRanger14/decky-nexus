@@ -1121,6 +1121,9 @@ export const getHealthCheck = callable<
       why: string;
       mod_id?: number;
     }[];
+    /** Version-mismatched DLL plugins we set aside, so the game stops
+     * asking about them before every main menu. */
+    se_parked?: string[];
     /** DLL plugins the script extender refused, named by owning mod. */
     script_extender?: {
       dll: string;
