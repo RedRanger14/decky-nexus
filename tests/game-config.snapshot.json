@@ -19,7 +19,8 @@
     "hasSetupInis": true,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
   },
   {
     "appId": "22380",
@@ -40,7 +41,10 @@
     "hasSetupInis": true,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"nvse\", \"Data/NVSE\""
+    ]
   },
   {
     "appId": "261550",
@@ -61,7 +65,8 @@
     "hasSetupInis": false,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
   },
   {
     "appId": "292030",
@@ -80,7 +85,8 @@
     "hasSetupInis": false,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
   },
   {
     "appId": "377160",
@@ -101,7 +107,10 @@
     "hasSetupInis": true,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"f4se\""
+    ]
   },
   {
     "appId": "413150",
@@ -122,7 +131,10 @@
     "hasSetupInis": false,
     "hasLogAdapter": true,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"StardewModdingAPI\", \"smapi-internal\""
+    ]
   },
   {
     "appId": "489830",
@@ -143,7 +155,10 @@
     "hasSetupInis": false,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"skse64\""
+    ]
   },
   {
     "appId": "1030300",
@@ -164,7 +179,8 @@
     "hasSetupInis": false,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
   },
   {
     "appId": "1091500",
@@ -189,7 +205,14 @@
     "hasSetupInis": false,
     "hasLogAdapter": true,
     "hasOwnLauncher": true,
-    "longWaitAtMods": 150
+    "longWaitAtMods": 150,
+    "cleanupPrefixes": [
+      "\"bin/x64/plugins\", \"bin/x64/version.dll\"",
+      "\"red4ext\", \"bin/x64/winmm.dll\"",
+      "\"red4ext/plugins/ArchiveXL\"",
+      "\"red4ext/plugins/TweakXL\"",
+      "\"engine/tools\""
+    ]
   },
   {
     "appId": "1245620",
@@ -208,7 +231,8 @@
     "hasSetupInis": false,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
   },
   {
     "appId": "1623730",
@@ -229,7 +253,8 @@
     "hasSetupInis": false,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
   },
   {
     "appId": "2050650",
@@ -250,7 +275,10 @@
     "hasSetupInis": false,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"dinput8\""
+    ]
   },
   {
     "appId": "2868840",
@@ -271,6 +299,7 @@
     "hasSetupInis": false,
     "hasLogAdapter": true,
     "hasOwnLauncher": false,
-    "longWaitAtMods": null
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
   }
 ]

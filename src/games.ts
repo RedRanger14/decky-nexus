@@ -453,7 +453,17 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       launchOptionsTemplate:
         "bash -c 'exec \"$" +
         "{@/FalloutNVLauncher.exe/nvse_loader.exe}\"' -- %command%",
-      cleanupPrefixes: ["nvse"],
+      // "nvse" matches top-level names only, so xNVSE's own Data/NVSE
+      // folder (nvse_config.ini, and Plugins/ where NVSE-plugin mods land)
+      // survived every reset - and then got recorded as vanilla by the
+      // next baseline, on a game we had just reinstalled from scratch to
+      // get a clean one. A prefix containing a slash is treated as an
+      // EXACT relative path, never a prefix.
+      //
+      // Only New Vegas: Skyrim's Data/SKSE and Fallout 4's Data/F4SE do
+      // not exist on the test device, so adding them would be a guess
+      // about games that currently work.
+      cleanupPrefixes: ["nvse", "Data/NVSE"],
     },
     // verified live: NVAC (the domain's top mod) + YUP (51664, 5.3M dl)
     recommendedModIds: [53635, 51664],
