@@ -6387,6 +6387,30 @@ class TestHealthCheckCorroboration(unittest.TestCase):
         self.assertNotIn("General Shadows Fixes", suggested)
         self.assertEqual(r["known_bad"][0]["name"], "General Shadows Fixes")
 
+    def test_a_mod_the_collection_found_deleted_is_never_suggested(self):
+        # Fallout 4's health check recommended "Glowing Eyes - DELETED" and
+        # "More Clothes and Textures" - the second being one the collection
+        # run had JUST skipped as a 404. What one part of the plugin
+        # learns, the rest should not have to rediscover.
+        settings = main._load_settings()
+        settings.setdefault("collection_attention", {})["cyberpunk2077"] = {
+            "iszwwe": [{
+                "file_id": 1, "mod_id": 20405,
+                "mod_name": "General Shadows Fixes",
+                "reason": "unavailable", "options": [],
+            }],
+        }
+        main._save_settings(settings)
+        try:
+            r = self._check()
+            self.assertEqual(r["needs_mods"], [])
+            self.assertEqual(r["known_bad"][0]["mod_id"], 20405)
+            self.assertIn("no longer available", r["known_bad"][0]["why"])
+        finally:
+            settings = main._load_settings()
+            settings.get("collection_attention", {}).pop("cyberpunk2077", None)
+            main._save_settings(settings)
+
     def test_a_mod_with_a_verdict_is_never_suggested_again(self):
         main._record_mod_verdicts("cyberpunk2077", "23811903", [
             {"mod_id": 20405, "name": "General Shadows Fixes",

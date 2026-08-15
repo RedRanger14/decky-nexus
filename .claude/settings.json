@@ -3,7 +3,9 @@
     "allow": [
       "Bash(scp -o ConnectTimeout=25 /c/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/probe_modrules.py deck@steamdeck.local:/tmp/probe_modrules.py)",
       "Bash(scp -o ConnectTimeout=25 __TRACKED_VAR__/probe_modrules.py deck@steamdeck.local:/tmp/probe_modrules.py)",
-      "Bash(python -m unittest tests.test_backend -k \"LoadOrder\")"
+      "Bash(python -m unittest tests.test_backend -k \"LoadOrder\")",
+      "Bash(grep -viE \"^\\\\s*//\")",
+      "Bash(scp -o ConnectTimeout=25 /c/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/fo4_health.py deck@steamdeck.local:/tmp/fo4_health.py)"
     ]
   }
 }

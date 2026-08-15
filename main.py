@@ -13296,12 +13296,36 @@ query CollectionInstructions($slug: String!) {
             _record_mod_verdicts(game_domain, build, learned)
             verdicts = _verdicts_for_build(game_domain, build)
 
+        # Mods a collection run has already found are no longer on Nexus.
+        # The health check was recommending two of them by name - "Glowing
+        # Eyes - DELETED" and "More Clothes and Textures", the latter being
+        # one the collection had just skipped as a 404 - so the page was
+        # sending the user after downloads that cannot exist. What one part
+        # of the plugin learns, the rest should not have to rediscover.
+        gone = {}
+        for items in ((_load_settings().get("collection_attention") or {})
+                      .get(game_domain) or {}).values():
+            for item in items or []:
+                if item.get("reason") == "unavailable" and item.get("mod_id"):
+                    try:
+                        gone[int(item["mod_id"])] = item.get("mod_name") or ""
+                    except (TypeError, ValueError):
+                        continue
         # Never recommend a mod this device has already watched fail.
         known_bad = []
         for finding in needs_mods:
             kept = []
             for m in finding["missing"]:
-                v = verdicts.get(int(m.get("mod_id") or 0))
+                mid = int(m.get("mod_id") or 0)
+                if mid in gone:
+                    known_bad.append({
+                        "name": gone[mid] or m["name"],
+                        "for": finding["name"],
+                        "why": "it is no longer available on Nexus",
+                        "mod_id": mid,
+                    })
+                    continue
+                v = verdicts.get(mid)
                 if v:
                     known_bad.append({
                         "name": v.get("name") or m["name"],
