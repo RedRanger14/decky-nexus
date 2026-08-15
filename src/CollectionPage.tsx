@@ -686,6 +686,19 @@ export function CollectionPage() {
         dropDownload(f.modId);
       }
     } finally {
+      // The finishing pass an install does: bundled mods, the ini patches,
+      // and - the reason this is here - the load order the collection
+      // asks for. A collection installed before that existed never got
+      // it, and there is otherwise no way to apply it without
+      // reinstalling: Michael had no Finish setup to press, because
+      // nothing was pending, while the load order was still whatever
+      // install order produced. Repair is the recovery path for an
+      // already-installed collection, so it belongs here.
+      try {
+        await runCollectionExtras();
+      } catch {
+        /* a repair that fixed files must not report failure over this */
+      }
       endCollectionRun();
       setRepairing(false);
       refreshInstalled();
