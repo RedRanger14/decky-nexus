@@ -131,6 +131,11 @@ export interface ActiveDownload {
   /** Exact transfer accounting from the backend (downloading only). */
   bytesDone?: number;
   bytesTotal?: number;
+  /** Something the row must SAY rather than imply - currently only the
+   * retry notice after a dropped connection. Michael turned the wifi off
+   * mid-download and got no message at all, because nothing carried one
+   * this far. */
+  message?: string;
   /** Smoothed download speed, bytes/second. */
   bps?: number;
 }
@@ -165,6 +170,7 @@ export function nameDownload(
     bytesDone: prior?.bytesDone,
     bytesTotal: prior?.bytesTotal,
     bps: prior?.bps,
+    message: prior?.message,
   });
   notifyDownloads();
 }
@@ -184,7 +190,8 @@ export function updateDownload(
   percent: number,
   bytesDone?: number,
   bytesTotal?: number,
-  bps?: number
+  bps?: number,
+  message?: string
 ): void {
   const existing = downloads.get(modId);
   if (phase === "done" || phase === "error" || phase === "cancelled") {
@@ -208,6 +215,10 @@ export function updateDownload(
     bytesTotal: bytesTotal ?? existing?.bytesTotal,
     // Speed only means something mid-download.
     bps: phase === "downloading" ? bps ?? existing?.bps : undefined,
+    // NOT carried over from the previous update: a retry notice must
+    // disappear the moment bytes start flowing again, or the row keeps
+    // claiming the connection is lost while it visibly downloads.
+    message,
   });
   recordSpeedSample();
   notifyDownloads();

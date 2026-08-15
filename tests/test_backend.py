@@ -6988,6 +6988,18 @@ class TestDownloadSurvivesConnectionDrops(unittest.TestCase):
         body = self._download_source()
         self.assertIn("connection lost - retrying in", body)
 
+    def test_a_retry_reports_the_bytes_actually_on_disk(self):
+        # Michael pulled the wifi and watched the bar drop to zero. The
+        # retry reported part_now - the size when the ATTEMPT started,
+        # which is 0 for a file being fetched for the first time - so it
+        # claimed no progress at the exact moment the user most needs to
+        # see that theirs is safe.
+        body = self._download_source()
+        retry = body[body.index("connection lost - retrying in") - 900:]
+        self.assertIn("os.path.getsize(part_path)", retry)
+        self.assertIn("bytes_done=have", retry)
+        self.assertNotIn("bytes_done=part_now", retry)
+
 
 class TestPrefixToolRestaging(unittest.TestCase):
     """A tool already staged by an earlier successful run must be reused,
