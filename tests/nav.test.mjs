@@ -270,6 +270,29 @@ test("the endorse pill has a gamepad focus style", () => {
   );
 });
 
+test("a network drop pauses a collection instead of eating the queue", () => {
+  // 47 mods failed on DNS in five minutes and landed on the button as
+  // "still to install" with no reason attached. A network error says
+  // nothing about the mod, so it must not cost the mod its place.
+  const page = read("CollectionPage.tsx");
+  assert.ok(
+    page.includes("isNetworkError(result.error)"),
+    "the run loop does not tell a network failure from a mod failure"
+  );
+  assert.ok(
+    page.includes("networkStopped = true"),
+    "the run does not stop when the connection is gone"
+  );
+  assert.ok(
+    /setCollectionRow\(f\.fileId, "pending"\)/.test(page),
+    "a network-stopped mod is not returned to the queue as pending"
+  );
+  assert.ok(
+    page.includes("stopped - connection lost"),
+    "the summary does not say the connection went"
+  );
+});
+
 test("a download row can say what went wrong, not just how fast", () => {
   // Michael turned the wifi off mid-download: the retry notice was emitted
   // by the backend and never seen, because nothing between the event and
