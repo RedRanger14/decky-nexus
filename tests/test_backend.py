@@ -7075,6 +7075,90 @@ class TestScriptExtenderFailuresNameTheMod(unittest.TestCase):
                 os.path.join(self.dir, "absent.log"), {}), [])
 
 
+class TestCollectionLoadOrder(unittest.TestCase):
+    """Load order IS file order in plugins.txt, and the collection ships it.
+
+    Vault Boy 101's manifest carries 417 plugin entries already in the
+    curator's order. We read that list as a SET to decide what to enable
+    and threw the sequence away, so the load order came out as whatever
+    install order produced. In-game that reads as mods fighting: Michael's
+    run hung on Unlimited Companion Framework's own warning to "move EFF
+    further down your load order"."""
+
+    def setUp(self):
+        self.dir = os.path.join(TEST_ROOT, "loadorder")
+        shutil.rmtree(self.dir, ignore_errors=True)
+        os.makedirs(self.dir)
+        self.path = os.path.join(self.dir, "Plugins.txt")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _write(self, lines):
+        main._write_plugins_txt(self.path, lines)
+
+    def _read(self):
+        return main._read_plugins_txt(self.path)
+
+    def test_it_applies_the_curators_sequence(self):
+        self._write(["*EFF.esp", "*UCF.esp"])
+        moved = main._reorder_plugins(self.path, ["UCF.esp", "EFF.esp"])
+        self.assertEqual(moved, 2)
+        self.assertEqual(self._read(), ["*UCF.esp", "*EFF.esp"])
+
+    def test_it_never_switches_anything_on_or_off(self):
+        # The marker travels with its line, so reordering cannot activate
+        # a plugin the user had switched off.
+        self._write(["*EFF.esp", "UCF.esp"])
+        main._reorder_plugins(self.path, ["UCF.esp", "EFF.esp"])
+        self.assertEqual(self._read(), ["UCF.esp", "*EFF.esp"])
+
+    def test_a_mod_the_user_added_is_left_exactly_where_it_was(self):
+        # Only the collection's own plugins are permuted, and only across
+        # the positions they already occupy.
+        self._write(["*EFF.esp", "*MyOwnMod.esp", "*UCF.esp"])
+        main._reorder_plugins(self.path, ["UCF.esp", "EFF.esp"])
+        self.assertEqual(
+            self._read(), ["*UCF.esp", "*MyOwnMod.esp", "*EFF.esp"])
+
+    def test_comments_and_blanks_survive(self):
+        self._write(["# This file is used by Fallout 4", "", "*B.esp",
+                     "*A.esp"])
+        main._reorder_plugins(self.path, ["A.esp", "B.esp"])
+        self.assertEqual(
+            self._read(),
+            ["# This file is used by Fallout 4", "", "*A.esp", "*B.esp"])
+
+    def test_a_plugin_the_collection_does_not_name_is_untouched(self):
+        self._write(["*Zed.esp", "*A.esp"])
+        moved = main._reorder_plugins(self.path, ["A.esp"])
+        self.assertEqual(moved, 0)
+        self.assertEqual(self._read(), ["*Zed.esp", "*A.esp"])
+
+    def test_an_already_correct_order_moves_nothing(self):
+        # The steady state. Rewriting the file every launch would churn
+        # mtimes on the timestamp-ordered engines for no reason.
+        self._write(["*A.esp", "*B.esp", "*C.esp"])
+        moved = main._reorder_plugins(
+            self.path, ["A.esp", "B.esp", "C.esp"])
+        self.assertEqual(moved, 0)
+
+    def test_case_differences_do_not_defeat_it(self):
+        # Plugins.txt casing comes from the game, the manifest's from the
+        # curator, and they disagree constantly.
+        self._write(["*eff.ESP", "*Ucf.esp"])
+        main._reorder_plugins(self.path, ["UCF.esp", "EFF.esp"])
+        self.assertEqual(self._read(), ["*Ucf.esp", "*eff.ESP"])
+
+    def test_it_is_applied_only_where_file_order_is_load_order(self):
+        # FO3/New Vegas order by file TIMESTAMP; rewriting their plugins
+        # file would achieve nothing and churn it every run.
+        import inspect
+        src = inspect.getsource(main.Plugin.apply_collection_plugins)
+        cut = src.index("_reorder_plugins")
+        self.assertIn('plugins_style != "listed"', src[cut - 400:cut])
+
+
 class TestPrefixToolRestaging(unittest.TestCase):
     """A tool already staged by an earlier successful run must be reused,
     not treated as an obstacle.

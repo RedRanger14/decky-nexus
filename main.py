@@ -1999,6 +1999,60 @@ def _bisect_advance(state: dict, crashed: bool) -> dict:
     return state
 
 
+def _reorder_plugins(path: str, order: list) -> int:
+    """Put a collection's plugins into the order its curator chose.
+
+    Load order IS the file order in plugins.txt, and a collection's
+    manifest ships the answer: 417 entries for Vault Boy 101, already
+    resolved. We read that list, used it as a SET to decide what to
+    enable, and threw the sequence away - so the load order came out as
+    whatever install order happened to produce.
+
+    In-game that reads as mods fighting. Michael's Fallout 4 run hung on
+    Unlimited Companion Framework's own warning: "you may have another mod
+    overwriting FollowerScript... move EFF further down your load order or
+    UCF will not function correctly". Nothing had failed to install; the
+    ordering had simply never been applied.
+
+    Deliberately a PERMUTATION IN PLACE, not a rewrite. Only lines whose
+    plugin the collection names are touched, and they are redistributed
+    across the exact positions they already occupy - so a mod the user
+    installed themselves, and every implicit master, stays exactly where it
+    was. Enabled/disabled markers travel with their line, so this never
+    switches anything on or off.
+
+    Returns how many lines actually moved.
+    """
+    rank = {}
+    for i, name in enumerate(order):
+        low = (name or "").strip().lower()
+        if low and low not in rank:
+            rank[low] = i
+    if not rank:
+        return 0
+    lines = _read_plugins_txt(path)
+    slots, entries = [], []
+    for idx, line in enumerate(lines):
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        low = raw.lstrip("*").strip().lower()
+        if low in rank:
+            slots.append(idx)
+            entries.append((rank[low], line))
+    if len(slots) < 2:
+        return 0
+    entries.sort(key=lambda pair: pair[0])
+    moved = 0
+    for slot, (_r, line) in zip(slots, entries):
+        if lines[slot] != line:
+            lines[slot] = line
+            moved += 1
+    if moved:
+        _write_plugins_txt(path, lines)
+    return moved
+
+
 def _plugin_entries(lines: list, style: str = "starred") -> list:
     """(name, enabled) for the real entries, skipping comments/blanks.
 
@@ -12358,6 +12412,12 @@ query Link($slug: String!, $domainName: String!) {
             scratch, manifest = await _fetch_collection_manifest(
                 slug, game_domain, api_key
             )
+            # Kept as a LIST as well as a set: the sequence is the load
+            # order, and discarding it was the whole bug.
+            manifest_order = [
+                pl["name"] for pl in manifest.get("plugins") or []
+                if pl.get("name")
+            ]
             wanted = {
                 (pl.get("name") or "").lower()
                 for pl in manifest.get("plugins") or []
@@ -12418,6 +12478,20 @@ query Link($slug: String!, $domainName: String!) {
         # marked down for a limit nobody had hit. _slot_usage reads the
         # 0x200 flag out of each plugin header and has been correct all
         # along; this was the one caller not using it.
+        # The curator's sequence, applied last so it sees every plugin
+        # this pass switched on. Timestamp-ordered engines (FO3/FNV) get
+        # nothing from this - there the file order is not the load order,
+        # and _stagger_plugin_mtimes above is what matters.
+        reordered = 0
+        if plugins_style != "listed":
+            reordered = await asyncio.to_thread(
+                _reorder_plugins, path, manifest_order
+            )
+            if reordered:
+                decky.logger.info(
+                    f"collection plugins {slug!r}: moved {reordered} plugin(s) "
+                    "into the order the collection asks for"
+                )
         after_names = _enabled_plugins(path, plugins_style)
         full, light = await asyncio.to_thread(
             _slot_usage, data_path, after_names, implicit, esl
@@ -12438,6 +12512,10 @@ query Link($slug: String!, $domainName: String!) {
             "total": full,
             "light": light,
             "limit": limit,
+            # Plugins moved into the collection's own load order. Zero is
+            # the normal steady state - it only moves things the first time,
+            # or after something is added out of sequence.
+            "reordered": reordered,
         }
 
     async def apply_known_prerequisites(
