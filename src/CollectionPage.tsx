@@ -993,6 +993,22 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             unavailable.push(f.modName);
             setCollectionRow(f.fileId, "skipped");
             updateDownload(f.modId, "done", 100);
+            // PERSISTED, or it is only skipped until the page reloads.
+            // Vault Boy 101 finished with "4 remaining" that were all
+            // deleted mods: the skip lived in React state, so every fresh
+            // look at the collection offered them again, and the count
+            // could never reach zero. Nothing the user can do about a mod
+            // that no longer exists, so it is a permanent skip like a PC
+            // tool rather than something for Finish setup.
+            freshAttention.push({
+              file_id: f.fileId,
+              mod_id: f.modId,
+              mod_name: f.modName,
+              file_name: f.fileName,
+              version: f.version,
+              reason: "unavailable",
+              options: [],
+            });
           } else {
             failures += 1;
             setCollectionRow(f.fileId, "failed");

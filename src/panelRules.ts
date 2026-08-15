@@ -340,7 +340,13 @@ export function isGoneFromNexus(error?: string): boolean {
   const e = (error ?? "").toLowerCase();
   return (
     e.includes("author has removed this mod") ||
-    e.includes("taken this mod down while it is reviewed")
+    e.includes("taken this mod down while it is reviewed") ||
+    // A 404 on the download-link endpoint is the same fact arriving by a
+    // different route: the FILE the curator pinned is no longer there.
+    // "More Clothes and Textures" in Vault Boy 101 failed this way and,
+    // not being recognised as gone, sat on the button as a mod the user
+    // was invited to install again - which can only ever 404 again.
+    e.includes("download link error (http 404)")
   );
 }
 
