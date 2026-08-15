@@ -13160,12 +13160,48 @@ query CollectionInstructions($slug: String!) {
         # itself - and the same translation job: the extender names DLLs,
         # the user needs mods.
         se_failed = []
+        se_parked = []
+        # Declared here rather than with its siblings below, because the
+        # script-extender pass can fail a rename and has to say so.
+        errors = []
         if se_log_subpath and app_id:
             se_log = _game_prefs_path(app_id, se_log_subpath)
             if os.path.isfile(se_log):
                 se_failed = await asyncio.to_thread(
                     _se_failures_with_owners, se_log, records
                 )
+            # A plugin built for a different game build is refused by the
+            # extender EVERY launch, and the game asks about it with a
+            # modal before the main menu. Michael saw the same two on every
+            # boot: "po3_SpellPerkItemDistributorF4.dll: disabled" and
+            # "encounter_zone_recalculation" - and had to dismiss them to
+            # play, on a handheld, with no way to act on either.
+            #
+            # Parking one changes nothing about what loads: the game had
+            # already refused it. It only stops being asked. Version
+            # mismatches ONLY - "failed to load" is often a missing
+            # dependency and may still be repairable, so those are
+            # reported and left alone.
+            se_dir = os.path.join(
+                STEAM_COMMON, install_dir, *SE_PLUGIN_DIRS.get(
+                    se_log_subpath.split("/")[0], ("Data", "SKSE", "Plugins")
+                )
+            )
+            for f in se_failed:
+                if not f["outdated"]:
+                    continue
+                live = os.path.join(se_dir, f["dll"])
+                if not os.path.isfile(live):
+                    continue
+                try:
+                    os.replace(live, live + SE_DISABLED_SUFFIX)
+                    se_parked.append(f["mod"] or f["dll"])
+                    decky.logger.info(
+                        f"set aside {f['dll']} ({f['mod'] or 'no record'}): "
+                        f"{f['reason']} - the game refuses it every launch"
+                    )
+                except OSError as e:
+                    errors.append(f"{f['dll']}: {e}")
         verdicts = _verdicts_for_build(game_domain, build)
         have_ids = {int(rec["mod_id"]) for rec in tracked.values()}
         # The framework is installed, but not as a tracked mod - it arrives
@@ -13189,7 +13225,7 @@ query CollectionInstructions($slug: String!) {
                     owned_dlc.add(human)
         except OSError:
             pass
-        needs_mods, needs_dlc, needs_external, errors = [], [], [], []
+        needs_mods, needs_dlc, needs_external = [], [], []
         # One query per 20 mods rather than one per mod. At 14 mods the
         # difference is invisible; on a 500-mod Fallout 3 collection it is
         # 25 requests instead of 500, which is the difference between a
@@ -13432,6 +13468,9 @@ query CollectionInstructions($slug: String!) {
             # DLL plugins the script extender refused, named by the mod
             # that owns them rather than by filename.
             "script_extender": se_failed[:12],
+            # Version-mismatched ones we set aside, so the game stops
+            # asking about them before every main menu.
+            "se_parked": se_parked[:12],
             # Requirements a collection left out that the game has not
             # complained about. Shown, because silence is a bug - but not
             # as faults, because they are not faults.

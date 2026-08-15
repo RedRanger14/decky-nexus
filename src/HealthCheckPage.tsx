@@ -222,6 +222,7 @@ export default function HealthCheckPage() {
     owned_dlc: string[];
     already_fixed: { name: string; for: string }[];
     known_bad: { name: string; for: string; why: string; mod_id?: number }[];
+    se_parked: string[];
     script_extender: {
       dll: string;
       reason: string;
@@ -276,6 +277,7 @@ export default function HealthCheckPage() {
                 already_fixed: r.already_fixed ?? [],
                 known_bad: r.known_bad ?? [],
                 script_extender: r.script_extender ?? [],
+                se_parked: r.se_parked ?? [],
                 script_log: r.script_log,
               }
             : undefined
@@ -459,6 +461,25 @@ export default function HealthCheckPage() {
         {(shown?.script_extender.length ?? 0) > 0 && (
           <>
             <SectionHeading title="Mods the game refused to load" />
+            {(shown?.se_parked.length ?? 0) > 0 && (
+              <FindingCard
+                tone="143, 212, 143"
+                icon={<FaCheck size={14} />}
+                title={`${report!.se_parked.length} set aside for you`}
+                detail={
+                  <>
+                    <b>{report!.se_parked.join(", ")}</b> —{" "}
+                    {report!.se_parked.length === 1 ? "this was" : "these were"}{" "}
+                    built for a different version of the game, so the game
+                    refused {report!.se_parked.length === 1 ? "it" : "them"}{" "}
+                    every launch and asked you about{" "}
+                    {report!.se_parked.length === 1 ? "it" : "them"} before the
+                    main menu. Nothing has changed about what loads — that had
+                    already been refused — you just won't be asked again.
+                  </>
+                }
+              />
+            )}
             {report!.script_extender.map((p) => (
               <FindingCard
                 key={p.dll}

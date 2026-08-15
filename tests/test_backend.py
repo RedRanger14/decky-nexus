@@ -7098,6 +7098,27 @@ class TestScriptExtenderFailuresNameTheMod(unittest.TestCase):
             main._se_failures_with_owners(
                 os.path.join(self.dir, "absent.log"), {}), [])
 
+    def test_only_version_mismatches_are_set_aside(self):
+        # Parking one changes nothing about what loads - the game had
+        # already refused it - it only stops the modal before every main
+        # menu. But "failed to load" is often a missing dependency and may
+        # still be repairable here, so those are reported and left alone.
+        src = open(main.__file__, encoding="utf-8").read()
+        start = src.index("se_parked.append")
+        window = src[start - 900:start]
+        self.assertIn('if not f["outdated"]:', window)
+        self.assertIn("continue", window)
+        self.assertIn("SE_DISABLED_SUFFIX", window)
+
+    def test_the_parked_file_is_renamed_never_deleted(self):
+        # The extender only scans *.dll, so a suffix is enough - and the
+        # user can always have the mod back.
+        src = open(main.__file__, encoding="utf-8").read()
+        start = src.index("se_parked.append")
+        window = src[start - 400:start]
+        self.assertIn("os.replace(live, live + SE_DISABLED_SUFFIX)", window)
+        self.assertNotIn("os.remove", window)
+
 
 class TestCollectionLoadOrder(unittest.TestCase):
     """Load order IS file order in plugins.txt, and the collection ships it.
