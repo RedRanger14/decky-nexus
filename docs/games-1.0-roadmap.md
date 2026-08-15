@@ -10,13 +10,74 @@ tell whose fault it is.
 |---|---|---|
 | Stardew Valley | folder | **verified 2026-08-14: three collections including the #1 (Stardew Very Expanded), save loaded, health check corroborated against SMAPI's own log** |
 | Skyrim SE | dataDir | **the most heavily tested game here.** Automated crash hunt bisected a 100+ plugin load order to a single culprit; Gate to Sovngarde and Immersive Skyrim collections played. See `gate-to-sovngarde-findings.md` |
-| Fallout 4 | dataDir | tested 2026-08-04, collection worked first time |
+| Fallout 4 | dataDir | **PARTIAL (2026-08-15).** Small collections work (Historical Arsenal, 2026-08-04, first time). Large ones install correctly and then misbehave in-game, because a collection's load ORDER is not applied - see "modRules" below. Vault Boy 101 (521 mods) installed, booted after a long black screen, and hung on Unlimited Companion Framework's load-order warning |
 | Fallout: New Vegas | dataDir | tested, pre-adult-content |
 | Slay the Spire 2 | folder | **verified 2026-08-13 in depth**: #1 collection (Mesugaki the Spire) installs and boots clean - "Loaded 11 mods (11 total)", no errors; a second collection diagnosed to one mod throwing 1,041 exceptions and repaired automatically; individual mods, dependency auto-install and the verdict store all exercised. Most of the log-parsing, verdict and auto-repair machinery was built and proven here |
 | The Witcher 3 | folder | tested 2026-07-24 (script-mod ceiling documented) |
 | Resident Evil 4 | folder | **verified 2026-08-14: three collections, all worked. Tested WITH adult content**; endorsement bug found and fixed here |
 | Cyberpunk 2077 | folder+frameworks | **verified 2026-08-14: Welcome to Night City (283 mods) boots** once two orphaned .reds files were removed. Five frameworks install and endorse individually. **Health check corroborated against redscript's own log, verified by deliberately breaking a compile on device** - see below |
 | Elden Ring | me3 | **verified 2026-08-12: Seamless Co-op played between this Deck and a real Windows player.** The strongest result here - it proves the me3 route (real exe, EAC never bootstrapped) produces a client Windows players can actually host with, not just a game that launches. Unblocks DS3, Sekiro, AC6 and Nightreign, which share the loader |
+
+### The biggest open gap: collection load ORDER (modRules)
+
+Found properly on 2026-08-15, testing Vault Boy 101 (521 mods) on Fallout 4.
+
+A Nexus collection does not merely list mods, it ships **modRules** -
+explicit before/after constraints between named plugin files. The device's
+New Vegas collection carries **1,442** of them. We install in list order and
+never read the rules, so the resulting load order is whatever install order
+happened to produce.
+
+This is already written down in `get_collection_conflicts`, which is
+DISABLED for exactly this reason: judged by list order it reported 782 files
+as misplaced when modRules said they were fine. The detection was sound; the
+intent it compared against was wrong.
+
+The consequence in-game, verbatim from Vault Boy 101:
+
+> Unlimited Companion Framework has detected a potential mod conflict... move
+> EFF further down your load order or UCF will not function correctly
+
+Nothing is broken mechanically - 451 records installed, 399 plugins enabled,
+0 missing from Data - and the game still does not behave as the curator
+intended, because the curator's ordering was never applied.
+
+**This is the single highest-value Bethesda item left.** It is what makes
+large collections work on Windows and not here, and it needs a topological
+sort over the rules rather than a heuristic.
+
+### Bethesda titles cost several times what other games do
+
+Michael, 2026-08-15: *"I honestly think we could smash out 3-5 games for
+every 1 Bethesda title - they have taken by far the most work"*.
+
+The record supports it. Bethesda games are the only ones carrying all of:
+plugins.txt dialects (starred / listed / timestamp-ordered), load order and
+its 255-slot limit, ESL flags, missing masters, archive invalidation, a
+script extender whose plugins are version-locked to the exe, per-game ini
+surgery, and now modRules. Cyberpunk needed a router and a log parser;
+Slay the Spire 2 needed a folder and a log parser.
+
+Worth weighing when picking what to build next: the FromSoft family is one
+registry block each, and Silksong/Balatro/Palworld reuse machinery that
+already exists.
+
+### Fallout 4 is NOT over the plugin limit - our counter was
+
+Recorded because it nearly caused a wrong decision. The activation step logs
+`load order now 362 of 254`, which counts every enabled plugin against the
+FULL-slot limit. ESL-flagged plugins do not occupy those slots. Measured
+from the plugin headers on device with 521 mods installed:
+
+| | |
+|---|---|
+| enabled in Plugins.txt | 399 |
+| ESL-flagged (free) | 167 |
+| **full slots used** | **232 of 255** |
+| missing from Data | 0 |
+
+Every large Fallout 4 collection is ESL-heavy by design, so that counter is
+wrong on all of them. Fix it before trusting any slot-pressure warning.
 
 ### Cut from 1.0: Fallout 3
 
