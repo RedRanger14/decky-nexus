@@ -1100,6 +1100,32 @@ test("retry backoff grows and is capped", () => {
   }
 });
 
+// A collection outlives the mods in it. Vault Boy 101 finished with "4
+// remaining" that were all deleted: two the author removed, one whose
+// pinned file 404s, and a second file of the same removed mod.
+test("a 404 on the download link means the file is gone too", () => {
+  assert.equal(isGoneFromNexus("Download link error (HTTP 404)"), true);
+});
+
+test("a mod that is merely broken is not treated as deleted", () => {
+  for (const e of [
+    "Network error: ClientConnectorDNSError",
+    "Download link error (HTTP 403)",
+    "CDN download failed (HTTP 503)",
+  ]) {
+    assert.equal(isGoneFromNexus(e), false, e);
+  }
+});
+
+test("a deleted mod is a permanent skip, not a Finish setup job", () => {
+  // There is nothing a user can do about a mod that no longer exists, so
+  // it must not appear in "waiting on your choices".
+  assert.equal(
+    isActionableAttention({ reason: "unavailable", options: [] }),
+    false
+  );
+});
+
 // --- isGoneFromNexus / unavailableNote ------------------------------------
 // Slay the Spire 2's most popular collection lists two mods Nexus will not
 // serve: one its author deleted, one under moderation. Michael was told he

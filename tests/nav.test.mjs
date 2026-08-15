@@ -270,6 +270,20 @@ test("the endorse pill has a gamepad focus style", () => {
   );
 });
 
+test("a deleted mod is skipped for good, not every session", () => {
+  // Vault Boy 101 finished with 4 remaining, all of them mods that no
+  // longer exist on Nexus. The skip lived in React state only, so every
+  // fresh look at the collection offered them again and the count could
+  // never reach zero - which is the number Michael wants it to reach.
+  const page = read("CollectionPage.tsx");
+  const branch = page.slice(page.indexOf("isGoneFromNexus(result.error)"));
+  assert.ok(
+    branch.slice(0, 1600).includes('reason: "unavailable"'),
+    "a mod gone from Nexus is not persisted as a skip, so it returns as " +
+      "remaining on the next load"
+  );
+});
+
 test("a network drop pauses a collection instead of eating the queue", () => {
   // 47 mods failed on DNS in five minutes and landed on the button as
   // "still to install" with no reason attached. A network error says
