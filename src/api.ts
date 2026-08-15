@@ -432,7 +432,11 @@ export const installFramework = callable<
     install_kind: "smapi" | "copyRoot",
     detect_file: string,
     avoid_file_keywords: string[],
-    install_subdir: string
+    install_subdir: string,
+    /** So the vanilla baseline can be taken BEFORE the framework lands -
+     * it is the first thing to touch the game folder. */
+    mods_subdir: string,
+    app_id: number
   ],
   { ok: boolean; install_path?: string; error?: string }
 >("install_framework");

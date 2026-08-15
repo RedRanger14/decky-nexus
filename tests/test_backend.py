@@ -7094,6 +7094,47 @@ class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
                 f"baseline call with no build stamp: {window[:120]!r}",
             )
 
+    def test_a_mods_folder_the_game_never_ships_is_baselined_as_empty(self):
+        # _record_vanilla_baseline bailed out when the mods folder did not
+        # exist yet - which is the normal state for Cyberpunk's
+        # archive/pc/mod and Slay the Spire 2's mods before the first mod
+        # arrives. So the games whose mods folder is 100% mod-owned, the
+        # ones where a baseline is most useful, were the only ones that
+        # never got one at install time.
+        settings = main._load_settings()
+        settings.get("vanilla_baseline", {}).pop("freshtest", None)
+        main._save_settings(settings)
+        absent = os.path.join(self.root, "archive", "pc", "mod")
+        shutil.rmtree(os.path.join(self.root, "archive"), ignore_errors=True)
+        main._record_vanilla_baseline("freshtest", absent, 0, None, self.root)
+        try:
+            after = main._load_settings()
+            self.assertEqual(after["vanilla_baseline"]["freshtest"], [])
+        finally:
+            settings = main._load_settings()
+            for sec in ("vanilla_baseline", "vanilla_root_baseline"):
+                settings.get(sec, {}).pop("freshtest", None)
+            main._save_settings(settings)
+
+    def test_the_framework_install_takes_the_baseline_first(self):
+        # New Vegas, on a brand new install: Step 1 put xNVSE down, then
+        # the first mod install recorded the baseline - so eight nvse_*
+        # files and Data/NVSE went in as "vanilla". The framework is the
+        # first thing to touch the game folder, so it has to record the
+        # baseline, not inherit one taken after it.
+        import inspect
+        src = inspect.getsource(main.Plugin.install_framework)
+        self.assertIn("_record_vanilla_baseline", src)
+        self.assertLess(
+            src.index("_record_vanilla_baseline"),
+            src.index("_install_framework_inner("),
+            "the baseline is taken after the framework is installed",
+        )
+        # Optional trailing args, so a caller that has not been updated
+        # behaves exactly as before rather than recording a wrong baseline.
+        self.assertIn('mods_subdir: str = ""', src)
+        self.assertIn("if mods_subdir:", src)
+
     def test_an_empty_mods_baseline_still_sweeps(self):
         # "Recorded as empty" is not "never recorded", and `or []` had
         # collapsed the two. Cyberpunk's archive/pc/mod and Slay the Spire

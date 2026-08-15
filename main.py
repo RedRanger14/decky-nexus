@@ -443,15 +443,25 @@ def _record_vanilla_baseline(
     game's mods can write into (that lives in the frontend registry), so
     those are recorded on the first reset instead.
     """
-    if not game_domain or not os.path.isdir(mods_path):
+    if not game_domain:
         return
     settings = _load_settings()
     have = settings.setdefault("vanilla_baseline", {})
     if game_domain in have:
         return
-    try:
-        have[game_domain] = sorted(os.listdir(mods_path))
-    except OSError:
+    if os.path.isdir(mods_path):
+        try:
+            have[game_domain] = sorted(os.listdir(mods_path))
+        except OSError:
+            return
+    elif not os.path.exists(mods_path):
+        # A mods folder the game does not ship - Cyberpunk's
+        # archive/pc/mod, Slay the Spire 2's mods - does not exist until
+        # the first mod creates it, and this used to bail out entirely.
+        # So the games whose mods folder is 100% mod-owned, the ones where
+        # a baseline is most useful, were the ones that never got one.
+        have[game_domain] = []
+    else:
         return
     # And the game's own folder, not just its mod folder.
     #
@@ -9378,11 +9388,25 @@ query Link($slug: String!, $domainName: String!) {
         detect_file: str = "StardewModdingAPI",
         avoid_file_keywords: list = None,
         install_subdir: str = "",
+        mods_subdir: str = "",
+        app_id: int = 0,
     ) -> dict:
         """Download a mod-loader framework (e.g. SMAPI) from Nexus - so the
         author gets the download credit - and run its unattended installer
         against the game folder. Verified for SMAPI's installer, which
         supports --install --game-path for mod managers."""
+        # The framework is the FIRST thing to touch the game folder, so the
+        # baseline has to be taken before it, not after. It was taken by
+        # the first mod install instead - by which time Step 1 had already
+        # put the script extender there, and New Vegas duly recorded eight
+        # nvse_* files and Data/NVSE as vanilla on a brand new install.
+        # Trailing optional arguments so an un-updated caller behaves
+        # exactly as before rather than recording a wrong baseline.
+        if mods_subdir:
+            install_path, mods_path, _d = _game_paths(install_dir, mods_subdir)
+            _record_vanilla_baseline(
+                game_domain, mods_path, app_id, None, install_path
+            )
         return await self._install_framework_inner(
             game_domain,
             mod_id,
