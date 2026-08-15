@@ -429,6 +429,19 @@ def _record_vanilla_baseline(
     whether it actually got back to vanilla, without this file needing to
     know what vanilla looks like for every game - which is exactly the
     guess that let five mod files through the manual clean.
+
+    `app_id` and `root` are not optional in practice, whatever the defaults
+    say. Every install-time caller used to omit them, so the baseline was
+    written with NO build stamp and NO game-folder listing - and an
+    unstamped baseline used to mean "the game has not changed", which is
+    the assumption that would have let a reset sweep Skyrim's new vanilla
+    files after a Bethesda patch. Six of the nine games on device were in
+    that state, all of them baselined at first install and none of them
+    ever reset. They are passed now.
+
+    `extra_dirs` still is optional: install has no idea which directories a
+    game's mods can write into (that lives in the frontend registry), so
+    those are recorded on the first reset instead.
     """
     if not game_domain or not os.path.isdir(mods_path):
         return
@@ -8353,7 +8366,9 @@ query Link($slug: String!, $domainName: String!) {
                     "(FOMOD/optioned installers aren't supported yet). "
                     f"It contains: {tops}",
                 }
-            _record_vanilla_baseline(game_domain, mods_path)
+            _record_vanilla_baseline(
+                game_domain, mods_path, app_id, None, install_path
+            )
             os.makedirs(mods_path, exist_ok=True)
 
             def _merge_data_payloads():
@@ -8681,7 +8696,9 @@ query Link($slug: String!, $domainName: String!) {
                 elif kind == "layout":
                     result["unsupported_layout"] = True
                 return result
-            _record_vanilla_baseline(game_domain, mods_path)
+            _record_vanilla_baseline(
+                game_domain, mods_path, app_id, None, install_path
+            )
             os.makedirs(mods_path, exist_ok=True)
             settings = _load_settings()  # re-read: parallel installs
             installed = settings.setdefault("installed", {}).setdefault(
@@ -9020,7 +9037,9 @@ query Link($slug: String!, $domainName: String!) {
                     "error": "No loadable mod files found in this archive "
                     f"(expected {', '.join(flat_extensions)})",
                 }
-            _record_vanilla_baseline(game_domain, mods_path)
+            _record_vanilla_baseline(
+                game_domain, mods_path, app_id, None, install_path
+            )
             os.makedirs(mods_path, exist_ok=True)
             moved = []
             for src in flat:
@@ -9068,7 +9087,9 @@ query Link($slug: String!, $domainName: String!) {
         # Archives that ship the mods DIRECTORY itself (Bannerlord zips
         # rooted at Modules/, Stardew at Mods/, BepInEx at plugins/):
         # unwrap it, or the mod nests invisibly (Modules/Modules/X).
-        _record_vanilla_baseline(game_domain, mods_path)
+        _record_vanilla_baseline(
+            game_domain, mods_path, app_id, None, install_path
+        )
         os.makedirs(mods_path, exist_ok=True)
         target_name = os.path.basename(mods_subdir.rstrip("/")).lower()
         if (
@@ -9236,10 +9257,13 @@ query Link($slug: String!, $domainName: String!) {
                     ),
                 }
 
-            _, mods_path, _unused = _game_paths(
+            fomod_install_path, mods_path, _unused = _game_paths(
                 entry["install_dir"], entry["mods_subdir"]
             )
-            _record_vanilla_baseline(entry.get("game_domain", ""), mods_path)
+            _record_vanilla_baseline(
+                entry.get("game_domain", ""), mods_path,
+                int(entry.get("app_id") or 0), None, fomod_install_path,
+            )
             os.makedirs(mods_path, exist_ok=True)
 
             repair_only = bool(entry.get("repair_only"))

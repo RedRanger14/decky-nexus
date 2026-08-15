@@ -7068,6 +7068,32 @@ class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
                  .get("vanilla_root_baseline", {}).get(self.DOMAIN))
         self.assertIn("Game.exe", after)
 
+    def test_every_install_time_baseline_is_stamped(self):
+        # The root cause of the whole unstamped fleet. All five install-time
+        # callers passed only (game_domain, mods_path), so the baseline went
+        # in with no build stamp and no game-folder listing - and an
+        # unstamped baseline used to read as "the game has not changed".
+        # Six of nine games on device were in that state, every one of them
+        # baselined at first install and never reset.
+        #
+        # Asserted on the call sites because that is where it went wrong:
+        # the function always accepted these arguments and nobody passed
+        # them.
+        src = open(main.__file__, encoding="utf-8").read()
+        # The old two-argument form is what left every baseline unstamped.
+        self.assertNotIn("_record_vanilla_baseline(game_domain, mods_path)",
+                         src)
+        starts = [m.start() for m in
+                  re.finditer(r"_record_vanilla_baseline\(", src)]
+        # The definition plus five call sites.
+        self.assertGreaterEqual(len(starts), 6, starts)
+        for i in starts[1:]:
+            window = src[i:i + 220]
+            self.assertIn(
+                "app_id", window,
+                f"baseline call with no build stamp: {window[:120]!r}",
+            )
+
     def test_an_empty_mods_baseline_still_sweeps(self):
         # "Recorded as empty" is not "never recorded", and `or []` had
         # collapsed the two. Cyberpunk's archive/pc/mod and Slay the Spire
