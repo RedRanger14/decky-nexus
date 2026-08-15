@@ -7204,6 +7204,66 @@ class TestCollectionLoadOrder(unittest.TestCase):
         self.assertIn('plugins_style != "listed"', src[cut - 400:cut])
 
 
+class TestUninstallNeverEatsGameFiles(unittest.TestCase):
+    """A mod's record must never be able to delete the game's own files.
+
+    Fallout 4, 2026-08-15: a 451-mod collection installed perfectly, the
+    load order was applied, the game booted and started a new game - and
+    every surface rendered magenta. All nine of "Fallout4 - Textures1.ba2"
+    through "Textures9.ba2" were missing, removed when a reset uninstalled
+    records that listed them as their own files. Mod-supplied hair and eyes
+    drew correctly; skin, clothing and walls had no textures at all.
+
+    _game_owned_name already recognised them. It guarded the leftover sweep
+    and was never asked here."""
+
+    DOMAIN = "fallout4"
+
+    def setUp(self):
+        self.data = os.path.join(TEST_ROOT, "eatgame", "Data")
+        shutil.rmtree(os.path.dirname(self.data), ignore_errors=True)
+        os.makedirs(self.data)
+        for n in ("Fallout4 - Textures1.ba2", "Fallout4 - Meshes.ba2",
+                  "DLCCoast - Main.ba2", "TotallyAMod.ba2",
+                  "SomeMod - Textures.ba2"):
+            with open(os.path.join(self.data, n), "w") as f:
+                f.write("x")
+
+    def tearDown(self):
+        shutil.rmtree(os.path.dirname(self.data), ignore_errors=True)
+
+    def _remove(self, files):
+        settings = {"installed": {self.DOMAIN: {"Greedy Mod": {
+            "mode": "dataDir", "name": "Greedy Mod", "files": files,
+        }}}}
+        main._remove_data_dir_record(
+            self.DOMAIN, "Greedy Mod", self.data, 0, "", settings)
+
+    def test_a_vanilla_texture_archive_survives(self):
+        self._remove(["Fallout4 - Textures1.ba2"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.data, "Fallout4 - Textures1.ba2")))
+
+    def test_every_vanilla_archive_shape_survives(self):
+        self._remove(["Fallout4 - Meshes.ba2", "DLCCoast - Main.ba2"])
+        for n in ("Fallout4 - Meshes.ba2", "DLCCoast - Main.ba2"):
+            self.assertTrue(os.path.isfile(os.path.join(self.data, n)), n)
+
+    def test_the_mod_s_own_files_are_still_removed(self):
+        # The guard must not turn uninstall into a no-op.
+        self._remove(["TotallyAMod.ba2", "SomeMod - Textures.ba2"])
+        for n in ("TotallyAMod.ba2", "SomeMod - Textures.ba2"):
+            self.assertFalse(os.path.isfile(os.path.join(self.data, n)), n)
+
+    def test_a_mixed_record_loses_only_its_own(self):
+        # The real shape of the bug: one record claiming both.
+        self._remove(["Fallout4 - Textures1.ba2", "TotallyAMod.ba2"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.data, "Fallout4 - Textures1.ba2")))
+        self.assertFalse(os.path.isfile(
+            os.path.join(self.data, "TotallyAMod.ba2")))
+
+
 class TestPrefixToolRestaging(unittest.TestCase):
     """A tool already staged by an earlier successful run must be reused,
     not treated as an obstacle.

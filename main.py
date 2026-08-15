@@ -2930,6 +2930,28 @@ def _remove_data_dir_record(
     for rel in rec.get("files") or []:
         if not _safe_rel_path(rel):
             continue
+        # NEVER delete a file the GAME owns, even when a mod's record
+        # claims it. A mod that ships a replacement for a vanilla archive
+        # records that path as its own, and uninstalling it then takes the
+        # game's copy with it.
+        #
+        # That is not hypothetical. Michael's Fallout 4 rendered every
+        # surface magenta after a 451-mod collection installed perfectly:
+        # all nine of "Fallout4 - Textures1.ba2" through "Textures9.ba2"
+        # were gone, deleted by a reset removing records that claimed
+        # them. The mods' own textures loaded, so hair and eyes were fine
+        # and skin, clothing and walls had nothing to draw with.
+        #
+        # _game_owned_name already knew - "Fallout4 - Textures1.ba2"
+        # matches the Fallout4.esm stem - it was simply never asked here.
+        # It guarded the leftover sweep and nothing else.
+        leaf = rel.rsplit("/", 1)[-1]
+        if _game_owned_name(game_domain, leaf):
+            decky.logger.warning(
+                f"{record_key}: refusing to delete {leaf} - it belongs to "
+                "the game, not to this mod"
+            )
+            continue
         target = os.path.join(data_path, *rel.split("/"))
         try:
             if os.path.isfile(target):
