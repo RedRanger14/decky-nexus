@@ -1337,7 +1337,12 @@ export function CollectionPage() {
                   border: "1px solid rgba(220, 80, 80, 0.5)",
                 }}
               >
-                ⚠ This collection isn't supported on SteamOS. {unsupported}
+                {/* whiteSpace preserves the blank lines around the
+                    curator's own quoted instruction - run together as one
+                    paragraph it reads as our words rather than theirs. */}
+                <span style={{ whiteSpace: "pre-wrap" }}>
+                  ⚠ This collection isn't supported on SteamOS. {unsupported}
+                </span>
               </div>
             )}
             {conflictIssue && (

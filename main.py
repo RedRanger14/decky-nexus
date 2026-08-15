@@ -1353,6 +1353,61 @@ UNSUPPORTED_COLLECTIONS = {
 }
 
 
+# Collections that require the GAME to be downgraded before they work.
+#
+# Fallout 4's next-gen update split the modding ecosystem: F4SE plugins and
+# interface mods built for 1.10.163 are refused by, or crash on, the current
+# build. A StoryWealth - the #1 Fallout 4 collection, 908 mods and 115 GB -
+# says so in step 6 of its own instructions, and Michael installed the whole
+# thing before finding out, then got a black screen and a crash to desktop.
+#
+# The requirement is written in the description we already download, so
+# there is no excuse for not reading it. This is the hand-written
+# UNSUPPORTED_COLLECTIONS table's job done from the data instead.
+_DOWNGRADE_RE = re.compile(
+    r"downgrade\s+(?:the|your)\s+game"
+    r"|downgrade\s+by\s+(?:patching|downloading)"
+    r"|(?:fallout\s*4|skyrim)\s+downgrader"
+    r"|\bfo4down\b"
+    r"|not\s+next[\s-]?gen\s+compatible",
+    re.I,
+)
+# "You do NOT need to downgrade" is the opposite statement and appears just
+# as often, so a match is only believed when nothing negates it just before.
+_DOWNGRADE_NOT_RE = re.compile(
+    r"(?:no|not|never|don'?t|do not|without)\s+(?:need|have|required?|"
+    r"necessary)?[^.]{0,30}$",
+    re.I,
+)
+
+
+def _collection_downgrade_reason(description: str) -> str:
+    """The phrase that says this collection needs an older game, or "".
+
+    Returns the matched instruction so the panel can quote the curator
+    rather than paraphrase them - a user who is about to lose a 115 GB
+    download deserves to see the actual sentence.
+    """
+    text = description or ""
+    # Collection descriptions are mostly markdown images and links, so a
+    # naive window around the match quotes a URL fragment at the user -
+    # the first live run produced "ivery.nexusmods.com/mods/1151/images/...
+    # *** ## Step 6. Downgrade the game!". Strip the furniture first so the
+    # quote is the curator's sentence and nothing else.
+    text = re.sub(r"!?\[[^\]]*\]\([^)]*\)", " ", text)   # md images/links
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)                 # html tags
+    text = re.sub(r"[*_#`\\]+", " ", text)               # md emphasis
+    text = re.sub(r"\s+", " ", text)
+    for m in _DOWNGRADE_RE.finditer(text):
+        before = text[max(0, m.start() - 40):m.start()]
+        if _DOWNGRADE_NOT_RE.search(before):
+            continue
+        start = max(0, m.start() - 90)
+        return text[start:m.end() + 110].strip()
+    return ""
+
+
 def _parked_files_dir(game_domain: str, record_key: str) -> str:
     """Where a disabled dataDir mod's files wait to be put back."""
     return os.path.join(
@@ -12220,13 +12275,61 @@ query Link($slug: String!, $domainName: String!) {
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         entry = (UNSUPPORTED_COLLECTIONS.get(game_domain) or {}).get(slug or "")
-        if not entry:
+        if entry:
+            return {
+                "ok": True,
+                "supported": False,
+                "reason": entry["reason"],
+                "title": entry.get("title") or "",
+            }
+        # Nothing hand-written about it, so ask the curator. A collection
+        # that needs the game downgraded says so in its instructions, and
+        # those are one query away - which is a great deal cheaper than the
+        # 115 GB and two hours it cost to find out the other way.
+        try:
+            data = await _gql_query_vars(
+                """
+query CollectionInstructions($slug: String!) {
+  collection(slug: $slug, viewAdultContent: true) {
+    name
+    description
+  }
+}""",
+                {"slug": slug},
+                _load_settings().get("api_key"),
+            )
+            col = data.get("collection") or {}
+            quote = _collection_downgrade_reason(col.get("description") or "")
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                KeyError, ValueError, TypeError) as e:
+            # Never block a collection because a lookup failed - the check
+            # exists to save a download, not to become one more thing that
+            # can go wrong.
+            decky.logger.info(
+                f"downgrade check for {slug!r} could not run: "
+                f"{type(e).__name__}: {e}"
+            )
             return {"ok": True, "supported": True}
+        if not quote:
+            return {"ok": True, "supported": True}
+        decky.logger.info(
+            f"collection {slug!r} needs a game downgrade: {quote[:120]!r}"
+        )
         return {
             "ok": True,
             "supported": False,
-            "reason": entry["reason"],
-            "title": entry.get("title") or "",
+            "needs_downgrade": True,
+            "title": col.get("name") or "",
+            "reason": (
+                "This collection needs an OLDER version of the game than "
+                "the one Steam installs. Its own instructions say so:\n\n"
+                f"“{quote}”\n\n"
+                "Downgrading rewrites the game's exe and has to be redone "
+                "every time Steam updates it, so this plugin will not do it "
+                "for you yet. Installing anyway wastes the download: the "
+                "script extender refuses the collection's plugins and the "
+                "game crashes before the main menu."
+            ),
         }
 
     async def cancel_collection_install(
