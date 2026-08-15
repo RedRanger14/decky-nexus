@@ -11030,8 +11030,32 @@ query Link($slug: String!, $domainName: String!) {
             settings.get("baseline_build", {}).get(game_domain) or ""
         )
         now_build = _steam_build_id(app_id)
-        game_changed = bool(baseline_build and now_build
-                            and baseline_build != now_build)
+        # An UNSTAMPED baseline is not a matching one. Baselines taken
+        # before this stamp existed have no build at all, and the test
+        # below read that as "not changed" - so the sweep proceeded on the
+        # assumption that a baseline of unknown age describes the game
+        # sitting on disk right now.
+        #
+        # Found 2026-08-15 while checking Skyrim and New Vegas at Michael's
+        # request. Skyrim SE's baseline is stamped with nothing, and Skyrim
+        # is the most heavily tested game here: a Bethesda patch followed
+        # by a reset would have swept the new vanilla files as orphans,
+        # protected only by the known-masters list, which does not cover
+        # new .bsa content. That is the same class of loss as the New Vegas
+        # DLC incident, on a game with a hundred hours of testing in it.
+        #
+        # Unknown means unknown, and unknown means report rather than
+        # delete. Only when the CURRENT build is readable: if neither is
+        # known we have learned nothing and behave as before.
+        unstamped = bool(now_build and not baseline_build)
+        game_changed = unstamped or bool(
+            baseline_build and now_build and baseline_build != now_build
+        )
+        if unstamped:
+            decky.logger.info(
+                f"reset {game_domain!r}: baseline carries no build stamp, so "
+                "untracked files are reported rather than swept"
+            )
         if game_changed:
             decky.logger.info(
                 f"reset {game_domain!r}: game build changed "

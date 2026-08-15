@@ -7068,6 +7068,44 @@ class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
                  .get("vanilla_root_baseline", {}).get(self.DOMAIN))
         self.assertIn("Game.exe", after)
 
+    def test_an_unstamped_baseline_reports_instead_of_sweeping(self):
+        # Skyrim SE on device, 2026-08-15: baseline_build was None, because
+        # the baseline predates the stamp. The guard read that as "the game
+        # has not changed" and swept - so a Bethesda patch followed by a
+        # reset would have deleted the new vanilla files as orphans, on the
+        # most heavily tested game in the project.
+        #
+        # A baseline of unknown age says nothing about the game on disk.
+        settings = main._load_settings()
+        settings.get("baseline_build", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        self._orphan("r6/scripts", "orphan.reds")
+        orig = main._steam_build_id
+        main._steam_build_id = lambda app_id: "999999"
+        try:
+            r = self._reset()
+        finally:
+            main._steam_build_id = orig
+        self.assertTrue(r["game_changed"])
+        # Named, so the user still learns about it...
+        self.assertIn("r6/scripts/orphan.reds", r["extra_leftovers"])
+        # ...but not deleted, because we cannot prove it is not a game file.
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.root, "r6", "scripts", "orphan.reds")))
+
+    def test_an_unreadable_current_build_changes_nothing(self):
+        # If neither build is known we have learned nothing, so behaviour
+        # is exactly as before - otherwise every game whose appmanifest we
+        # cannot read would quietly stop sweeping.
+        settings = main._load_settings()
+        settings.get("baseline_build", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+        self._orphan("r6/scripts", "orphan.reds")
+        r = self._reset()  # app_id 0, so no build is readable either side
+        self.assertFalse(r["game_changed"])
+        self.assertFalse(os.path.exists(os.path.join(
+            self.root, "r6", "scripts", "orphan.reds")))
+
     def test_a_directory_with_no_baseline_is_left_completely_alone(self):
         # The dangerous case. With no record of what the GAME put there,
         # every file reads as an orphan - and deleting r6/scripts because
