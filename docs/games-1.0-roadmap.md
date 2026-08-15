@@ -173,25 +173,59 @@ every CET mod must have.
 
 **Not yet run on device.** Unit-tested only (9 tests).
 
-### Known gap: reset cannot sweep most of Cyberpunk's mod directories
+### RESOLVED (v0.186.0-v0.191.0): reset could not sweep four of Cyberpunk's
+### five mod directories
 
-Found while adding the above. `modWriteDirs` lists five directories, but the
-device's `vanilla_extra_baseline` for cyberpunk2077 holds **only
-`r6/scripts`** - because the other four do not exist in a vanilla install,
-so there was nothing to capture. The sweep deliberately skips any directory
-with no baseline ("we do not know what the GAME put there"), which is the
-right call for a directory that might hold game files, and the wrong one for
-a directory that vanilla does not have at all.
+`modWriteDirs` lists five, but the device's `vanilla_extra_baseline` held
+only `r6/scripts` - the other four do not exist in a vanilla install, so
+`os.listdir` raised and the error was swallowed. The sweep deliberately
+skips any directory with no baseline ("we do not know what the GAME put
+there"), so a CET mod, RED4ext plugin or tweak whose install record was lost
+was an orphan nothing could ever find. Exactly the failure that left two
+`.reds` files killing the script stack for weeks, with four more places to
+produce it.
 
-The consequence: a CET mod, RED4ext plugin or tweak whose install record is
-lost is an orphan no reset can ever find - exactly the failure that left two
-`.reds` files killing the script stack for weeks, now with four more
-directories able to produce it.
+**A directory a vanilla install does not have provably contains nothing of
+the game's**, so that is now recorded as an empty baseline rather than a
+missing one. A directory that exists but cannot be READ is still skipped -
+claiming empty there would have reset delete the contents of something we
+merely failed to open.
 
-The fix is to record an **empty list** for a modWriteDir that is absent at
-baseline time, so "vanilla had nothing here" is stated rather than
-indistinguishable from "never looked". Not done here: it changes reset, and
-reset is the one operation where being wrong deletes someone's game.
+#### Doing it on device found three more, none of which a test could have
+
+Run 2026-08-15, with Michael resetting and the numbers checked after each.
+
+1. **The re-take skipped the one game that needed it.** `reset_game_modding`
+   re-takes the baseline afterwards, because "THIS is the only moment we can
+   be sure what vanilla looks like" - but it was gated on the mods folder
+   existing AND being non-empty. Cyberpunk's mods folder is
+   `archive/pc/mod`, which the game does not ship, so a correct reset
+   removes it and the whole block was skipped. His reset completed with no
+   errors and changed no baseline at all.
+
+2. **Both baselines were protecting mod files from every sweep.**
+   `vanilla_baseline` held 16 `.archive` files with names like
+   `WINGDEER_FemV_HAIR_BELLE_NO32`; `vanilla_extra_baseline` held four more
+   in `r6/scripts`, including `ZKV_EnableFinisherRagdolls.reds` and a folder
+   `Arm Cyberware Attack Speed Fix` still sitting on disk. Both were
+   captured when the game was already modded. A baseline holding mod files
+   PROTECTS them, which is the exact opposite of its purpose, and no number
+   of clean resets could dislodge them. Cleared by hand, with a backup.
+
+3. **An empty root baseline switched the game-folder check off.**
+   `vanilla_root_baseline` was `[]` while 17 vanilla files sat in the game
+   root, and the leftover report is gated on `if root_baseline:` - so a mod
+   DLL beside the exe would never have been reported. That is the Fallout 3
+   failure the check was built for. Reset now re-takes this one too.
+
+Final state, verified: mods baseline `[]`, all four extra directories `[]`,
+root baseline 17 files, stamped at build 20383525.
+
+**Worth remembering for every other game:** a baseline captured on a device
+that was modded before the plugin ever saw it is worse than no baseline,
+and until now nothing could repair one. Any long-standing install may have
+the same problem, and the remedy is the same - reset, which now re-takes all
+three baselines honestly.
 
 ## Decky store submission: pre-PR checklist (researched 2026-08-11)
 
