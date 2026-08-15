@@ -6845,6 +6845,68 @@ class TestBrowseHidesKnownBrokenMods(unittest.TestCase):
         self.assertIn("still reachable by search", window)
 
 
+class TestDownloadSurvivesConnectionDrops(unittest.TestCase):
+    """The device fell off the wifi 79% into a 521-mod, 119 GB collection.
+
+    Four downloads froze at 12:35 and were still frozen two and a half hours
+    later. Pause and resume could not shift them: the pause flag is checked
+    once per chunk and no chunk ever arrived, so the coroutine never got
+    control back to see it. Only a read timeout can break that, and there
+    was none - the request carried total=1800 and no sock_read.
+
+    Michael: "although it was an accident, it is a very valid real world
+    test so we need to be able to handle connection drops"."""
+
+    def _download_source(self):
+        src = open(main.__file__, encoding="utf-8").read()
+        start = src.index("_DL_ACTIVE.add(mod_id)")
+        return src[start:src.index("async def _validate_key")]
+
+    def test_a_silent_socket_is_noticed_in_seconds_not_half_an_hour(self):
+        body = self._download_source()
+        self.assertIn("sock_read=DOWNLOAD_STALL_SECONDS", body)
+        self.assertLessEqual(main.DOWNLOAD_STALL_SECONDS, 90)
+
+    def test_a_healthy_long_download_is_never_killed_on_duration(self):
+        # total=1800 also aborted a legitimate 4 GB file on slow wifi at
+        # thirty minutes. Silence is the thing worth measuring, not length.
+        body = self._download_source()
+        self.assertIn("total=None", body)
+        self.assertNotIn("total=1800", body)
+
+    def test_it_absorbs_an_outage_long_enough_for_wifi_to_return(self):
+        # Three tries two seconds apart covered a hiccup and nothing else,
+        # so an outage shorter than a kettle boil killed the collection.
+        self.assertGreaterEqual(main.DOWNLOAD_TRANSPORT_RETRIES, 6)
+        total = sum(
+            main._transport_backoff(i)
+            for i in range(1, main.DOWNLOAD_TRANSPORT_RETRIES)
+        )
+        self.assertGreaterEqual(total, 120, "gives up inside two minutes")
+
+    def test_backoff_is_capped_so_it_does_not_double_into_hours(self):
+        for attempt in range(1, 20):
+            self.assertLessEqual(main._transport_backoff(attempt), 60)
+        self.assertLess(
+            main._transport_backoff(1), main._transport_backoff(4),
+            "backoff does not back off",
+        )
+
+    def test_every_retry_resumes_from_the_part_file(self):
+        # A 119 GB collection cannot restart files from zero on every
+        # wobble. The Range header and the .part are what make an outage
+        # cost seconds instead of the whole download.
+        body = self._download_source()
+        self.assertIn('{"Range": f"bytes={part_now}-"}', body)
+        self.assertIn("resuming from the part file", body)
+
+    def test_the_user_is_told_rather_than_left_watching_a_frozen_bar(self):
+        # A stalled bar that says nothing is indistinguishable from a hang,
+        # which is exactly why pause/resume got pressed.
+        body = self._download_source()
+        self.assertIn("connection lost - retrying in", body)
+
+
 class TestPrefixToolRestaging(unittest.TestCase):
     """A tool already staged by an earlier successful run must be reused,
     not treated as an obstacle.
