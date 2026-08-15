@@ -13,6 +13,8 @@ import {
   healthVerdict,
   installedDepsNote,
   isGoneFromNexus,
+  isNetworkError,
+  collectionRetryDelayMs,
   knownBrokenNote,
   lastRunSummary,
   preDisabledNote,
@@ -1049,6 +1051,53 @@ test("no dead ends behaves exactly as before", () => {
     lastRunSummary(["A"], 0, []),
     /looks the same whether that is one or twenty/
   );
+});
+
+// --- isNetworkError -------------------------------------------------------
+// Michael's device fell off the wifi during a 521-mod collection. Every
+// install failed on DNS in about fifteen seconds, so the run marched
+// through 47 mods in five minutes and finished "complete" with 47 still to
+// install - none faulty, none explained, all left for a console player to
+// click and diagnose.
+
+test("the errors a dropped connection actually produces are recognised", () => {
+  // Verbatim from the device log.
+  assert.equal(
+    isNetworkError("Network error: ClientConnectorDNSError"),
+    true
+  );
+  for (const e of [
+    "Nexus Mods API timed out",
+    "Network error: ClientConnectorError",
+    "Temporary failure in name resolution",
+    "Connection reset by peer",
+    "Cannot connect to host api.nexusmods.com",
+  ]) {
+    assert.equal(isNetworkError(e), true, e);
+  }
+});
+
+test("a real mod problem is not mistaken for a network one", () => {
+  // These must keep their own handling - retrying them forever would be
+  // worse than the bug being fixed.
+  for (const e of [
+    "The author has removed this mod",
+    "No Cyberpunk mod layout found in this archive",
+    "This archive has no recognizable Data payload",
+    "Low disk space (under 5 GB free)",
+    undefined,
+    "",
+  ]) {
+    assert.equal(isNetworkError(e), false, String(e));
+  }
+});
+
+test("retry backoff grows and is capped", () => {
+  assert.ok(collectionRetryDelayMs(1) >= 5000);
+  assert.ok(collectionRetryDelayMs(2) > collectionRetryDelayMs(1));
+  for (let a = 1; a < 12; a++) {
+    assert.ok(collectionRetryDelayMs(a) <= 30000, `attempt ${a}`);
+  }
 });
 
 // --- isGoneFromNexus / unavailableNote ------------------------------------

@@ -24,6 +24,8 @@ import {
   preDisabledNote,
   directNote,
   isGoneFromNexus,
+  isNetworkError,
+  collectionRetryDelayMs,
   unavailableNote,} from "./panelRules";
 
 import {
@@ -760,7 +762,13 @@ export function CollectionPage() {
       // nothing, but each prepared mod is an unpacked tree on disk, so
       // the window is small. 0 turns it off and restores the old
       // download-only behaviour exactly.
-      const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
+      // How many times a mod is re-attempted when the NETWORK is what failed.
+// Three tries at 5s, 10s and 20s covers a wifi reconnect; past that the
+// link is genuinely down and the honest move is to stop the run rather
+// than spend the rest of the queue discovering the same thing.
+const NETWORK_RETRIES = 3;
+
+const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       let installIndex = 0;
       let nextPrefetch = 0;
       const inflight = new Map<number, Promise<void>>();
@@ -794,6 +802,9 @@ export function CollectionPage() {
       };
       pump();
 
+      // Set when the run gives up because the network went away, so the
+      // summary can say so instead of reporting phantom failures.
+      let networkStopped = false;
       for (let qi = 0; qi < queue.length; qi++) {
         const f = queue[qi];
         installIndex = qi;
@@ -830,6 +841,53 @@ export function CollectionPage() {
             f.version,
             collection.slug
           );
+          // A dropped connection says nothing about the mod, so it must
+          // not cost the mod its place in the queue. Michael's wifi went
+          // down mid-run and 47 mods failed on DNS in five minutes, then
+          // sat on the button as "still to install" with no reason
+          // attached - exactly the diagnosis work a console player should
+          // never be handed.
+          for (
+            let attempt = 1;
+            attempt <= NETWORK_RETRIES && !result.ok &&
+              isNetworkError(result.error);
+            attempt++
+          ) {
+            const waitMs = collectionRetryDelayMs(attempt);
+            updateDownload(
+              f.modId,
+              "downloading",
+              0,
+              undefined,
+              undefined,
+              undefined,
+              `connection lost - retrying in ${Math.round(waitMs / 1000)}s`
+            );
+            await new Promise((r) => setTimeout(r, waitMs));
+            result = await installPinned(
+              game,
+              f.modId,
+              f.fileId,
+              f.fileName,
+              f.modName,
+              f.version,
+              collection.slug
+            );
+          }
+          if (!result.ok && isNetworkError(result.error)) {
+            // Still down after the retries. STOP, rather than spending
+            // the rest of the queue fifteen seconds at a time: every one
+            // of these would fail the same way, and a run that ends
+            // "finished" with 47 unexplained leftovers is worse than one
+            // that says the connection went and it is waiting.
+            dropDownload(f.modId);
+            // Back to pending, NOT failed: nothing is wrong with this mod
+            // and "Install remaining" must pick it up untouched once the
+            // connection returns.
+            setCollectionRow(f.fileId, "pending");
+            networkStopped = true;
+            break;
+          }
           if (result.needs_fomod && result.fomod_token) {
             const choices = curatorChoices[String(f.fileId)];
             if (choices !== undefined) {
@@ -977,6 +1035,7 @@ export function CollectionPage() {
       const bits = [];
       if (unavailable.length > 0) setUnavailable(unavailable);
       if (failures > 0) bits.push(`${failures} failure(s)`);
+      if (networkStopped) bits.push("stopped - connection lost");
       if (unavailable.length > 0)
         bits.push(`${unavailable.length} no longer on Nexus`);
       if (needsChoices > 0)

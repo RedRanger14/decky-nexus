@@ -302,6 +302,40 @@ export function knownBrokenNote(version: string): string {
  * down for review. Neither is a failure anybody can act on, so neither
  * belongs in a failure count.
  */
+/** The connection dropped, rather than anything being wrong with the mod.
+ *
+ * Michael's device fell off the wifi during a 521-mod collection. Each
+ * install failed in about fifteen seconds with ClientConnectorDNSError, so
+ * the run marched through 47 mods in five minutes and finished "complete"
+ * with 47 still to install - none of them faulty, none of them explained,
+ * and every one of them left for a console player to click and diagnose.
+ *
+ * A network error says nothing about the mod, so it must never consume its
+ * place in the queue.
+ */
+export function isNetworkError(error?: string): boolean {
+  const e = (error ?? "").toLowerCase();
+  return (
+    e.includes("network error") ||
+    e.includes("clientconnector") ||
+    e.includes("dns") ||
+    e.includes("timed out") ||
+    e.includes("timeout") ||
+    e.includes("connection reset") ||
+    e.includes("cannot connect") ||
+    e.includes("temporary failure in name resolution")
+  );
+}
+
+/** How long to wait before retrying a mod the network denied us.
+ *
+ * Deliberately longer than the download loop's backoff: by the time a whole
+ * install call has failed on DNS, the link is down rather than flaky, and
+ * hammering it just burns the queue faster. */
+export function collectionRetryDelayMs(attempt: number): number {
+  return Math.min(5000 * 2 ** (attempt - 1), 30000);
+}
+
 export function isGoneFromNexus(error?: string): boolean {
   const e = (error ?? "").toLowerCase();
   return (
