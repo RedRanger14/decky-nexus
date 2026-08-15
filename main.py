@@ -1408,6 +1408,41 @@ def _collection_downgrade_reason(description: str) -> str:
     return ""
 
 
+def _hide_known_broken(game_domain: str, app_id: int, mods: list) -> tuple:
+    """Drop mods this device has watched fail on the build it is running.
+
+    For the browse rows only. Michael: the store page "is kind of a
+    highlights page and we shouldn't show things you can't install" - and a
+    mod we have already seen crash this exact game build is the clearest
+    case there is, because it is evidence from this device rather than a
+    table someone typed.
+
+    Scoped to the build like every verdict: a game update retires the
+    verdict, and the mod comes straight back onto the page. It is still
+    reachable by search, and its own page still says what happened - this
+    only decides what gets recommended.
+
+    Returns (kept, hidden_names).
+    """
+    if not app_id:
+        return mods, []
+    known = _known_broken_mods(game_domain, _steam_build_id(app_id))
+    if not known:
+        return mods, []
+    kept, hidden = [], []
+    for m in mods:
+        try:
+            mid = int(m.get("modId") or 0)
+        except (TypeError, ValueError):
+            kept.append(m)
+            continue
+        if mid in known:
+            hidden.append(m.get("name") or str(mid))
+        else:
+            kept.append(m)
+    return kept, hidden
+
+
 def _parked_files_dir(game_domain: str, record_key: str) -> str:
     """Where a disabled dataDir mod's files wait to be put back."""
     return os.path.join(
@@ -6567,9 +6602,14 @@ class Plugin:
         count: int = 10,
         offset: int = 0,
         search: str = "",
+        app_id: int = 0,
     ) -> dict:
         """Browse or search a game's mods, sorted server-side. Public data -
-        works without a key, but we send it when present."""
+        works without a key, but we send it when present.
+
+        `app_id` is optional and only used to hide mods this device has
+        watched fail on the installed build - see _hide_known_broken. A
+        caller that omits it gets exactly what it always got."""
         if sort not in SORT_FIELDS:
             return {"ok": False, "error": f"Unknown sort {sort!r}"}
         search = (search or "").strip()
@@ -6630,6 +6670,12 @@ class Plugin:
             f"get_mods({game_domain!r}, sort={sort}): "
             f"{len(mods)}/{page['nodesCount']} mods returned"
         )
+        mods, hidden = _hide_known_broken(game_domain, app_id, mods)
+        if hidden:
+            decky.logger.info(
+                f"get_mods({game_domain!r}): hid {len(hidden)} mod(s) known "
+                f"broken on this build: {', '.join(hidden[:5])}"
+            )
         return {"ok": True, "total": page["nodesCount"], "mods": mods}
 
     async def get_endorsement(self, game_domain: str, mod_id: int) -> dict:
@@ -6854,6 +6900,7 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
       endorsements
       tileImage { thumbnailUrl(size: small) }
       user { name }
+      description
       latestPublishedRevision { modCount totalSize }
     }
   }
@@ -6878,8 +6925,23 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
         try:
             data = await _gql_query_vars(query, variables, api_key)
             out = []
+            hidden = []
             for n in data["collectionsV2"]["nodes"]:
                 rev = n.get("latestPublishedRevision") or {}
+                # A collection that needs an older game cannot be installed
+                # here at all, so it does not belong on a page of things to
+                # install. Michael: "its kind of a highlights page and we
+                # shouldn't show things you can't install".
+                #
+                # Free to check: `description` comes back on the SAME list
+                # query, so this costs no extra requests. Hidden here only -
+                # search still finds it, and its own page still explains
+                # why, so this is a highlights decision rather than a
+                # pretence that the collection does not exist.
+                slug = n.get("slug") or ""
+                if _collection_downgrade_reason(n.get("description") or ""):
+                    hidden.append(f"{n.get('name') or slug} ({slug})")
+                    continue
                 out.append(
                     {
                         "name": n.get("name") or "",
@@ -6894,10 +6956,20 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                         "totalSize": int(rev.get("totalSize") or 0),
                     }
                 )
+            if hidden:
+                # Logged, never silent: a curator whose collection stops
+                # appearing deserves a reason that exists somewhere, and
+                # the next person debugging "why is X missing" should find
+                # it in one grep rather than reading this function.
+                decky.logger.info(
+                    f"get_collections({game_domain!r}): hid "
+                    f"{len(hidden)} collection(s) needing an older game "
+                    f"build: {', '.join(hidden[:5])}"
+                )
             decky.logger.info(
                 f"get_collections({game_domain!r}): {len(out)} returned"
             )
-            return {"ok": True, "collections": out}
+            return {"ok": True, "collections": out, "hidden": len(hidden)}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -7775,7 +7847,9 @@ query Link($slug: String!, $domainName: String!) {
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    async def get_trending_mods(self, game_domain: str, count: int = 10) -> dict:
+    async def get_trending_mods(
+        self, game_domain: str, count: int = 10, app_id: int = 0
+    ) -> dict:
         """Genuinely-trending mods from the v1 API (a signal v2 doesn't
         expose), mapped to the standard mod shape."""
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
@@ -7803,6 +7877,12 @@ query Link($slug: String!, $domainName: String!) {
             for m in _gate_adult_nodes(body, "contains_adult_content")
             if m.get("name") and m.get("available", True)
         ][: int(count)]
+        mods, hidden = _hide_known_broken(game_domain, app_id, mods)
+        if hidden:
+            decky.logger.info(
+                f"get_trending_mods({game_domain!r}): hid {len(hidden)} "
+                f"mod(s) known broken on this build: {', '.join(hidden[:5])}"
+            )
         return {"ok": True, "total": len(mods), "mods": mods}
 
     # ---- Mod files & install (REST v1) --------------------------------------

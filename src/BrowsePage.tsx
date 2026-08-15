@@ -533,7 +533,8 @@ export function BrowsePage() {
         effectiveSort,
         PAGE_SIZE,
         offset,
-        effectiveSearch
+        effectiveSearch,
+        game.appId
       );
       if (result.ok) {
         setError(undefined);
@@ -575,9 +576,11 @@ export function BrowsePage() {
         apply(setRecommended)
       );
     }
-    getTrendingMods(game.nexusDomain, 10).then(apply(setTrending));
-    getMods(game.nexusDomain, "createdAt", ROW_SIZE, 0, "").then(apply(setNewest));
-    getMods(game.nexusDomain, "endorsements", ROW_SIZE, 0, "").then((r) => {
+    getTrendingMods(game.nexusDomain, 10, game.appId).then(apply(setTrending));
+    getMods(game.nexusDomain, "createdAt", ROW_SIZE, 0, "", game.appId).then(
+      apply(setNewest)
+    );
+    getMods(game.nexusDomain, "endorsements", ROW_SIZE, 0, "", game.appId).then((r) => {
       if (!cancelled && r.ok) {
         setPopular(r.mods ?? []);
         setTotal(r.total);

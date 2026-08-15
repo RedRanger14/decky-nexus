@@ -159,7 +159,17 @@ export interface GameStatus {
 }
 
 export const getMods = callable<
-  [game_domain: string, sort: string, count: number, offset: number, search: string],
+  [
+    game_domain: string,
+    sort: string,
+    count: number,
+    offset: number,
+    search: string,
+    /** Optional. Only used to hide mods this device has already watched
+     * fail on the installed build - the browse rows are a highlights page,
+     * not a catalogue. */
+    app_id: number
+  ],
   ModsResult
 >("get_mods");
 
@@ -183,7 +193,7 @@ export const checkUpdates = callable<
 >("check_updates");
 
 export const getTrendingMods = callable<
-  [game_domain: string, count: number],
+  [game_domain: string, count: number, app_id: number],
   ModsResult
 >("get_trending_mods");
 

@@ -6755,6 +6755,33 @@ class TestCollectionNeedsDowngrade(unittest.TestCase):
         self.assertIn("older version", r["reason"].lower())
         self.assertIn("Downgrade the game", r["reason"])
 
+    def test_a_downgrade_collection_is_hidden_from_the_browse_rows(self):
+        # Michael: the store page "is kind of a highlights page and we
+        # shouldn't show things you can't install". The description comes
+        # back on the SAME list query, so this costs no extra requests.
+        plugin = main.Plugin()
+        orig = main._gql_query_vars
+
+        async def fake(query, variables, api_key=None):
+            self.assertIn("description", query)
+            return {"collectionsV2": {"nodes": [
+                {"name": "A StoryWealth", "slug": "5atq9t",
+                 "description": self.REAL,
+                 "latestPublishedRevision": {"modCount": 908}},
+                {"name": "Such Fallout 4", "slug": "u6moyd",
+                 "description": "Install the mods and play.",
+                 "latestPublishedRevision": {"modCount": 112}},
+            ]}}
+
+        main._gql_query_vars = fake
+        try:
+            r = run(plugin.get_collections("fallout4", 10, "", "endorsements", 0))
+        finally:
+            main._gql_query_vars = orig
+        names = [c["name"] for c in r["collections"]]
+        self.assertEqual(names, ["Such Fallout 4"])
+        self.assertEqual(r["hidden"], 1)
+
     def test_the_hand_written_table_still_wins(self):
         # VeryLastKiss's TTW is refused for a different reason entirely, and
         # a network lookup must not get the chance to overrule it.
@@ -6762,6 +6789,60 @@ class TestCollectionNeedsDowngrade(unittest.TestCase):
         r = run(plugin.get_collection_support("newvegas", "3fs9zx"))
         self.assertFalse(r["supported"])
         self.assertIn("Tale of Two Wastelands", r["reason"])
+
+
+class TestBrowseHidesKnownBrokenMods(unittest.TestCase):
+    """The browse rows recommend things. A mod this device has already
+    watched fail on the build it is running should not be one of them."""
+
+    DOMAIN = "browsetest"
+    BUILD = "555000"
+
+    def setUp(self):
+        self._orig_build = main._steam_build_id
+        main._steam_build_id = lambda app_id: self.BUILD if app_id else ""
+        main._record_mod_verdicts(self.DOMAIN, self.BUILD, [
+            {"mod_id": 284, "name": "Relics Reminder", "version": "1.1.0",
+             "why": "1,056 MissingMethodExceptions"}])
+
+    def tearDown(self):
+        main._steam_build_id = self._orig_build
+        settings = main._load_settings()
+        settings.get("mod_verdicts", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+
+    def _mods(self):
+        return [{"modId": 284, "name": "Relics Reminder"},
+                {"modId": 103, "name": "BaseLib"}]
+
+    def test_a_mod_with_a_broken_verdict_is_hidden(self):
+        kept, hidden = main._hide_known_broken(self.DOMAIN, 1, self._mods())
+        self.assertEqual([m["name"] for m in kept], ["BaseLib"])
+        self.assertEqual(hidden, ["Relics Reminder"])
+
+    def test_without_an_app_id_nothing_is_hidden(self):
+        # A caller that has not been updated must get exactly what it
+        # always got.
+        kept, hidden = main._hide_known_broken(self.DOMAIN, 0, self._mods())
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(hidden, [])
+
+    def test_a_verdict_from_another_build_does_not_hide_it(self):
+        # A game update retires the verdict and the mod comes straight back
+        # onto the page, same rule as everywhere else.
+        main._steam_build_id = lambda app_id: "999999"
+        kept, _hidden = main._hide_known_broken(self.DOMAIN, 1, self._mods())
+        self.assertEqual(len(kept), 2)
+
+    def test_search_is_unaffected_by_the_highlights_rule(self):
+        # Hiding is a recommendation decision, not a pretence the mod does
+        # not exist - anyone searching for it by name still finds it.
+        import re as _re
+        src = open(main.__file__, encoding="utf-8").read()
+        start = src.index("def _hide_known_broken")
+        # Whitespace-normalised: the sentence wraps across source lines.
+        window = _re.sub(r"\s+", " ", src[start:start + 1200]).lower()
+        self.assertIn("still reachable by search", window)
 
 
 class TestPrefixToolRestaging(unittest.TestCase):
