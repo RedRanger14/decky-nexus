@@ -6642,6 +6642,128 @@ class TestFilesModeToggle(unittest.TestCase):
             os.path.join(self.root, "r6", "scripts", "a.reds")))
 
 
+class TestCollectionNeedsDowngrade(unittest.TestCase):
+    """A collection that needs an older game says so, and we never read it.
+
+    A StoryWealth is the #1 Fallout 4 collection - 908 mods, 115 GB, 14,662
+    endorsements - and step 6 of its instructions is "Downgrade the game!".
+    Michael installed all of it, booted, and got seven F4SE plugins refused
+    as "incompatible with the current version of the game" and a crash
+    before the main menu. The requirement was in the description the plugin
+    already downloads."""
+
+    # Lifted from the live description, 2026-08-15.
+    REAL = (
+        "ab and in the top bar click DEPLOY MODS. *** ## Step 6. Downgrade "
+        "the game! *GOG.com users can skip this step as GOG still uses the "
+        "old version of the game.* **If you w"
+    )
+    REAL_TOOL = (
+        'Go to the Dashboard and find the "**Fallout 4 Downgrader**".\\ '
+        "*Let the patcher do it's job for a few seconds. Done.*"
+    )
+    REAL_FILE = (
+        "Make sure to grab the **(Not Next-Gen compatible)** version. For "
+        "file-conflicts the mod of your choice should go **After**."
+    )
+
+    def test_it_finds_the_downgrade_instruction(self):
+        self.assertIn("Downgrade the game",
+                      main._collection_downgrade_reason(self.REAL))
+
+    def test_it_finds_the_named_tool(self):
+        self.assertTrue(main._collection_downgrade_reason(self.REAL_TOOL))
+
+    def test_it_finds_the_not_next_gen_file_note(self):
+        self.assertTrue(main._collection_downgrade_reason(self.REAL_FILE))
+
+    def test_the_quote_is_a_sentence_not_a_url_fragment(self):
+        # The first live run quoted "ivery.nexusmods.com/mods/1151/images/
+        # 68877-1759206362-988431549.jpg) *** ## Step 6. Downgrade the
+        # game!" at the user, because these descriptions are mostly
+        # markdown images.
+        quote = main._collection_downgrade_reason(
+            "![clean](https://staticdelivery.nexusmods.com/mods/1151/images/"
+            "68877-1759206362-988431549.jpg) *** ## Step 6. Downgrade the "
+            "game! *GOG.com users can skip this step.*"
+        )
+        self.assertTrue(quote)
+        self.assertNotIn("http", quote)
+        self.assertNotIn(".jpg", quote)
+        self.assertNotIn("![", quote)
+        self.assertIn("Downgrade the game", quote)
+
+    def test_it_quotes_the_curator_rather_than_paraphrasing(self):
+        # Someone about to lose a 115 GB download deserves the actual
+        # sentence, not our summary of it.
+        quote = main._collection_downgrade_reason(self.REAL)
+        self.assertIn("GOG", quote)
+        self.assertGreater(len(quote), 40)
+
+    def test_html_markup_does_not_hide_the_instruction(self):
+        self.assertTrue(main._collection_downgrade_reason(
+            "<h2>Step 6. <b>Downgrade</b> the game!</h2>"
+        ) or main._collection_downgrade_reason(
+            "<h2>Step 6. Downgrade the game!</h2>"
+        ))
+
+    def test_a_collection_that_needs_no_downgrade_is_left_alone(self):
+        # The opposite statement appears just as often, and blocking a
+        # working collection is worse than the problem.
+        for text in (
+            "You do not need to downgrade the game for this collection.",
+            "No need to downgrade the game - it is next-gen compatible.",
+            "This collection is Next-Gen compatible out of the box.",
+            "Install the mods in order and launch.",
+            "",
+        ):
+            self.assertEqual(
+                main._collection_downgrade_reason(text), "", text)
+
+    def test_the_check_never_blocks_when_the_lookup_fails(self):
+        # It exists to save a download, not to become one more thing that
+        # can go wrong.
+        plugin = main.Plugin()
+        orig = main._gql_query_vars
+
+        async def boom(*a, **k):
+            raise RuntimeError("nexus is down")
+
+        main._gql_query_vars = boom
+        try:
+            r = run(plugin.get_collection_support("fallout4", "5atq9t"))
+        finally:
+            main._gql_query_vars = orig
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["supported"])
+
+    def test_a_downgrade_collection_is_refused_before_the_download(self):
+        plugin = main.Plugin()
+        orig = main._gql_query_vars
+
+        async def fake(query, variables, api_key=None):
+            return {"collection": {"name": "A StoryWealth",
+                                   "description": self.REAL}}
+
+        main._gql_query_vars = fake
+        try:
+            r = run(plugin.get_collection_support("fallout4", "5atq9t"))
+        finally:
+            main._gql_query_vars = orig
+        self.assertFalse(r["supported"])
+        self.assertTrue(r["needs_downgrade"])
+        self.assertIn("older version", r["reason"].lower())
+        self.assertIn("Downgrade the game", r["reason"])
+
+    def test_the_hand_written_table_still_wins(self):
+        # VeryLastKiss's TTW is refused for a different reason entirely, and
+        # a network lookup must not get the chance to overrule it.
+        plugin = main.Plugin()
+        r = run(plugin.get_collection_support("newvegas", "3fs9zx"))
+        self.assertFalse(r["supported"])
+        self.assertIn("Tale of Two Wastelands", r["reason"])
+
+
 class TestPrefixToolRestaging(unittest.TestCase):
     """A tool already staged by an earlier successful run must be reused,
     not treated as an obstacle.

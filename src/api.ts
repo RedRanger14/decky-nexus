@@ -970,7 +970,17 @@ export const cancelCollectionInstall = callable<
 // download rather than after it.
 export const getCollectionSupport = callable<
   [game_domain: string, slug: string],
-  { ok: boolean; supported?: boolean; reason?: string; title?: string; error?: string }
+  {
+    ok: boolean;
+    supported?: boolean;
+    /** Needs an OLDER game build than Steam installs - the Fallout 4
+     * next-gen split. Read from the collection's own instructions, before
+     * the download rather than after 115 GB of it. */
+    needs_downgrade?: boolean;
+    reason?: string;
+    title?: string;
+    error?: string;
+  }
 >("get_collection_support");
 
 // Whether ONE mod needs something Nexus does not host. Keyed by mod id so
