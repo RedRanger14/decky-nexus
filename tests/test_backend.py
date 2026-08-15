@@ -7001,6 +7001,80 @@ class TestDownloadSurvivesConnectionDrops(unittest.TestCase):
         self.assertNotIn("bytes_done=part_now", retry)
 
 
+class TestScriptExtenderFailuresNameTheMod(unittest.TestCase):
+    """The extender reports filenames. A player needs mods.
+
+    Michael, booting Vault Boy 101 (521 mods) on Fallout 4:
+
+        po3_SpellPerkItemDistributorF4.dll: disabled, incompatible with the
+        current version of the game
+
+    Nothing in that names the mod to update, the mod to switch off, or even
+    which mod it is - and it arrived on a black screen. The install records
+    already know which mod wrote which file."""
+
+    # Verbatim from the device's f4se.log.
+    LINES = [
+        "F4SE runtime: initialize (version = 0.7.8 010B0DD0, os = 6.2)",
+        "checking plugin Buffout4.dll",
+        "plugin Buffout4.dll (00000000  00000000) no version data 0 (handle 0)",
+        "checking plugin po3_SpellPerkItemDistributorF4.dll",
+        "plugin po3_SpellPerkItemDistributorF4.dll (00000001 SPID 01000000) "
+        "disabled, incompatible with current version of the game 0 (handle 0)",
+    ]
+
+    def setUp(self):
+        self.dir = os.path.join(TEST_ROOT, "se-log")
+        shutil.rmtree(self.dir, ignore_errors=True)
+        os.makedirs(self.dir)
+        self.log = os.path.join(self.dir, "f4se.log")
+        with open(self.log, "w", encoding="utf-8") as f:
+            f.write("\n".join(self.LINES))
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_a_refused_plugin_is_named_by_its_mod(self):
+        got = main._se_failures_with_owners(self.log, {
+            "Spell Perk Item Distributor": {
+                "name": "Spell Perk Item Distributor", "mod_id": 48365,
+                "files": [
+                    "F4SE/Plugins/po3_SpellPerkItemDistributorF4.dll",
+                    "F4SE/Plugins/po3_SpellPerkItemDistributorF4.ini",
+                ],
+            },
+        })
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["mod"], "Spell Perk Item Distributor")
+        self.assertEqual(got[0]["mod_id"], 48365)
+        self.assertEqual(got[0]["dll"], "po3_SpellPerkItemDistributorF4.dll")
+
+    def test_a_version_mismatch_is_marked_as_the_authors_problem(self):
+        # "Only its author can fix this" and "something it needs is
+        # missing" lead to completely different advice, so the distinction
+        # has to survive to the page.
+        got = main._se_failures_with_owners(self.log, {})
+        self.assertTrue(got[0]["outdated"])
+
+    def test_a_plugin_no_record_owns_still_gets_reported(self):
+        # Better a filename than silence: it is still the reason the game
+        # showed a modal.
+        got = main._se_failures_with_owners(self.log, {})
+        self.assertEqual(got[0]["mod"], "")
+        self.assertEqual(got[0]["dll"], "po3_SpellPerkItemDistributorF4.dll")
+
+    def test_plugins_that_loaded_are_not_reported(self):
+        # 44 of 57 loaded on device. Reporting those would bury the two
+        # that matter.
+        got = main._se_failures_with_owners(self.log, {})
+        self.assertNotIn("Buffout4.dll", [g["dll"] for g in got])
+
+    def test_no_log_means_nothing_to_say(self):
+        self.assertEqual(
+            main._se_failures_with_owners(
+                os.path.join(self.dir, "absent.log"), {}), [])
+
+
 class TestPrefixToolRestaging(unittest.TestCase):
     """A tool already staged by an earlier successful run must be reused,
     not treated as an obstacle.

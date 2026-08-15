@@ -4834,6 +4834,16 @@ _SE_DISABLED_RE = re.compile(
 )
 
 
+# "only compatible with versions earlier than 1.6.640" (SKSE)
+# "incompatible with current version of the game"          (F4SE)
+# "reported as incompatible during load"                   (F4SE, older)
+_SE_OUTDATED_RE = re.compile(
+    r"compatible with versions|incompatible with (?:the )?current version"
+    r"|reported as incompatible|version mismatch",
+    re.IGNORECASE,
+)
+
+
 def _parse_script_extender_log(path: str) -> list:
     """DLL plugins the extender refused to load, with its own wording.
 
@@ -4861,7 +4871,14 @@ def _parse_script_extender_log(path: str) -> list:
                         "reason": reason,
                         # Version-gated plugins are the author's problem;
                         # everything else may still be repairable here.
-                        "outdated": "compatible with versions" in reason.lower(),
+                        #
+                        # Both extenders' wordings, because only SKSE's was
+                        # here: F4SE says "incompatible with current version
+                        # of the game", which does not contain "compatible
+                        # with versions", so every version-mismatched
+                        # Fallout 4 plugin was being reported as a fixable
+                        # problem when only its author can fix it.
+                        "outdated": bool(_SE_OUTDATED_RE.search(reason)),
                     }
                 )
     except OSError:
@@ -5361,6 +5378,49 @@ def _redscript_report(install_path: str, records: dict) -> dict:
         "stamp": stamp,
         "stale": stale,
     }
+
+
+def _se_failures_with_owners(log_path: str, records: dict) -> list:
+    """Script-extender plugins the game refused, named by MOD.
+
+    The extender reports filenames, which is the wrong unit for someone
+    holding a controller. Michael, on Vault Boy 101:
+
+        po3_SpellPerkItemDistributorF4.dll: disabled, incompatible with the
+        current version of the game
+
+    There is nothing in that a player can act on - not which mod to update,
+    not which mod to switch off, not even which mod it IS. The install
+    records know: every dataDir record lists the files it wrote, so the DLL
+    can be handed back its owner's name.
+
+    This is the redscript corroboration in Bethesda clothing. Same rule:
+    the GAME is the authority on what it would not load, and we only
+    translate.
+
+    Returns [{"dll", "reason", "outdated", "mod", "record_key", "mod_id"}].
+    """
+    failed = _parse_script_extender_log(log_path)
+    if not failed:
+        return []
+    owner = {}
+    for key, rec in (records or {}).items():
+        for rel in rec.get("files") or []:
+            name = str(rel).replace(chr(92), "/").rsplit("/", 1)[-1]
+            if name.lower().endswith(".dll"):
+                owner.setdefault(name.lower(), (key, rec))
+    out = []
+    for f in failed:
+        hit = owner.get(f["name"].lower())
+        out.append({
+            "dll": f["name"],
+            "reason": f["reason"],
+            "outdated": f["outdated"],
+            "mod": (hit[1].get("name") or hit[0]) if hit else "",
+            "record_key": hit[0] if hit else "",
+            "mod_id": (hit[1].get("mod_id") or 0) if hit else 0,
+        })
+    return out
 
 
 def _missing_manifest_deps(manifests: dict) -> list:
@@ -12347,21 +12407,36 @@ query Link($slug: String!, $domainName: String!) {
                 _stagger_plugin_mtimes, data_path, path, plugins_style,
                 game_domain,
             )
-        limit = (
-            FULL_SLOT_LIMIT if game_domain in ESL_DOMAINS
-            else NO_ESL_SLOT_LIMIT
+        esl = game_domain in ESL_DOMAINS
+        limit = FULL_SLOT_LIMIT if esl else NO_ESL_SLOT_LIMIT
+        # Count SLOTS, not lines. This counted every enabled plugin against
+        # the full-slot limit and reported "load order now 362 of 254" on a
+        # Fallout 4 collection that was actually using 232 of 255 - because
+        # 167 of those plugins were ESL-flagged and occupy no full slot at
+        # all. Every large Bethesda collection is ESL-heavy by design, so
+        # the number was wrong on all of them, and it nearly had Fallout 4
+        # marked down for a limit nobody had hit. _slot_usage reads the
+        # 0x200 flag out of each plugin header and has been correct all
+        # along; this was the one caller not using it.
+        after_names = _enabled_plugins(path, plugins_style)
+        full, light = await asyncio.to_thread(
+            _slot_usage, data_path, after_names, implicit, esl
         )
-        after = len(_enabled_plugins(path, plugins_style)) + len(implicit)
         decky.logger.info(
             f"collection plugins {slug!r}: switched off {len(turn_off)}, on "
-            f"{len(turn_on)}; load order now {after} of {limit}"
+            f"{len(turn_on)}; load order now {full} of {limit} full slots"
+            + (f", {light} light" if esl else "")
         )
         return {
             "ok": True,
             "disabled": len(turn_off),
             "enabled": len(turn_on),
             "names_off": sorted(turn_off)[:12],
-            "total": after,
+            # Full SLOTS used, which is the number that can actually run
+            # out - not the line count, which counts ESL plugins that
+            # occupy none.
+            "total": full,
+            "light": light,
             "limit": limit,
         }
 
@@ -12959,6 +13034,7 @@ query CollectionInstructions($slug: String!) {
     async def get_health_check(
         self, game_domain: str, install_dir: str, mods_subdir: str,
         app_id: int = 0, framework_ids: list = None,
+        se_log_subpath: str = "",
     ) -> dict:
         """What is wrong with this setup that the user cannot see.
 
@@ -13002,6 +13078,16 @@ query CollectionInstructions($slug: String!) {
         # not report again, and one belonging to no record at all is the
         # orphan case that cost weeks.
         script = _redscript_report(install_path, records)
+        # The Bethesda half of the same question. Same authority - the game
+        # itself - and the same translation job: the extender names DLLs,
+        # the user needs mods.
+        se_failed = []
+        if se_log_subpath and app_id:
+            se_log = _game_prefs_path(app_id, se_log_subpath)
+            if os.path.isfile(se_log):
+                se_failed = await asyncio.to_thread(
+                    _se_failures_with_owners, se_log, records
+                )
         verdicts = _verdicts_for_build(game_domain, build)
         have_ids = {int(rec["mod_id"]) for rec in tracked.values()}
         # The framework is installed, but not as a tracked mod - it arrives
@@ -13241,6 +13327,9 @@ query CollectionInstructions($slug: String!) {
                 "orphans": script["orphans"][:10],
                 "switched_off": switched_off[:10],
             },
+            # DLL plugins the script extender refused, named by the mod
+            # that owns them rather than by filename.
+            "script_extender": se_failed[:12],
             # Requirements a collection left out that the game has not
             # complained about. Shown, because silence is a bug - but not
             # as faults, because they are not faults.
