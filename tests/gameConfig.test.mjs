@@ -76,6 +76,13 @@ function capture() {
       // that says the wrong thing, minutes after anyone stopped watching.
       hasOwnLauncher: has("ownLauncher"),
       longWaitAtMods: num("longWaitAtMods"),
+      // Every framework cleanup list for this game, primary and extras.
+      // This is the one piece of per-game config that DELETES files on
+      // reset - "bin" as a prefix would take the whole game with it - so
+      // it is the last place a change should be able to land unnoticed.
+      cleanupPrefixes: [
+        ...body.matchAll(/cleanupPrefixes:\s*\[([^\]]*)\]/g),
+      ].map((m) => m[1].replace(/\s+/g, " ").trim()),
     };
   });
   games.sort((a, b) => Number(a.appId) - Number(b.appId));
