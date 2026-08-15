@@ -7264,6 +7264,74 @@ class TestUninstallNeverEatsGameFiles(unittest.TestCase):
             os.path.join(self.data, "TotallyAMod.ba2")))
 
 
+class TestVerifiedOnDeck(unittest.TestCase):
+    """A collection is verified when somebody PLAYED it.
+
+    Michael, on a screenshot of Fallout 4 rendering every surface magenta:
+    "I think we jumped the gun on celebrating the install". That collection
+    had installed 451 of 454 mods, applied its load order, booted, and
+    reached a new game. Every signal the plugin could see said it worked.
+
+    So the evidence comes from outside the plugin - Steam's own playtime,
+    which cannot be faked by installing successfully."""
+
+    def _entry(self, at=1000, playtime_at=50):
+        return {"at": at, "playtime_at": playtime_at, "build": "b1"}
+
+    def test_installing_is_not_verification(self):
+        # Never launched: LastPlayed predates the install and no minutes
+        # have been added.
+        self.assertEqual(
+            main._collection_verified_state(self._entry(), 900, 50),
+            "installed",
+        )
+
+    def test_booting_is_not_verification_either(self):
+        # This is the exact state that fooled us: it started, and it was
+        # broken.
+        self.assertEqual(
+            main._collection_verified_state(self._entry(), 1500, 50),
+            "booted",
+        )
+
+    def test_a_couple_of_minutes_is_still_not_verification(self):
+        # Long enough to reach a menu and quit, which proves nothing.
+        self.assertEqual(
+            main._collection_verified_state(self._entry(), 1500, 53),
+            "booted",
+        )
+
+    def test_real_playtime_after_the_install_earns_it(self):
+        self.assertEqual(
+            main._collection_verified_state(
+                self._entry(), 1500, 50 + main.VERIFIED_PLAYED_MINUTES),
+            "played",
+        )
+
+    def test_play_from_BEFORE_the_install_does_not_count(self):
+        # 400 hours of vanilla Fallout says nothing about this collection,
+        # which is why the playtime at install time is recorded.
+        entry = self._entry(playtime_at=24000)
+        self.assertEqual(
+            main._collection_verified_state(entry, 900, 24000), "installed")
+
+    def test_a_game_update_retires_the_badge(self):
+        # Same rule as every other verdict here: after a patch nobody knows
+        # whether a 500-mod setup still works.
+        src = open(main.__file__, encoding="utf-8").read()
+        start = src.index("async def get_collection_verdicts")
+        window = src[start:start + 2000]
+        self.assertIn('entry["build"] != build', window)
+        self.assertIn("continue", window)
+
+    def test_the_recorded_entry_carries_what_it_needs(self):
+        src = open(main.__file__, encoding="utf-8").read()
+        start = src.index("def _record_collection_verdict")
+        window = src[start:start + 1800]
+        for field in ('"playtime_at"', '"build"', '"at"', '"plugin_version"'):
+            self.assertIn(field, window, field)
+
+
 class TestPrefixToolRestaging(unittest.TestCase):
     """A tool already staged by an earlier successful run must be reused,
     not treated as an obstacle.

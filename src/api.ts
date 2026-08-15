@@ -981,6 +981,39 @@ export const cancelCollectionInstall = callable<
   { ok: boolean; removed?: number; kept?: number; errors?: string[]; error?: string }
 >("cancel_collection_install");
 
+/** What this device has actually DONE with a collection.
+ *
+ * "installed" is not verification - Fallout 4's Vault Boy 101 installed 451
+ * of 454 mods, applied its load order, booted and reached a new game while
+ * rendering every surface magenta. Only "played" earns a badge, and the
+ * evidence is Steam's own playtime rather than anything the plugin decides.
+ */
+export type CollectionVerdictState = "installed" | "booted" | "played";
+
+export const recordCollectionInstalled = callable<
+  [game_domain: string, slug: string, app_id: number, name: string, mods: number],
+  { ok: boolean; error?: string }
+>("record_collection_installed");
+
+export const getCollectionVerdicts = callable<
+  [game_domain: string, app_id: number],
+  {
+    ok: boolean;
+    verdicts?: Record<
+      string,
+      {
+        state: CollectionVerdictState;
+        name: string;
+        mods: number;
+        at: number;
+        /** Minutes played SINCE it was installed. */
+        minutes: number;
+      }
+    >;
+    error?: string;
+  }
+>("get_collection_verdicts");
+
 // Whether we know a collection cannot work on SteamOS, said before the
 // download rather than after it.
 export const getCollectionSupport = callable<

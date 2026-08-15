@@ -39,6 +39,7 @@ import {
   getFileConflicts,
   installCollectionBundles,
   applyCollectionPlugins,
+  recordCollectionInstalled,
   resolveFileConflicts,
   AttentionItem,
   CollectionDetail,
@@ -1056,6 +1057,17 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       // work on the finished set, not on one mod at a time.
       await runCollectionExtras();
       refreshInstalled();
+      // Note WHEN this landed and what the playtime was, so "played since"
+      // can be measured later. Recorded even when the run stopped short -
+      // the entry is a starting point for evidence, not a claim that
+      // anything works. Only playing earns the badge.
+      recordCollectionInstalled(
+        game.nexusDomain,
+        collection.slug,
+        game.appId,
+        collection.name,
+        installedRequiredCount
+      ).catch(() => undefined);
       // Only actionable items belong in "waiting on your choices" -
       // tools/conflicts/unrecognized archives are permanent skips and
       // used to make this toast promise a Finish setup that never came.

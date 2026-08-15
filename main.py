@@ -382,6 +382,115 @@ def _game_paths(install_dir: str, mods_subdir: str):
     return install_path, mods_path, disabled_path
 
 
+# ---- "Verified on Deck" ------------------------------------------------------
+# A collection is verified when somebody PLAYED it, not when it installed.
+#
+# Michael, looking at a screenshot of Fallout 4 rendering every surface
+# magenta: "I think we jumped the gun on celebrating the install". That
+# collection had installed 451 of 454 mods, applied its load order, booted,
+# and reached a new game. By any measure the plugin could see, it worked.
+# It did not.
+#
+# So the evidence has to come from outside the plugin, and Steam already
+# keeps it: LastPlayed and Playtime, per app, in localconfig.vdf. Playtime
+# that went UP after the collection landed is the one thing no amount of
+# successful installing can fake.
+VERIFIED_PLAYED_MINUTES = 10
+
+
+def _steam_app_play(app_id: int):
+    """(last_played_epoch, total_minutes) for a Steam app, from Steam.
+
+    Read across every account on the device and the highest taken, because
+    a shared Deck has several and only one of them is playing. Zeroes when
+    Steam has no record, which reads as "never launched" - the honest
+    answer for a game nobody has started.
+    """
+    if not app_id:
+        return 0, 0
+    last, minutes = 0, 0
+    key = '"%d"' % int(app_id)
+    try:
+        accounts = sorted(os.listdir(STEAM_USERDATA))
+    except OSError:
+        return 0, 0
+    for account in accounts:
+        path = os.path.join(STEAM_USERDATA, account, "config",
+                            "localconfig.vdf")
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        at = text.find(key)
+        if at < 0:
+            continue
+        # The app's own block only - the next app's entry would otherwise
+        # be read as this one's.
+        window = text[at:at + 1200]
+        for name, target in (("LastPlayed", "last"), ("Playtime", "minutes")):
+            m = re.search(r'"%s"\s+"(\d+)"' % name, window)
+            if not m:
+                continue
+            value = int(m.group(1))
+            if target == "last":
+                last = max(last, value)
+            else:
+                minutes = max(minutes, value)
+    return last, minutes
+
+
+def _collection_verified_state(entry: dict, last_played: int,
+                               minutes: int) -> str:
+    """installed / booted / played, from Steam's own record.
+
+    Deliberately three steps rather than a yes-no. "It installed" is worth
+    saying and worth NOT calling verified; "it booted" is what misled us
+    once already; only "played" earns the badge.
+    """
+    started = int(entry.get("at") or 0)
+    before = int(entry.get("playtime_at") or 0)
+    if minutes - before >= VERIFIED_PLAYED_MINUTES:
+        return "played"
+    if last_played > started:
+        return "booted"
+    return "installed"
+
+
+def _record_collection_verdict(
+    game_domain: str, slug: str, app_id: int, name: str, mods: int
+) -> None:
+    """Remember that this collection installed here, and when.
+
+    The playtime AT THAT MOMENT is the important half: without it there is
+    no way to tell later play from play that happened before.
+    """
+    if not (game_domain and slug):
+        return
+    last, minutes = _steam_app_play(app_id)
+    settings = _load_settings()
+    store = settings.setdefault("collection_verdicts", {}).setdefault(
+        game_domain, {}
+    )
+    store[slug] = {
+        "name": name or slug,
+        "mods": int(mods or 0),
+        "at": int(time.time()),
+        "playtime_at": minutes,
+        # Scoped to the game build like every other verdict here: a game
+        # update is the most likely thing to have broken a 500-mod setup,
+        # so the badge retires with it rather than vouching for something
+        # nobody has run since.
+        "build": _steam_build_id(app_id),
+        "plugin_version": APP_VERSION,
+    }
+    _save_settings(settings)
+    decky.logger.info(
+        f"collection {slug!r} recorded as installed on build "
+        f"{store[slug]['build'] or 'unknown'} at {minutes} minutes played"
+    )
+
+
 def _vanilla_baseline(game_domain: str) -> list:
     return _load_settings().get("vanilla_baseline", {}).get(game_domain) or []
 
@@ -12654,6 +12763,59 @@ query Link($slug: String!, $domainName: String!) {
             "mods": [w["mod"] for w in waiting],
             "needs": sorted({w["needs"] for w in waiting}),
         }
+
+    async def record_collection_installed(
+        self, game_domain: str, slug: str, app_id: int = 0,
+        name: str = "", mods: int = 0,
+    ) -> dict:
+        """Note that a collection finished installing here, with the
+        playtime at that moment - see _record_collection_verdict."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        await asyncio.to_thread(
+            _record_collection_verdict, game_domain, slug, app_id, name, mods
+        )
+        return {"ok": True}
+
+    async def get_collection_verdicts(
+        self, game_domain: str, app_id: int = 0
+    ) -> dict:
+        """slug -> what this device has actually done with each collection.
+
+        Recomputed on every read rather than stored, because the answer
+        changes without us: the user plays for twenty minutes and Steam
+        knows, and nothing about this plugin was involved.
+        """
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        store = (
+            (_load_settings().get("collection_verdicts") or {})
+            .get(game_domain) or {}
+        )
+        if not store:
+            return {"ok": True, "verdicts": {}}
+        last, minutes = await asyncio.to_thread(_steam_app_play, app_id)
+        build = _steam_build_id(app_id)
+        out = {}
+        for slug, entry in store.items():
+            if not isinstance(entry, dict):
+                continue
+            # A game update retires it. The badge says "this worked here",
+            # and after a patch nobody knows that any more.
+            if build and entry.get("build") and entry["build"] != build:
+                continue
+            out[slug] = {
+                "state": _collection_verified_state(entry, last, minutes),
+                "name": entry.get("name") or slug,
+                "mods": entry.get("mods") or 0,
+                "at": entry.get("at") or 0,
+                "minutes": max(
+                    0, minutes - int(entry.get("playtime_at") or 0)
+                ),
+            }
+        return {"ok": True, "verdicts": out}
 
     async def get_collection_support(
         self, game_domain: str, slug: str
