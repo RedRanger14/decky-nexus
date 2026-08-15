@@ -11282,6 +11282,23 @@ query Link($slug: String!, $domainName: String!) {
                     except OSError:
                         # Exists but unreadable - never claim it is empty.
                         pass
+                # And the game's own folder. Script extenders, audio
+                # libraries and ENBs install BESIDE the exe, and the
+                # leftover report there is gated on having a baseline at
+                # all - so an empty one silently switches that check off.
+                # Cyberpunk's was empty while 17 vanilla files sat in the
+                # root, which is how a mod DLL there would have gone
+                # unreported for ever. Reported, never deleted: the game's
+                # own files live here too.
+                try:
+                    settings.setdefault("vanilla_root_baseline", {})[
+                        game_domain
+                    ] = sorted(
+                        n for n in os.listdir(install_path)
+                        if os.path.isfile(os.path.join(install_path, n))
+                    )
+                except OSError:
+                    pass
                 build = _steam_build_id(app_id)
                 if build:
                     settings.setdefault("baseline_build", {})[game_domain] = build

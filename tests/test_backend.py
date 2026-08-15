@@ -7049,6 +7049,25 @@ class TestResetFindsOrphansOutsideTheModsFolder(unittest.TestCase):
         extra = after["vanilla_extra_baseline"][self.DOMAIN]
         self.assertEqual(extra.get(self.ABSENT), [])
 
+    def test_reset_also_rebaselines_the_game_root(self):
+        # Device, 2026-08-15: Cyberpunk's vanilla_root_baseline was EMPTY
+        # while 17 vanilla files sat in the game root. The leftover report
+        # for that folder is gated on having a baseline at all, so an empty
+        # one silently switches the check off - and a mod DLL beside the
+        # exe would never be reported. That is the Fallout 3 failure, where
+        # three mod DLLs survived several "clean" resets because nothing
+        # ever looked there.
+        with open(os.path.join(self.root, "Game.exe"), "w") as f:
+            f.write("game")
+        settings = main._load_settings()
+        settings.setdefault("vanilla_root_baseline", {})[self.DOMAIN] = []
+        main._save_settings(settings)
+        r = self._reset()
+        self.assertTrue(r["ok"], r)
+        after = (main._load_settings()
+                 .get("vanilla_root_baseline", {}).get(self.DOMAIN))
+        self.assertIn("Game.exe", after)
+
     def test_a_directory_with_no_baseline_is_left_completely_alone(self):
         # The dangerous case. With no record of what the GAME put there,
         # every file reads as an orphan - and deleting r6/scripts because
