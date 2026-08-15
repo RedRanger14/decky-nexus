@@ -1081,7 +1081,10 @@ export const getHealthCheck = callable<
     app_id: number,
     /** Frameworks arrive through Step 1, not the mod list, so they are not
      * tracked mods - without these every SMAPI mod reads as missing SMAPI. */
-    framework_ids: number[]
+    framework_ids: number[],
+    /** Prefix-relative script-extender log, so the check can name the
+     * MODS whose DLL plugins the game refused. */
+    se_log_subpath: string
   ],
   {
     ok: boolean;
@@ -1116,6 +1119,14 @@ export const getHealthCheck = callable<
       name: string;
       for: string;
       why: string;
+      mod_id?: number;
+    }[];
+    /** DLL plugins the script extender refused, named by owning mod. */
+    script_extender?: {
+      dll: string;
+      reason: string;
+      outdated: boolean;
+      mod: string;
       mod_id?: number;
     }[];
     /** What the game's own compiler said, last time it ran. */

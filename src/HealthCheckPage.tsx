@@ -222,6 +222,13 @@ export default function HealthCheckPage() {
     owned_dlc: string[];
     already_fixed: { name: string; for: string }[];
     known_bad: { name: string; for: string; why: string; mod_id?: number }[];
+    script_extender: {
+      dll: string;
+      reason: string;
+      outdated: boolean;
+      mod: string;
+      mod_id?: number;
+    }[];
     script_log?: {
       ran: boolean;
       compiled: boolean;
@@ -253,7 +260,8 @@ export default function HealthCheckPage() {
       game.installDirName,
       game.modsSubdir,
       game.appId,
-      frameworkIds
+      frameworkIds,
+      game.scriptExtenderLog ?? ""
     )
       .then((r) =>
         setReport(
@@ -267,6 +275,7 @@ export default function HealthCheckPage() {
                 owned_dlc: r.owned_dlc ?? [],
                 already_fixed: r.already_fixed ?? [],
                 known_bad: r.known_bad ?? [],
+                script_extender: r.script_extender ?? [],
                 script_log: r.script_log,
               }
             : undefined
@@ -443,6 +452,53 @@ export default function HealthCheckPage() {
         {/* What the game itself said. This goes ABOVE the mod-page findings
             on purpose: everything below is inference from what an author
             wrote, and this is the only part that is evidence. */}
+        {/* The script extender's own verdict, translated from filenames
+            into mods. Michael got "po3_SpellPerkItemDistributorF4.dll:
+            disabled, incompatible with the current version of the game" on
+            a black screen, which names nothing he can act on. */}
+        {(shown?.script_extender.length ?? 0) > 0 && (
+          <>
+            <SectionHeading title="Mods the game refused to load" />
+            {report!.script_extender.map((p) => (
+              <FindingCard
+                key={p.dll}
+                tone={p.outdated ? WARN : "220, 110, 110"}
+                icon={<FaPuzzlePiece size={16} />}
+                title={p.mod || p.dll}
+                detail={
+                  <>
+                    The game's script extender would not load{" "}
+                    <b>{p.dll}</b> — {p.reason}.
+                    {p.outdated ? (
+                      <>
+                        {" "}
+                        That means this mod was built for a different version
+                        of the game than the one you have, so only its author
+                        can fix it. The rest of your mods are unaffected;
+                        this one just does nothing.
+                      </>
+                    ) : (
+                      <>
+                        {" "}
+                        That usually means something it depends on is missing
+                        rather than the mod being broken.
+                      </>
+                    )}
+                    {p.mod && p.mod_id && game ? (
+                      <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
+                        <LinkChip
+                          label={p.mod}
+                          onOpen={() => openMod(game, p.mod_id!, p.mod)}
+                        />
+                      </Focusable>
+                    ) : null}
+                  </>
+                }
+              />
+            ))}
+          </>
+        )}
+
         {shown && log?.ran && (
           <>
             <SectionHeading title="What the game said" />
