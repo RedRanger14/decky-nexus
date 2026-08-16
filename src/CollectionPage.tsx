@@ -260,7 +260,12 @@ export function CollectionPage() {
   useEffect(() => {
     if (!sel) return;
     let live = true;
-    getCollectionSupport(sel.game.nexusDomain, sel.collection.slug)
+    getCollectionSupport(
+      sel.game.nexusDomain,
+      sel.collection.slug,
+      sel.game.appId,
+      sel.game.installDirName
+    )
       .then((r) => {
         if (live && r.ok && r.supported === false) {
           setUnsupported(r.reason ?? "");
