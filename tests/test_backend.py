@@ -7473,6 +7473,59 @@ class TestBlockedCollectionsLeaveTheStore(unittest.TestCase):
         self.assertEqual(len(r["collections"]), 1)
 
 
+class TestWitcherExpansionsAreProvable(unittest.TestCase):
+    """Owning Blood & Wine is a directory check, not a guess.
+
+    Michael was running base-game Witcher 3 and the plugin could not say
+    so: a mod needing Blood & Wine installed silently and did nothing,
+    which looks exactly like a broken mod. The expansions live in dlc/ as
+    "ep1" and "bob", so this is as provable as a Bethesda master file -
+    reached a different way."""
+
+    def setUp(self):
+        self.root = os.path.join(TEST_ROOT, "w3dlc")
+        shutil.rmtree(self.root, ignore_errors=True)
+        os.makedirs(os.path.join(self.root, "dlc"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _add(self, *folders):
+        for f in folders:
+            os.makedirs(os.path.join(self.root, "dlc", f), exist_ok=True)
+
+    def test_base_game_owns_no_expansions(self):
+        self.assertEqual(main._owned_expansions("witcher3", self.root), set())
+
+    def test_each_expansion_is_recognised_by_its_folder(self):
+        self._add("ep1")
+        self.assertEqual(
+            main._owned_expansions("witcher3", self.root),
+            {"Hearts of Stone"},
+        )
+        self._add("bob")
+        self.assertEqual(
+            main._owned_expansions("witcher3", self.root),
+            {"Hearts of Stone", "Blood and Wine"},
+        )
+
+    def test_a_mod_folder_is_not_an_expansion(self):
+        self._add("modFriendlyHUD", "dlc1", "dlcFriendlyMeditation")
+        self.assertEqual(main._owned_expansions("witcher3", self.root), set())
+
+    def test_witcher_3_can_now_be_asked_about_dlc_at_all(self):
+        # It was excluded, so every DLC requirement there went unchecked.
+        self.assertTrue(main._dlc_checkable("witcher3"))
+        self.assertTrue(main._dlc_checkable("newvegas"))
+        # And a game whose expansions we cannot prove still says nothing.
+        self.assertFalse(main._dlc_checkable("slaythespire2"))
+        self.assertFalse(main._dlc_checkable("cyberpunk2077"))
+
+    def test_a_missing_dlc_folder_is_not_an_error(self):
+        shutil.rmtree(os.path.join(self.root, "dlc"))
+        self.assertEqual(main._owned_expansions("witcher3", self.root), set())
+
+
 class TestWitcherOfficialDlcSurvivesNewReleases(unittest.TestCase):
     """A hardcoded DLC list goes stale the day the game gains one.
 
