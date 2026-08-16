@@ -5608,6 +5608,52 @@ def _se_failures_with_owners(log_path: str, records: dict) -> list:
     return out
 
 
+# The Address Library is a table of game-version-specific addresses, and
+# EVERY F4SE/SKSE plugin built on it refuses to load without the file for
+# the exact runtime. Both sides name their version on disk:
+#
+#   Data/F4SE/Plugins/version-1-10-163-0.bin   the library, for 1.10.163
+#   f4se_1_11_221.dll                          the loader, for 1.11.221
+#
+# So a collection built for the pre-next-gen game announces itself in the
+# filesystem, whatever its description says. "Such Fallout 4" says nothing
+# about downgrading and shipped the 1.10.163 library: six plugins refused
+# to load and the game crashed on the way in.
+_ADDRLIB_RE = re.compile(r"^version-(\d+)-(\d+)-(\d+)(?:-\d+)?\.bin$", re.I)
+_SE_LOADER_RE = re.compile(r"^(?:f4se|skse64|skse|nvse)_(\d+)_(\d+)_(\d+)\.dll$",
+                           re.I)
+
+
+def _address_library_state(install_path: str, plugins_dir: str) -> dict:
+    """Whether the Address Library matches the game the extender runs on.
+
+    Returns {"runtime", "have", "matches"}. `matches` is True when there is
+    nothing to complain about - including when no library is installed at
+    all, because plenty of setups never need one and inventing a problem
+    there would be crying wolf.
+    """
+    runtime = ""
+    try:
+        for name in os.listdir(install_path):
+            m = _SE_LOADER_RE.match(name)
+            if m:
+                runtime = ".".join(m.groups())
+                break
+    except OSError:
+        pass
+    have = []
+    try:
+        for name in sorted(os.listdir(plugins_dir)):
+            m = _ADDRLIB_RE.match(name)
+            if m:
+                have.append(".".join(m.groups()))
+    except OSError:
+        pass
+    if not runtime or not have:
+        return {"runtime": runtime, "have": have, "matches": True}
+    return {"runtime": runtime, "have": have, "matches": runtime in have}
+
+
 def _missing_manifest_deps(manifests: dict) -> list:
     """Which installed mods declare a dependency that is not installed.
 
@@ -13345,6 +13391,7 @@ query CollectionInstructions($slug: String!) {
         # the user needs mods.
         se_failed = []
         se_parked = []
+        addrlib = {"runtime": "", "have": [], "matches": True}
         # Declared here rather than with its siblings below, because the
         # script-extender pass can fail a rename and has to say so.
         errors = []
@@ -13371,7 +13418,14 @@ query CollectionInstructions($slug: String!) {
                     se_log_subpath.split("/")[0], ("Data", "SKSE", "Plugins")
                 )
             )
-            for f in se_failed:
+            # Checked BEFORE parking anything: when the library is for
+            # the wrong game, these plugins are not individually broken -
+            # they are all failing for one reason, and setting them aside
+            # one by one would hide it behind six green ticks.
+            addrlib = await asyncio.to_thread(
+                _address_library_state, install_path, se_dir
+            )
+            for f in se_failed if addrlib["matches"] else []:
                 if not f["outdated"]:
                     continue
                 live = os.path.join(se_dir, f["dll"])
@@ -13655,6 +13709,10 @@ query CollectionInstructions($slug: String!) {
             # Version-mismatched ones we set aside, so the game stops
             # asking about them before every main menu.
             "se_parked": se_parked[:12],
+            # One fact that explains a whole screen of DLL failures: the
+            # Address Library is for a different game build than the one
+            # running.
+            "address_library": addrlib,
             # Requirements a collection left out that the game has not
             # complained about. Shown, because silence is a bug - but not
             # as faults, because they are not faults.
