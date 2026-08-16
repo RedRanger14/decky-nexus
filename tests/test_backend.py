@@ -7473,6 +7473,32 @@ class TestBlockedCollectionsLeaveTheStore(unittest.TestCase):
         self.assertEqual(len(r["collections"]), 1)
 
 
+class TestWitcherOfficialDlcSurvivesNewReleases(unittest.TestCase):
+    """A hardcoded DLC list goes stale the day the game gains one.
+
+    Michael, 2026-08-16: "There is a big piece of DLC coming soon so we
+    need to be prepared for that." The guard listed dlc1 to dlc16, so a
+    seventeenth would have been taken for a mod folder and deleted - the
+    New Vegas incident with different filenames. The comment above it even
+    records that an earlier version "destroyed Blood & Wine and every free
+    DLC" and needed a Steam verify."""
+
+    def test_the_dlc_that_exist_today_are_protected(self):
+        for name in ("dlc1", "dlc16", "bob", "ep1", "DLC9", "Bob"):
+            self.assertTrue(main._w3_official_dlc(name), name)
+
+    def test_a_dlc_released_tomorrow_is_protected_too(self):
+        for name in ("dlc17", "dlc20", "dlc99", "dlc4a"):
+            self.assertTrue(main._w3_official_dlc(name), name)
+
+    def test_a_mod_folder_is_still_removable(self):
+        # Mods conventionally use a "mod" prefix; deleting nothing would be
+        # as bad as deleting everything.
+        for name in ("modFriendlyHUD", "modLimitlessHorse", "dlcmod",
+                     "mydlc", "", "dlc"):
+            self.assertFalse(main._w3_official_dlc(name), repr(name))
+
+
 class TestNoMangledRegexEscapes(unittest.TestCase):
     """Word boundaries that had been replaced by actual backspace bytes.
 
