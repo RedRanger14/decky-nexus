@@ -1017,7 +1017,14 @@ export const getCollectionVerdicts = callable<
 // Whether we know a collection cannot work on SteamOS, said before the
 // download rather than after it.
 export const getCollectionSupport = callable<
-  [game_domain: string, slug: string],
+  [
+    game_domain: string,
+    slug: string,
+    /** So the pinned Address Library's target build can be compared with
+     * the game actually installed - before the download, not after. */
+    app_id: number,
+    install_dir: string
+  ],
   {
     ok: boolean;
     supported?: boolean;

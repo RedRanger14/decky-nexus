@@ -7339,6 +7339,100 @@ class TestAddressLibraryVersion(unittest.TestCase):
         self.assertIn('if addrlib["matches"] else []', src[cut:cut + 120])
 
 
+class TestAddressLibraryTargetBeforeDownload(unittest.TestCase):
+    """Read the target build off the collection, not off the wreckage.
+
+    "Such Fallout 4" says nothing about downgrading, so the description
+    check passed it, and only after 57 GB and a crash did the version files
+    on disk disagree. The collection page already knew: every pinned file
+    arrives with its name and version before a byte is downloaded, and the
+    Address Library names the build it was built for."""
+
+    def test_it_reads_the_target_from_the_pinned_version(self):
+        files = [
+            {"modName": "Some Weapon Mod", "fileName": "gun.7z",
+             "version": "2.1"},
+            {"modName": "Address Library for F4SE Plugins",
+             "fileName": "Address Library-47327-1-10-163-0-171.7z",
+             "version": "1.10.163.0"},
+        ]
+        self.assertEqual(main._address_library_target(files), "1.10.163")
+
+    def test_a_mod_id_is_never_mistaken_for_a_game_build(self):
+        # The filename carries the mod id first: 47327-1-10-163-0 parses as
+        # 47327.1.10 unless five-digit leads are rejected.
+        files = [{"modName": "Address Library",
+                  "fileName": "Address Library-47327-1-10-163-0-171.7z",
+                  "version": ""}]
+        self.assertNotEqual(main._address_library_target(files), "47327.1.10")
+
+    def test_a_collection_without_one_says_nothing(self):
+        # Most collections have no Address Library at all, and inventing a
+        # target for them would block them for nothing.
+        self.assertEqual(main._address_library_target([
+            {"modName": "Just A Mod", "fileName": "a.7z", "version": "1.0"},
+        ]), "")
+        self.assertEqual(main._address_library_target([]), "")
+
+    def test_the_runtime_comes_from_the_installed_extender(self):
+        root = os.path.join(TEST_ROOT, "sertest")
+        shutil.rmtree(root, ignore_errors=True)
+        os.makedirs(root)
+        try:
+            open(os.path.join(root, "f4se_1_11_221.dll"), "w").close()
+            self.assertEqual(main._script_extender_runtime(root), "1.11.221")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_no_extender_installed_means_no_opinion(self):
+        root = os.path.join(TEST_ROOT, "sertest-empty")
+        shutil.rmtree(root, ignore_errors=True)
+        os.makedirs(root)
+        try:
+            self.assertEqual(main._script_extender_runtime(root), "")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+class TestNoMangledRegexEscapes(unittest.TestCase):
+    """Word boundaries that had been replaced by actual backspace bytes.
+
+    Editing main.py through a shell heredoc turns "\\b" into 0x08, and the
+    result still compiles, still imports, and reads correctly in an editor -
+    it just never matches. Three had been sitting in shipped code:
+
+      \\bMO2\\b  \\bNMM\\b   so those two mod managers were never filtered
+                          out of the health check's missing requirements
+      \\s*or\\b   so "or BaseLib on Github" - an alternative SOURCE for a
+                          mod already installed - was reported as a missing
+                          off-Nexus file
+
+    Nothing catches this by reading. A test has to."""
+
+    def test_no_control_characters_anywhere_in_the_backend(self):
+        raw = open(main.__file__, encoding="utf-8", newline="").read()
+        for ch, name in ((chr(8), "backspace"), (chr(11), "vertical tab"),
+                         (chr(12), "form feed")):
+            self.assertNotIn(
+                ch, raw,
+                f"main.py contains a raw {name} - almost certainly a "
+                f"regex escape mangled by a shell heredoc",
+            )
+
+    def test_the_short_mod_manager_names_are_recognised(self):
+        for name in ("MO2", "NMM", "Fluffy Mod Manager", "Vortex",
+                     "Mod Organizer 2"):
+            self.assertTrue(
+                main._MANAGER_REQUIREMENT_RE.search(name), name)
+
+    def test_a_real_mod_is_not_swept_up_with_them(self):
+        # The word boundary is the whole point: these must NOT match.
+        for name in ("Generic Mod Config Menu", "Nemo2", "MO2Tools",
+                     "NMMirror"):
+            self.assertIsNone(
+                main._MANAGER_REQUIREMENT_RE.search(name), name)
+
+
 class TestVerifiedOnDeck(unittest.TestCase):
     """A collection is verified when somebody PLAYED it.
 

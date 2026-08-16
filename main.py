@@ -1490,6 +1490,59 @@ _DOWNGRADE_NOT_RE = re.compile(
 )
 
 
+# Which Fallout/Skyrim build a collection is built for, read off the
+# Address Library file it pins.
+#
+# "Such Fallout 4" cost Michael a 57 GB download to discover this. Its
+# description says nothing about downgrading, so v0.198.0's prose check
+# passed it, and only after installing did the version files on disk
+# disagree - library for 1.10.163, game running 1.11.221 - and the game
+# crashed.
+#
+# The collection page already knows. Every pinned file arrives with its
+# name and version before a byte is downloaded, and the Address Library
+# names its target build in both. Checking it there costs nothing.
+_ADDRLIB_MOD_RE = re.compile(r"address\s*library", re.I)
+_VERSION_IN_TEXT_RE = re.compile(r"([0-9]+)[._-]([0-9]+)[._-]([0-9]+)")
+
+
+def _address_library_target(files: list) -> str:
+    """The game build a collection's Address Library is for, or "".
+
+    `files` is the collection detail's file list - each {name, version,
+    mod_name}. Read from the version first and the filename second,
+    because the version field is the curator's own statement.
+    """
+    for f in files or []:
+        haystack = (
+            f"{f.get('modName') or ''} {f.get('fileName') or ''}"
+        )
+        if not _ADDRLIB_MOD_RE.search(haystack):
+            continue
+        for text in (f.get("version") or "", f.get("fileName") or ""):
+            for m in _VERSION_IN_TEXT_RE.finditer(str(text)):
+                # A filename carries the mod id first - "Address Library
+                # for F4SE Plugins-47327-1-10-163-0-..." parses as
+                # 47327.1.10 unless the id is rejected. Game builds start
+                # small; mod ids are five digits.
+                if int(m.group(1)) > 9:
+                    continue
+                return ".".join(m.groups())
+    return ""
+
+
+def _script_extender_runtime(install_path: str) -> str:
+    """The game build the installed script extender is for, or ""."""
+    try:
+        for name in os.listdir(install_path):
+            m = _SE_LOADER_RE.match(name)
+            if m:
+                return ".".join(m.groups())
+    except OSError:
+        pass
+    return ""
+
+
 def _collection_downgrade_reason(description: str) -> str:
     """The phrase that says this collection needs an older game, or "".
 
@@ -2221,8 +2274,8 @@ def _load_order_report(data_path: str, names: list, cache: dict = None) -> int:
 # Matched on name because these are listed as ordinary Nexus mods with real
 # mod ids; nothing in the API marks them as tooling.
 _MANAGER_REQUIREMENT_RE = re.compile(
-    r"fluffy\s*(mod\s*)?manager|vortex|mod\s*organizer|MO2|"
-    r"nexus\s*mod\s*manager|NMM",
+    r"fluffy\s*(mod\s*)?manager|vortex|mod\s*organizer|\bMO2\b|"
+    r"nexus\s*mod\s*manager|\bNMM\b",
     re.IGNORECASE,
 )
 
@@ -12864,7 +12917,8 @@ query Link($slug: String!, $domainName: String!) {
         return {"ok": True, "verdicts": out}
 
     async def get_collection_support(
-        self, game_domain: str, slug: str
+        self, game_domain: str, slug: str, app_id: int = 0,
+        install_dir: str = "",
     ) -> dict:
         """Whether we know this collection cannot work here, and why.
 
@@ -12899,6 +12953,7 @@ query CollectionInstructions($slug: String!) {
                 _load_settings().get("api_key"),
             )
             col = data.get("collection") or {}
+            game_name = "the game"
             quote = _collection_downgrade_reason(col.get("description") or "")
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
                 KeyError, ValueError, TypeError) as e:
@@ -12911,6 +12966,41 @@ query CollectionInstructions($slug: String!) {
             )
             return {"ok": True, "supported": True}
         if not quote:
+            # Nothing said in prose. Ask the files instead: the Address
+            # Library a collection pins names the game build it was built
+            # for, and it arrives with the collection detail before a byte
+            # is downloaded. "Such Fallout 4" says nothing about
+            # downgrading and cost a 57 GB download to find out.
+            if install_dir:
+                runtime = await asyncio.to_thread(
+                    _script_extender_runtime,
+                    os.path.join(STEAM_COMMON, install_dir),
+                )
+                detail = await self.get_collection(slug, game_domain)
+                target = _address_library_target(
+                    (detail.get("files") or []) if detail.get("ok") else []
+                )
+                if runtime and target and runtime != target:
+                    decky.logger.info(
+                        f"collection {slug!r} pins Address Library "
+                        f"{target}, game runs {runtime}"
+                    )
+                    return {
+                        "ok": True,
+                        "supported": False,
+                        "needs_downgrade": True,
+                        "title": "",
+                        "reason": (
+                            f"This collection is built for {game_name} "
+                            f"{target}, and yours is {runtime}. "
+                            "It pins an Address Library for that older "
+                            "build - a table of addresses for one exact "
+                            "version - so every script mod in it would "
+                            "fail and the game crashes on the way in. "
+                            "Installing it would download tens of "
+                            "gigabytes to reach that."
+                        ),
+                    }
             return {"ok": True, "supported": True}
         decky.logger.info(
             f"collection {slug!r} needs a game downgrade: {quote[:120]!r}"
@@ -13522,7 +13612,7 @@ query CollectionInstructions($slug: String!) {
                  "url": r.get("url") or ""}
                 for r in reqs.get("requirements") or []
                 if (r.get("modId") or 0) <= 0 and r.get("url")
-                and not re.match(r"\s*or", r.get("modName") or "", re.I)
+                and not re.match(r"\s*or\b", r.get("modName") or "", re.I)
             ]
             if off_nexus:
                 needs_external.append({"name": name, "files": off_nexus})
