@@ -66,6 +66,23 @@ and was never asked during record removal (fixed v0.209.0).
 files". It restored 16 files and left all 451 mod records untouched - the
 same property that makes it useless for cleaning a modded install.
 
+### Future: pick mods inside a collection before installing
+
+Michael, 2026-08-16, on collections that need an older game: *"more advanced
+users can push through and choose to enable/disable specific mods in the
+collection as they might know what works and what doesnt"* - and then, on
+the state of it today: *"Its not ideal but for now they can download the
+collection and individually disable mods"*.
+
+So the capability exists, in the wrong order: install everything, then turn
+things off in My Mods. What is missing is choosing BEFORE the download,
+which is the difference between 57 GB and the 3 GB somebody actually wanted.
+
+Not scheduled. It needs a per-mod list on the collection page with the
+curator's own notes attached, and it interacts with requirements (turning
+off a library breaks its dependents) - so it is a real feature rather than
+a checkbox, and worth doing properly when it comes up.
+
 ### The biggest open gap: collection load ORDER (modRules)
 
 Found properly on 2026-08-15, testing Vault Boy 101 (521 mods) on Fallout 4.
