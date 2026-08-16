@@ -1157,6 +1157,10 @@ export const getHealthCheck = callable<
     /** Version-mismatched DLL plugins we set aside, so the game stops
      * asking about them before every main menu. */
     se_parked?: string[];
+    /** The Address Library names the game build it was made for, and every
+     * script plugin built on it fails when that is not the build running.
+     * One fact behind a whole screen of DLL failures. */
+    address_library?: { runtime: string; have: string[]; matches: boolean };
     /** DLL plugins the script extender refused, named by owning mod. */
     script_extender?: {
       dll: string;

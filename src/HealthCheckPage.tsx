@@ -223,6 +223,7 @@ export default function HealthCheckPage() {
     already_fixed: { name: string; for: string }[];
     known_bad: { name: string; for: string; why: string; mod_id?: number }[];
     se_parked: string[];
+    address_library?: { runtime: string; have: string[]; matches: boolean };
     script_extender: {
       dll: string;
       reason: string;
@@ -278,6 +279,7 @@ export default function HealthCheckPage() {
                 known_bad: r.known_bad ?? [],
                 script_extender: r.script_extender ?? [],
                 se_parked: r.se_parked ?? [],
+                address_library: r.address_library,
                 script_log: r.script_log,
               }
             : undefined
@@ -458,6 +460,32 @@ export default function HealthCheckPage() {
             into mods. Michael got "po3_SpellPerkItemDistributorF4.dll:
             disabled, incompatible with the current version of the game" on
             a black screen, which names nothing he can act on. */}
+        {shown?.address_library && !shown.address_library.matches && (
+          <>
+            <SectionHeading title="Built for a different Fallout" />
+            <FindingCard
+              tone="220, 110, 110"
+              icon={<FaPuzzlePiece size={16} />}
+              title="This collection needs an older version of the game"
+              detail={
+                <>
+                  Its Address Library is for Fallout{" "}
+                  <b>{shown.address_library.have.join(", ")}</b>, and you are
+                  running <b>{shown.address_library.runtime}</b>. That library
+                  is a table of addresses for one exact build, so every script
+                  mod built on it fails — which is why several plugins were
+                  refused and the game crashed on the way in.
+                  <br />
+                  <br />
+                  Nothing here can fix that: the collection was built before
+                  the game was updated, and it needs the older build. The mods
+                  that don't use scripts are unaffected.
+                </>
+              }
+            />
+          </>
+        )}
+
         {(shown?.script_extender.length ?? 0) > 0 && (
           <>
             <SectionHeading title="Mods the game refused to load" />

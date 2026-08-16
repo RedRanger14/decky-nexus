@@ -10,7 +10,9 @@
       "Bash(python -m unittest tests.test_backend -k \"EatsGame\")",
       "Bash(grep -viE \"^\\\\s*//|moddedSave\")",
       "Bash(grep -n 'r.%s.\\\\\\\\\\\\\\\\s' main.py)",
-      "Bash(python -m unittest tests.test_backend -k \"Verified\")"
+      "Bash(python -m unittest tests.test_backend -k \"Verified\")",
+      "Bash(python -c ' *)",
+      "Bash(python -m unittest tests.test_backend -k \"AddressLibrary\")"
     ]
   }
 }

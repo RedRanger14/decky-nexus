@@ -7264,6 +7264,81 @@ class TestUninstallNeverEatsGameFiles(unittest.TestCase):
             os.path.join(self.data, "TotallyAMod.ba2")))
 
 
+class TestAddressLibraryVersion(unittest.TestCase):
+    """One fact behind a whole screen of DLL failures.
+
+    "Such Fallout 4" (112 mods) installed cleanly, then asked for a newer
+    Address Library, refused six plugins and crashed on the way in. Its
+    description says nothing about downgrading, so the description check
+    could not catch it - but the filesystem states it plainly:
+
+        Data/F4SE/Plugins/version-1-10-163-0.bin   library for 1.10.163
+        f4se_1_11_221.dll                          loader for 1.11.221
+
+    Every plugin built on that library fails, and they are not individually
+    broken - they all fail for the same one reason."""
+
+    def setUp(self):
+        self.root = os.path.join(TEST_ROOT, "addrlib")
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.plugins = os.path.join(self.root, "Data", "F4SE", "Plugins")
+        os.makedirs(self.plugins)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _put(self, root_files=(), lib_files=()):
+        for n in root_files:
+            open(os.path.join(self.root, n), "w").close()
+        for n in lib_files:
+            open(os.path.join(self.plugins, n), "w").close()
+
+    def test_it_reads_both_versions_off_disk(self):
+        # The exact filenames from the device.
+        self._put(["f4se_1_11_221.dll"], ["version-1-10-163-0.bin"])
+        got = main._address_library_state(self.root, self.plugins)
+        self.assertEqual(got["runtime"], "1.11.221")
+        self.assertEqual(got["have"], ["1.10.163"])
+        self.assertFalse(got["matches"])
+
+    def test_a_matching_library_is_not_a_problem(self):
+        self._put(["f4se_1_11_221.dll"], ["version-1-11-221-0.bin"])
+        self.assertTrue(
+            main._address_library_state(self.root, self.plugins)["matches"])
+
+    def test_several_libraries_pass_if_one_fits(self):
+        # Users accumulate these; only one has to match.
+        self._put(["f4se_1_11_221.dll"],
+                  ["version-1-10-163-0.bin", "version-1-11-221-0.bin"])
+        self.assertTrue(
+            main._address_library_state(self.root, self.plugins)["matches"])
+
+    def test_no_library_at_all_is_not_a_problem(self):
+        # Plenty of setups never need one, and inventing a fault there is
+        # exactly the crying wolf this check exists to avoid.
+        self._put(["f4se_1_11_221.dll"], [])
+        self.assertTrue(
+            main._address_library_state(self.root, self.plugins)["matches"])
+
+    def test_no_script_extender_is_not_a_problem(self):
+        self._put([], ["version-1-10-163-0.bin"])
+        self.assertTrue(
+            main._address_library_state(self.root, self.plugins)["matches"])
+
+    def test_it_reads_skyrims_loader_too(self):
+        self._put(["skse64_1_6_1170.dll"], ["version-1-6-640-0.bin"])
+        got = main._address_library_state(self.root, self.plugins)
+        self.assertEqual(got["runtime"], "1.6.1170")
+        self.assertFalse(got["matches"])
+
+    def test_nothing_is_set_aside_while_the_library_is_wrong(self):
+        # Parking six plugins one by one would hide the single reason all
+        # six failed behind six green ticks.
+        src = open(main.__file__, encoding="utf-8").read()
+        cut = src.index("for f in se_failed if addrlib")
+        self.assertIn('if addrlib["matches"] else []', src[cut:cut + 120])
+
+
 class TestVerifiedOnDeck(unittest.TestCase):
     """A collection is verified when somebody PLAYED it.
 
