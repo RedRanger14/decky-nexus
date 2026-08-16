@@ -3479,6 +3479,24 @@ W3_MERGED_MOD = "mod0000_DeckyMerged"
 # Blood & Wine and every free DLC, and uninstall then deleted the
 # replacements (bricked a device install; Steam verify required).
 W3_OFFICIAL_DLC = {"bob", "ep1"} | {f"dlc{i}" for i in range(1, 17)}
+# ...and anything else CDPR ships to that folder later. The set above is
+# the DLC that existed when it was written, which is a list that goes out
+# of date the moment the game gains anything - and Michael, 2026-08-16:
+# "There is a big piece of DLC coming soon so we need to be prepared for
+# that". A seventeenth dlc folder would not have been in the set, so a
+# reset would have taken it for a mod and deleted content the user was
+# given, which is the New Vegas incident with different filenames.
+#
+# Mod-installed folders are conventionally "modSomething"; the game's own
+# are "dlcN" or a named expansion. Matching the shape rather than the
+# specific numbers means a new one is protected the day it arrives.
+_W3_OFFICIAL_DLC_RE = re.compile(r"^dlc[0-9]+[a-z]?$", re.IGNORECASE)
+
+
+def _w3_official_dlc(folder: str) -> bool:
+    """Whether a dlc/ folder belongs to the GAME rather than to a mod."""
+    low = (folder or "").strip().lower()
+    return low in W3_OFFICIAL_DLC or bool(_W3_OFFICIAL_DLC_RE.match(low))
 
 
 def _w3_merge3(
@@ -9404,8 +9422,8 @@ query Link($slug: String!, $domainName: String!) {
             for d in dlc_dirs:
                 folder = os.path.basename(d)
                 dst = _adopt_case(os.path.join(dlc_root, folder))
-                if os.path.basename(dst).lower() in W3_OFFICIAL_DLC or (
-                    folder.lower() in W3_OFFICIAL_DLC
+                if _w3_official_dlc(os.path.basename(dst)) or (
+                    _w3_official_dlc(folder)
                 ):
                     # Official DLC patch: merge files INTO the game's
                     # folder with a per-file record - never replace it.
@@ -11535,7 +11553,7 @@ query Link($slug: String!, $domainName: String!) {
                     )
                     if (
                         target == "dlc"
-                        and folder.lower() in W3_OFFICIAL_DLC
+                        and _w3_official_dlc(folder)
                     ):
                         decky.logger.info(
                             f"refusing to delete official DLC {folder!r}"
@@ -12135,7 +12153,7 @@ query Link($slug: String!, $domainName: String!) {
                     )
                     if (
                         target == "dlc"
-                        and folder.lower() in W3_OFFICIAL_DLC
+                        and _w3_official_dlc(folder)
                     ):
                         decky.logger.info(
                             f"refusing to delete official DLC {folder!r}"
@@ -15189,7 +15207,7 @@ query CollectionInstructions($slug: String!) {
             install_path = os.path.join(STEAM_COMMON, install_dir)
             base = os.path.join(install_path, *rec["target"].split("/"))
             real = rec.get("folder") or folder
-            if rec["target"] == "dlc" and real.lower() in W3_OFFICIAL_DLC:
+            if rec["target"] == "dlc" and _w3_official_dlc(real):
                 return {
                     "ok": False,
                     "error": "This entry patches one of the game's own DLC "
@@ -15369,7 +15387,7 @@ query CollectionInstructions($slug: String!) {
                 real = rec.get("folder") or folder
                 if (
                     rec.get("target") == "dlc"
-                    and real.lower() in W3_OFFICIAL_DLC
+                    and _w3_official_dlc(real)
                 ):
                     # NEVER delete the game's own DLC (legacy records
                     # from before official-dlc patches merged in).
