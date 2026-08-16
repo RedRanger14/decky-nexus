@@ -2280,15 +2280,49 @@ _MANAGER_REQUIREMENT_RE = re.compile(
 )
 
 
+# Expansions that ship as FOLDERS rather than master files.
+#
+# The Witcher 3 keeps Hearts of Stone and Blood & Wine in dlc/ as "ep1" and
+# "bob", so ownership is a directory check rather than a guess - the same
+# standard as the Bethesda games, reached a different way. Michael was
+# running the base game and the plugin could not say so: a mod needing
+# Blood & Wine installed silently and simply did not work, which is
+# indistinguishable from a mod that is broken.
+EXPANSION_DIRS_BY_DOMAIN = {
+    "witcher3": ("dlc", {"ep1": "Hearts of Stone", "bob": "Blood and Wine"}),
+}
+
+
+def _owned_expansions(game_domain: str, install_path: str) -> set:
+    """Expansions proved present on disk, by their human names."""
+    entry = EXPANSION_DIRS_BY_DOMAIN.get(game_domain)
+    if not entry:
+        return set()
+    subdir, names = entry
+    found = set()
+    try:
+        present = {n.lower() for n in os.listdir(
+            os.path.join(install_path, subdir))}
+    except OSError:
+        return set()
+    for folder, human in names.items():
+        if folder in present:
+            found.add(human)
+    return found
+
+
 def _dlc_checkable(game_domain: str) -> bool:
     """Whether a missing DLC can be proved rather than guessed.
 
-    True only where expansions ship as master files in the game's data
-    folder, which is what DLC_MASTER_NAMES enumerates. Everywhere else a
-    "you need this DLC" warning would be a guess aimed at somebody who may
-    well own it - worse than silence.
+    True where expansions ship as master files in the game's data folder
+    (DLC_MASTER_NAMES), or as their own folders (EXPANSION_DIRS_BY_DOMAIN).
+    Everywhere else a "you need this DLC" warning would be a guess aimed at
+    somebody who may well own it - worse than silence.
     """
-    return game_domain in DLC_GAMES_WITH_MASTERS
+    return (
+        game_domain in DLC_GAMES_WITH_MASTERS
+        or game_domain in EXPANSION_DIRS_BY_DOMAIN
+    )
 
 
 DLC_GAMES_WITH_MASTERS = frozenset(
@@ -13604,6 +13638,8 @@ query CollectionInstructions($slug: String!) {
                     owned_dlc.add(human)
         except OSError:
             pass
+        # ...and the ones that are folders rather than master files.
+        owned_dlc |= _owned_expansions(game_domain, install_path)
         needs_mods, needs_dlc, needs_external = [], [], []
         # One query per 20 mods rather than one per mod. At 14 mods the
         # difference is invisible; on a 500-mod Fallout 3 collection it is
