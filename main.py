@@ -7414,15 +7414,32 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                     # its own page still explains why it is blocked, so
                     # nobody is told it does not exist.
                     slug = n.get("slug") or ""
-                    if slug in blocked_slugs or _collection_downgrade_reason(
-                        n.get("description") or ""
-                    ):
+                    # WARNED, not hidden. Michael: "I dont know if the
+                    # collection should dissapear, that feels a little too
+                    # far... my preference would be an advance warning to
+                    # novice users so they dont download it in the first
+                    # place but more advanced users can push through and
+                    # choose to enable/disable specific mods".
+                    #
+                    # Right, and hiding was the same mistake as silence in
+                    # a different coat: somebody who knows their setup
+                    # cannot act on a collection they cannot see, and
+                    # nobody learns why it went.
+                    needs_older = bool(
+                        slug in blocked_slugs
+                        or _collection_downgrade_reason(
+                            n.get("description") or ""
+                        )
+                    )
+                    if needs_older:
                         hidden.append(f"{n.get('name') or slug} ({slug})")
-                        continue
                     out.append(
                         {
                             "name": n.get("name") or "",
                             "slug": slug,
+                            # The tile shows a warning rather than the
+                            # collection vanishing.
+                            "needs_older_game": needs_older,
                             "summary": n.get("summary") or "",
                             "endorsements": n.get("endorsements") or 0,
                             "author": (n.get("user") or {}).get("name") or "",
@@ -7437,13 +7454,9 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                     break  # the source is exhausted, not just filtered
             out = out[:wanted]
             if hidden:
-                # Logged, never silent: a curator whose collection stops
-                # appearing deserves a reason that exists somewhere, and
-                # the next person debugging "why is X missing" should find
-                # it in one grep rather than by reading this function.
                 decky.logger.info(
-                    f"get_collections({game_domain!r}): hid "
-                    f"{len(hidden)} collection(s) needing an older game "
+                    f"get_collections({game_domain!r}): flagged "
+                    f"{len(hidden)} collection(s) as needing an older game "
                     f"build: {', '.join(hidden[:5])}"
                 )
             decky.logger.info(

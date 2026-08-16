@@ -159,6 +159,26 @@ function CollectionCard({
             ? `${(c.totalSize / (1 << 30)).toFixed(1)} GB`
             : `${Math.round(c.totalSize / (1 << 20))} MB`}
         </div>
+        {c.needs_older_game && (
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              alignSelf: "flex-start",
+              marginTop: "3px",
+              padding: "1px 7px",
+              borderRadius: "3px",
+              fontSize: "9.5px",
+              fontWeight: 700,
+              letterSpacing: "0.4px",
+              background: "rgba(200, 90, 70, 0.92)",
+              color: "#fff",
+            }}
+          >
+            NEEDS AN OLDER GAME
+          </div>
+        )}
         {verdict && <VerifiedBadge state={verdict} />}
       </div>
     </Focusable>
