@@ -7394,6 +7394,69 @@ class TestAddressLibraryTargetBeforeDownload(unittest.TestCase):
             shutil.rmtree(root, ignore_errors=True)
 
 
+class TestBlockedCollectionsLeaveTheStore(unittest.TestCase):
+    """The two "this cannot work here" checks must agree.
+
+    Michael: "I cant see any marked knowing they wont work." The
+    description check HIDES a collection from the store list; the Address
+    Library check only spoke when you opened its page. So Such Fallout 4 -
+    which says nothing about downgrading and needs 1.10.163 - sat in the
+    list looking perfectly normal after the plugin had already refused it
+    once."""
+
+    def test_a_remembered_block_hides_it_from_the_store(self):
+        plugin = main.Plugin()
+        settings = main._load_settings()
+        settings.setdefault("collection_blocked", {})["blocktest"] = {
+            "u6moyd": {"target": "1.10.163", "runtime": "1.11.221"},
+        }
+        main._save_settings(settings)
+        orig = main._gql_query_vars
+
+        async def fake(query, variables, api_key=None):
+            return {"collectionsV2": {"nodes": [
+                {"name": "Such Fallout 4", "slug": "u6moyd",
+                 "description": "Just install it.",
+                 "latestPublishedRevision": {"modCount": 112}},
+                {"name": "Fine One", "slug": "okok",
+                 "description": "Just install it.",
+                 "latestPublishedRevision": {"modCount": 10}},
+            ]}}
+
+        main._gql_query_vars = fake
+        try:
+            r = run(plugin.get_collections(
+                "blocktest", 8, "", "endorsements", 0))
+        finally:
+            main._gql_query_vars = orig
+            settings = main._load_settings()
+            settings.get("collection_blocked", {}).pop("blocktest", None)
+            main._save_settings(settings)
+        self.assertEqual([c["name"] for c in r["collections"]], ["Fine One"])
+        self.assertEqual(r["hidden"], 1)
+
+    def test_nothing_is_hidden_before_anything_has_looked(self):
+        # The block is LEARNED. A collection nobody has opened is offered
+        # normally - we do not pretend to know what we have not checked.
+        plugin = main.Plugin()
+        orig = main._gql_query_vars
+
+        async def fake(query, variables, api_key=None):
+            return {"collectionsV2": {"nodes": [
+                {"name": "Unknown One", "slug": "newslug",
+                 "description": "Just install it.",
+                 "latestPublishedRevision": {"modCount": 5}},
+            ]}}
+
+        main._gql_query_vars = fake
+        try:
+            r = run(plugin.get_collections(
+                "blocktest", 8, "", "endorsements", 0))
+        finally:
+            main._gql_query_vars = orig
+        self.assertEqual(len(r["collections"]), 1)
+
+
 class TestNoMangledRegexEscapes(unittest.TestCase):
     """Word boundaries that had been replaced by actual backspace bytes.
 
