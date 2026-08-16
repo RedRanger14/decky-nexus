@@ -7375,6 +7375,13 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
         src_offset = int(offset)
         out = []
         hidden = []
+        # Collections already found to need a different game build. The
+        # description check catches the ones that say so; this catches the
+        # ones that only their files admit to, once anything has looked.
+        blocked_slugs = set(
+            ((_load_settings().get("collection_blocked") or {})
+             .get(game_domain) or {}).keys()
+        )
         try:
             for _round in range(COLLECTION_BACKFILL_ROUNDS):
                 if len(out) >= wanted:
@@ -7407,7 +7414,7 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                     # its own page still explains why it is blocked, so
                     # nobody is told it does not exist.
                     slug = n.get("slug") or ""
-                    if _collection_downgrade_reason(
+                    if slug in blocked_slugs or _collection_downgrade_reason(
                         n.get("description") or ""
                     ):
                         hidden.append(f"{n.get('name') or slug} ({slug})")
@@ -12985,6 +12992,19 @@ query CollectionInstructions($slug: String!) {
                         f"collection {slug!r} pins Address Library "
                         f"{target}, game runs {runtime}"
                     )
+                    # Remembered, so the STORE stops offering it too.
+                    # Michael: "I cant see any marked knowing they wont
+                    # work" - the description check hides a collection
+                    # from the list, and this one only spoke when you
+                    # opened the page, so the two disagreed about the same
+                    # question. Now the first refusal teaches the list.
+                    settings_now = _load_settings()
+                    settings_now.setdefault(
+                        "collection_blocked", {}
+                    ).setdefault(game_domain, {})[slug] = {
+                        "target": target, "runtime": runtime,
+                    }
+                    _save_settings(settings_now)
                     return {
                         "ok": True,
                         "supported": False,
