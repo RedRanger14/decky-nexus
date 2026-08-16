@@ -790,6 +790,10 @@ export interface CollectionSummary {
   thumbnailUrl?: string;
   modCount: number;
   totalSize: number;
+  /** Needs an OLDER game build than Steam installs. Shown as a warning on
+   * the tile rather than hiding the collection: somebody who knows their
+   * setup cannot act on something they cannot see. */
+  needs_older_game?: boolean;
 }
 
 export interface CollectionFile {

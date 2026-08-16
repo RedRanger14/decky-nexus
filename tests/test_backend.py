@@ -6779,7 +6779,7 @@ class TestCollectionNeedsDowngrade(unittest.TestCase):
         self.assertIn("older version", r["reason"].lower())
         self.assertIn("Downgrade the game", r["reason"])
 
-    def test_a_downgrade_collection_is_hidden_from_the_browse_rows(self):
+    def test_a_downgrade_collection_is_flagged_not_hidden(self):
         # Michael: the store page "is kind of a highlights page and we
         # shouldn't show things you can't install". The description comes
         # back on the SAME list query, so this costs no extra requests.
@@ -6802,9 +6802,15 @@ class TestCollectionNeedsDowngrade(unittest.TestCase):
             r = run(plugin.get_collections("fallout4", 10, "", "endorsements", 0))
         finally:
             main._gql_query_vars = orig
+        # Warned, not hidden: an advanced user may know their setup and
+        # want to pick through it. Hiding it takes that choice away and
+        # explains nothing.
         names = [c["name"] for c in r["collections"]]
-        self.assertEqual(names, ["Such Fallout 4"])
-        self.assertEqual(r["hidden"], 1)
+        self.assertEqual(names, ["A StoryWealth", "Such Fallout 4"])
+        flagged = {c["name"]: c.get("needs_older_game")
+                   for c in r["collections"]}
+        self.assertTrue(flagged["A StoryWealth"])
+        self.assertFalse(flagged["Such Fallout 4"])
 
     def test_the_row_refills_instead_of_coming_back_short(self):
         # Hiding two of Fallout 4's top collections turned a row of eight
@@ -6841,9 +6847,10 @@ class TestCollectionNeedsDowngrade(unittest.TestCase):
         self.assertGreater(r["next_offset"], 8)
         self.assertGreaterEqual(len(seen), 1)
 
-    def test_it_stops_rather_than_spinning_when_everything_is_blocked(self):
-        # A game whose whole catalogue needs a downgrade must produce a
-        # short row, not an endless walk down the list.
+    def test_a_catalogue_that_all_needs_downgrading_is_all_flagged(self):
+        # This used to assert an empty row, back when such collections
+        # were hidden. Warning beats hiding, so the row is full and every
+        # tile carries the mark.
         plugin = main.Plugin()
         orig = main._gql_query_vars
         calls = []
@@ -6862,7 +6869,9 @@ class TestCollectionNeedsDowngrade(unittest.TestCase):
             r = run(plugin.get_collections("fallout4", 8, "", "endorsements", 0))
         finally:
             main._gql_query_vars = orig
-        self.assertEqual(r["collections"], [])
+        self.assertEqual(len(r["collections"]), 8)
+        self.assertTrue(
+            all(c.get("needs_older_game") for c in r["collections"]))
         self.assertLessEqual(len(calls), main.COLLECTION_BACKFILL_ROUNDS)
 
     def test_it_stops_when_the_source_runs_out(self):
@@ -6886,6 +6895,7 @@ class TestCollectionNeedsDowngrade(unittest.TestCase):
         finally:
             main._gql_query_vars = orig
         self.assertEqual(len(r["collections"]), 1)
+        self.assertFalse(r["collections"][0].get("needs_older_game"))
         self.assertEqual(len(calls), 1, "kept asking after the list ended")
 
     def test_the_hand_written_table_still_wins(self):
@@ -7404,7 +7414,7 @@ class TestBlockedCollectionsLeaveTheStore(unittest.TestCase):
     list looking perfectly normal after the plugin had already refused it
     once."""
 
-    def test_a_remembered_block_hides_it_from_the_store(self):
+    def test_a_flagged_collection_is_still_offered_with_a_warning(self):
         plugin = main.Plugin()
         settings = main._load_settings()
         settings.setdefault("collection_blocked", {})["blocktest"] = {
@@ -7432,8 +7442,14 @@ class TestBlockedCollectionsLeaveTheStore(unittest.TestCase):
             settings = main._load_settings()
             settings.get("collection_blocked", {}).pop("blocktest", None)
             main._save_settings(settings)
-        self.assertEqual([c["name"] for c in r["collections"]], ["Fine One"])
-        self.assertEqual(r["hidden"], 1)
+        # Warned, NOT hidden. Michael: "I dont know if the collection
+        # should dissapear, that feels a little too far" - somebody who
+        # knows their setup cannot act on something they cannot see.
+        names = [c["name"] for c in r["collections"]]
+        self.assertEqual(names, ["Such Fallout 4", "Fine One"])
+        flagged = {c["name"]: c.get("needs_older_game") for c in r["collections"]}
+        self.assertTrue(flagged["Such Fallout 4"])
+        self.assertFalse(flagged["Fine One"])
 
     def test_nothing_is_hidden_before_anything_has_looked(self):
         # The block is LEARNED. A collection nobody has opened is offered
