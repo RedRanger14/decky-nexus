@@ -17,7 +17,12 @@
       "Bash(python -m unittest tests.test_backend -k \"Mangled\")",
       "Bash(python -m unittest tests.test_backend -k \"BlockedCollections\")",
       "Bash(python -m unittest tests.test_backend -k \"BundledMe3\")",
-      "Bash(scp -o ConnectTimeout=25 /c/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/er_top_mods.py deck@steamdeck.local:/tmp/er_top_mods.py)"
+      "Bash(scp -o ConnectTimeout=25 /c/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/er_top_mods.py deck@steamdeck.local:/tmp/er_top_mods.py)",
+      "Bash(awk 'NR>=8500 && NR<=8700 && \\(/_download|dl_url|progress.*download|async def |# ----/\\)' main.py)",
+      "Bash(awk 'NR<=8842 && /^async def |^ async def /{l=NR\": \"$0} END{}' main.py)",
+      "Bash(python -m unittest tests.test_backend.TestRegulationClashBeforeDownload -v)",
+      "Bash(python -m unittest tests.test_backend.TestRegulationClashBeforeDownload)",
+      "PowerShell(python -m unittest discover -s tests 2>&1)"
     ]
   }
 }
