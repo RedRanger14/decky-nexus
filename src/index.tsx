@@ -98,6 +98,7 @@ import {
   setFrameworkEnabled,
   setApiKey,
   setModEnabled,
+  buildReport,
 } from "./api";
 import {
   crashHuntVerdict,
@@ -3723,6 +3724,30 @@ function DevSection() {
 
   return (
     <PanelSection title="Developer">
+      {/* Reporting belongs in the QAM, where someone is standing when the
+          thing goes wrong: the Health page is two taps further on and is
+          where you go when you already suspect a problem. Michael asked for
+          it here, in the space the developer tools vacate before release.
+          The plugin fills the ticket in; GitHub's own form takes it from
+          there, so nothing is posted on anyone's behalf. */}
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          onClick={async () => {
+            const r = await buildReport(
+              game.nexusDomain,
+              game.appId
+            ).catch(() => undefined);
+            Navigation.NavigateToExternalWeb(
+              "https://github.com/RedRanger14/decky-nexus/issues/new" +
+                `?title=${encodeURIComponent(`[${game.displayName}] `)}` +
+                `&body=${encodeURIComponent((r?.body ?? "").slice(0, 5500))}`
+            );
+          }}
+        >
+          Report a problem
+        </ButtonItem>
+      </PanelSectionRow>
       {game.logAdapter && (
         <PanelSectionRow>
           <ButtonItem

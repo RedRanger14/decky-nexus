@@ -14,8 +14,6 @@ have each been installed, modded and played on real hardware, which is not
 the same as everything working. Expect rough edges, and back up saves you
 care about.
 
-See [starterFile.md](./starterFile.md) for the full project handover: motivation, market context, v1 scope, constraints, and build order.
-
 ## Supported games
 
 Nine games, each one installed, modded and played on real hardware before it
@@ -47,6 +45,32 @@ which. Adding a game means installing it, modding it and playing it on
 hardware, so the list grows slowly and on purpose.
 
 [issues]: https://github.com/RedRanger14/decky-nexus/issues
+
+## What you need
+
+- **A Nexus Mods Premium account.** This is not optional. Free accounts
+  cannot generate download links through the Nexus API, and the manual route
+  free users take on a PC (clicking through the website, then a browser
+  handoff) is not usable from Gaming Mode on a controller. With a free
+  account you can browse here, but nothing will download.
+- **Decky Loader**, installed on the Deck already.
+- **The game installed through Steam.** Mods are applied to the Steam copy.
+
+## Crediting mod authors
+
+Mods exist because people give their work away, and a plugin that makes them
+invisible is a plugin that quietly costs them. So:
+
+- **Endorsing is one button**, on the mod page in the plugin, and it is the
+  same endorsement that counts on the website.
+- **Author support and donation links are carried through** to the mod page
+  rather than stripped out, so a mod you get hours from is one tap from the
+  place its author asked to be supported.
+- **Authors and versions are shown** everywhere a mod is listed, not just the
+  mod name.
+
+If something you install turns out to be good, endorse it. It costs nothing
+and it is the whole economy these mods run on.
 
 ## Installing
 
