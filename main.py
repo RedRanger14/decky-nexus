@@ -4741,22 +4741,23 @@ def _me3_bundled_loader(rel_dir: str) -> bool:
     through it, so the bundled one is noise - and worse than noise: its
     per-platform builds of the same dll look exactly like an option pack.
 
-    Matched on ANY path segment, not just the first: ERR ships its copy at
-    internals/modengine/, and a first-segment test registered
-    me3_mod_host.dll as mod content - a second mod host loaded underneath
-    our own. Michael's ERR install recorded 13 natives; four were ERR's and
-    the rest were plumbing.
+    Matched on ANY path segment. ERR keeps a whole ModEngine2 distribution
+    at internals/modengine/, dlls included, and those dlls are built for
+    ITS loader and ITS config - not for our me3 host. Registering them as
+    our natives crashed Elden Ring on startup within seconds. The state
+    that works, proven across a day of booting, is ERR loading its assets
+    only. I briefly "fixed" this into loading them, on the reasoning that a
+    mod's own dll should not be excluded; the crash says otherwise, and the
+    crash outranks the reasoning.
     """
     loaders = ("me3", "modengine2", "mod engine 2", "modengine")
-    return rel_dir.split("/")[0].lower() in loaders
+    return any(part.lower() in loaders for part in rel_dir.split("/"))
 
 
-# Loader and runtime binaries by NAME, wherever they sit. Matching whole
-# directories was too blunt: ERR keeps its own mod dll at
-# internals/modengine/dll/reforged.dll, so excluding every path containing
-# "modengine" silenced the mod itself while still loading
-# internals/launcher/libzstd.dll - a compression library that was never a
-# native. The file is what must be recognised, not the folder it sits in.
+# Loader and runtime binaries by NAME, wherever they sit - the folder test
+# cannot catch these. internals/launcher/libzstd.dll was being registered as
+# a native: a compression library that never was one, sitting outside any
+# folder named after a loader.
 _ME3_LOADER_BINARIES = {
     "me3_mod_host.dll",
     "me3.dll",

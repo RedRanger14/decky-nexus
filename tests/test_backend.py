@@ -12620,20 +12620,23 @@ class TestErrNativesAreNotPlumbing(unittest.TestCase):
         self.assertTrue(main._me3_bundled_loader("me3"))
         self.assertTrue(main._me3_bundled_loader("modengine2/bin"))
 
-    def test_errs_own_dll_survives_the_loader_exclusion(self):
-        # ERR keeps reforged.dll at internals/modengine/dll/. Excluding
-        # every path containing "modengine" silenced the mod itself - a
-        # false negative I created while fixing a false positive.
-        self.assertFalse(main._me3_loader_binary(
-            "internals/modengine/dll/reforged.dll"))
-        self.assertFalse(main._me3_loader_binary(
-            "internals/modengine/dll/ertransmogrify.dll"))
-        self.assertFalse(main._me3_bundled_loader("internals/modengine/dll"))
+    def test_errs_bundled_modengine_tree_must_not_load(self):
+        # Learned by crashing. ERR keeps a whole ModEngine2 distribution at
+        # internals/modengine/, dlls included, built for ITS loader and ITS
+        # config. Registering them as our natives crashed Elden Ring within
+        # seconds of launch; ERR loading assets only is the state that works.
+        # Michael: "I reinstalled ERR and now the game crashes almost
+        # instantly". Do not "fix" this into loading them again.
+        self.assertTrue(main._me3_bundled_loader("internals/modengine/dll"))
+        self.assertTrue(main._me3_bundled_loader(
+            "internals/modengine/bin/win64"))
+
+    def test_a_top_level_bundled_loader_is_excluded_too(self):
+        self.assertTrue(main._me3_bundled_loader("modengine2/bin"))
 
     def test_loader_plumbing_is_excluded_by_name_anywhere(self):
-        self.assertTrue(main._me3_loader_binary(
-            "internals/modengine/bin/win64/me3_mod_host.dll"))
-        # Was being registered as a native: a compression library.
+        # The name test catches what the folder test cannot: libzstd sits
+        # under internals/launcher/, named after no loader at all.
         self.assertTrue(main._me3_loader_binary(
             "internals/launcher/libzstd.dll"))
 
