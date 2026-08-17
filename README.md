@@ -1,23 +1,50 @@
-# Nexus Mods — Decky Loader Plugin
+# Nexus Mods: Decky Loader Plugin
 
-Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods.com) content for the currently selected game — entirely from Gaming Mode with a controller, on SteamOS and Bazzite. No Desktop Mode required.
+Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods.com) content for the currently selected game, entirely from Gaming Mode with a controller, on SteamOS and Bazzite. No Desktop Mode required.
 
 > **Unofficial, and in beta.** This is a community-built plugin. It is not an
 > official Nexus Mods product, is not supported by Nexus Mods, and nothing
-> here is endorsed by them — it uses their public API like any other
-> third-party client. Bugs are ours; please report them here rather than to
-> Nexus Mods support.
+> here is endorsed by them. It uses their public API like any other
+> third-party client. Bugs are ours, so please report them here rather than
+> to Nexus Mods support.
 
 **Status:** 1.0 beta. Supports the games listed below; Slay the Spire 2 was
 the proving ground and is no longer the limit. Beta means the supported games
-have each been installed, modded and played on real hardware — not that
-everything works. Expect rough edges, and back up saves you care about.
+have each been installed, modded and played on real hardware, which is not
+the same as everything working. Expect rough edges, and back up saves you
+care about.
 
 See [starterFile.md](./starterFile.md) for the full project handover: motivation, market context, v1 scope, constraints, and build order.
 
+## Supported games
+
+Thirteen games, each one installed, modded and played on real hardware before
+it shipped. Anything not on this list is not supported yet, and the plugin
+will say so rather than guess.
+
+1. Cyberpunk 2077
+2. Elden Ring
+3. Fallout 3
+4. Fallout 4
+5. Fallout: New Vegas
+6. Hollow Knight: Silksong
+7. Mount & Blade II: Bannerlord
+8. Palworld
+9. Resident Evil 4
+10. Skyrim Special Edition
+11. Slay the Spire 2
+12. Stardew Valley
+13. The Witcher 3
+
+Want one added? Open a [game request][issues] and say which game. Adding one
+means installing it, modding it and playing it on hardware, so the list grows
+slowly and on purpose.
+
+[issues]: https://github.com/RedRanger14/decky-nexus/issues
+
 ## Installing
 
-You need [Decky Loader](https://decky.xyz) first — this is a Decky plugin, not
+You need [Decky Loader](https://decky.xyz) first, this is a Decky plugin, not
 a standalone app. Everything below is done in Gaming Mode with the controller.
 
 There are two ways in, and they trade off differently. Read both before you
@@ -30,11 +57,14 @@ Quick Access Menu (**…**) → the plug icon → **gear** → **Settings** → 
 Decky store and install it.
 
 - **Updates arrive automatically**, the same as any Decky plugin.
-- **You keep controller-only setup** — no Desktop Mode, no file manager.
+- **Setup stays on the couch.** No Desktop Mode and no file manager needed.
+  (The whole plugin is controller-first, not controller-only: a mouse and
+  keyboard work fine if you have them.)
 - **The catch: a custom store REPLACES Decky's default store rather than
   adding to it.** While ours is set, the usual Decky plugin listing is not
   shown, so installing other plugins means switching the URL back. That is
-  Decky's behaviour, not ours, and it is the main reason to consider option 2.
+  Decky's behaviour rather than ours, and it is the main reason to consider
+  option 2.
 
 ### 2. Install the release zip by hand
 
@@ -42,9 +72,10 @@ Download the release `.zip`, then extract it to
 `~/homebrew/plugins/Nexus-Mods` on the Deck and restart Decky.
 
 - **Decky's default store is untouched**, so other plugins install normally.
-- **The catch: no automatic updates.** Every new version has to be downloaded
-  and extracted again, and you will not be told one exists.
-- **The catch: it needs Desktop Mode** (or SSH) once, to move the files.
+- **The catch: no automatic updates.** You will not be told a new version
+  exists, and you have to go and look.
+- **The catch: Desktop Mode every time.** Not once at setup: each update means
+  switching to Desktop Mode (or SSH) again to replace the files.
 
 ### Which to choose
 
@@ -57,7 +88,7 @@ their store to stay put, take option 2 and check back for updates yourself.
 This is a **beta**. It changes game files, and while every game it supports
 can be returned to vanilla from inside the plugin, back up saves you care
 about first. Report anything wrong on
-[GitHub Issues](https://github.com/RedRanger14/decky-nexus/issues) — the
+[GitHub Issues](https://github.com/RedRanger14/decky-nexus/issues), the
 plugin can package the details for you from the Health page.
 
 ## v1 Scope
@@ -74,10 +105,10 @@ Out of scope for v1: multi-game support, FOMOD installers, load order, Proton-pr
 
 Standard Decky plugin layout (from the [official template](https://github.com/SteamDeckHomebrew/decky-plugin-template)):
 
-- `src/` — React/TypeScript frontend rendered in the Quick Access Menu (`@decky/ui`, `@decky/api`).
-- `main.py` — Python backend (Nexus API calls, downloads, archive extraction, folder moves).
-- `plugin.json` — plugin metadata. Note: no `_root` flag; everything the plugin touches lives in the user's home directory.
-- `defaults/` — files bundled alongside the built plugin in the zip.
+- `src/`: React/TypeScript frontend rendered in the Quick Access Menu (`@decky/ui`, `@decky/api`).
+- `main.py`: Python backend (Nexus API calls, downloads, archive extraction, folder moves).
+- `plugin.json`: plugin metadata. Note: no `_root` flag; everything the plugin touches lives in the user's home directory.
+- `defaults/`: files bundled alongside the built plugin in the zip.
 
 Frontend ↔ backend communication: `callable()` for request/response, `decky.emit()` + `addEventListener` for backend-initiated events (e.g. download progress).
 
@@ -92,26 +123,26 @@ pnpm run build   # bundles src/ into dist/index.js via rollup
 
 ### Deploying to hardware
 
-**From Windows (this project's dev machine): `pnpm run deploy`** — runs [deploy.ps1](./deploy.ps1), which builds the frontend, packs the runtime files, ships them over SSH to `~/homebrew/plugins/Nexus-Mods/` on the device, and restarts `plugin_loader`. Uses Windows' built-in OpenSSH and tar; no Docker or decky CLI needed.
+**From Windows (this project's dev machine): `pnpm run deploy`**: runs [deploy.ps1](./deploy.ps1), which builds the frontend, packs the runtime files, ships them over SSH to `~/homebrew/plugins/Nexus-Mods/` on the device, and restarts `plugin_loader`. Uses Windows' built-in OpenSSH and tar; no Docker or decky CLI needed.
 
 One-time device setup (Steam Deck, in Desktop Mode → Konsole):
 
-1. `passwd` — set a password for the `deck` user if you never have.
-2. `sudo systemctl enable --now sshd` — turn on SSH permanently.
+1. `passwd`: set a password for the `deck` user if you never have.
+2. `sudo systemctl enable --now sshd`: turn on SSH permanently.
 3. Note the device's address: `steamdeck.local` usually resolves from Windows; otherwise get the IP from Settings → Internet.
 
 One-time laptop setup:
 
-1. Run `pnpm run deploy` once — it creates `.vscode/settings.json` (gitignored) from the defaults and exits.
+1. Run `pnpm run deploy` once: it creates `.vscode/settings.json` (gitignored) from the defaults and exits.
 2. Edit `.vscode/settings.json`: set `deckip` (hostname or IP) and `deckpass` (the password from step 1 above; used for `sudo` on the device). Leave `deckpass` as-is to be prompted each deploy instead of storing it.
 3. Optional, to skip SSH password prompts: `ssh-keygen -t ed25519` then
    `type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh deck@steamdeck.local "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"`
 
 Flags: `-SkipBuild` deploys the current `dist/` as-is; `-PackOnly` builds the tarball without touching the device.
 
-The same script deploys to the Bazzite box — point `deckip`/`deckuser`/`deckdir` at it in `settings.json`. Both targets run Decky; Bazzite treats it as first-class, but expect occasional breakage after SteamOS updates.
+The same script deploys to the Bazzite box, point `deckip`/`deckuser`/`deckdir` at it in `settings.json`. Both targets run Decky; Bazzite treats it as first-class, but expect occasional breakage after SteamOS updates.
 
-Current test device: a Lenovo Legion Go 2 running SteamOS (hostname `steamdeck.local`, user `deck` — behaves identically to a Steam Deck for all plugin purposes). It suspends aggressively; the deploy script probes and retries, but wake the device before deploying. The device password must be printable ASCII (the deploy pipe scrubs non-printable bytes around it).
+Current test device: a Lenovo Legion Go 2 running SteamOS (hostname `steamdeck.local`, user `deck`, behaves identically to a Steam Deck for all plugin purposes). It suspends aggressively; the deploy script probes and retries, but wake the device before deploying. The device password must be printable ASCII (the deploy pipe scrubs non-printable bytes around it).
 
 The template's `.vscode/` bash tasks and the [`decky` CLI](https://github.com/SteamDeckHomebrew/cli) zip pipeline remain the store-submission path later.
 
@@ -122,7 +153,7 @@ The template's `.vscode/` bash tasks and the [`decky` CLI](https://github.com/St
 
 ### Dev-loop smoke test
 
-The current hello-world panel has a **Ping backend** button that round-trips a `callable`, displays backend environment info (user, home path, versions), and fires a backend-emitted event that surfaces as a toast — verifying all three communication channels work on real hardware.
+The current hello-world panel has a **Ping backend** button that round-trips a `callable`, displays backend environment info (user, home path, versions), and fires a backend-emitted event that surfaces as a toast, verifying all three communication channels work on real hardware.
 
 ## Build Order
 
@@ -137,4 +168,4 @@ The current hello-world panel has a **Ping backend** button that round-trips a `
 
 ## License
 
-BSD-3-Clause (inherited from the Decky plugin template — see [LICENSE](./LICENSE)).
+BSD-3-Clause (inherited from the Decky plugin template, see [LICENSE](./LICENSE)).
