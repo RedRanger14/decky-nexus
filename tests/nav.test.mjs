@@ -699,3 +699,22 @@ test("the verified badge stays hidden until its counting is trustworthy", () => 
     "the badge renders without checking the flag, so hiding it does nothing"
   );
 });
+
+test("a conflict message offers the way out, not just the instruction", () => {
+  // A conflict is resolved in My Mods, and telling someone to go there while
+  // making them back out and navigate by hand is an instruction pretending
+  // to be help. Michael: "it would be nice if we add a 'manage my mods'
+  // button to the end of the message".
+  const chrome = read("chrome.tsx");
+  assert.ok(
+    /action\?: \{ label: string; onClick: \(\) => void \}/.test(chrome),
+    "WarningBox cannot carry an action, so every refusal is a dead end"
+  );
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /label: "Manage my mods"/.test(page) &&
+      /pushOurPage\("\/nexus-mods\/manager"\)/.test(page),
+    "the blocked-install box has no route to My Mods, which is where the " +
+      "conflict is actually resolved"
+  );
+});

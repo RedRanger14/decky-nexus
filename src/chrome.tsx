@@ -1,6 +1,7 @@
 // Shared page furniture for the full-screen pages: one visual language
 // for the store, mod detail and collection detail instead of three
 // hand-rolled variants. QAM panels deliberately stay native Steam.
+import { ButtonItem, Focusable } from "@decky/ui";
 import { CSSProperties, ReactNode } from "react";
 import { FaExclamationTriangle } from "react-icons/fa";
 
@@ -210,9 +211,16 @@ export function StackedThumb({
 export function WarningBox({
   title,
   body,
+  action,
 }: {
   title: string;
   body: string;
+  /** Optional way out, on the message itself. A conflict is resolved in My
+   * Mods, and telling someone to go there while making them back out and
+   * navigate by hand is a instruction pretending to be help. Michael: "it
+   * would be nice if we add a 'manage my mods' button to the end of the
+   * message so users can easily go there and turn others off". */
+  action?: { label: string; onClick: () => void };
 }) {
   return (
     <div
@@ -245,6 +253,13 @@ export function WarningBox({
         >
           {body}
         </div>
+        {action && (
+          <Focusable style={{ marginTop: "9px", maxWidth: "230px" }}>
+            <ButtonItem layout="below" onClick={action.onClick}>
+              {action.label}
+            </ButtonItem>
+          </Focusable>
+        )}
       </div>
     </div>
   );

@@ -12786,6 +12786,45 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestIncompatibilityIsPairwise(unittest.TestCase):
+    """First Person Souls breaks ERR's menus - "?MenuText?" on character
+    selects, no Reforged menus - but it is a native, so no files overlap and
+    it is presumably fine on its own. Michael: "I think mark first person
+    souls incompatible". Marked WITH ERR, not in the abstract."""
+
+    PAIRS = {"mod_incompat": {"eldenring": {
+        "3266": {"with": 541, "why": "It replaces the menus ERR provides."}}}}
+
+    def _settings(self, err_enabled):
+        s = dict(self.PAIRS)
+        s["installed"] = {"eldenring": {"ERR": {
+            "mode": "me3", "mod_id": 541, "name": "ERR - ELDEN RING Reforged",
+            "enabled": err_enabled, "installed_at": 1,
+        }}}
+        return s
+
+    def test_refused_while_the_other_mod_is_on(self):
+        pair = main._incompatible_partner(
+            self._settings(True), "eldenring", 3266)
+        self.assertIsNotNone(pair)
+        self.assertEqual(pair[0], "ERR - ELDEN RING Reforged")
+
+    def test_allowed_once_the_other_mod_is_switched_off(self):
+        # Switching it off is the remedy, so it must actually work.
+        self.assertIsNone(main._incompatible_partner(
+            self._settings(False), "eldenring", 3266))
+
+    def test_allowed_when_the_other_mod_is_absent(self):
+        # On its own it is not a broken mod, and must not be treated as one.
+        s = dict(self.PAIRS)
+        s["installed"] = {"eldenring": {}}
+        self.assertIsNone(main._incompatible_partner(s, "eldenring", 3266))
+
+    def test_an_unrecorded_mod_is_unaffected(self):
+        self.assertIsNone(main._incompatible_partner(
+            self._settings(True), "eldenring", 9999))
+
+
 class TestAVerdictCanCoverOlderVersions(unittest.TestCase):
     """Seamless Co-op is hard version-locked to the game build, so every
     release before the current one fails identically. Elden Essentials pins
