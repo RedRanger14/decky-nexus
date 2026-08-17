@@ -792,11 +792,12 @@ export default function HealthCheckPage() {
               icon={<FaPuzzlePiece size={16} />}
               title="Turned off a mod's debug display"
               detail={
-                `${report!.debug_quieted.length} debug option` +
-                `${report!.debug_quieted.length === 1 ? " was" : "s were"} ` +
-                "switched on and put a panel of text over the game. Turned " +
-                "off in the game's own settings - the file was backed up " +
-                "first, and the mods themselves are untouched."
+                `${report!.debug_quieted.join(", ")} — ` +
+                `${report!.debug_quieted.length === 1 ? "a mod" : "mods"} ` +
+                "left a debug display switched on, putting a panel of text " +
+                "over the game. Turned off in the game's own settings; the " +
+                "file was backed up first and the mods are untouched. Turn " +
+                "it back on in the game's Mods menu if you want it."
               }
             />
           </>

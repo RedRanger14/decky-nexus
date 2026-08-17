@@ -1351,6 +1351,20 @@ def _w3_quiet_debug_overlays(app_id: int) -> list:
             decky.logger.warning(f"W3 debug quiet failed for {path}: {e}")
             continue
         changed.extend(keys)
+        # Remembered, because the run that fixes it is the ONLY run that
+        # can report it: the next check finds nothing on and says nothing.
+        # Michael: "I clicked refresh and saw a brief message about debug
+        # mode but then it went once the refresh finished." A change we
+        # made to someone's settings has to stay visible after the moment
+        # we made it.
+        try:
+            st = _load_settings()
+            noted = st.setdefault("w3_debug_quieted", {})
+            for k in keys:
+                noted[k] = os.path.basename(path)
+            _save_settings(st)
+        except Exception as e:  # noqa: BLE001 - the fix already landed
+            decky.logger.debug(f"could not record debug quiet: {e}")
         decky.logger.info(
             f"W3: switched off {len(keys)} mod debug option(s) in "
             f"{os.path.basename(path)}: {', '.join(keys)}"
@@ -14471,11 +14485,14 @@ query CollectionInstructions($slug: String!) {
         # world positions over their game belongs to New Lightning FX, or
         # that the switch is three menus deep. Runs before the rest so the
         # report can say what changed.
-        debug_quieted = (
+        if game_domain == "witcher3" and app_id:
             _w3_quiet_debug_overlays(app_id)
-            if game_domain == "witcher3" and app_id
-            else []
-        )
+            # Everything we have ever switched off here, not just this run.
+            debug_quieted = sorted(
+                (_load_settings().get("w3_debug_quieted") or {}).keys()
+            )
+        else:
+            debug_quieted = []
         script = _redscript_report(install_path, records)
         # The Bethesda half of the same question. Same authority - the game
         # itself - and the same translation job: the extender names DLLs,
