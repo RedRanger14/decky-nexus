@@ -32,7 +32,11 @@
       "Bash(python -m unittest tests.test_backend.TestTwoModsCannotOwnTheSameFile)",
       "Bash(python -m unittest tests.test_backend.TestAVerdictCanCoverOlderVersions)",
       "Bash(python -m unittest tests.test_backend.TestIncompatibilityIsPairwise)",
-      "Bash(python -m unittest tests.test_backend.TestW3MergeSafety)"
+      "Bash(python -m unittest tests.test_backend.TestW3MergeSafety)",
+      "Bash(grep -n \"notes = \\\\[\\\\]\\\\|report = {\\\\|\\\\\"ok\\\\\": True,\" main.py)",
+      "Bash(awk -F: '$1>14440 && $1<14560')",
+      "Bash(awk -F: '$1>14520 && $1<14900')",
+      "Bash(python -m unittest tests.test_backend.TestW3DebugOverlaysAreSwitchedOff)"
     ]
   }
 }
