@@ -2,6 +2,7 @@
 // for the store, mod detail and collection detail instead of three
 // hand-rolled variants. QAM panels deliberately stay native Steam.
 import { CSSProperties, ReactNode } from "react";
+import { FaExclamationTriangle } from "react-icons/fa";
 
 import { NEXUS_ORANGE } from "./theme";
 
@@ -193,6 +194,58 @@ export function StackedThumb({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** A refusal the user must be able to read and act on.
+ *
+ * Toasts truncate, and they leave. Michael: "you forget how little
+ * information will fit on a toast message - i think there needs to an
+ * orange warning info box or something so the user is informed why it
+ * install blocked". A blocked install has to say what is in the way AND
+ * what to do about it, which is two clauses more than a toast will show,
+ * so it stays on the page until the situation changes.
+ */
+export function WarningBox({
+  title,
+  body,
+}: {
+  title: string;
+  body: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: "10px",
+        alignItems: "flex-start",
+        margin: "10px 0",
+        padding: "11px 13px",
+        borderRadius: "6px",
+        // Orange, and a left bar so it reads as a warning at a glance
+        // rather than as another panel of body text.
+        background: "rgba(215, 130, 40, 0.14)",
+        borderLeft: "3px solid rgba(240, 145, 40, 0.95)",
+      }}
+    >
+      <FaExclamationTriangle
+        size={15}
+        style={{ color: "rgb(240, 165, 70)", flexShrink: 0, marginTop: "2px" }}
+      />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: "14px" }}>{title}</div>
+        <div
+          style={{
+            fontSize: "13px",
+            opacity: 0.9,
+            lineHeight: 1.45,
+            marginTop: "2px",
+          }}
+        >
+          {body}
+        </div>
+      </div>
     </div>
   );
 }
