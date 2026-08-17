@@ -12599,6 +12599,24 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
             source = fh.read()
         self.assertIn("urllib.parse.quote(link", source)
 
+    def test_only_a_recorded_verdict_skips_a_mod(self):
+        # Age is information; a verdict is evidence. The age rule skipped A
+        # Better Nude Body, verified working on this build, and every
+        # texture mod in EldenBoobs. Michael: "i think you have been far
+        # too broad with that brush... we need to mark ones specifically
+        # incompatible even if it means more testing."
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        wrapper = source[source.index("        payload_choice picks a folder"):]
+        wrapper = wrapper[:wrapper.index("    async def get_user_prefs")]
+        # The skip and the disable both hang off the verdict...
+        self.assertIn("_known_broken_mods(", wrapper)
+        self.assertIn("if broken and record_source", wrapper)
+        self.assertIn('result.get("ok") and broken', wrapper)
+        # ...and age reaches the user as a warning and nothing else.
+        self.assertNotIn("stale_note and record_source", wrapper)
+        self.assertIn('result["warning"] = stale_note', wrapper)
+
     def test_a_stale_native_installs_switched_off(self):
         # From scratch, nobody should have to know which mod to disable.
         # Michael, after being handed four dll names: "package it up nicely
@@ -12612,8 +12630,6 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
         self.assertIn('record_source == "collection"', wrapper)
         self.assertIn("_disable_me3_record(", wrapper)
         self.assertIn('result["installed_disabled"] = True', wrapper)
-        # And the reason travels with it, or the row cannot explain itself.
-        self.assertIn('result["warning"] = stale_note', wrapper)
 
     def test_a_loader_is_exempt_from_the_older_patch_rule(self):
         # Elden Mod Loader was last updated in 2022 and the date rule
@@ -12753,6 +12769,54 @@ class TestLooseFromSoftAssets(unittest.TestCase):
         self.assertEqual(main._sort_loose_me3_assets(self.dir), {})
         self.assertTrue(os.path.isfile(
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
+
+
+class TestOnlyCodeCanAgeOut(unittest.TestCase):
+    """The older-patch rule skipped A Better Nude Body - a 2022 asset mod
+    verified working in the character creator on this exact build - plus
+    every texture mod in EldenBoobs. Michael: "just because its older
+    doesnt mean its broke." A mesh cannot fail a signature scan; it never
+    scans anything. Only code can age out."""
+
+    def test_a_dll_anywhere_in_the_archive_counts(self):
+        self.assertTrue(main._preview_has_dll(
+            [{"name": "mod", "type": "directory", "children": [
+                {"name": "SkipTheIntro.dll", "type": "file"}]}]))
+
+    def test_an_archive_of_meshes_ships_no_code(self):
+        # ABNB's real file list.
+        self.assertFalse(main._preview_has_dll([
+            {"name": "bd_f_0000.partsbnd.dcx", "type": "file"},
+            {"name": "fc_f_0100.partsbnd.dcx", "type": "file"},
+            {"name": "lg_f_0000.partsbnd.dcx", "type": "file"},
+        ]))
+
+    def test_a_texture_pack_ships_no_code(self):
+        self.assertFalse(main._preview_has_dll([
+            {"name": "parts", "type": "directory", "children": [
+                {"name": "am_m_1234.tpf.dcx", "type": "file"}]},
+            {"name": "readme.txt", "type": "file"},
+        ]))
+
+    def test_junk_in_the_tree_is_survivable(self):
+        self.assertFalse(main._preview_has_dll([None, "x.dll", 3, {}]))
+
+    def test_a_known_asset_mod_is_never_re_checked(self):
+        with mock.patch.object(main, "_load_settings", return_value={
+            "native_facts": {"eldenring": {"1153": False}},
+        }), mock.patch.object(main.aiohttp, "ClientSession") as session:
+            self.assertIs(run(main._mod_ships_dll("eldenring", 1153, 1)), False)
+        session.assert_not_called()
+
+    def test_no_evidence_means_no_action(self):
+        # None, not False: "we could not look" must never read as "it is
+        # code" NOR silently as "it is not" for a caller that treats False
+        # as proof. The stale check requires True specifically.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        check = source[source.index("async def _stale_native_warning"):]
+        check = check[:check.index("async def get_mod_files")]
+        self.assertIn("ships_dll is not True", check)
 
 
 class TestStaleNativeWarning(unittest.TestCase):
