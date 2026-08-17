@@ -3727,6 +3727,57 @@ def _w3_current_script(install_path: str, mods_path: str, rel: str,
     return owner_path
 
 
+# Witcher 3 caches its compiled scripts, so changing a .ws is not enough to
+# make the game rebuild them. Vortex ships an empty mod for exactly this -
+# mod0000____CompilationTrigger - whose presence forces a recompile. Our
+# merger wrote merged scripts and never triggered one, which means a merge
+# could be correct and still do nothing until something else invalidated
+# the cache. Named after theirs so a user comparing the two folders sees
+# the same idea.
+W3_COMPILE_TRIGGER = "mod0000____DeckyCompileTrigger"
+
+
+def _w3_write_compile_trigger(mods_path: str) -> str:
+    """Create the empty mod that forces a script recompile. Returns its path."""
+    root = os.path.join(mods_path, W3_COMPILE_TRIGGER)
+    os.makedirs(os.path.join(root, "content", "scripts"), exist_ok=True)
+    note = os.path.join(root, "decky-nexus.txt")
+    if not os.path.isfile(note):
+        with open(note, "w", encoding="utf-8") as f:
+            f.write(
+                "Empty on purpose. The Witcher 3 caches compiled scripts; "
+                "this mod's presence makes it rebuild them after decky-nexus "
+                "merges scripts. Safe to delete - the merge is then simply "
+                "not applied until something else invalidates the "
+                "cache." + chr(10)
+            )
+    return root
+
+
+def _w3_merge_participants(settings: dict, game_domain: str) -> dict:
+    """merged script -> the mod folders whose edits went into it."""
+    return ((settings.get("w3_merges") or {}).get(game_domain) or {})
+
+
+def _w3_stale_merges(settings: dict, game_domain: str, mods_path: str) -> list:
+    """Merged scripts whose contributors are no longer all present.
+
+    Vortex calls the equivalent a MergeDataViolationError: merged script data
+    referencing "missing/undeployed/optional mods". The merged file still
+    contains a disabled mod's edits, so the user switches a mod off and its
+    changes stay in the game - which is worse than the conflict we were
+    avoiding, because nothing on screen says so.
+    """
+    stale = []
+    for rel, entry in _w3_merge_participants(settings, game_domain).items():
+        # Existing store shape: {rel: {"mods": [folder, ...]}}.
+        for folder in (entry or {}).get("mods") or []:
+            if not os.path.isdir(os.path.join(mods_path, folder)):
+                stale.append((rel, folder))
+                break
+    return stale
+
+
 def _w3_try_merge_conflicts(
     game_domain: str, install_path: str, mods_path: str,
     conflicts: list, settings: dict,

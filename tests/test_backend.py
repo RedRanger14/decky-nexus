@@ -12786,6 +12786,59 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestW3MergeSafety(unittest.TestCase):
+    """Groundwork for turning auto-merge back on. It has been off since
+    2026-07-24 because a merged script crashed the game before the compile
+    stage, and nothing checked the result. Two lessons taken from Vortex's
+    own Witcher 3 extension, read for this."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def test_a_compile_trigger_is_written(self):
+        # Vortex ships mod0000____CompilationTrigger because the game caches
+        # compiled scripts: a correct merge can otherwise do nothing at all.
+        path = main._w3_write_compile_trigger(self.dir)
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.dir, main.W3_COMPILE_TRIGGER,
+                         "content", "scripts")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(path, "decky-nexus.txt")))
+        # Sorts before any real mod, like the merged folder itself.
+        self.assertTrue(main.W3_COMPILE_TRIGGER.startswith("mod0000"))
+
+    def test_writing_it_twice_does_not_clobber_the_note(self):
+        main._w3_write_compile_trigger(self.dir)
+        note = os.path.join(self.dir, main.W3_COMPILE_TRIGGER,
+                            "decky-nexus.txt")
+        with open(note, "a", encoding="utf-8") as f:
+            f.write("edited by hand")
+        main._w3_write_compile_trigger(self.dir)
+        with open(note, encoding="utf-8") as f:
+            self.assertIn("edited by hand", f.read())
+
+    def test_a_merge_missing_a_contributor_is_stale(self):
+        # Vortex's MergeDataViolationError in miniature: the merged file
+        # still carries a departed mod's edits, so switching that mod off
+        # leaves its changes in the game with nothing saying so.
+        settings = {"w3_merges": {"witcher3": {
+            "game/player/r4player.ws": {"mods": ["modA", "modB"]}}}}
+        os.makedirs(os.path.join(self.dir, "modA"))
+        stale = main._w3_stale_merges(settings, "witcher3", self.dir)
+        self.assertEqual(stale, [("game/player/r4player.ws", "modB")])
+
+    def test_a_complete_merge_is_not_stale(self):
+        settings = {"w3_merges": {"witcher3": {
+            "game/player/r4player.ws": {"mods": ["modA", "modB"]}}}}
+        for m in ("modA", "modB"):
+            os.makedirs(os.path.join(self.dir, m))
+        self.assertEqual(main._w3_stale_merges(settings, "witcher3", self.dir), [])
+
+    def test_no_merges_recorded_is_not_an_error(self):
+        self.assertEqual(main._w3_stale_merges({}, "witcher3", self.dir), [])
+
+
 class TestIncompatibilityIsPairwise(unittest.TestCase):
     """First Person Souls breaks ERR's menus - "?MenuText?" on character
     selects, no Reforged menus - but it is a native, so no files overlap and
