@@ -1279,6 +1279,85 @@ def _adopt_case(path: str) -> str:
     return path
 
 
+# ---- Witcher 3 mod debug overlays ----------------------------------------
+# New Lightning FX ships with Debug Mode ON, so the #1 collection puts a
+# debug panel over the screen - weather state, world positions, mod
+# settings - for every user who installs it. Michael saw it flashing bottom
+# left and had no way to know which of 162 mod folders was responsible, let
+# alone that the remedy was three menus deep. The Mod Menu XML declares the
+# option (id="modDebugMode"), the game stores the value in its settings
+# file, and the value the user picks persists - so this is ours to fix.
+#
+# Done AFTER a boot rather than at install: the game writes each mod's
+# defaults into the settings file the first time it sees the mod, so a
+# value written before that is either overwritten or lands in a section
+# that does not exist yet. It also means mods installed before this shipped
+# are covered.
+_W3_DEBUG_KEY_RE = re.compile(
+    r"^([ 	]*)(mod[A-Za-z0-9_]*debug[A-Za-z0-9_]*)([ 	]*=[ 	]*)true"
+    r"([ 	]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Both are real: next-gen DX12 writes dx12user.settings, the classic
+# renderer writes user.settings, and a device can have either or both.
+_W3_SETTINGS_FILES = ("dx12user.settings", "user.settings")
+
+
+def _w3_quiet_debug_text(text: str):
+    """Turn every mod debug key that is on off. Returns (text, keys)."""
+    keys = []
+
+    def flip(m):
+        keys.append(m.group(2))
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}false{m.group(4)}"
+
+    return _W3_DEBUG_KEY_RE.sub(flip, text), keys
+
+
+def _w3_settings_paths(app_id: int) -> list:
+    return [
+        _prefix_user_path(app_id, "Documents", "The Witcher 3", name)
+        for name in _W3_SETTINGS_FILES
+    ]
+
+
+def _w3_quiet_debug_overlays(app_id: int) -> list:
+    """Switch mod debug overlays off in the game's own settings files.
+
+    Backed up alongside, once, before the first change - the same file
+    holds the user's graphics and control settings and is not ours to
+    lose. Returns the keys changed, for the health check to report.
+    """
+    changed = []
+    for path in _w3_settings_paths(app_id):
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        new_text, keys = _w3_quiet_debug_text(text)
+        if not keys:
+            continue
+        backup = path + ".decky-nexus.bak"
+        try:
+            if not os.path.isfile(backup):
+                shutil.copy2(path, backup)
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(new_text)
+        except OSError as e:
+            decky.logger.warning(f"W3 debug quiet failed for {path}: {e}")
+            continue
+        changed.extend(keys)
+        decky.logger.info(
+            f"W3: switched off {len(keys)} mod debug option(s) in "
+            f"{os.path.basename(path)}: {', '.join(keys)}"
+        )
+    return changed
+
+
 def _prefix_user_path(app_id: int, *parts: str) -> str:
     """A path inside the Proton prefix's Windows user profile."""
     return os.path.join(
@@ -14387,6 +14466,16 @@ query CollectionInstructions($slug: String!) {
         # belonging to a mod already switched off is exactly what we must
         # not report again, and one belonging to no record at all is the
         # orphan case that cost weeks.
+        # Witcher 3 mods that ship a debug overlay switched on: fixed, not
+        # reported. The user cannot be expected to know that a panel of
+        # world positions over their game belongs to New Lightning FX, or
+        # that the switch is three menus deep. Runs before the rest so the
+        # report can say what changed.
+        debug_quieted = (
+            _w3_quiet_debug_overlays(app_id)
+            if game_domain == "witcher3" and app_id
+            else []
+        )
         script = _redscript_report(install_path, records)
         # The Bethesda half of the same question. Same authority - the game
         # itself - and the same translation job: the extender names DLLs,
@@ -14693,6 +14782,9 @@ query CollectionInstructions($slug: String!) {
         return {
             "ok": True,
             "checked": len(tracked),
+            # Already done, not a task for the user - listed so the report
+            # can say so rather than silently changing their settings.
+            "debug_quieted": debug_quieted,
             # What the game itself reported, and the only part of this
             # report that is evidence rather than inference.
             "script_log": {

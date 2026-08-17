@@ -12786,6 +12786,55 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestW3DebugOverlaysAreSwitchedOff(unittest.TestCase):
+    """New Lightning FX ships Debug Mode ON, so the #1 Witcher 3 collection
+    puts a debug panel over the game for everyone who installs it. Michael
+    had no way to know which of 162 mod folders it belonged to, or that the
+    switch was three menus deep."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def test_only_debug_keys_are_flipped(self):
+        text = ("modStatus=true" + chr(10) + "modDebugInfo=true" + chr(10) +
+                "modAllowStrike=true" + chr(10) + "modDebugMode=true" + chr(10))
+        out, keys = main._w3_quiet_debug_text(text)
+        self.assertEqual(keys, ["modDebugInfo", "modDebugMode"])
+        self.assertIn("modStatus=true", out)
+        self.assertIn("modAllowStrike=true", out)
+        self.assertIn("modDebugInfo=false", out)
+        self.assertIn("modDebugMode=false", out)
+
+    def test_a_debug_key_already_off_is_left_alone(self):
+        out, keys = main._w3_quiet_debug_text("modDebugMode=false" + chr(10))
+        self.assertEqual(keys, [])
+        self.assertEqual(out, "modDebugMode=false" + chr(10))
+
+    def test_other_settings_are_untouched(self):
+        # This file holds the user's graphics and controls too.
+        text = "[Rendering]" + chr(10) + "TextureMemoryBudget=800" + chr(10)
+        out, keys = main._w3_quiet_debug_text(text)
+        self.assertEqual((out, keys), (text, []))
+
+    def test_the_file_is_backed_up_before_it_is_touched(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _w3_quiet_debug_overlays"):]
+        fn = fn[:fn.index("def _prefix_user_path")]
+        self.assertIn(".decky-nexus.bak", fn)
+        self.assertIn("shutil.copy2(path, backup)", fn)
+        # Once - a second run must not overwrite the original backup with
+        # an already-modified file.
+        self.assertIn("if not os.path.isfile(backup):", fn)
+
+    def test_both_renderers_settings_files_are_covered(self):
+        # Next-gen DX12 writes dx12user.settings; classic writes
+        # user.settings; a device can have either or both.
+        self.assertEqual(
+            main._W3_SETTINGS_FILES, ("dx12user.settings", "user.settings"))
+
+
 class TestW3MergeSafety(unittest.TestCase):
     """Groundwork for turning auto-merge back on. It has been off since
     2026-07-24 because a merged script crashed the game before the compile

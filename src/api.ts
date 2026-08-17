@@ -1162,6 +1162,10 @@ export const getHealthCheck = callable<
   {
     ok: boolean;
     checked?: number;
+    /** Mod debug overlays switched off in the game's own settings file.
+     * Already done - listed so the page can say so rather than changing
+     * someone's settings silently. */
+    debug_quieted?: string[];
     needs_mods?: {
       name: string;
       mod_id?: number;

@@ -221,6 +221,8 @@ export default function HealthCheckPage() {
     needs_external: Finding[];
     owned_dlc: string[];
     already_fixed: { name: string; for: string }[];
+    /** Mod debug overlays we switched off in the game's own settings. */
+    debug_quieted: string[];
     known_bad: { name: string; for: string; why: string; mod_id?: number }[];
     se_parked: string[];
     address_library?: { runtime: string; have: string[]; matches: boolean };
@@ -276,6 +278,7 @@ export default function HealthCheckPage() {
                 needs_external: r.needs_external ?? [],
                 owned_dlc: r.owned_dlc ?? [],
                 already_fixed: r.already_fixed ?? [],
+                debug_quieted: r.debug_quieted ?? [],
                 known_bad: r.known_bad ?? [],
                 script_extender: r.script_extender ?? [],
                 se_parked: r.se_parked ?? [],
@@ -777,6 +780,25 @@ export default function HealthCheckPage() {
                 }
               />
             ))}
+          </>
+        )}
+
+        {(report?.debug_quieted?.length ?? 0) > 0 && (
+          <>
+            <SectionHeading title="Fixed for you" />
+            <FindingCard
+              key="debug-quieted"
+              tone="150, 160, 220"
+              icon={<FaPuzzlePiece size={16} />}
+              title="Turned off a mod's debug display"
+              detail={
+                `${report!.debug_quieted.length} debug option` +
+                `${report!.debug_quieted.length === 1 ? " was" : "s were"} ` +
+                "switched on and put a panel of text over the game. Turned " +
+                "off in the game's own settings - the file was backed up " +
+                "first, and the mods themselves are untouched."
+              }
+            />
           </>
         )}
 
