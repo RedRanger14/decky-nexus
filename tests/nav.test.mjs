@@ -744,3 +744,23 @@ test("My Mods opened from a blocked install returns to that mod", () => {
     "the normal path out of My Mods is gone"
   );
 });
+
+test("an install toast cannot launch a game that is already running", () => {
+  // onClick used to be attached unconditionally, so brushing a toast fired
+  // a launch - and a 183-mod collection produces a lot of toasts to brush.
+  // Michael, sitting on the Witcher 3 menu: "I kept getting 'game is
+  // already running'". A toast saying "it will load next time" must not
+  // start anything when tapped.
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /const running = isGameRunning\(game\.appId\);/.test(page),
+    "the toast does not know whether the game is running"
+  );
+  assert.ok(
+    /\.\.\.\(running \? \{ onClick: \(\) => restartGame\(game\.appId\) \} : \{\}\)/.test(
+      page
+    ),
+    "the restart action is attached regardless of state, so a stray tap " +
+      "launches the game"
+  );
+});
