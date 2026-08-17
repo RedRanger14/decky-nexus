@@ -2,9 +2,55 @@
 
 Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods.com) content for the currently selected game — entirely from Gaming Mode with a controller, on SteamOS and Bazzite. No Desktop Mode required.
 
-**Status:** early development. v1 targets a single game (Slay the Spire 2) as the proving ground.
+**Status:** 1.0 beta. Supports the games listed below; Slay the Spire 2 was
+the proving ground and is no longer the limit.
 
 See [starterFile.md](./starterFile.md) for the full project handover: motivation, market context, v1 scope, constraints, and build order.
+
+## Installing
+
+You need [Decky Loader](https://decky.xyz) first — this is a Decky plugin, not
+a standalone app. Everything below is done in Gaming Mode with the controller.
+
+There are two ways in, and they trade off differently. Read both before you
+pick.
+
+### 1. Add the custom store (recommended)
+
+Quick Access Menu (**…**) → the plug icon → **gear** → **Settings** → **Other**
+→ paste the store URL into **Custom store URL**, then find *Nexus Mods* in the
+Decky store and install it.
+
+- **Updates arrive automatically**, the same as any Decky plugin.
+- **You keep controller-only setup** — no Desktop Mode, no file manager.
+- **The catch: a custom store REPLACES Decky's default store rather than
+  adding to it.** While ours is set, the usual Decky plugin listing is not
+  shown, so installing other plugins means switching the URL back. That is
+  Decky's behaviour, not ours, and it is the main reason to consider option 2.
+
+### 2. Install the release zip by hand
+
+Download the release `.zip`, then extract it to
+`~/homebrew/plugins/Nexus-Mods` on the Deck and restart Decky.
+
+- **Decky's default store is untouched**, so other plugins install normally.
+- **The catch: no automatic updates.** Every new version has to be downloaded
+  and extracted again, and you will not be told one exists.
+- **The catch: it needs Desktop Mode** (or SSH) once, to move the files.
+
+### Which to choose
+
+If this is the only Decky plugin you use, or you would rather never think
+about updates, take option 1. If you already run other Decky plugins and want
+their store to stay put, take option 2 and check back for updates yourself.
+
+### Beta
+
+This is a **beta**. It changes game files, and while every game it supports
+can be returned to vanilla from inside the plugin, back up saves you care
+about first. Report anything wrong on
+[GitHub Issues](https://github.com/RedRanger14/decky-nexus/issues) — the
+plugin can package the details for you from the Health page.
 
 ## v1 Scope
 
