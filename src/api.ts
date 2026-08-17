@@ -219,9 +219,17 @@ export const getInstallBlock = callable<
     mod_id: number,
     file_id: number,
     mod_name: string,
-    install_mode: string
+    install_mode: string,
+    app_id: number
   ],
-  { ok: boolean; blocked: boolean; reason?: string; owner?: string }
+  {
+    ok: boolean;
+    blocked: boolean;
+    reason?: string;
+    owner?: string;
+    /** Installable, but built before the game's current patch. */
+    warning?: string;
+  }
 >("get_install_block");
 
 export const installMod = callable<

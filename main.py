@@ -7,6 +7,7 @@ import re
 import shutil
 import ssl
 import time
+import datetime
 import urllib.parse
 
 import aiohttp
@@ -519,6 +520,60 @@ def _steam_build_id(app_id: int) -> str:
     except OSError:
         return ""
     return ""
+
+
+def _game_updated_at(app_id: int) -> int:
+    """When Steam last updated this game, as a unix timestamp.
+
+    From the same appmanifest as the build id, because the build id alone
+    cannot be compared with anything - a mod's upload date can.
+    """
+    if not app_id:
+        return 0
+    path = os.path.join(
+        os.path.dirname(STEAM_COMMON), f"appmanifest_{int(app_id)}.acf"
+    )
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.search(r'"LastUpdated"' + chr(92) + 's+"(' + chr(92) + 'd+)"', line)
+                if m:
+                    return int(m.group(1))
+    except (OSError, ValueError):
+        return 0
+    return 0
+
+
+# A native built before the game's current patch may still work - a byte
+# signature often survives - so this warns and never blocks. Proven the
+# hard way on Elden Ring build 22984413: every dll in the Performance and
+# QoL collection except the loader pops "Could not find signature!", a
+# blocking Win32 dialog that reads as a frozen game in Gaming Mode.
+# Michael: "is a janky horrile experience for the user".
+_STALE_NATIVE_DAYS = 45
+
+
+def _stale_native_note(uploaded: int, game_updated: int, mod_name: str):
+    """Warning text for a native older than the game it patches, or ""."""
+    if not uploaded or not game_updated:
+        return ""
+    if uploaded > game_updated - _STALE_NATIVE_DAYS * 86400:
+        return ""
+    up = datetime.datetime.fromtimestamp(
+        uploaded, datetime.timezone.utc
+    ).strftime("%B %Y")
+    patched = datetime.datetime.fromtimestamp(
+        game_updated, datetime.timezone.utc
+    ).strftime("%B %Y")
+    return (
+        f"{mod_name} was last updated in {up}, and the game was patched in "
+        f"{patched}. Mods like this one patch the running game by searching "
+        "it for known code, so a patch since can stop them finding it - "
+        "usually as a 'Could not find signature!' box on startup that has "
+        "to be dismissed before the game will carry on. It may still work; "
+        "if the game hangs on a message box after installing, switch this "
+        "off in My Mods."
+    )
 
 
 def _record_vanilla_baseline(
@@ -8676,7 +8731,7 @@ query Link($slug: String!, $domainName: String!) {
 
     async def get_install_block(
         self, game_domain: str, mod_id: int, file_id: int, mod_name: str,
-        install_mode: str = "",
+        install_mode: str = "", app_id: int = 0,
     ) -> dict:
         """Would installing this be refused, and why - asked before the click.
 
@@ -8699,13 +8754,42 @@ query Link($slug: String!, $domainName: String!) {
             decky.logger.debug(f"install block check failed: {e}")
             return {"ok": True, "blocked": False}
         if not owner:
-            return {"ok": True, "blocked": False}
+            # Not blocked, but possibly aged out. A native built before the
+            # game's current patch is the shape that froze Elden Ring on a
+            # message box, and nothing on a mod's page says so.
+            try:
+                note = await self._stale_native_warning(
+                    game_domain, int(mod_id), int(file_id), mod_name,
+                    int(app_id or 0),
+                )
+            except Exception as e:  # noqa: BLE001 - a warning must not break
+                decky.logger.debug(f"stale native check failed: {e}")
+                note = ""
+            return {"ok": True, "blocked": False, "warning": note}
         return {
             "ok": True,
             "blocked": True,
             "reason": _regulation_clash_error(mod_name, owner)["error"],
             "owner": owner,
         }
+
+    async def _stale_native_warning(
+        self, game_domain: str, mod_id: int, file_id: int, mod_name: str,
+        app_id: int,
+    ) -> str:
+        """Warn when a memory-patching mod predates the game's own patch."""
+        game_updated = _game_updated_at(app_id)
+        if not game_updated:
+            return ""
+        files = await self.get_mod_files(game_domain, mod_id)
+        if not files.get("ok"):
+            return ""
+        uploaded = 0
+        for f in files.get("files") or []:
+            if int(f.get("file_id") or 0) == file_id:
+                uploaded = int(f.get("uploaded_timestamp") or 0)
+                break
+        return _stale_native_note(uploaded, game_updated, mod_name)
 
     async def get_mod_files(self, game_domain: str, mod_id: int) -> dict:
         url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}/files.json"
@@ -8736,6 +8820,7 @@ query Link($slug: String!, $domainName: String!) {
                 "category_name": f.get("category_name") or "",
                 "is_primary": bool(f.get("is_primary")),
                 "description": f.get("description") or "",
+                "uploaded_timestamp": f.get("uploaded_timestamp") or 0,
             }
             for f in body.get("files", [])
             if f.get("category_id") in VISIBLE_FILE_CATEGORIES

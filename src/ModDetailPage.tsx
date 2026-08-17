@@ -118,6 +118,10 @@ export function ModDetailPage() {
   // A refusal that needs explaining, kept on the page rather than in a
   // toast that truncates it and then leaves.
   const [blocked, setBlocked] = useState<string | undefined>();
+  // Installable, but built for an older build of the game. A warning, not
+  // a refusal: a byte signature often survives a patch, and it is the
+  // author's mod, not ours to veto.
+  const [stale, setStale] = useState<string | undefined>();
   useEffect(() => {
     getShowAdult()
       .then((r) => setBlurAdult(Boolean(r.ok && r.show_adult && r.blur_adult)))
@@ -164,6 +168,7 @@ export function ModDetailPage() {
     setInstalledCopy(undefined);
     setImageFull(false);
     setBlocked(undefined);
+    setStale(undefined);
     getModFiles(s.game.nexusDomain, s.mod.modId).then((r) => {
       setFiles(r);
       // Ask up front whether this would be refused. Michael: "lets just put
@@ -176,9 +181,11 @@ export function ModDetailPage() {
         s.mod.modId,
         first.file_id,
         s.mod.name,
-        String(modeParams(s.game)[0] ?? "")
+        String(modeParams(s.game)[0] ?? ""),
+        s.game.appId
       ).then((b) => {
         if (b.blocked && b.reason) setBlocked(b.reason);
+        else if (b.warning) setStale(b.warning);
       });
     });
     getModRequirements(s.game.nexusDomain, s.mod.modId).then((r) =>
@@ -927,6 +934,9 @@ export function ModDetailPage() {
       </Focusable>
       {blocked && (
         <WarningBox title="This mod cannot install yet" body={blocked} />
+      )}
+      {!blocked && stale && (
+        <WarningBox title="Built for an older version of the game" body={stale} />
       )}
       {files && !files.ok && (
         <div style={{ opacity: 0.8, fontSize: "13px" }}>
