@@ -284,22 +284,72 @@ test("a deleted mod is skipped for good, not every session", () => {
   );
 });
 
-test("the store's tab bar is sticky, so focus scrolling cannot hide it", () => {
-  // Restoring the scroll was not enough: the hero grid must keep autoFocus,
-  // Steam scrolls whatever it focuses into view, and it does so after
-  // anything we set - so the header went off the top however it was put
-  // back. Michael: "the top menu is still being cut off by default. Maybe
-  // we should make it sticky anyway?"
+// --- what is pinned to the top of the store ------------------------------
+// There is no isVisible() to assert here: these are Steam's own components,
+// they only render inside Gaming Mode, and jsdom does no layout - so a
+// rendered test would report every element at 0x0 and pass whatever we
+// shipped. What can be checked exactly is which elements sit INSIDE the
+// pinned block, and that is the property that broke: v0.219.0 pinned the
+// tab bar and left the search below it, still scrolling off the top.
+// Michael: "the nav is there, the search bar is still being cut off. Have
+// you got no test that can do (isVisible)?"
+//
+// Returns the source of the element that carries position: "sticky",
+// matching JSX tags properly so a self-closing <div /> or an arrow function
+// in an attribute cannot end the block early.
+function stickyBlock(page) {
+  const anchor = page.indexOf('position: "sticky"');
+  assert.notEqual(anchor, -1, "nothing on the store page is sticky");
+  const start = page.lastIndexOf("<div", anchor);
+  let i = start;
+  let depth = 0;
+  while (i < page.length) {
+    const open = page.indexOf("<div", i);
+    const close = page.indexOf("</div>", i);
+    if (open === -1 && close === -1) break;
+    if (open !== -1 && (close === -1 || open < close)) {
+      // Walk to this tag's own '>', skipping {...} so that => does not
+      // read as the end of the tag.
+      let j = open + 4;
+      let braces = 0;
+      for (; j < page.length; j++) {
+        if (page[j] === "{") braces++;
+        else if (page[j] === "}") braces--;
+        else if (page[j] === ">" && braces === 0) break;
+      }
+      if (page[j - 1] !== "/") depth++; // self-closing opens nothing
+      i = j + 1;
+    } else {
+      depth--;
+      if (depth === 0) return page.slice(start, close + 6);
+      i = close + 6;
+    }
+  }
+  assert.fail("the sticky block on the store page is never closed");
+}
+
+test("the store pins both its nav and its search out of the scroll", () => {
   const page = read("BrowsePage.tsx");
-  const bar = page.slice(0, page.indexOf('<TabBar currentId="store" />'));
-  const block = bar.slice(-900);
+  const block = stickyBlock(page);
   assert.ok(
-    block.includes('position: "sticky"'),
-    "the store's tab bar is not sticky, so a focus scroll hides the nav"
+    block.includes('<TabBar currentId="store" />'),
+    "the store's tab bar is outside the pinned block, so a focus scroll " +
+      "hides the nav"
   );
   assert.ok(
-    /background:\s*"#/.test(block),
-    "a sticky bar with no opaque background lets the rails ghost through it"
+    block.includes('label="Search"'),
+    "the search field is outside the pinned block - this is exactly the " +
+      "half that was still cut off after the tab bar was fixed"
+  );
+  assert.ok(
+    /background:\s*"#/.test(block.slice(0, block.indexOf(">"))),
+    "a pinned block with no opaque background lets the rails ghost through it"
+  );
+  assert.ok(
+    !block.includes("autoFocus"),
+    "something inside the pinned block takes focus - Steam scrolls what it " +
+      "focuses into view, and a sticky element cannot be scrolled to, so " +
+      "the page would jump to the bottom instead"
   );
 });
 
