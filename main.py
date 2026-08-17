@@ -8942,6 +8942,7 @@ query Link($slug: String!, $domainName: String!) {
         cp77_layout: bool = False,
         pakpatch_layout: bool = False,
         repair_only: bool = False,
+        framework_ids: list = None,
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -8973,7 +8974,18 @@ query Link($slug: String!, $domainName: String!) {
             # individually, so spending a download on a message box nobody
             # asked for is the wrong default.
             stale_note = ""
-            if install_mode == "me3" and not repair_only:
+            # A loader is exempt by definition. Elden Mod Loader was last
+            # updated in 2022 and the date rule skipped it - but a proxy
+            # loader's job is to load other dlls, not to find code inside
+            # the game, so a game patch does not invalidate it. It has
+            # booted on every build tested. Michael: "its skipped every mod
+            # in the collection. i thought it should leave Elden mod
+            # loader?" Taken from the game's own framework config rather
+            # than a hardcoded id, so it stays true per game.
+            is_framework = int(mod_id) in {
+                int(x) for x in (framework_ids or []) if x
+            }
+            if install_mode == "me3" and not repair_only and not is_framework:
                 try:
                     stale_note = await self._stale_native_warning(
                         game_domain, int(mod_id), int(file_id), mod_name,

@@ -346,7 +346,10 @@ export function ModDetailPage() {
         "",
         game.cp77Layout ?? false,
         game.pakPatchLayout ?? false,
-        false
+        false,
+        // A loader is exempt from the older-patch rule - it loads dlls
+        // rather than patching game code.
+        frameworkModIds(game)
       );
       if (result.needs_fomod && result.fomod_token && result.wizard) {
         // FOMOD archive: run the wizard, then finish with the choices.

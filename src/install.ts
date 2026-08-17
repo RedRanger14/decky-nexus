@@ -9,7 +9,7 @@ import {
   prefetchModFile,
   prepareModFile,
 } from "./api";
-import { SupportedGame, modeParams } from "./games";
+import { SupportedGame, frameworkModIds, modeParams } from "./games";
 import { nameDownload } from "./state";
 
 /** Download AND extract a pinned file so the installer only has to
@@ -126,7 +126,11 @@ function installModWith(
     collectionSlug,
     game.cp77Layout ?? false,
     game.pakPatchLayout ?? false,
-    repairOnly
+    repairOnly,
+    // Loaders are exempt from the built-for-an-older-patch rule: they load
+    // other dlls rather than patching game code, so a game update does not
+    // age them out.
+    frameworkModIds(game)
   );
 }
 
