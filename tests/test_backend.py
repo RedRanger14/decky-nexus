@@ -12615,13 +12615,31 @@ class TestErrNativesAreNotPlumbing(unittest.TestCase):
     """ERR's install registered 13 natives: four were ERR's, the rest were
     a bundled mod host and the author's opt-in pile."""
 
-    def test_a_nested_bundled_loader_is_still_a_loader(self):
-        # ERR ships its copy at internals/modengine/, so a first-segment
-        # test loaded me3_mod_host.dll underneath our own mod host.
-        self.assertTrue(main._me3_bundled_loader("internals/modengine"))
-        self.assertTrue(main._me3_bundled_loader(
-            "internals/modengine/bin/win64"))
+    def test_a_top_level_bundled_loader_is_excluded(self):
+        # The Convergence ships its copy as a top-level me3/ folder.
         self.assertTrue(main._me3_bundled_loader("me3"))
+        self.assertTrue(main._me3_bundled_loader("modengine2/bin"))
+
+    def test_errs_own_dll_survives_the_loader_exclusion(self):
+        # ERR keeps reforged.dll at internals/modengine/dll/. Excluding
+        # every path containing "modengine" silenced the mod itself - a
+        # false negative I created while fixing a false positive.
+        self.assertFalse(main._me3_loader_binary(
+            "internals/modengine/dll/reforged.dll"))
+        self.assertFalse(main._me3_loader_binary(
+            "internals/modengine/dll/ertransmogrify.dll"))
+        self.assertFalse(main._me3_bundled_loader("internals/modengine/dll"))
+
+    def test_loader_plumbing_is_excluded_by_name_anywhere(self):
+        self.assertTrue(main._me3_loader_binary(
+            "internals/modengine/bin/win64/me3_mod_host.dll"))
+        # Was being registered as a native: a compression library.
+        self.assertTrue(main._me3_loader_binary(
+            "internals/launcher/libzstd.dll"))
+
+    def test_eldens_own_loader_is_not_plumbing(self):
+        # EML's dinput8.dll IS the mod, and other mods depend on it.
+        self.assertFalse(main._me3_loader_binary("dinput8.dll"))
 
     def test_real_mod_directories_are_left_alone(self):
         self.assertFalse(main._me3_bundled_loader("dll"))

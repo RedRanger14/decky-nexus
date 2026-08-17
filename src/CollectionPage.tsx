@@ -1381,6 +1381,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
     if (attentionIds.has(f.fileId)) {
       const reason = attention.find((a) => a.file_id === f.fileId)?.reason;
       if (reason === "conflict") return "🔒 ";
+      // Left out on purpose, and it must not read as done. A tick on a
+      // mod we chose not to install is the least honest mark available.
+      // Michael: "why not have some icon for skip instead of the ticks in
+      // the mod list... The toast is too fast."
+      if (reason === "older-game") return "⚠ ";
       return reason === "incompatible" ? "⚠ " : "⏭ ";
     }
     const st = rowState[f.fileId];
@@ -1983,6 +1988,15 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                           · script conflict
                         </span>
                       )}
+                      {/* Amber and worded, because a toast has gone by the
+                          time the user wonders why this one has no tick. */}
+                      {parkedReason === "older-game" &&
+                        !installedIds.has(f.modId) && (
+                          <span style={{ color: "#ffc83c" }}>
+                            {" "}
+                            · skipped · built for an older patch
+                          </span>
+                        )}
                     </span>
                     <span
                       style={{ opacity: 0.6, flexShrink: 0, marginLeft: "10px" }}
