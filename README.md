@@ -18,27 +18,33 @@ See [starterFile.md](./starterFile.md) for the full project handover: motivation
 
 ## Supported games
 
-Thirteen games, each one installed, modded and played on real hardware before
-it shipped. Anything not on this list is not supported yet, and the plugin
-will say so rather than guess.
+Nine games, each one installed, modded and played on real hardware before it
+shipped. That is what supported means here: not that the code has a config
+entry for it, but that someone finished a session with mods running.
 
 1. Cyberpunk 2077
 2. Elden Ring
-3. Fallout 3
-4. Fallout 4
-5. Fallout: New Vegas
-6. Hollow Knight: Silksong
-7. Mount & Blade II: Bannerlord
-8. Palworld
-9. Resident Evil 4
-10. Skyrim Special Edition
-11. Slay the Spire 2
-12. Stardew Valley
-13. The Witcher 3
+3. Fallout 4
+4. Fallout: New Vegas
+5. Resident Evil 4
+6. Skyrim Special Edition
+7. Slay the Spire 2
+8. Stardew Valley
+9. The Witcher 3
 
-Want one added? Open a [game request][issues] and say which game. Adding one
-means installing it, modding it and playing it on hardware, so the list grows
-slowly and on purpose.
+### On the roadmap
+
+Groundwork exists for these and they are NOT ready. They may appear in the
+plugin; treat anything you do with them as untested.
+
+- Fallout 3
+- Hollow Knight: Silksong
+- Mount & Blade II: Bannerlord
+- Palworld
+
+Want one moved up, or a new one added? Open a [game request][issues] and say
+which. Adding a game means installing it, modding it and playing it on
+hardware, so the list grows slowly and on purpose.
 
 [issues]: https://github.com/RedRanger14/decky-nexus/issues
 
