@@ -631,3 +631,25 @@ test("a collection skips natives built for an older patch", () => {
     "the skip is not recorded with a reason, so nothing can explain it later"
   );
 });
+
+test("a skipped mod never wears a tick", () => {
+  // Michael: "why not have some icon for skip instead of the ticks in the
+  // mod list... The toast is too fast." A tick on a mod we deliberately
+  // left out is the least honest mark available, and the toast is gone by
+  // the time anyone wonders why.
+  const page = read("CollectionPage.tsx");
+  const badge = page.slice(
+    page.indexOf("const stateBadge"),
+    page.indexOf("const stateBadge") + 900
+  );
+  assert.ok(
+    /reason === "older-game"\) return "⚠/.test(badge),
+    "a mod skipped for being built against an older patch has no distinct " +
+      "mark, so it reads as done or as an ordinary skip"
+  );
+  assert.ok(
+    /· skipped · built for an older patch/.test(page),
+    "the row never says WHY it was skipped, leaving the toast as the only " +
+      "explanation - which is the complaint"
+  );
+});

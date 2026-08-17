@@ -4727,7 +4727,7 @@ def _me3_natives(path: str, assets_subpath):
                 continue
             rel = os.path.relpath(os.path.join(root, name), path).replace(
                 os.sep, "/")
-            if _me3_optional_native(rel):
+            if _me3_optional_native(rel) or _me3_loader_binary(rel):
                 continue
             dlls.append(rel)
     return sorted(dlls)
@@ -4748,7 +4748,29 @@ def _me3_bundled_loader(rel_dir: str) -> bool:
     the rest were plumbing.
     """
     loaders = ("me3", "modengine2", "mod engine 2", "modengine")
-    return any(part.lower() in loaders for part in rel_dir.split("/"))
+    return rel_dir.split("/")[0].lower() in loaders
+
+
+# Loader and runtime binaries by NAME, wherever they sit. Matching whole
+# directories was too blunt: ERR keeps its own mod dll at
+# internals/modengine/dll/reforged.dll, so excluding every path containing
+# "modengine" silenced the mod itself while still loading
+# internals/launcher/libzstd.dll - a compression library that was never a
+# native. The file is what must be recognised, not the folder it sits in.
+_ME3_LOADER_BINARIES = {
+    "me3_mod_host.dll",
+    "me3.dll",
+    "me3-launcher.dll",
+    "modengine2.dll",
+    "modengine.dll",
+    "libzstd.dll",
+    "bink2w64.dll",
+}
+
+
+def _me3_loader_binary(rel: str) -> bool:
+    """Whether this dll is loader plumbing we already provide."""
+    return os.path.basename(rel).lower() in _ME3_LOADER_BINARIES
 
 
 def _me3_optional_native(rel: str) -> bool:
