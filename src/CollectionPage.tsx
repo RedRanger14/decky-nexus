@@ -192,8 +192,19 @@ export function CollectionPage() {
     : {};
   const installing = Boolean(runIsOurs && run!.running);
 
+  // Six call sites fire this, several of them during a run, so two reads
+  // are routinely in flight at once - and the responses can land in any
+  // order. An older one landing last put the pre-install picture back:
+  // Michael, after a clean 4-mod run, "after the button reverted back to
+  // install required (5)". Leaving and reopening the page fixed it, which
+  // is the tell - the records were right all along, the newest read just
+  // lost a race. Only the latest read may write state.
+  const refreshSeq = useRef(0);
+
   const refreshInstalled = () => {
     if (!sel) return;
+    const seq = ++refreshSeq.current;
+    const stale = () => seq !== refreshSeq.current;
     getInstalledMods(
       sel.game.nexusDomain,
       sel.game.installDirName,
@@ -201,6 +212,7 @@ export function CollectionPage() {
       ...modeParams(sel.game),
       sel.game.protectedModFolders ?? []
     ).then((r) => {
+      if (stale()) return;
       // Framework pins (REFramework, CET...) count as installed: Step 1
       // owns them, and their archives don't fit the mod pipeline anyway.
       const fwIds = [
