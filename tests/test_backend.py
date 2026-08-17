@@ -12907,6 +12907,17 @@ class TestW3MergeSafety(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
 
+    def test_merging_is_on_unless_switched_off(self):
+        # Michael, after the test run: "I booted and played for a few mins
+        # and no errors at all." 25 of 30 previously-skipped mods merged
+        # into 36 scripts on the #1 collection. Off since 2026-07-24 for a
+        # crash whose likely cause - no compile trigger - is now fixed.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn('settings_now.get("w3_auto_merge", True)', source)
+        # An explicit false must still turn it off.
+        self.assertNotIn('settings_now.get("w3_auto_merge"):', source)
+
     def test_a_compile_trigger_is_written(self):
         # Vortex ships mod0000____CompilationTrigger because the game caches
         # compiled scripts: a correct merge can otherwise do nothing at all.
