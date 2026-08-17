@@ -52,7 +52,6 @@ import {
   copySavesToModded,
   getAuthStatus,
   refreshContentGate,
-  getDebugInfo,
   getFrameworkSetup,
   getGameStatus,
   getInstalledMods,
@@ -134,7 +133,6 @@ import {
 import {
   getAppDisplayName,
   getAvailableCompatTools,
-  getMainWindowPath,
   getRunningAppIds,
   getViewedLibraryAppId,
   isGameRunning,
@@ -3652,87 +3650,25 @@ function AccountSection() {
   );
 }
 
-function LogModal({
-  title,
-  text,
-  closeModal,
-}: {
-  title: string;
-  text: string;
-  closeModal?: () => void;
-}) {
-  return (
-    <ModalRoot closeModal={closeModal} bAllowFullSize={true}>
-      <h3 style={{ marginTop: 0 }}>{title}</h3>
-      <pre
-        style={{
-          fontSize: "11px",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-all",
-          maxHeight: "60vh",
-          overflowY: "auto",
-          background: "rgba(0,0,0,0.35)",
-          padding: "8px",
-          borderRadius: "4px",
-        }}
-      >
-        {text}
-      </pre>
-    </ModalRoot>
-  );
-}
 
 function DevSection() {
   // Dev tools work regardless of context; fall back to the default game's
   // log location when the context is unsupported.
   const game = resolveGameContext().game ?? DEFAULT_GAME;
 
-  const [info, setInfo] = useState<BackendInfo | undefined>();
-  const [error, setError] = useState<string | undefined>();
-
-  const onPing = async () => {
-    try {
-      setError(undefined);
-      setInfo(await ping(true));
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  const showLog = async (which: "game" | "plugin") => {
-    const debug = await getDebugInfo(
-      game.logAdapter?.kind === "godot" ? game.logAdapter.userDirName : "",
-      game.logAdapter?.kind === "smapi" ? game.logAdapter.configDirName : ""
-    );
-    if (!debug.ok) {
-      toaster.toast({ title: "Debug info failed", body: debug.error ?? "" });
-      return;
-    }
-    if (which === "game") {
-      showModal(
-        <LogModal
-          title={`${game.displayName} — mod loader log`}
-          text={debug.game_log_mod_lines ?? "(empty)"}
-        />
-      );
-    } else {
-      showModal(
-        <LogModal title="Plugin backend log" text={debug.plugin_log ?? "(empty)"} />
-      );
-    }
-  };
-
   return (
-    <PanelSection title="Developer">
-      {/* Reporting belongs in the QAM, where someone is standing when the
-          thing goes wrong: the Health page is two taps further on and is
-          where you go when you already suspect a problem. Michael asked for
-          it here, in the space the developer tools vacate before release.
-          The plugin fills the ticket in; GitHub's own form takes it from
-          there, so nothing is posted on anyone's behalf. */}
+    <PanelSection title="Help">
+      {/* What was the Developer section. Removed for the beta: game and
+          plugin logs, Ping backend, the backend version line, the Route
+          diagnostic. None of it means anything to a player, and a panel of
+          developer tools is how a beta reads as unfinished rather than
+          deliberate. The report button carries the same information now -
+          it packages the log tail itself - so nothing diagnostic was lost,
+          it just stopped being the user's job to find. */}
       <PanelSectionRow>
         <ButtonItem
           layout="below"
+          description="Fills in your setup and the log, then opens GitHub"
           onClick={async () => {
             const r = await buildReport(
               game.nexusDomain,
@@ -3747,47 +3683,6 @@ function DevSection() {
         >
           Report a problem
         </ButtonItem>
-      </PanelSectionRow>
-      {game.logAdapter && (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            description="What the game's mod loader reported last run"
-            onClick={() => showLog("game")}
-          >
-            Game mod log
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={() => showLog("plugin")}>
-          Plugin log
-        </ButtonItem>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={onPing}>
-          Ping backend
-        </ButtonItem>
-      </PanelSectionRow>
-      {/* NXM relay spike rows removed 2026-07-24: free-user support is
-          off the table (business-model decision - docs/free-user-design.md).
-          Backend callables remain if that ever gets revisited. */}
-      {error && (
-        <PanelSectionRow>
-          <Field label="Error">{error}</Field>
-        </PanelSectionRow>
-      )}
-      {info && (
-        <PanelSectionRow>
-          <Field label="Backend">
-            {info.plugin_name} v{info.plugin_version} on Decky {info.decky_version}
-          </Field>
-        </PanelSectionRow>
-      )}
-      <PanelSectionRow>
-        {/* Diagnostic for viewed-game detection - shows what route Steam
-            reports. Remove once detection is confirmed on real hardware. */}
-        <Field label="Route">{getMainWindowPath() ?? "(unavailable)"}</Field>
       </PanelSectionRow>
     </PanelSection>
   );
