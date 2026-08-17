@@ -4429,6 +4429,79 @@ async def _file_uploaded_at(game_domain: str, mod_id: int, file_id: int) -> int:
     return 0
 
 
+def _preview_has_dll(node) -> bool:
+    """Does this content-preview tree contain a .dll anywhere?
+
+    The older-patch rule only makes sense for mods that ship CODE. A
+    signature scan is something a dll does; a mesh or a texture cannot
+    fail one, because it never looks for anything. Asking "how old is this
+    file" instead of "does this contain code" skipped A Better Nude Body -
+    a 2022 asset mod verified working in the character creator on this
+    exact build - along with every other texture mod in EldenBoobs.
+    Michael: "just because its older doesnt mean its broke."
+    """
+    if isinstance(node, list):
+        return any(_preview_has_dll(n) for n in node)
+    if not isinstance(node, dict):
+        return False
+    if (node.get("name") or "").strip().lower().endswith(".dll"):
+        return True
+    return _preview_has_dll(node.get("children") or [])
+
+
+def _remember_natives(game_domain: str, mod_id: int, has_dll: bool):
+    """Record whether a mod's archive shipped any dll, learned by opening it."""
+    if not mod_id:
+        return
+    settings = _load_settings()
+    facts = settings.setdefault("native_facts", {}).setdefault(game_domain, {})
+    if facts.get(str(mod_id)) is bool(has_dll):
+        return
+    facts[str(mod_id)] = bool(has_dll)
+    _save_settings(settings)
+
+
+async def _mod_ships_dll(game_domain: str, mod_id: int, file_id: int):
+    """Does this mod ship code? True, False, or None for cannot-tell.
+
+    None is NOT False for the caller's purposes - it means there is no
+    evidence either way, and a rule that acts on no evidence is the bug
+    this replaced.
+    """
+    settings = _load_settings()
+    fact = settings.get("native_facts", {}).get(game_domain, {}).get(str(mod_id))
+    if fact is not None:
+        return bool(fact)
+    headers = _api_headers(settings.get("api_key"))
+    url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}/files.json"
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=25)
+        ) as session:
+            async with session.get(url, headers=headers, ssl=SSL_CONTEXT) as r:
+                if r.status != 200:
+                    return None
+                body = await r.json()
+            link = ""
+            for f in body.get("files") or []:
+                if int(f.get("file_id") or 0) == int(file_id):
+                    link = f.get("content_preview_link") or ""
+                    break
+            if not link:
+                return None
+            safe = urllib.parse.quote(link, safe=":/?#[]@!$&'()*+,;=%~")
+            async with session.get(safe, ssl=SSL_CONTEXT) as r:
+                if r.status != 200:
+                    return None
+                preview = await r.json(content_type=None)
+    except Exception as e:  # noqa: BLE001 - no evidence, so no action
+        decky.logger.debug(f"dll check failed for {game_domain}/{mod_id}: {e}")
+        return None
+    if not isinstance(preview, dict):
+        return None
+    return _preview_has_dll(preview.get("children") or [])
+
+
 def _remember_regulation(game_domain: str, mod_id: int, has_regulation: bool):
     """Record whether a mod's archive holds regulation.bin.
 
@@ -8875,6 +8948,11 @@ query Link($slug: String!, $domainName: String!) {
         game_updated = _game_updated_at(app_id)
         if not game_updated:
             return ""
+        # Code only. Without positive evidence of a dll there is nothing
+        # for a game patch to invalidate, so the rule does not apply.
+        ships_dll = await _mod_ships_dll(game_domain, mod_id, file_id)
+        if ships_dll is not True:
+            return ""
         uploaded = await _file_uploaded_at(game_domain, mod_id, file_id)
         return _stale_native_note(uploaded, game_updated, mod_name)
 
@@ -8974,6 +9052,11 @@ query Link($slug: String!, $domainName: String!) {
             # individually, so spending a download on a message box nobody
             # asked for is the wrong default.
             stale_note = ""
+            # None until looked up, and only looked up for me3 - every
+            # other install mode reaches the checks below without entering
+            # that branch, which is how nine tests failed on an unbound
+            # local. The suite caught it before the device did.
+            broken = None
             # A loader is exempt by definition. Elden Mod Loader was last
             # updated in 2022 and the date rule skipped it - but a proxy
             # loader's job is to load other dlls, not to find code inside
@@ -8993,17 +9076,29 @@ query Link($slug: String!, $domainName: String!) {
                     )
                 except Exception as e:  # noqa: BLE001 - never break a run
                     decky.logger.debug(f"stale check failed: {e}")
-                # In a collection: skipped outright, no download spent.
-                # On its own: installed but switched off, because the user
-                # picked this mod deliberately and the files being there
-                # makes it one press to try anyway.
-                if stale_note and record_source == "collection":
+                # Age is INFORMATION, not a verdict. It skipped A Better
+                # Nude Body - verified working on this build - and every
+                # texture mod in EldenBoobs, because "old" and "broken" are
+                # not the same thing. Michael: "we need to mark ones
+                # specifically incompatible even if it means more testing."
+                # So the note is shown on the mod page and nothing is
+                # skipped for age alone. What DOES skip a mod is a recorded
+                # verdict: this mod, this build, observed to fail.
+                broken = _known_broken_mods(
+                    game_domain, _steam_build_id(int(app_id or 0))
+                ).get(int(mod_id))
+                if broken and record_source == "collection":
+                    why = (broken.get("note") or "").strip() or (
+                        f"{mod_name} was recorded as not working on this "
+                        "version of the game, on this device."
+                    )
                     decky.logger.info(
                         f"collection skipped {mod_name!r} "
-                        f"({game_domain}/{mod_id}): built for an older patch"
+                        f"({game_domain}/{mod_id}): recorded broken on this "
+                        "build"
                     )
-                    await _emit_progress(mod_id, "error", 0, "older patch")
-                    return {"ok": False, "stale_skip": True, "error": stale_note}
+                    await _emit_progress(mod_id, "error", 0, "known broken")
+                    return {"ok": False, "stale_skip": True, "error": why}
             result = await self._install_mod_inner(
                 game_domain,
                 mod_id,
@@ -9032,14 +9127,22 @@ query Link($slug: String!, $domainName: String!) {
                 pakpatch_layout,
                 repair_only,
             )
-            if result.get("ok") and stale_note:
+            if result.get("ok") and stale_note and not broken:
+                # Not skipped, not disabled - just said out loud, so an old
+                # dll mod that turns out to fail is one the user was warned
+                # about rather than ambushed by.
+                result["warning"] = stale_note
+            if result.get("ok") and broken:
                 if _disable_me3_record(game_domain, _safe_name(mod_name)):
                     decky.logger.info(
-                        f"installed {mod_name!r} switched OFF: built for an "
-                        "older patch than this game build"
+                        f"installed {mod_name!r} switched OFF: recorded as "
+                        "not working on this game build"
                     )
                     result["installed_disabled"] = True
-                    result["warning"] = stale_note
+                    result["warning"] = (broken.get("note") or "").strip() or (
+                        f"{mod_name} was recorded as not working on this "
+                        "version of the game."
+                    )
             if not result.get("ok") and result.get("error"):
                 # UI rows show failures the log never saw - record every
                 # failed install so remote diagnosis has evidence.
@@ -9710,6 +9813,7 @@ query Link($slug: String!, $domainName: String!) {
                 else os.path.join(root, "regulation.bin")
             )
             _remember_regulation(game_domain, mod_id, has_regulation)
+            _remember_natives(game_domain, mod_id, bool(dlls))
             if has_regulation:
                 owner = _me3_regulation_owner(settings, game_domain, folder)
                 if owner:
