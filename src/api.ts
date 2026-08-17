@@ -74,6 +74,9 @@ export interface InstallResult {
    * claiming regulation.bin). Retryable once the other one is disabled,
    * so it's parked with an explanation rather than called unsupported. */
   mod_conflict?: boolean;
+  /** Built for an older patch than the installed game: skipped in a
+   * collection run rather than downloaded to fail. */
+  stale_skip?: boolean;
   /** Archive layout we can't recognize - parked as skipped so it stops
    * counting as remaining (retrying can't change the layout). */
   unsupported_layout?: boolean;

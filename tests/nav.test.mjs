@@ -608,3 +608,26 @@ test("installed-mod thumbnails honour the account's adult blur", () => {
       "applied per row"
   );
 });
+
+test("a collection skips natives built for an older patch", () => {
+  // Michael: "a lot of those should be skipped as the game has been
+  // updated... Especially if is a waste of a download." A single install
+  // still warns and lets the user decide; in a collection nobody chose
+  // this mod individually, so spending the download on a message box
+  // nobody asked for is the wrong default.
+  const page = read("CollectionPage.tsx");
+  assert.ok(
+    page.includes("result.stale_skip"),
+    "the collection run has no branch for a stale native, so it lands in " +
+      "the generic failure path and reads as broken"
+  );
+  const branch = page.slice(page.indexOf("result.stale_skip"), page.indexOf("result.stale_skip") + 900);
+  assert.ok(
+    /setCollectionRow\(f\.fileId, "skipped"\)/.test(branch),
+    "a skipped mod is not marked skipped, so it counts as remaining forever"
+  );
+  assert.ok(
+    /reason: "older-game"/.test(branch),
+    "the skip is not recorded with a reason, so nothing can explain it later"
+  );
+});
