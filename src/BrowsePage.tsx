@@ -69,6 +69,19 @@ const TILE_WIDTH = 195;
  * showing and is NOT verification. Only real playtime after the install
  * earns the green mark, and that evidence comes from Steam, not from us.
  */
+/** Off, deliberately.
+ *
+ * EldenBoobs earned VERIFIED ON DECK having skipped all 16 of its mods: the
+ * run recorded one install that never landed, so later playtime promoted an
+ * empty collection to verified. Michael: "ive got cold feet about the badges
+ * - lets remove them for now - just hide them." Right call - a badge that
+ * overstates is worse than no badge, and the counting is not trustworthy yet.
+ *
+ * The evidence keeps being recorded either way, so this is one line to turn
+ * back on once "installed" means what it says.
+ */
+const SHOW_VERIFIED_BADGES = false;
+
 function VerifiedBadge({ state }: { state: CollectionVerdictState }) {
   const look =
     state === "played"
@@ -224,7 +237,7 @@ function CollectionCard({
             NEEDS AN OLDER GAME
           </div>
         )}
-        {verdict && <VerifiedBadge state={verdict} />}
+        {SHOW_VERIFIED_BADGES && verdict && <VerifiedBadge state={verdict} />}
       </div>
     </Focusable>
   );

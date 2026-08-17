@@ -1098,6 +1098,14 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       // can be measured later. Recorded even when the run stopped short -
       // the entry is a starting point for evidence, not a claim that
       // anything works. Only playing earns the badge.
+      //
+      // But NOT when the run installed nothing. EldenBoobs skipped all 16
+      // of its mods, was recorded anyway, and then an Elden Ring session
+      // promoted an empty install to VERIFIED ON DECK. Michael: "Why has
+      // Elden boobs been given a verifed badge when we havent done a
+      // successful install confirmation?" Playtime cannot be evidence for
+      // mods that were never put on the device.
+      if (installedRequiredCount > 0)
       recordCollectionInstalled(
         game.nexusDomain,
         collection.slug,
