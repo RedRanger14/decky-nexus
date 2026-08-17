@@ -12559,6 +12559,44 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
                     "eldenring", 541, 9999, "ERR"))
             self.assertIsNone(owner, f"{type(boom).__name__} escaped the gate")
 
+    def test_what_one_download_taught_is_not_paid_for_twice(self):
+        # Nexus publishes no content listing for some files - The
+        # Convergence's are 404 - so the only way to know was to open the
+        # archive. Having opened it once, the answer is kept.
+        with mock.patch.object(main, "_load_settings", return_value={
+            "regulation_facts": {"eldenring": {"3419": True}},
+        }), mock.patch.object(main, "_me3_regulation_owner",
+                              return_value="ERR - ELDEN RING Reforged"), \
+                mock.patch.object(main.aiohttp, "ClientSession") as session:
+            owner = run(main._regulation_owner_before_download(
+                "eldenring", 3419, 48403, "The Convergence"))
+        self.assertEqual(owner, "ERR - ELDEN RING Reforged")
+        session.assert_not_called()
+
+    def test_a_mod_known_clean_is_not_re_checked_either(self):
+        with mock.patch.object(main, "_load_settings", return_value={
+            "regulation_facts": {"eldenring": {"9999": False}},
+        }), mock.patch.object(main, "_me3_regulation_owner",
+                              return_value="ERR"), \
+                mock.patch.object(main.aiohttp, "ClientSession") as session:
+            owner = run(main._regulation_owner_before_download(
+                "eldenring", 9999, 1, "Some UI mod"))
+        self.assertEqual(owner, "")
+        session.assert_not_called()
+
+    def test_never_seen_is_not_the_same_as_clean(self):
+        self.assertIsNone(main._known_regulation_mod({}, "eldenring", 3419))
+        self.assertIs(main._known_regulation_mod(
+            {"regulation_facts": {"eldenring": {"3419": False}}},
+            "eldenring", 3419), False)
+
+    def test_a_preview_link_with_spaces_is_still_fetchable(self):
+        # ERR's own patch file: the link carries the upload's file name,
+        # spaces and all, and a raw space is not a legal request target.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("urllib.parse.quote(link", source)
+
     def test_the_gate_runs_before_the_worker(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()

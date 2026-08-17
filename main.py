@@ -4303,6 +4303,35 @@ def _preview_has_regulation(node) -> bool:
     return _preview_has_regulation(node.get("children") or [])
 
 
+def _remember_regulation(game_domain: str, mod_id: int, has_regulation: bool):
+    """Record whether a mod's archive holds regulation.bin.
+
+    Learned the expensive way, kept so it is only learned once. Nexus does
+    not publish a content listing for every file - The Convergence's are
+    404 - so for those the only way to know is to have opened the archive.
+    Having done that, the answer is worth keeping: the next attempt, on
+    this device or after an uninstall, is refused before the download.
+    """
+    if not mod_id:
+        return
+    settings = _load_settings()
+    facts = settings.setdefault("regulation_facts", {}).setdefault(
+        game_domain, {}
+    )
+    if facts.get(str(mod_id)) is bool(has_regulation):
+        return
+    facts[str(mod_id)] = bool(has_regulation)
+    _save_settings(settings)
+
+
+def _known_regulation_mod(settings: dict, game_domain: str, mod_id: int):
+    """What a previous install taught us: True, False, or None for never
+    seen. None must not be read as False - it means ask elsewhere."""
+    fact = (settings.get("regulation_facts", {}).get(game_domain, {})
+            .get(str(mod_id)))
+    return None if fact is None else bool(fact)
+
+
 async def _regulation_owner_before_download(
     game_domain: str, mod_id: int, file_id: int, mod_name: str
 ):
@@ -4321,6 +4350,14 @@ async def _regulation_owner_before_download(
     settings = _load_settings()
     if not _me3_regulation_owner(settings, game_domain, _safe_name(mod_name)):
         return ""
+    known = _known_regulation_mod(settings, game_domain, mod_id)
+    if known is not None:
+        # Already opened this archive once. No network, no download.
+        return (
+            _me3_regulation_owner(settings, game_domain, _safe_name(mod_name))
+            if known
+            else ""
+        )
     headers = _api_headers(settings.get("api_key"))
     url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}/files.json"
     try:
@@ -4339,7 +4376,10 @@ async def _regulation_owner_before_download(
             if not link:
                 return None
             # The preview lives on a CDN, not the API: no apikey header.
-            async with session.get(link, ssl=SSL_CONTEXT) as resp:
+            # Quoted because these links carry the upload's own file name,
+            # spaces and all, and a raw space is not a legal request target.
+            safe = urllib.parse.quote(link, safe=":/?#[]@!$&'()*+,;=%~")
+            async with session.get(safe, ssl=SSL_CONTEXT) as resp:
                 if resp.status != 200:
                     return None
                 preview = await resp.json(content_type=None)
@@ -9337,6 +9377,7 @@ query Link($slug: String!, $domainName: String!) {
                 if assets_subpath
                 else os.path.join(root, "regulation.bin")
             )
+            _remember_regulation(game_domain, mod_id, has_regulation)
             if has_regulation:
                 owner = _me3_regulation_owner(settings, game_domain, folder)
                 if owner:
