@@ -718,3 +718,29 @@ test("a conflict message offers the way out, not just the instruction", () => {
       "conflict is actually resolved"
   );
 });
+
+test("My Mods opened from a blocked install returns to that mod", () => {
+  // The conflict box sends the user to My Mods to switch the other mod off.
+  // B there dropped them at the QAM, so the obvious next step - press
+  // install again - meant navigating back from scratch. Michael: "it should
+  // go back to the mod page where I can easily click install again."
+  const mod = read("ModDetailPage.tsx");
+  assert.ok(
+    /markManagerReturn\(\);/.test(mod),
+    "nothing marks that My Mods was opened from a mod page"
+  );
+  const mgr = read("ManagerPage.tsx");
+  assert.ok(
+    /managerReturnsToMod\(\)/.test(mgr) && /popOurPage\(\)/.test(mgr),
+    "My Mods still exits to the QAM however it was opened"
+  );
+  assert.ok(
+    /clearManagerReturn\(\)/.test(mgr),
+    "the flag is never cleared, so a later visit from the tab bar would " +
+      "pop instead of exiting - the opposite bug"
+  );
+  assert.ok(
+    /exitTabsToQam\(\)/.test(mgr),
+    "the normal path out of My Mods is gone"
+  );
+});
