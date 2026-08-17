@@ -36,7 +36,7 @@ import {
 import { knownBrokenNote } from "./panelRules";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
-import { popOurPage } from "./Tabs";
+import { popOurPage, pushOurPage } from "./Tabs";
 import { getCompatHint } from "./compat";
 import { frameworkModIds, modeParams, stalenessExemptModIds } from "./games";
 import { finishFomod, installLatest } from "./install";
@@ -946,7 +946,14 @@ export function ModDetailPage() {
       </Focusable>
       </Focusable>
       {blocked && (
-        <WarningBox title="This mod cannot install yet" body={blocked} />
+        <WarningBox
+          title="This mod cannot install yet"
+          body={blocked}
+          action={{
+            label: "Manage my mods",
+            onClick: () => pushOurPage("/nexus-mods/manager"),
+          }}
+        />
       )}
       {!blocked && stale && (
         <WarningBox title="Built for an older version of the game" body={stale} />

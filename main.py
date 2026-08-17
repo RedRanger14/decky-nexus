@@ -4441,6 +4441,30 @@ async def _file_uploaded_at(game_domain: str, mod_id: int, file_id: int) -> int:
     return 0
 
 
+def _incompatible_partner(settings: dict, game_domain: str, mod_id: int):
+    """An ENABLED mod this one is recorded as incompatible with, or None.
+
+    Pairwise on purpose. First Person Souls breaks ERR's menus - Michael saw
+    "?MenuText?" on character selects and lost the Reforged menus - but it
+    is a native, so there are no overlapping files to detect, and it is
+    presumably fine on its own. Recording it as simply "broken" would block
+    a mod that works, which is the over-broad mistake the age rule made.
+    A mod is not incompatible in the abstract; it is incompatible WITH
+    something.
+    """
+    pairs = (settings.get("mod_incompat") or {}).get(game_domain) or {}
+    entry = pairs.get(str(int(mod_id)))
+    if not entry:
+        return None
+    partner = int(entry.get("with") or 0)
+    if not partner:
+        return None
+    for _key, rec in _me3_records(settings, game_domain):
+        if int(rec.get("mod_id") or 0) == partner and rec.get("enabled", True):
+            return (rec.get("name") or str(partner), entry.get("why") or "")
+    return None
+
+
 def _verdict_covers_version(entry: dict, version: str) -> bool:
     """Does a recorded verdict apply to the version being installed?
 
@@ -9184,6 +9208,28 @@ query Link($slug: String!, $domainName: String!) {
                 # version means the verdict was never version-specific.
                 if broken and not _verdict_covers_version(broken, mod_version):
                     broken = None
+                # Pairwise incompatibility: only when the other mod is
+                # actually here and switched on.
+                pair = _incompatible_partner(
+                    _load_settings(), game_domain, int(mod_id)
+                )
+                if pair:
+                    other, why = pair
+                    decky.logger.info(
+                        f"install {mod_name!r} refused: incompatible with "
+                        f"{other}"
+                    )
+                    await _emit_progress(mod_id, "error", 0, "incompatible")
+                    return {
+                        "ok": False,
+                        "mod_conflict": True,
+                        "error": (
+                            f"{mod_name} and {other} cannot run together. "
+                            + (why + " " if why else "")
+                            + f"Switch {other} off in My Mods to install "
+                            f"{mod_name}, or keep {other} and skip this one."
+                        ),
+                    }
                 if broken and record_source == "collection":
                     why = (broken.get("note") or "").strip() or (
                         f"{mod_name} was recorded as not working on this "
