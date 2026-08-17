@@ -22,7 +22,8 @@
       "Bash(awk 'NR<=8842 && /^async def |^ async def /{l=NR\": \"$0} END{}' main.py)",
       "Bash(python -m unittest tests.test_backend.TestRegulationClashBeforeDownload -v)",
       "Bash(python -m unittest tests.test_backend.TestRegulationClashBeforeDownload)",
-      "PowerShell(python -m unittest discover -s tests 2>&1)"
+      "PowerShell(python -m unittest discover -s tests 2>&1)",
+      "Bash(python -m unittest tests.test_backend.TestMe3Layout)"
     ]
   }
 }

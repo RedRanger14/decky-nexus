@@ -4623,8 +4623,11 @@ def _me3_natives(path: str, assets_subpath):
         for name in names:
             if not name.lower().endswith(".dll"):
                 continue
-            rel = os.path.relpath(os.path.join(root, name), path)
-            dlls.append(rel.replace(os.sep, "/"))
+            rel = os.path.relpath(os.path.join(root, name), path).replace(
+                os.sep, "/")
+            if _me3_optional_native(rel):
+                continue
+            dlls.append(rel)
     return sorted(dlls)
 
 
@@ -4635,9 +4638,28 @@ def _me3_bundled_loader(rel_dir: str) -> bool:
     user has everything in one download. We provide our own and launch
     through it, so the bundled one is noise - and worse than noise: its
     per-platform builds of the same dll look exactly like an option pack.
+
+    Matched on ANY path segment, not just the first: ERR ships its copy at
+    internals/modengine/, and a first-segment test registered
+    me3_mod_host.dll as mod content - a second mod host loaded underneath
+    our own. Michael's ERR install recorded 13 natives; four were ERR's and
+    the rest were plumbing.
     """
-    first = rel_dir.split("/")[0].lower()
-    return first in ("me3", "modengine2", "mod engine 2", "modengine")
+    loaders = ("me3", "modengine2", "mod engine 2", "modengine")
+    return any(part.lower() in loaders for part in rel_dir.split("/"))
+
+
+def _me3_optional_native(rel: str) -> bool:
+    """Whether a dll sits in the author's opt-in pile.
+
+    ERR's dll/optional/ holds UltrawideFix.dll AND UltrawideFixNoDelay.dll -
+    alternatives, not a set - plus tweaks like RemoveVignette that are
+    somebody's taste, not part of the mod. Enabling all of them because
+    they happen to be in the archive is a choice nobody made. They stay on
+    disk and can be turned on per-dll; they just do not load by default.
+    """
+    parts = [p.lower() for p in rel.split("/")[:-1]]
+    return any(p in ("optional", "optionals", "optional dlls") for p in parts)
 
 
 def _route_me3_payload(scratch: str, mod_name: str):
@@ -8593,6 +8615,39 @@ query Link($slug: String!, $domainName: String!) {
         return {"ok": True, "total": len(mods), "mods": mods}
 
     # ---- Mod files & install (REST v1) --------------------------------------
+
+    async def get_install_block(
+        self, game_domain: str, mod_id: int, file_id: int, mod_name: str,
+        install_mode: str = "",
+    ) -> dict:
+        """Would installing this be refused, and why - asked before the click.
+
+        Michael: "lets just put the box there before the user clicks install,
+        why show it after?" Quite. A refusal the user reads first costs them
+        nothing; the same refusal after a 5GB download costs them the
+        download and their patience.
+
+        Silent when it cannot tell, which is the honest answer for a mod
+        whose listing Nexus has not published: better a working install
+        button than a warning that might be wrong.
+        """
+        if install_mode != "me3":
+            return {"ok": True, "blocked": False}
+        try:
+            owner = await _regulation_owner_before_download(
+                game_domain, int(mod_id), int(file_id), mod_name
+            )
+        except Exception as e:  # noqa: BLE001 - a warning must not break a page
+            decky.logger.debug(f"install block check failed: {e}")
+            return {"ok": True, "blocked": False}
+        if not owner:
+            return {"ok": True, "blocked": False}
+        return {
+            "ok": True,
+            "blocked": True,
+            "reason": _regulation_clash_error(mod_name, owner)["error"],
+            "owner": owner,
+        }
 
     async def get_mod_files(self, game_domain: str, mod_id: int) -> dict:
         url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}/files.json"

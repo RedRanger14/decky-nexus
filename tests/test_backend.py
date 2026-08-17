@@ -12541,7 +12541,9 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
         self.assertIn("The Convergence", body["error"])
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
-        self.assertEqual(source.count("_regulation_clash_error("), 3)
+        # One wording, however many callers - counting callers just makes
+        # the test fail every time a third place needs to say it.
+        self.assertEqual(source.count("replaces regulation.bin, and"), 1)
 
     def test_a_broken_preview_never_blocks_an_install(self):
         # It is a courtesy check on optional metadata. Any failure of it
@@ -12607,6 +12609,37 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
             "the pre-download gate must sit above the install worker, or "
             "the download happens first and the refusal is worthless"
         )
+
+
+class TestErrNativesAreNotPlumbing(unittest.TestCase):
+    """ERR's install registered 13 natives: four were ERR's, the rest were
+    a bundled mod host and the author's opt-in pile."""
+
+    def test_a_nested_bundled_loader_is_still_a_loader(self):
+        # ERR ships its copy at internals/modengine/, so a first-segment
+        # test loaded me3_mod_host.dll underneath our own mod host.
+        self.assertTrue(main._me3_bundled_loader("internals/modengine"))
+        self.assertTrue(main._me3_bundled_loader(
+            "internals/modengine/bin/win64"))
+        self.assertTrue(main._me3_bundled_loader("me3"))
+
+    def test_real_mod_directories_are_left_alone(self):
+        self.assertFalse(main._me3_bundled_loader("dll"))
+        self.assertFalse(main._me3_bundled_loader("mod/parts"))
+        self.assertFalse(main._me3_bundled_loader("internals/launcher"))
+
+    def test_the_authors_optional_pile_does_not_auto_load(self):
+        # UltrawideFix and UltrawideFixNoDelay are alternatives, not a set.
+        self.assertTrue(main._me3_optional_native(
+            "dll/optional/UltrawideFix.dll"))
+        self.assertTrue(main._me3_optional_native(
+            "dll/optional/UltrawideFixNoDelay.dll"))
+        self.assertTrue(main._me3_optional_native("optionals/x.dll"))
+
+    def test_a_dll_named_optional_is_not_a_folder_named_optional(self):
+        # Only directories decide this - a dll called optional.dll ships.
+        self.assertFalse(main._me3_optional_native("dll/optional.dll"))
+        self.assertFalse(main._me3_optional_native("reforged.dll"))
 
 
 if __name__ == "__main__":

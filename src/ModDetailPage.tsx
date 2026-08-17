@@ -30,7 +30,9 @@ import {
   uninstallMod,
 
   getKnownModVerdict,
-  getShowAdult,} from "./api";
+  getShowAdult,
+  getInstallBlock,
+} from "./api";
 import { knownBrokenNote } from "./panelRules";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
@@ -161,7 +163,24 @@ export function ModDetailPage() {
     setInstalledFileIds(new Set());
     setInstalledCopy(undefined);
     setImageFull(false);
-    getModFiles(s.game.nexusDomain, s.mod.modId).then(setFiles);
+    setBlocked(undefined);
+    getModFiles(s.game.nexusDomain, s.mod.modId).then((r) => {
+      setFiles(r);
+      // Ask up front whether this would be refused. Michael: "lets just put
+      // the box there before the user clicks install, why show it after?"
+      const list = r.ok ? r.files ?? [] : [];
+      const first = list.find((f) => f.is_primary) ?? list[0];
+      if (!first) return;
+      getInstallBlock(
+        s.game.nexusDomain,
+        s.mod.modId,
+        first.file_id,
+        s.mod.name,
+        String(modeParams(s.game)[0] ?? "")
+      ).then((b) => {
+        if (b.blocked && b.reason) setBlocked(b.reason);
+      });
+    });
     getModRequirements(s.game.nexusDomain, s.mod.modId).then((r) =>
       setRequirements(r.ok ? r.requirements ?? [] : [])
     );

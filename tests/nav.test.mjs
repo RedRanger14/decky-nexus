@@ -545,3 +545,21 @@ test("health check findings are openable and show gamepad focus", () => {
     "a Nexus mod should open in the plugin, not the browser"
   );
 });
+
+test("a refusal is on screen before the install button is pressed", () => {
+  // Michael: "lets just put the box there before the user clicks install,
+  // why show it after?" A refusal read first costs nothing; the same
+  // refusal after a 5GB download costs the download.
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    page.includes("getInstallBlock("),
+    "nothing asks whether the install would be refused until it is tried"
+  );
+  const load = page.indexOf("getInstallBlock(");
+  const attempt = page.indexOf("const result = await installMod(");
+  assert.ok(
+    load < attempt,
+    "the block check happens inside the install attempt, which is the " +
+      "behaviour this replaced"
+  );
+});
