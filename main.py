@@ -4372,6 +4372,39 @@ def _preview_has_regulation(node) -> bool:
     return _preview_has_regulation(node.get("children") or [])
 
 
+async def _file_uploaded_at(game_domain: str, mod_id: int, file_id: int) -> int:
+    """When one specific file was uploaded, from the UNFILTERED file list.
+
+    get_mod_files hides ARCHIVED and OLD_VERSION categories because the UI
+    should not offer them - but a collection pins exact file ids, often to
+    versions that are now archived. Looking those ids up in the filtered
+    list found nothing, so the date came back 0, and 0 means cannot-tell,
+    which is silent: the Performance and QoL run skipped none of its four
+    stale dlls. Michael: "I still got the could not find signature error so
+    we still havent sorted it."
+
+    Returns 0 when it genuinely cannot be found, which stays silent.
+    """
+    settings = _load_settings()
+    url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}/files.json"
+    headers = _api_headers(settings.get("api_key"))
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=25)
+        ) as session:
+            async with session.get(url, headers=headers, ssl=SSL_CONTEXT) as r:
+                if r.status != 200:
+                    return 0
+                body = await r.json()
+    except Exception as e:  # noqa: BLE001 - a date lookup must not break installs
+        decky.logger.debug(f"upload date lookup failed: {e}")
+        return 0
+    for f in body.get("files") or []:
+        if int(f.get("file_id") or 0) == int(file_id):
+            return int(f.get("uploaded_timestamp") or 0)
+    return 0
+
+
 def _remember_regulation(game_domain: str, mod_id: int, has_regulation: bool):
     """Record whether a mod's archive holds regulation.bin.
 
@@ -8795,14 +8828,7 @@ query Link($slug: String!, $domainName: String!) {
         game_updated = _game_updated_at(app_id)
         if not game_updated:
             return ""
-        files = await self.get_mod_files(game_domain, mod_id)
-        if not files.get("ok"):
-            return ""
-        uploaded = 0
-        for f in files.get("files") or []:
-            if int(f.get("file_id") or 0) == file_id:
-                uploaded = int(f.get("uploaded_timestamp") or 0)
-                break
+        uploaded = await _file_uploaded_at(game_domain, mod_id, file_id)
         return _stale_native_note(uploaded, game_updated, mod_name)
 
     async def get_mod_files(self, game_domain: str, mod_id: int) -> dict:

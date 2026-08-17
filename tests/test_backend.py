@@ -12733,6 +12733,20 @@ class TestStaleNativeWarning(unittest.TestCase):
         self.assertEqual(main._stale_native_note(0, self.JUL_2026, "x"), "")
         self.assertEqual(main._stale_native_note(self.JAN_2022, 0, "x"), "")
 
+    def test_an_archived_file_id_still_gets_a_date(self):
+        # get_mod_files hides ARCHIVED and OLD_VERSION for the UI, but a
+        # collection pins exact file ids - often now-archived ones. Looking
+        # those up in the FILTERED list returned no date, so the check went
+        # silent and the Performance and QoL run skipped none of its four
+        # stale dlls. The lookup must read the unfiltered list.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        check = source[source.index("async def _stale_native_warning"):]
+        check = check[:check.index("async def get_mod_files")]
+        self.assertIn("_file_uploaded_at", check)
+        # The filtered list is the bug, so the call must be gone.
+        self.assertNotIn("self.get_mod_files", check)
+
     def test_the_manifests_own_lowercase_key_is_read(self):
         # Elden Ring's appmanifest spells it "lastupdated". A
         # case-sensitive match returned 0 for every game, and 0 means
