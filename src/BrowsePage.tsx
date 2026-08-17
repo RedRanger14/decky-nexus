@@ -836,13 +836,16 @@ export function BrowsePage() {
             // hidden rather than ghosting through the tabs.
             background: "#0e141b",
             margin: "0 -24px",
-            padding: "0 24px",
+            padding: "0 24px 6px",
             boxShadow: "0 6px 12px -8px rgba(0,0,0,0.9)",
           }}
         >
           <TabBar currentId="store" />
-        </div>
-        {/* ---- Header: [game art] [title/count] ..... [search] [sort] ---- */}
+        {/* ---- Header: [game art] [title/count] ..... [search] [sort] ----
+            Inside the sticky block on purpose. Pinning the tabs alone left
+            the search scrolled off the top, which is the half Michael was
+            actually reaching for. Nav and search are the two things a store
+            page must never hide. */}
         <Focusable
           style={{
             display: "flex",
@@ -895,6 +898,7 @@ export function BrowsePage() {
           </>
           )}
         </Focusable>
+        </div>
 
         {collectionsMode ? (
           <div>
