@@ -16,8 +16,15 @@ $root = $PSScriptRoot
 
 $pkg = Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json
 $version = $pkg.version
-# Must match the folder Decky installs into, and the folder deploy.ps1 uses.
-$pluginDir = "Nexus-Mods"
+# The zip's top folder must be plugin.json's "name", not a hyphenated
+# variant. Decky reads the folder name out of the zip AND the name out of
+# plugin.json, and ours disagreed: folder "Nexus-Mods" against name "Nexus
+# Mods". Every failure inside Decky's installer returns without telling the
+# UI, so the disagreement presented as "PARSING ZIP FILE" forever rather
+# than an error. Taken from plugin.json so the two cannot drift again.
+$pluginJson = Get-Content (Join-Path $root "plugin.json") -Raw | ConvertFrom-Json
+$pluginDir = $pluginJson.name
+Write-Host "Plugin folder in zip: '$pluginDir' (from plugin.json)" -ForegroundColor Cyan
 
 Write-Host "Building v$version ..." -ForegroundColor Cyan
 pnpm run build
