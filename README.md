@@ -46,6 +46,28 @@ hardware, so the list grows slowly and on purpose.
 
 [issues]: https://github.com/RedRanger14/decky-nexus/issues
 
+## What it does
+
+- **Finds the game you are playing** and shows its Nexus mods, with search,
+  sort and curated rails, on a controller.
+- **Downloads and installs** into the right place for that game, whether that
+  is a mods folder, the game's data directory, a Proton prefix, or a mod
+  loader profile. Which one is per game and handled for you.
+- **Collections**, installed in order, with a report at the end naming
+  anything skipped and why.
+- **FOMOD installers**, presented as a controller-friendly wizard rather than
+  a desktop dialog.
+- **Load order applied automatically** where a game needs one, from the
+  collection's own ordering. Reordering it by hand is not supported yet.
+- **Enable and disable** any installed mod, and reset a game to vanilla.
+- **A health check** that reads the game's own logs and says what is actually
+  broken, rather than guessing.
+- **Endorsements and author support links**, so the people who made the mods
+  still get credit.
+
+Not supported yet: manual load order editing, Vortex profile import, and
+mods that need a Windows tool to install.
+
 ## What you need
 
 - **A Nexus Mods Premium account.** This is not optional. Free accounts
@@ -120,16 +142,6 @@ can be returned to vanilla from inside the plugin, back up saves you care
 about first. Report anything wrong on
 [GitHub Issues](https://github.com/RedRanger14/decky-nexus/issues), the
 plugin can package the details for you from the Health page.
-
-## v1 Scope
-
-- Detect the currently selected game (app ID via the Steam client APIs Decky exposes), mapped to its Nexus game domain (hardcoded for StS2 in v1).
-- Controller-friendly browse/search UI for that game's Nexus mods, built on the Nexus Mods API.
-- Download and extract archives into the game's `mods/` folder (Premium direct-download flow first).
-- Enable/disable by moving mod folders between `mods/` and `mods-disabled/`, with state tracked in plugin config.
-- Surface StS2's modded-vs-unmodded save file warning.
-
-Out of scope for v1: multi-game support, FOMOD installers, load order, Proton-prefix games, collections, Vortex integration.
 
 ## Architecture
 
