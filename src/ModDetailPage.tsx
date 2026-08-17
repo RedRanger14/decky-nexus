@@ -399,12 +399,19 @@ export function ModDetailPage() {
       } else if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
         refreshInstalled(sel);
+        // onClick ONLY while the game is running. It used to be attached
+        // unconditionally, so brushing a toast launched the game - and
+        // during a 183-mod collection there are a lot of toasts to brush.
+        // Michael, on the Witcher 3 menu: "I kept getting 'game is already
+        // running'". A toast that says "it will load next time" must not
+        // start anything when tapped.
+        const running = isGameRunning(game.appId);
         toaster.toast({
           title: `${mod.name} installed`,
-          body: isGameRunning(game.appId)
+          body: running
             ? `Tap here to restart ${game.displayName} and load it.`
             : `It will load next time ${game.displayName} starts.`,
-          onClick: () => restartGame(game.appId),
+          ...(running ? { onClick: () => restartGame(game.appId) } : {}),
         });
       } else if (result.mod_conflict || result.script_conflict) {
         // Not a broken mod: something already installed is in the way, and
