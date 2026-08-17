@@ -12929,6 +12929,15 @@ class TestW3MergeSafety(unittest.TestCase):
         with open(note, encoding="utf-8") as f:
             self.assertIn("edited by hand", f.read())
 
+    def test_the_trigger_is_actually_written_after_a_merge(self):
+        # It existed as a helper for four versions without a single caller.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("_w3_write_compile_trigger(mods_path)", source)
+        merge_block = source[source.index("if merged_rels is not None:"):]
+        merge_block = merge_block[:merge_block.index("else:")]
+        self.assertIn("_w3_write_compile_trigger(", merge_block)
+
     def test_a_merge_missing_a_contributor_is_stale(self):
         # Vortex's MergeDataViolationError in miniature: the merged file
         # still carries a departed mod's edits, so switching that mod off
