@@ -1146,6 +1146,14 @@ export const getKnownModVerdict = callable<
 // Everything wrong with a setup that the game will not mention until it
 // refuses to start: mods missing their required mods, mods needing DLC that
 // is not installed, and requirements hosted off Nexus.
+/** The body of a bug report, assembled from what the device knows. Nothing
+ * is sent: the Health page hands this to GitHub's new-issue form, where the
+ * user sees all of it before pressing submit. */
+export const buildReport = callable<
+  [game_domain: string, app_id: number],
+  { ok: boolean; body?: string }
+>("build_report");
+
 export const getHealthCheck = callable<
   [
     game_domain: string,

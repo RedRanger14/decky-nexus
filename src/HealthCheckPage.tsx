@@ -14,6 +14,7 @@
 // enough to read from a sofa, and only then the detail.
 
 import {
+  ButtonItem,
   DialogButton,
   Focusable,
   Navigation,
@@ -31,7 +32,7 @@ import {
   FaSyncAlt,
 } from "react-icons/fa";
 
-import { getHealthCheck, getModDetails } from "./api";
+import { buildReport, getHealthCheck, getModDetails } from "./api";
 import { PageBackdrop, SectionHeading, StatChip } from "./chrome";
 import { SupportedGame, frameworkModIds, getActiveGame } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
@@ -782,6 +783,37 @@ export default function HealthCheckPage() {
             ))}
           </>
         )}
+
+        {/* Reporting a problem from a handheld: the plugin writes the part
+            a player cannot be expected to know - build id, what a
+            collection pinned, the log tail - and GitHub's own form takes
+            the part only they can write. Nothing leaves the device until
+            they press submit there, with the whole body in front of them.
+            Michael wanted tickets in the repo itself rather than anything
+            posted on his behalf. */}
+        <Focusable style={{ margin: "6px 0 10px" }}>
+          <ButtonItem
+            layout="below"
+            onClick={async () => {
+              const r = await buildReport(
+                game.nexusDomain,
+                game.appId
+              ).catch(() => undefined);
+              const body = encodeURIComponent(
+                (r?.body ?? "").slice(0, 5500)
+              );
+              const title = encodeURIComponent(
+                `[${game.displayName}] `
+              );
+              Navigation.NavigateToExternalWeb(
+                "https://github.com/RedRanger14/decky-nexus/issues/new" +
+                  `?title=${title}&body=${body}`
+              );
+            }}
+          >
+            Report a problem
+          </ButtonItem>
+        </Focusable>
 
         {(report?.debug_quieted?.length ?? 0) > 0 && (
           <>

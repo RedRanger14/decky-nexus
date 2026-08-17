@@ -1400,6 +1400,21 @@ def _w3_quiet_debug_overlays(app_id: int) -> list:
     return changed
 
 
+def _plugin_log_tail(count: int) -> str:
+    """The end of the newest plugin log, for a report. Best effort."""
+    try:
+        logs = sorted(
+            glob.glob(os.path.join(decky.DECKY_PLUGIN_LOG_DIR, "*.log")),
+            key=os.path.getmtime,
+        )
+        if not logs:
+            return ""
+        with open(logs[-1], "r", encoding="utf-8", errors="replace") as f:
+            return chr(10).join(f.read().splitlines()[-int(count):])
+    except Exception:  # noqa: BLE001 - a report must not fail on its context
+        return ""
+
+
 def _prefix_user_path(app_id: int, *parts: str) -> str:
     """A path inside the Proton prefix's Windows user profile."""
     return os.path.join(
@@ -14477,6 +14492,59 @@ query CollectionInstructions($slug: String!) {
             "version": verdict.get("version") or "",
             "why": verdict.get("why") or "",
         }
+
+    async def build_report(self, game_domain: str, app_id: int = 0) -> dict:
+        """The body of a bug report, assembled so nobody has to describe it.
+
+        A player on a handheld cannot be asked which build they are on or
+        what a collection pinned. The plugin knows, so it writes that part
+        and leaves the human the one thing only they can supply: what
+        happened. Nothing is sent anywhere - this returns text that the
+        Health page hands to GitHub's new-issue form, where the user sees
+        the lot before pressing submit.
+        """
+        settings = _load_settings()
+        records = settings.get("installed", {}).get(game_domain, {}) or {}
+        build = _steam_build_id(app_id)
+        verdicts = _verdicts_for_build(game_domain, build) if build else {}
+        enabled = [r for r in records.values() if r.get("enabled", True)]
+        lines = [
+            "### What happened",
+            "",
+            "<!-- Anything you can add here helps. Fine to leave blank. -->",
+            "",
+            "### Setup",
+            "",
+            f"- Plugin: {decky.DECKY_PLUGIN_VERSION}",
+            f"- Game: {game_domain} (app {app_id or 'unknown'})",
+            f"- Game build: {build or 'unknown'}",
+            f"- Mods installed: {len(records)} ({len(enabled)} enabled)",
+        ]
+        if verdicts:
+            lines.append(
+                f"- Mods recorded as broken on this build: {len(verdicts)}"
+            )
+        srcs = sorted({r.get("source") or "manual" for r in records.values()})
+        if srcs:
+            lines.append(f"- Installed via: {', '.join(srcs)}")
+        recent = sorted(
+            records.items(),
+            key=lambda kv: kv[1].get("installed_at") or 0,
+            reverse=True,
+        )[:15]
+        if recent:
+            lines += ["", "### Most recent mods", ""]
+            for key, rec in recent:
+                mark = "" if rec.get("enabled", True) else " (disabled)"
+                lines.append(
+                    f"- {rec.get('name') or key} "
+                    f"v{rec.get('version') or '?'}{mark}"
+                )
+        tail = _plugin_log_tail(60)
+        if tail:
+            lines += ["", "### Plugin log (last 60 lines)", "",
+                      "```", tail, "```"]
+        return {"ok": True, "body": chr(10).join(lines)}
 
     async def get_health_check(
         self, game_domain: str, install_dir: str, mods_subdir: str,
