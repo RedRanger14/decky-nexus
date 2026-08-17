@@ -40,7 +40,8 @@
       "Bash(awk -F: '$1>14400 && $1<14800')",
       "Bash(python -m unittest tests.test_backend.TestW3GameBranchVariants)",
       "Bash(awk -F: '$1>3745')",
-      "PowerShell(.\\\\release.ps1)"
+      "PowerShell(.\\\\release.ps1)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File release.ps1)"
     ]
   }
 }
