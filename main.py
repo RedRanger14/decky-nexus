@@ -8892,6 +8892,33 @@ query Link($slug: String!, $domainName: String!) {
                     )
                     await _emit_progress(mod_id, "error", 0, "regulation clash")
                     return _regulation_clash_error(mod_name, owner)
+            # In a collection, a native built for an older patch is skipped
+            # rather than downloaded. Michael: "a lot of those should be
+            # skipped as the game has been updated... Especially if is a
+            # waste of a download." On a single install it stays a warning
+            # on the page and the user decides - here nobody chose this mod
+            # individually, so spending a download on a message box nobody
+            # asked for is the wrong default.
+            if (
+                install_mode == "me3"
+                and not repair_only
+                and record_source == "collection"
+            ):
+                note = ""
+                try:
+                    note = await self._stale_native_warning(
+                        game_domain, int(mod_id), int(file_id), mod_name,
+                        int(app_id or 0),
+                    )
+                except Exception as e:  # noqa: BLE001 - never break a run
+                    decky.logger.debug(f"stale check failed: {e}")
+                if note:
+                    decky.logger.info(
+                        f"collection skipped {mod_name!r} "
+                        f"({game_domain}/{mod_id}): built for an older patch"
+                    )
+                    await _emit_progress(mod_id, "error", 0, "older patch")
+                    return {"ok": False, "stale_skip": True, "error": note}
             result = await self._install_mod_inner(
                 game_domain,
                 mod_id,
