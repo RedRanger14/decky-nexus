@@ -4662,6 +4662,51 @@ def _me3_optional_native(rel: str) -> bool:
     return any(p in ("optional", "optionals", "optional dlls") for p in parts)
 
 
+# A loose DVDBND asset names its own home in its extension: FromSoft's
+# bundle suffixes map one-to-one onto the game folders me3 overlays. Only
+# the unambiguous ones are here - a .texbnd could belong to parts/ or chr/
+# depending on what it dresses, and guessing that would put a file where
+# the game will not look for it.
+_ME3_LOOSE_ASSET_DIRS = {
+    ".partsbnd.dcx": "parts",
+    ".chrbnd.dcx": "chr",
+    ".anibnd.dcx": "chr",
+    ".behbnd.dcx": "chr",
+}
+
+
+def _me3_loose_asset_dir(name: str):
+    """Which game folder a loose asset file belongs in, or None."""
+    low = name.lower()
+    for suffix, folder in _ME3_LOOSE_ASSET_DIRS.items():
+        if low.endswith(suffix):
+            return folder
+    return None
+
+
+def _sort_loose_me3_assets(root: str) -> dict:
+    """Move loose asset files at the archive root into the folders me3
+    expects, and report what was sorted.
+
+    A Better Nude Body ships bd_f_0000.partsbnd.dcx and friends at the top
+    level with no parts/ folder, and was refused as having "no FromSoft mod
+    layout" - while being nothing but game assets. The author packed for a
+    tool that sorts them; we sort them instead of asking the user to.
+    """
+    moved = {}
+    for name in sorted(os.listdir(root)):
+        src = os.path.join(root, name)
+        if not os.path.isfile(src):
+            continue
+        folder = _me3_loose_asset_dir(name)
+        if not folder:
+            continue
+        os.makedirs(os.path.join(root, folder), exist_ok=True)
+        shutil.move(src, os.path.join(root, folder, name))
+        moved.setdefault(folder, []).append(name)
+    return moved
+
+
 def _route_me3_payload(scratch: str, mod_name: str):
     """Decide what an extracted FromSoft archive is. Returns
     (payload_root, assets_subpath_or_None, dlls, None), or
@@ -4669,6 +4714,19 @@ def _route_me3_payload(scratch: str, mod_name: str):
     root = _me3_payload_root(scratch)
     assets = _me3_assets_subpath(root)
     dlls = _me3_natives(root, assets)
+    if assets is None and not dlls:
+        # Loose assets first: sorting them into parts/ or chr/ turns an
+        # archive we would have refused into a perfectly ordinary package.
+        sorted_assets = _sort_loose_me3_assets(root)
+        if sorted_assets:
+            decky.logger.info(
+                f"sorted loose FromSoft assets for {mod_name!r}: "
+                + ", ".join(
+                    f"{len(v)} into {k}/" for k, v in sorted_assets.items()
+                )
+            )
+            assets = _me3_assets_subpath(root)
+            dlls = _me3_natives(root, assets)
     if assets is None and not dlls:
         names = sorted(os.listdir(root))
         exes = [n for n in names if n.lower().endswith(".exe")]
