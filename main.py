@@ -10297,9 +10297,17 @@ query Link($slug: String!, $domainName: String!) {
                             os.path.basename(d),
                         )
                     _save_settings(settings_now)
+                    # Without this the game can keep running its CACHED
+                    # compiled scripts and the merge does nothing visible -
+                    # which would make any test of merging inconclusive.
+                    # Shipped as a helper in v0.246.0 and never called: the
+                    # kind of gap that only shows up when someone is about
+                    # to spend an hour testing against it.
+                    _w3_write_compile_trigger(mods_path)
                     decky.logger.info(
                         f"W3 {mod_name!r}: auto-merged "
-                        f"{len(merged_rels)} script(s) into {W3_MERGED_MOD}"
+                        f"{len(merged_rels)} script(s) into {W3_MERGED_MOD}, "
+                        f"compile trigger written"
                     )
                     w3_err = None
                 else:
