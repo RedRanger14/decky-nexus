@@ -558,7 +558,13 @@ def _game_updated_at(app_id: int) -> int:
 # QoL collection except the loader pops "Could not find signature!", a
 # blocking Win32 dialog that reads as a frozen game in Gaming Mode.
 # Michael: "is a janky horrile experience for the user".
-_STALE_NATIVE_DAYS = 45
+# Six months, set from measurement rather than instinct. On Elden Ring's
+# August 2026 patch: ERR's current release is 60 days older than the patch
+# and works, Skip the intro is 21 months older and fails, the 2022 dlls are
+# four years older and fail. 45 days flagged ERR, which is crying wolf on a
+# maintained mod - and a warning that fires on the good ones teaches the
+# user to ignore it, which costs more than not warning at all.
+_STALE_NATIVE_DAYS = 180
 
 
 def _stale_native_note(uploaded: int, game_updated: int, mod_name: str):

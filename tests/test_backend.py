@@ -12717,6 +12717,18 @@ class TestStaleNativeWarning(unittest.TestCase):
         self.assertEqual(main._stale_native_note(
             self.JUL_2026 - 10 * 86400, self.JUL_2026, "Recent mod"), "")
 
+    def test_err_at_sixty_days_is_maintained_not_stale(self):
+        # Measured, not assumed: ERR's release is 60 days older than the
+        # patch and boots clean. A 45-day threshold flagged it, and a
+        # warning that fires on the good ones teaches the user to ignore it.
+        self.assertEqual(main._stale_native_note(
+            self.JUL_2026 - 60 * 86400, self.JUL_2026, "ERR"), "")
+
+    def test_twenty_one_months_behind_still_warns(self):
+        # Skip the intro logos: old enough to fail, and it does.
+        self.assertIn("Could not find signature", main._stale_native_note(
+            self.JUL_2026 - 640 * 86400, self.JUL_2026, "Skip the intro"))
+
     def test_unknown_dates_never_warn(self):
         self.assertEqual(main._stale_native_note(0, self.JUL_2026, "x"), "")
         self.assertEqual(main._stale_native_note(self.JAN_2022, 0, "x"), "")
