@@ -12642,5 +12642,53 @@ class TestErrNativesAreNotPlumbing(unittest.TestCase):
         self.assertFalse(main._me3_optional_native("reforged.dll"))
 
 
+class TestLooseFromSoftAssets(unittest.TestCase):
+    """A Better Nude Body ships its meshes at the archive root with no
+    parts/ folder, and was refused for having no layout while being
+    nothing but game assets."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def _touch(self, *names):
+        for n in names:
+            open(os.path.join(self.dir, n), "w").close()
+
+    def test_the_suffix_names_the_folder(self):
+        self.assertEqual(
+            main._me3_loose_asset_dir("bd_f_0000.partsbnd.dcx"), "parts")
+        self.assertEqual(
+            main._me3_loose_asset_dir("c0000.chrbnd.dcx"), "chr")
+        self.assertIsNone(main._me3_loose_asset_dir("readme.txt"))
+        # Ambiguous on purpose: a texbnd could dress either.
+        self.assertIsNone(main._me3_loose_asset_dir("c0000.texbnd.dcx"))
+
+    def test_abnbs_own_file_list_is_sorted_and_installable(self):
+        self._touch("bd_f_0000.partsbnd.dcx", "fc_f_0100.partsbnd.dcx",
+                    "lg_f_0000.partsbnd.dcx", "readme.txt")
+        moved = main._sort_loose_me3_assets(self.dir)
+        self.assertEqual(sorted(moved), ["parts"])
+        self.assertEqual(len(moved["parts"]), 3)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.dir, "parts", "bd_f_0000.partsbnd.dcx")))
+        # Not an asset, so left exactly where the author put it.
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "readme.txt")))
+        # And the archive now reads as the package it always was.
+        self.assertIsNotNone(main._me3_assets_subpath(self.dir))
+
+    def test_an_archive_with_no_loose_assets_is_untouched(self):
+        self._touch("readme.txt", "screenshot.png")
+        self.assertEqual(main._sort_loose_me3_assets(self.dir), {})
+        self.assertEqual(len(os.listdir(self.dir)), 2)
+
+    def test_a_proper_layout_is_never_reshuffled(self):
+        os.makedirs(os.path.join(self.dir, "parts"))
+        open(os.path.join(self.dir, "parts", "x.partsbnd.dcx"), "w").close()
+        self.assertEqual(main._sort_loose_me3_assets(self.dir), {})
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
+
+
 if __name__ == "__main__":
     unittest.main()
