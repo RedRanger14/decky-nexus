@@ -95,6 +95,28 @@ export function takeCollectionsReturn(): boolean {
   return take;
 }
 
+// ---- My Mods opened from a blocked install ------------------------------
+// The conflict box on a mod page offers "Manage my mods" so the user can
+// switch the other mod off. B there used to drop them at the QAM, so the
+// obvious next step - press install again - meant navigating back from
+// scratch. Michael: "it should go back to the mod page where I can easily
+// click install again."
+let returnToMod = false;
+
+export function markManagerReturn(): void {
+  returnToMod = true;
+}
+
+/** Read WITHOUT clearing: B may be pressed at any point, and the manager
+ * has no other reason to consume it. Cleared when the manager unmounts. */
+export function managerReturnsToMod(): boolean {
+  return returnToMod;
+}
+
+export function clearManagerReturn(): void {
+  returnToMod = false;
+}
+
 // ---- Collection hand-off -------------------------------------------------------
 
 import { CollectionSummary } from "./api";

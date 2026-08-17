@@ -32,6 +32,8 @@ import {
   setDetailOrigin,
   setSelectedCollection,
   setSelectedMod,
+  clearManagerReturn,
+  managerReturnsToMod,
 } from "./state";
 import {
   BLUE_BUTTON_CLASS,
@@ -40,7 +42,13 @@ import {
   WHITE_BUTTON_CLASS,
 } from "./theme";
 import { OrangeToggle } from "./Toggle";
-import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
+import {
+  TabBar,
+  exitTabsToQam,
+  handleTabButtons,
+  popOurPage,
+  pushOurPage,
+} from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -551,7 +559,16 @@ export function ManagerPage() {
       // No autoFocus/onActivate here: the TabBar guarantees focusable
       // children, and a focusable root traps the gamepad focus.
       onButtonDown={handleTabButtons("manager")}
-      onCancel={exitTabsToQam}
+      onCancel={() => {
+        // Opened from a mod page that could not install: B returns to it,
+        // one press from trying again now the conflict is resolved.
+        if (managerReturnsToMod()) {
+          clearManagerReturn();
+          popOurPage();
+          return;
+        }
+        exitTabsToQam();
+      }}
       style={{ marginTop: "40px", height: "calc(100% - 40px)" }}
     >
       <Scroller

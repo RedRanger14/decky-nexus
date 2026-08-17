@@ -50,6 +50,7 @@ import {
   getSelectedMod,
   nameDownload,
   setSelectedMod,
+  markManagerReturn,
 } from "./state";
 import { isGameRunning, restartGame } from "./steam";
 import {
@@ -951,7 +952,11 @@ export function ModDetailPage() {
           body={blocked}
           action={{
             label: "Manage my mods",
-            onClick: () => pushOurPage("/nexus-mods/manager"),
+            onClick: () => {
+              // So B on My Mods comes back HERE, ready to install again.
+              markManagerReturn();
+              pushOurPage("/nexus-mods/manager");
+            },
           }}
         />
       )}
