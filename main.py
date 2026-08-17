@@ -835,6 +835,34 @@ REQUIREMENT_FIELDS = """
 """
 
 
+# Witcher 3 ships two branches of the game and mods follow: the same mod
+# exists as "(Next Gen) Base Appearances Special Expansion" and "(Classic)
+# Base Appearances Special Expansion", often on SEPARATE Nexus pages, so
+# matching requirements by mod id cannot see that one satisfies the other.
+# The health check told Michael to install "Upscaled UI - HUD Elements -
+# 1.32" and "(Classic) Base Appearances Special Expansion" while he had the
+# Next-Gen build of both - and the one-tap button would have put classic
+# files into a next-gen install, which is worse than the false alarm.
+_W3_VARIANT_RE = re.compile(
+    r"\(?\b(?:classic|next[\s-]?gen(?:eration)?|ng|1\.3[12]|"
+    r"4\.0[0-9]*|old[\s-]?gen)\b\)?",
+    re.IGNORECASE,
+)
+_W3_NOISE_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _w3_variant_key(name: str) -> str:
+    """A mod name with its game-branch variant stripped.
+
+    So "(Classic) Base Appearances Special Expansion" and "(Next Gen) Base
+    Appearances Special Expansion" reduce to the same key. Deliberately
+    crude: it only has to catch the branch labels Witcher 3 authors
+    actually use, and a name that reduces to nothing is not matched at all.
+    """
+    stripped = _W3_VARIANT_RE.sub(" ", str(name or ""))
+    return _W3_NOISE_RE.sub("", stripped.lower())
+
+
 def _split_requirements(node: dict) -> dict:
     """One legacyMods node -> {"requirements", "dlc"}.
 
@@ -14550,6 +14578,14 @@ query CollectionInstructions($slug: String!) {
                     errors.append(f"{f['dll']}: {e}")
         verdicts = _verdicts_for_build(game_domain, build)
         have_ids = {int(rec["mod_id"]) for rec in tracked.values()}
+        # Witcher 3 only: what we have, ignoring which branch of the game
+        # each name says it is for.
+        have_variants = (
+            {_w3_variant_key(rec.get("name") or k)
+             for k, rec in tracked.items()}
+            if game_domain == "witcher3" else set()
+        )
+        have_variants.discard("")
         # The framework is installed, but not as a tracked mod - it arrives
         # through Step 1, not the mod list. Without this every SMAPI mod
         # reads as missing SMAPI: 77 of them on Michael's Stardew, on a
@@ -14611,6 +14647,12 @@ query CollectionInstructions($slug: String!) {
                 # A mod manager is not a missing dependency: this plugin IS
                 # the manager, and the mod is already installed.
                 and not _MANAGER_REQUIREMENT_RE.search(r.get("modName") or "")
+                # The same mod for the other branch of the game does not
+                # need installing - and must not be, on a next-gen setup.
+                and not (
+                    game_domain == "witcher3"
+                    and _w3_variant_key(r.get("modName") or "") in have_variants
+                )
             ]
             if missing:
                 needs_mods.append({

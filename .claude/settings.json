@@ -36,7 +36,9 @@
       "Bash(grep -n \"notes = \\\\[\\\\]\\\\|report = {\\\\|\\\\\"ok\\\\\": True,\" main.py)",
       "Bash(awk -F: '$1>14440 && $1<14560')",
       "Bash(awk -F: '$1>14520 && $1<14900')",
-      "Bash(python -m unittest tests.test_backend.TestW3DebugOverlaysAreSwitchedOff)"
+      "Bash(python -m unittest tests.test_backend.TestW3DebugOverlaysAreSwitchedOff)",
+      "Bash(awk -F: '$1>14400 && $1<14800')",
+      "Bash(python -m unittest tests.test_backend.TestW3GameBranchVariants)"
     ]
   }
 }
