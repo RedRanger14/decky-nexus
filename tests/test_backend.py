@@ -12786,6 +12786,53 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestW3GameBranchVariants(unittest.TestCase):
+    """Witcher 3 ships two branches and mods follow, often on separate Nexus
+    pages - so matching requirements by mod id cannot tell that one satisfies
+    the other. Health told Michael to install two CLASSIC mods he already had
+    in Next-Gen form, and the one-tap button would have put classic files
+    into a next-gen install."""
+
+    def test_the_two_branches_of_one_mod_match(self):
+        # His exact case.
+        self.assertEqual(
+            main._w3_variant_key("(Classic) Base Appearances Special Expansion"),
+            main._w3_variant_key("(Next Gen) Base Appearances Special Expansion"),
+        )
+
+    def test_a_version_labelled_branch_matches_too(self):
+        # 1.32 is how authors name the pre-next-gen build.
+        self.assertEqual(
+            main._w3_variant_key("Upscaled UI - HUD Elements - 1.32"),
+            main._w3_variant_key("Upscaled UI - HUD Elements (Next-Gen)"),
+        )
+
+    def test_different_mods_still_differ(self):
+        # The third finding was genuine and must stay reported.
+        self.assertNotEqual(
+            main._w3_variant_key("Promotional Atmosphere Lighting Mod"),
+            main._w3_variant_key("Novigrad Sewers Lighting Improved"),
+        )
+
+    def test_punctuation_and_case_do_not_matter(self):
+        self.assertEqual(
+            main._w3_variant_key("Friendly HUD"),
+            main._w3_variant_key("friendly  hud!"),
+        )
+
+    def test_a_name_that_is_only_a_branch_label_matches_nothing(self):
+        # Reduces to "", which is excluded from the have-set on purpose.
+        self.assertEqual(main._w3_variant_key("(Next Gen)"), "")
+
+    def test_only_witcher_3_is_affected(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        block = source[source.index("        have_ids = {int(rec"):]
+        block = block[:block.index("needs_mods.append")]
+        self.assertIn('game_domain == "witcher3" else set()', block)
+        self.assertIn('game_domain == "witcher3"', block)
+
+
 class TestW3DebugOverlaysAreSwitchedOff(unittest.TestCase):
     """New Lightning FX ships Debug Mode ON, so the #1 Witcher 3 collection
     puts a debug panel over the game for everyone who installs it. Michael
