@@ -11,7 +11,7 @@ import {
   showModal,
 } from "@decky/ui";
 import { toaster } from "@decky/api";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FaEye } from "react-icons/fa";
 
 import {
@@ -24,6 +24,7 @@ import {
   setModEnabled,
   uninstallCollection,
   uninstallMod,
+  getShowAdult,
 } from "./api";
 import { ALL_GAMES, SupportedGame, getActiveGame, modeParams } from "./games";
 import {
@@ -64,10 +65,17 @@ function Thumb({
   url,
   size,
   fallback,
+  blur,
 }: {
   url?: string;
   size: { w: number; h: number };
   fallback: string;
+  /** The account's own adult-image preference, honoured here too. The
+   * browse rows and the mod page have always blurred; these thumbnails
+   * did not, so a setting the user set once was being kept in two places
+   * out of three. Michael: "the small mod thumbnails on the my mods
+   * section are not respecting the adult content settings for blur". */
+  blur?: boolean;
 }) {
   if (url) {
     return (
@@ -80,6 +88,7 @@ function Thumb({
           width: `${size.w}px`,
           height: `${size.h}px`,
           objectFit: "cover",
+          filter: blur ? "blur(9px)" : undefined,
           borderRadius: "3px",
           flexShrink: 0,
           background: "#0b0e13",
@@ -127,6 +136,7 @@ function ModRow({
   game,
   mod,
   thumb,
+  blur,
   busy,
   onToggle,
   onRemove,
@@ -134,6 +144,7 @@ function ModRow({
   game: SupportedGame;
   mod: InstalledMod;
   thumb?: string;
+  blur?: boolean;
   busy: boolean;
   onToggle: (game: SupportedGame, mod: InstalledMod) => void;
   onRemove: (game: SupportedGame, mod: InstalledMod) => void;
@@ -152,6 +163,7 @@ function ModRow({
     >
       <Thumb
         url={thumb}
+        blur={blur}
         size={{ w: 64, h: 40 }}
         fallback={(mod.name ?? mod.folder).charAt(0).toUpperCase()}
       />
@@ -245,6 +257,11 @@ export function ManagerPage() {
   const [showAllGames, setShowAllGames] = useState(false);
   const [groups, setGroups] = useState<GameMods[] | undefined>();
   const [busyKey, setBusyKey] = useState<string | undefined>();
+  // Which installed mods are adult, and whether this account blurs them.
+  // A ref because it is filled by the same fetch that fills thumbs and
+  // read in the same render pass.
+  const adultRef = useRef<Set<number>>(new Set());
+  const [blurAdult, setBlurAdult] = useState(false);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [openCollections, setOpenCollections] = useState<Set<string>>(
     new Set()
@@ -288,6 +305,9 @@ export function ManagerPage() {
           setThumbs((prev) => {
             const next = { ...prev };
             for (const m of res.mods!) {
+              if (m.adultContent) {
+                adultRef.current.add(m.modId);
+              }
               if (m.thumbnailUrl ?? m.pictureUrl) {
                 next[`${game.appId}:${m.modId}`] =
                   m.thumbnailUrl ?? m.pictureUrl!;
@@ -299,6 +319,14 @@ export function ManagerPage() {
         .catch(() => {});
     }
   };
+
+  useEffect(() => {
+    // The account decides this, not the plugin - same source the browse
+    // rows and the mod page read.
+    getShowAdult().then((r) => {
+      if (r.ok) setBlurAdult(Boolean(r.blur_adult));
+    });
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -625,6 +653,10 @@ export function ManagerPage() {
                           game={game}
                           mod={mod}
                           thumb={thumbs[`${game.appId}:${mod.mod_id}`]}
+                          blur={
+                            blurAdult &&
+                            adultRef.current.has(mod.mod_id ?? -1)
+                          }
                           busy={busyKey === `${game.appId}:${mod.folder}`}
                           onToggle={toggle}
                           onRemove={remove}
@@ -832,6 +864,10 @@ export function ManagerPage() {
                                     mod={mod}
                                     thumb={
                                       thumbs[`${game.appId}:${mod.mod_id}`]
+                                    }
+                                    blur={
+                                      blurAdult &&
+                                      adultRef.current.has(mod.mod_id ?? -1)
                                     }
                                     busy={
                                       busyKey ===

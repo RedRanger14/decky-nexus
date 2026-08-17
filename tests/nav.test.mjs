@@ -586,3 +586,25 @@ test("a stale installed-mods read cannot overwrite a newer one", () => {
       "a current one"
   );
 });
+
+test("installed-mod thumbnails honour the account's adult blur", () => {
+  // The browse rows and the mod page have always blurred; My Mods did not,
+  // so a preference the user set once was being kept in two places out of
+  // three. Michael: "the small mod thumbnails on the my mods section are
+  // not respecting the adult content settings for blur".
+  const page = read("ManagerPage.tsx");
+  assert.ok(
+    page.includes("getShowAdult()"),
+    "My Mods never reads the account's adult preference"
+  );
+  assert.ok(
+    /filter: blur \? "blur\(/.test(page),
+    "the thumbnail has no blur filter, so adult art renders unblurred " +
+      "however the account is set"
+  );
+  assert.ok(
+    /adultRef\.current\.has\(mod\.mod_id/.test(page),
+    "nothing tracks WHICH installed mods are adult, so the blur cannot be " +
+      "applied per row"
+  );
+});
