@@ -12690,5 +12690,43 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestStaleNativeWarning(unittest.TestCase):
+    """Every dll in Elden Ring's Performance and QoL collection except the
+    loader pops "Could not find signature!" on build 22984413 - a blocking
+    Win32 dialog that reads as a frozen game. Proven by isolation on
+    device, not inferred: with the loader alone it boots clean."""
+
+    JAN_2022 = 1641000000      # the collection's dlls
+    JUL_2026 = 1783000000      # the game's current patch
+
+    def test_a_2022_dll_against_a_2026_patch_is_flagged(self):
+        note = main._stale_native_note(
+            self.JAN_2022, self.JUL_2026, "Unlock the framerate")
+        self.assertIn("January 2022", note)
+        self.assertIn("Could not find signature", note)
+        # It must tell the user what to do when it happens.
+        self.assertIn("My Mods", note)
+
+    def test_a_mod_newer_than_the_patch_is_silent(self):
+        self.assertEqual(main._stale_native_note(
+            self.JUL_2026, self.JAN_2022, "Fresh mod"), "")
+
+    def test_a_mod_from_around_the_patch_is_silent(self):
+        # Authors update within weeks of a patch; warning about those would
+        # cry wolf on exactly the mods that DO work.
+        self.assertEqual(main._stale_native_note(
+            self.JUL_2026 - 10 * 86400, self.JUL_2026, "Recent mod"), "")
+
+    def test_unknown_dates_never_warn(self):
+        self.assertEqual(main._stale_native_note(0, self.JUL_2026, "x"), "")
+        self.assertEqual(main._stale_native_note(self.JAN_2022, 0, "x"), "")
+
+    def test_the_game_update_time_is_read_from_the_manifest(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("LastUpdated", source)
+        self.assertEqual(main._game_updated_at(0), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -25,7 +25,8 @@
       "PowerShell(python -m unittest discover -s tests 2>&1)",
       "Bash(python -m unittest tests.test_backend.TestMe3Layout)",
       "Bash(python -m unittest tests.test_backend.TestLooseFromSoftAssets)",
-      "Bash(grep -n \"const \\\\[thumbs, setThumbs\\\\]\\\\|useRef\\\\|useEffect\\(\\(\\) => {\" src/ManagerPage.tsx)"
+      "Bash(grep -n \"const \\\\[thumbs, setThumbs\\\\]\\\\|useRef\\\\|useEffect\\(\\(\\) => {\" src/ManagerPage.tsx)",
+      "Bash(python -m unittest tests.test_backend.TestStaleNativeWarning)"
     ]
   }
 }
