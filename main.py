@@ -463,10 +463,22 @@ def _record_collection_verdict(
 ) -> None:
     """Remember that this collection installed here, and when.
 
+    Refuses a run that installed nothing. EldenBoobs skipped every one of
+    its 16 mods and was still recorded, so later playtime promoted an empty
+    install to VERIFIED ON DECK - a badge asserting the collection works
+    here when not one of its mods was on the device. The frontend guards
+    this too; both, because a badge that overstates is worse than no badge
+    and this is the second time the badge has claimed too much.
+
     The playtime AT THAT MOMENT is the important half: without it there is
     no way to tell later play from play that happened before.
     """
     if not (game_domain and slug):
+        return
+    if int(mods or 0) <= 0:
+        decky.logger.info(
+            f"collection {slug!r}: nothing installed, no verdict recorded"
+        )
         return
     last, minutes = _steam_app_play(app_id)
     settings = _load_settings()

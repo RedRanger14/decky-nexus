@@ -681,3 +681,21 @@ test("a dll loader is exempt from the older-patch rule", () => {
     );
   }
 });
+
+test("the verified badge stays hidden until its counting is trustworthy", () => {
+  // EldenBoobs earned VERIFIED ON DECK having skipped all 16 of its mods:
+  // the run recorded one install that never landed, so later playtime
+  // promoted an empty collection to verified. Michael: "ive got cold feet
+  // about the badges - lets remove them for now - just hide them."
+  const page = read("BrowsePage.tsx");
+  assert.match(
+    page,
+    /const SHOW_VERIFIED_BADGES = false;/,
+    "the badge flag is on again - it must stay off until 'installed' means " +
+      "a mod actually landed on the device"
+  );
+  assert.ok(
+    /SHOW_VERIFIED_BADGES && verdict && <VerifiedBadge/.test(page),
+    "the badge renders without checking the flag, so hiding it does nothing"
+  );
+});

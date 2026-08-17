@@ -12786,6 +12786,30 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestABadgeCannotOverstate(unittest.TestCase):
+    """EldenBoobs skipped all 16 of its mods, was recorded as installed
+    anyway, and a later Elden Ring session promoted that to VERIFIED ON
+    DECK. Michael: "Why has Elden boobs been given a verifed badge when we
+    havent done a successful install confirmation?" """
+
+    def test_a_run_that_installed_nothing_records_no_verdict(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _record_collection_verdict"):]
+        fn = fn[:fn.index("def _collection_verdicts(")] if "def _collection_verdicts(" in fn else fn[:4000]
+        self.assertIn("if int(mods or 0) <= 0:", fn)
+        self.assertIn("no verdict recorded", fn)
+
+    def test_the_frontend_guards_it_too(self):
+        import os as _os
+        path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            "src", "CollectionPage.tsx")
+        with open(path, encoding="utf-8") as fh:
+            page = fh.read()
+        self.assertIn("if (installedRequiredCount > 0)", page)
+
+
 class TestOnlyCodeCanAgeOut(unittest.TestCase):
     """The older-patch rule skipped A Better Nude Body - a 2022 asset mod
     verified working in the character creator on this exact build - plus
