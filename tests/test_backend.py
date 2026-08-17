@@ -12615,6 +12615,21 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
         # And the reason travels with it, or the row cannot explain itself.
         self.assertIn('result["warning"] = stale_note', wrapper)
 
+    def test_a_loader_is_exempt_from_the_older_patch_rule(self):
+        # Elden Mod Loader was last updated in 2022 and the date rule
+        # skipped it, taking out the one mod in the collection that works.
+        # A proxy loader loads other dlls; it does not search game code, so
+        # a game patch cannot age it out. Michael: "its skipped every mod
+        # in the collection. i thought it should leave Elden mod loader?"
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        wrapper = source[source.index("        payload_choice picks a folder"):]
+        wrapper = wrapper[:wrapper.index("    async def get_user_prefs")]
+        self.assertIn("is_framework", wrapper)
+        self.assertIn("not is_framework", wrapper)
+        # From the game's own config, not a hardcoded mod id.
+        self.assertIn("framework_ids", wrapper)
+
     def test_disabling_a_record_rewrites_the_profile(self):
         # A record flipped off without rewriting the profile still loads:
         # the profile is what me3 reads, not our settings file.
