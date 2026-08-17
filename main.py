@@ -4287,6 +4287,97 @@ def _me3_regulation_owner(settings: dict, game_domain: str, skip_key: str = ""):
     return None
 
 
+def _preview_has_regulation(node) -> bool:
+    """Does a Nexus content-preview tree contain regulation.bin anywhere?
+
+    The preview is the listing the website shows under "Preview file
+    contents": the archive's tree without the archive. Walked recursively
+    because mods bury it at any depth, and matched on the leaf name only.
+    """
+    if isinstance(node, list):
+        return any(_preview_has_regulation(n) for n in node)
+    if not isinstance(node, dict):
+        return False
+    if (node.get("name") or "").strip().lower() == "regulation.bin":
+        return True
+    return _preview_has_regulation(node.get("children") or [])
+
+
+async def _regulation_owner_before_download(
+    game_domain: str, mod_id: int, file_id: int, mod_name: str
+):
+    """The mod already owning regulation.bin, if this file would clash.
+
+    Returns "" for no clash and None for cannot-tell: the preview is
+    optional metadata, so a missing one must never block an install. The
+    post-extract gate remains the real backstop - this exists only so the
+    answer arrives BEFORE the bytes do. Michael, on ELDEN RING Reforged:
+    "it did refuse the install but after it downloaded the 2.7gb. We know
+    what they have installed already and know it wont be useful."
+
+    Costs nothing in the common case: if no enabled mod owns regulation.bin
+    there is no clash to find, and neither request is made.
+    """
+    settings = _load_settings()
+    if not _me3_regulation_owner(settings, game_domain, _safe_name(mod_name)):
+        return ""
+    headers = _api_headers(settings.get("api_key"))
+    url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}/files.json"
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=25)
+        ) as session:
+            async with session.get(url, headers=headers, ssl=SSL_CONTEXT) as resp:
+                if resp.status != 200:
+                    return None
+                body = await resp.json()
+            link = ""
+            for f in body.get("files", []):
+                if int(f.get("file_id") or 0) == int(file_id):
+                    link = f.get("content_preview_link") or ""
+                    break
+            if not link:
+                return None
+            # The preview lives on a CDN, not the API: no apikey header.
+            async with session.get(link, ssl=SSL_CONTEXT) as resp:
+                if resp.status != 200:
+                    return None
+                preview = await resp.json(content_type=None)
+    except Exception as e:  # noqa: BLE001 - see below
+        # Deliberately everything. This is a courtesy check on optional
+        # metadata: no failure of it - network, malformed JSON, a changed
+        # preview format - may cost the user an install they asked for.
+        # Cannot-tell falls through to the post-extract gate.
+        decky.logger.debug(
+            f"regulation preview for {game_domain}/{mod_id} unavailable: "
+            f"{type(e).__name__}: {e}"
+        )
+        return None
+    if not isinstance(preview, dict):
+        return None
+    if not _preview_has_regulation(preview.get("children") or []):
+        return ""
+    return _me3_regulation_owner(settings, game_domain, _safe_name(mod_name))
+
+
+def _regulation_clash_error(mod_name: str, owner: str) -> dict:
+    """One wording for both gates, so the UI cannot tell them apart.
+
+    mod_conflict marks it as a conflict rather than a bad archive:
+    disabling the other owner makes this installable, so it must not be
+    parked as permanently unsupported.
+    """
+    return {
+        "ok": False,
+        "mod_conflict": True,
+        "error": (
+            f"{mod_name} replaces regulation.bin, and {owner} already "
+            "does. Only one mod can own that file - disable or uninstall "
+            "the other one first, or use a merged version of the two."
+        ),
+    }
+
+
 def _write_me3_profile(game_domain: str, settings: dict) -> str:
     """Regenerate the .me3 profile from the install records; returns its
     path. Two lines are deliberately not configurable:
@@ -8532,6 +8623,23 @@ query Link($slug: String!, $domainName: String!) {
         the website-issued free-download token from an nxm:// link;
         payload_choice picks a folder from an option-style archive."""
         try:
+            # Ask before spending the bandwidth. A regulation.bin clash was
+            # only caught after extraction, which meant ELDEN RING Reforged
+            # downloaded 2.7GB to be told no. The archive listing answers it
+            # up front, and this runs for every caller - single installs and
+            # collections alike - because it sits above the worker.
+            if install_mode == "me3" and not repair_only:
+                owner = await _regulation_owner_before_download(
+                    game_domain, mod_id, file_id, mod_name
+                )
+                if owner:
+                    decky.logger.info(
+                        f"install {mod_name!r} ({game_domain}/{mod_id}) "
+                        f"refused before downloading: {owner} owns "
+                        "regulation.bin"
+                    )
+                    await _emit_progress(mod_id, "error", 0, "regulation clash")
+                    return _regulation_clash_error(mod_name, owner)
             result = await self._install_mod_inner(
                 game_domain,
                 mod_id,
@@ -9234,19 +9342,9 @@ query Link($slug: String!, $domainName: String!) {
                 if owner:
                     _force_rmtree(scratch)
                     await _emit_progress(mod_id, "error", 0, "regulation clash")
-                    # A conflict, not a bad archive: disabling the other
-                    # owner makes this installable, so it must not be
-                    # parked as permanently unsupported.
-                    return {
-                        "ok": False,
-                        "mod_conflict": True,
-                        "error": (
-                            f"{mod_name} replaces regulation.bin, and "
-                            f"{owner} already does. Only one mod can own "
-                            "that file - disable or uninstall the other "
-                            "one first, or use a merged version of the two."
-                        ),
-                    }
+                    # The backstop: reached only when the archive listing was
+                    # missing or unreadable before the download.
+                    return _regulation_clash_error(mod_name, owner)
             dest = os.path.join(_me3_mods_dir(game_domain), folder)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             _force_rmtree(dest)

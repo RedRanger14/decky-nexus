@@ -18,6 +18,7 @@ import tempfile
 import time
 import types
 import unittest
+from unittest import mock
 import zipfile
 
 TEST_ROOT = tempfile.mkdtemp(prefix="decky-nexus-tests-")
@@ -12481,6 +12482,93 @@ class TestMe3Layout(unittest.TestCase):
         result = run(self.plugin.get_me3_coop_password(self.DOMAIN))
         self.assertTrue(result["ok"])
         self.assertFalse(result["installed"])
+
+
+class TestRegulationClashBeforeDownload(unittest.TestCase):
+    """ELDEN RING Reforged downloaded 2.7GB and was then refused, because
+    the regulation.bin clash was only detectable after extraction. The
+    archive listing Nexus already publishes answers it first."""
+
+    def test_regulation_is_found_at_any_depth(self):
+        tree = {"children": [
+            {"name": "readme.txt", "type": "file"},
+            {"name": "reforged", "type": "directory", "children": [
+                {"name": "param", "type": "directory", "children": [
+                    {"name": "regulation.bin", "type": "file"},
+                ]},
+            ]},
+        ]}
+        self.assertTrue(main._preview_has_regulation(tree["children"]))
+
+    def test_an_archive_without_it_is_not_a_clash(self):
+        tree = [
+            {"name": "mod.dll", "type": "file"},
+            {"name": "chr", "type": "directory", "children": [
+                {"name": "c0000.partsbnd.dcx", "type": "file"},
+            ]},
+        ]
+        self.assertFalse(main._preview_has_regulation(tree))
+
+    def test_a_regulation_folder_is_not_the_file(self):
+        # Matched on the leaf name, so a directory that merely mentions it
+        # in a path cannot raise a false clash.
+        self.assertFalse(main._preview_has_regulation(
+            [{"name": "regulation", "type": "directory", "children": []}]
+        ))
+
+    def test_junk_in_the_tree_is_survivable(self):
+        # Third-party JSON: nulls, strings and numbers must not raise.
+        self.assertFalse(main._preview_has_regulation(
+            [None, "regulation.bin", 7, {"children": None}]
+        ))
+
+    def test_no_current_owner_asks_the_network_nothing(self):
+        # The cost of the check must be zero for the common case.
+        with mock.patch.object(main, "_load_settings", return_value={}), \
+                mock.patch.object(main, "_me3_regulation_owner",
+                                  return_value=None), \
+                mock.patch.object(main.aiohttp, "ClientSession") as session:
+            owner = run(main._regulation_owner_before_download(
+                "eldenring", 541, 9999, "ERR"))
+        self.assertEqual(owner, "")
+        session.assert_not_called()
+
+    def test_both_gates_speak_with_one_voice(self):
+        # Two wordings for one refusal is how a UI ends up handling only
+        # the one someone tested.
+        body = main._regulation_clash_error("ERR", "The Convergence")
+        self.assertTrue(body["mod_conflict"])
+        self.assertIn("The Convergence", body["error"])
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertEqual(source.count("_regulation_clash_error("), 3)
+
+    def test_a_broken_preview_never_blocks_an_install(self):
+        # It is a courtesy check on optional metadata. Any failure of it
+        # must fall through to the post-extract gate, never refuse. The
+        # existing me3 suite found this: the first version let the test
+        # harness's "network is disabled" RuntimeError escape.
+        for boom in (RuntimeError("network is disabled"), KeyError("files"),
+                     ValueError("not json")):
+            with mock.patch.object(main, "_load_settings", return_value={}), \
+                    mock.patch.object(main, "_me3_regulation_owner",
+                                      return_value="The Convergence"), \
+                    mock.patch.object(main.aiohttp, "ClientSession",
+                                      side_effect=boom):
+                owner = run(main._regulation_owner_before_download(
+                    "eldenring", 541, 9999, "ERR"))
+            self.assertIsNone(owner, f"{type(boom).__name__} escaped the gate")
+
+    def test_the_gate_runs_before_the_worker(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        gate = source.index("_regulation_owner_before_download(\n")
+        worker = source.index("await self._install_mod_inner(")
+        self.assertLess(
+            gate, worker,
+            "the pre-download gate must sit above the install worker, or "
+            "the download happens first and the refusal is worthless"
+        )
 
 
 if __name__ == "__main__":
