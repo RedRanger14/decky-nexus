@@ -9087,6 +9087,17 @@ query Link($slug: String!, $domainName: String!) {
                 broken = _known_broken_mods(
                     game_domain, _steam_build_id(int(app_id or 0))
                 ).get(int(mod_id))
+                # A verdict is about a VERSION, not a mod. Seamless Co-op
+                # 1.5.1 - the version this collection pins - fails on this
+                # build with "failed to find all necessary game signatures",
+                # while 1.9.9 installed from the mod page works: it is hard
+                # version-locked to the game. Skipping the mod outright would
+                # have taken the working release with it. An empty recorded
+                # version means the verdict was never version-specific.
+                if broken:
+                    recorded = (broken.get("version") or "").strip()
+                    if recorded and recorded != str(mod_version or "").strip():
+                        broken = None
                 if broken and record_source == "collection":
                     why = (broken.get("note") or "").strip() or (
                         f"{mod_name} was recorded as not working on this "
