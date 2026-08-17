@@ -643,6 +643,20 @@ export function CollectionPage() {
    * re-asserting it would undo the collection's conflict order. */
   const repairInstallers = async () => {
     if (!detail || installing || repairing) return;
+    // Mods parked for a script conflict get another go. They were skipped
+    // because two mods edited the same script and merging was off; merging
+    // is on now, and the same 30 mods installed on the next attempt. Until
+    // this, nothing re-offered them - the only way back was clearing the
+    // parked list by hand over SSH, which is not a thing a user can do.
+    // Repair is the right place: it is the button for "try again".
+    const parkedConflicts = attentionRef.current.filter(
+      (a) => a.reason === "conflict"
+    );
+    if (parkedConflicts.length) {
+      persistAttention(
+        attentionRef.current.filter((a) => a.reason !== "conflict")
+      );
+    }
     setRepairing(true);
     let checked = 0;
     let repaired = 0;

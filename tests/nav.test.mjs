@@ -764,3 +764,25 @@ test("an install toast cannot launch a game that is already running", () => {
       "launches the game"
   );
 });
+
+test("Repair gives parked script conflicts another go", () => {
+  // 30 mods were parked because two mods edited the same script and merging
+  // was off. Merging is on now and 25 of them merge cleanly - but nothing
+  // re-offered them, so the only route back was clearing the parked list by
+  // hand over SSH. Repair is the button that means "try again".
+  const page = read("CollectionPage.tsx");
+  const fn = page.slice(
+    page.indexOf("const repairInstallers = async () => {"),
+    page.indexOf("const repairInstallers = async () => {") + 1200
+  );
+  assert.ok(
+    /a\.reason === "conflict"/.test(fn),
+    "Repair ignores mods parked for a script conflict, so a merge that " +
+      "would now succeed is never attempted"
+  );
+  assert.ok(
+    /persistAttention\(/.test(fn),
+    "the parked list is cleared only in memory, so the mods come back as " +
+      "skipped on the next visit"
+  );
+});
