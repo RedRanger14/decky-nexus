@@ -536,7 +536,15 @@ def _game_updated_at(app_id: int) -> int:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
-                m = re.search(r'"LastUpdated"' + chr(92) + 's+"(' + chr(92) + 'd+)"', line)
+                # Lowercase in the file - "lastupdated" - and matched
+                # case-insensitively because Valve's casing is not a
+                # contract. A case-sensitive match returned 0 for every
+                # game, and 0 means "cannot tell", so the warning was
+                # silent everywhere and looked like it worked.
+                m = re.search(
+                    r'"lastupdated"' + chr(92) + 's+"(' + chr(92) + 'd+)"',
+                    line, re.IGNORECASE,
+                )
                 if m:
                     return int(m.group(1))
     except (OSError, ValueError):
