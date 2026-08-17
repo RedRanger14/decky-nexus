@@ -786,3 +786,22 @@ test("Repair gives parked script conflicts another go", () => {
       "skipped on the next visit"
   );
 });
+
+test("the panel says unofficial and beta where the user can see it", () => {
+  // Michael works at Nexus Mods, so this is a necessity rather than
+  // modesty: nothing here is an official product, and a user hitting a bug
+  // must not take it to their support team. A README nobody opens does not
+  // carry that. Michael: "We also need to clearly label that its
+  // 'unnofifcial' and in beta ha".
+  const panel = read("index.tsx");
+  assert.ok(
+    /v\{version\} · unofficial beta/.test(panel),
+    "the QAM version badge does not say unofficial or beta"
+  );
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  assert.ok(
+    /Unofficial, and in beta/.test(readme) &&
+      /not an\s*\n?>?\s*official Nexus Mods product/.test(readme),
+    "the README does not disclaim official status up front"
+  );
+});

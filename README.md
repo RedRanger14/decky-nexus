@@ -2,8 +2,16 @@
 
 Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods.com) content for the currently selected game — entirely from Gaming Mode with a controller, on SteamOS and Bazzite. No Desktop Mode required.
 
+> **Unofficial, and in beta.** This is a community-built plugin. It is not an
+> official Nexus Mods product, is not supported by Nexus Mods, and nothing
+> here is endorsed by them — it uses their public API like any other
+> third-party client. Bugs are ours; please report them here rather than to
+> Nexus Mods support.
+
 **Status:** 1.0 beta. Supports the games listed below; Slay the Spire 2 was
-the proving ground and is no longer the limit.
+the proving ground and is no longer the limit. Beta means the supported games
+have each been installed, modded and played on real hardware — not that
+everything works. Expect rough edges, and back up saves you care about.
 
 See [starterFile.md](./starterFile.md) for the full project handover: motivation, market context, v1 scope, constraints, and build order.
 
