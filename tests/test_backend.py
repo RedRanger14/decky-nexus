@@ -12786,6 +12786,61 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestTwoModsCannotOwnTheSameFile(unittest.TestCase):
+    """Elden Essentials ships ERR and First Person Souls together and both
+    replace the same msg files. One wins; the other's changes vanish
+    silently - Michael saw "?MenuText?" on character selects and lost ERR's
+    menus. He asked for "a fomod sort of thing... let the user choose one or
+    the other with a bit of info about what they are"."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def _pkg(self, name, *rel_paths):
+        root = os.path.join(self.dir, name)
+        for rel in rel_paths:
+            full = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            open(full, "w").close()
+        return root
+
+    def test_it_lists_files_not_folders(self):
+        root = self._pkg("a", "msg/engus/menu.msgbnd.dcx", "parts/x.dcx")
+        self.assertEqual(
+            main._me3_package_files(root),
+            {"msg/engus/menu.msgbnd.dcx", "parts/x.dcx"},
+        )
+
+    def test_different_files_in_the_same_folder_do_not_clash(self):
+        # ABNB and ERR both provide parts/ and run together fine - verified
+        # in the character creator. Folder overlap must never be a clash.
+        abnb = main._me3_package_files(
+            self._pkg("abnb", "parts/bd_f_0000.partsbnd.dcx"))
+        err = main._me3_package_files(
+            self._pkg("err", "parts/am_m_9999.partsbnd.dcx"))
+        self.assertEqual(abnb & err, set())
+
+    def test_the_same_file_is_a_clash(self):
+        fps = main._me3_package_files(
+            self._pkg("fps", "msg/engus/menu.msgbnd.dcx"))
+        err = main._me3_package_files(
+            self._pkg("err2", "msg/engus/menu.msgbnd.dcx"))
+        self.assertEqual(fps & err, {"msg/engus/menu.msgbnd.dcx"})
+
+    def test_a_missing_package_dir_is_not_a_clash(self):
+        self.assertEqual(main._me3_package_files("/no/such/path"), set())
+
+    def test_a_disabled_mod_cannot_own_anything(self):
+        # Switching the other one off IS the remedy, so it has to work
+        # without uninstalling anything.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _me3_asset_clash"):]
+        fn = fn[:fn.index("def _preview_has_dll")]
+        self.assertIn('not rec.get("enabled", True)', fn)
+
+
 class TestABadgeCannotOverstate(unittest.TestCase):
     """EldenBoobs skipped all 16 of its mods, was recorded as installed
     anyway, and a later Elden Ring session promoted that to VERIFIED ON

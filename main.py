@@ -4441,6 +4441,53 @@ async def _file_uploaded_at(game_domain: str, mod_id: int, file_id: int) -> int:
     return 0
 
 
+def _me3_package_files(path: str) -> set:
+    """Every file a package overlays, as lowercase relative paths.
+
+    File level, not folder level, and that distinction is the whole point:
+    ABNB provides parts/bd_f_0000.partsbnd.dcx while ERR provides different
+    part files, and those two run together happily - verified in the
+    character creator. First Person Souls and ERR both provide the SAME
+    msg files, and there the loser's text silently vanishes: Michael saw
+    "?MenuText?" on character selects and lost ERR's menus entirely.
+    Overlapping folders are normal; overlapping FILES are the clash.
+    """
+    found = set()
+    if not path or not os.path.isdir(path):
+        return found
+    for root, _dirs, names in os.walk(path):
+        rel_dir = os.path.relpath(root, path).replace(os.sep, "/")
+        if rel_dir == ".":
+            rel_dir = ""
+        for n in names:
+            rel = f"{rel_dir}/{n}" if rel_dir else n
+            found.add(rel.lower())
+    return found
+
+
+def _me3_asset_clash(settings: dict, game_domain: str, skip_key: str,
+                     files: set):
+    """The enabled package already overlaying any of these files.
+
+    Returns (mod name, sorted examples, count) or None. Only enabled
+    records count: switching the other one off is the remedy, and it has to
+    work without uninstalling anything.
+    """
+    if not files:
+        return None
+    for key, rec in _me3_records(settings, game_domain):
+        if key == skip_key or not rec.get("enabled", True):
+            continue
+        if not rec.get("package"):
+            continue
+        other = os.path.join(_me3_mods_dir(game_domain), key,
+                             *(rec.get("package_subpath") or "").split("/"))
+        shared = files & _me3_package_files(other)
+        if shared:
+            return (rec.get("name") or key, sorted(shared)[:3], len(shared))
+    return None
+
+
 def _preview_has_dll(node) -> bool:
     """Does this content-preview tree contain a .dll anywhere?
 
@@ -9837,6 +9884,41 @@ query Link($slug: String!, $domainName: String!) {
             )
             _remember_regulation(game_domain, mod_id, has_regulation)
             _remember_natives(game_domain, mod_id, bool(dlls))
+            # Two mods overwriting the SAME asset files is a choice nobody
+            # made: one silently wins. Elden Essentials ships ERR and First
+            # Person Souls together, both replacing the same msg files, and
+            # the loser's text disappears - "?MenuText?" on character
+            # selects, and no Reforged menus at all. Same shape as the
+            # regulation.bin gate, so it reads the same to the user: named
+            # owner, and switching that one off makes this installable.
+            if assets_subpath is not None or has_regulation:
+                pkg_root = os.path.join(
+                    root, *(assets_subpath or "").split("/")
+                ) if assets_subpath else root
+                clash = _me3_asset_clash(
+                    settings, game_domain, folder,
+                    _me3_package_files(pkg_root),
+                )
+                if clash:
+                    owner, examples, count = clash
+                    _force_rmtree(scratch)
+                    await _emit_progress(mod_id, "error", 0, "asset clash")
+                    return {
+                        "ok": False,
+                        "mod_conflict": True,
+                        "asset_clash": True,
+                        "error": (
+                            f"{mod_name} and {owner} both replace "
+                            f"{count} of the same game file"
+                            f"{'' if count == 1 else 's'} "
+                            f"({', '.join(examples)}"
+                            f"{', ...' if count > len(examples) else ''}). "
+                            "Only one of them can win, and the other's "
+                            f"changes vanish silently - so pick one: "
+                            f"switch {owner} off in My Mods to install "
+                            f"{mod_name}, or keep {owner} and skip this."
+                        ),
+                    }
             if has_regulation:
                 owner = _me3_regulation_owner(settings, game_domain, folder)
                 if owner:
