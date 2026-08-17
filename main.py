@@ -4441,6 +4441,35 @@ async def _file_uploaded_at(game_domain: str, mod_id: int, file_id: int) -> int:
     return 0
 
 
+def _verdict_covers_version(entry: dict, version: str) -> bool:
+    """Does a recorded verdict apply to the version being installed?
+
+    Three cases, and the third is why this exists:
+
+    - No recorded version: the verdict is about the mod, all versions.
+    - An exact match: the classic case.
+    - "upto": this version AND anything older. Seamless Co-op is hard
+      version-locked to the game build, so EVERY release before the current
+      one fails the same way - Elden Essentials pins 1.4.3. Recording those
+      one at a time is whack-a-mole; the working 1.9.9 install must still
+      be untouched.
+    """
+    recorded = (entry.get("version") or "").strip()
+    if not recorded:
+        return True
+    installed = str(version or "").strip()
+    if recorded == installed:
+        return True
+    if entry.get("upto") and installed:
+        # Reuses the existing parser rather than a second one - it returns
+        # None for anything it cannot read, and an unreadable version must
+        # not be swept up by an "and older" verdict.
+        mine, theirs = _version_tuple(installed), _version_tuple(recorded)
+        if mine is not None and theirs is not None:
+            return mine <= theirs
+    return False
+
+
 def _me3_package_files(path: str) -> set:
     """Every file a package overlays, as lowercase relative paths.
 
@@ -9153,10 +9182,8 @@ query Link($slug: String!, $domainName: String!) {
                 # version-locked to the game. Skipping the mod outright would
                 # have taken the working release with it. An empty recorded
                 # version means the verdict was never version-specific.
-                if broken:
-                    recorded = (broken.get("version") or "").strip()
-                    if recorded and recorded != str(mod_version or "").strip():
-                        broken = None
+                if broken and not _verdict_covers_version(broken, mod_version):
+                    broken = None
                 if broken and record_source == "collection":
                     why = (broken.get("note") or "").strip() or (
                         f"{mod_name} was recorded as not working on this "

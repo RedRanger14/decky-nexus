@@ -29,7 +29,8 @@
       "Bash(python -m unittest tests.test_backend.TestStaleNativeWarning)",
       "Bash(python -m unittest tests.test_backend.TestErrNativesAreNotPlumbing)",
       "Bash(python -m unittest tests.test_backend.TestABadgeCannotOverstate)",
-      "Bash(python -m unittest tests.test_backend.TestTwoModsCannotOwnTheSameFile)"
+      "Bash(python -m unittest tests.test_backend.TestTwoModsCannotOwnTheSameFile)",
+      "Bash(python -m unittest tests.test_backend.TestAVerdictCanCoverOlderVersions)"
     ]
   }
 }

@@ -12627,10 +12627,10 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
             source = fh.read()
         wrapper = source[source.index("        payload_choice picks a folder"):]
         wrapper = wrapper[:wrapper.index("    async def get_user_prefs")]
-        self.assertIn('recorded = (broken.get("version")', wrapper)
-        self.assertIn("recorded != str(mod_version", wrapper)
-        # An empty recorded version must still apply to every version.
-        self.assertIn("if recorded and recorded !=", wrapper)
+        # The comparison lives in _verdict_covers_version now, which also
+        # handles "this version and older" - see
+        # TestAVerdictCanCoverOlderVersions for the behaviour itself.
+        self.assertIn("_verdict_covers_version(broken, mod_version)", wrapper)
 
     def test_a_stale_native_installs_switched_off(self):
         # From scratch, nobody should have to know which mod to disable.
@@ -12784,6 +12784,38 @@ class TestLooseFromSoftAssets(unittest.TestCase):
         self.assertEqual(main._sort_loose_me3_assets(self.dir), {})
         self.assertTrue(os.path.isfile(
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
+
+
+class TestAVerdictCanCoverOlderVersions(unittest.TestCase):
+    """Seamless Co-op is hard version-locked to the game build, so every
+    release before the current one fails identically. Elden Essentials pins
+    1.5.1, EldenBoobs pins 1.4.3, and the working install is 1.9.9.
+    Recording them one at a time is whack-a-mole."""
+
+    def test_an_exact_version_still_matches(self):
+        e = {"version": "1.5.1"}
+        self.assertTrue(main._verdict_covers_version(e, "1.5.1"))
+        self.assertFalse(main._verdict_covers_version(e, "1.4.3"))
+
+    def test_upto_covers_anything_older(self):
+        e = {"version": "1.5.1", "upto": True}
+        self.assertTrue(main._verdict_covers_version(e, "1.4.3"))
+        self.assertTrue(main._verdict_covers_version(e, "1.5.1"))
+        self.assertTrue(main._verdict_covers_version(e, "0.9"))
+
+    def test_upto_leaves_the_working_release_alone(self):
+        # The one that matters: Michael has 1.9.9 installed and working,
+        # and asked us not to break his co-op setup.
+        e = {"version": "1.5.1", "upto": True}
+        self.assertFalse(main._verdict_covers_version(e, "1.9.9"))
+        self.assertFalse(main._verdict_covers_version(e, "1.10.0"))
+
+    def test_no_recorded_version_means_every_version(self):
+        self.assertTrue(main._verdict_covers_version({}, "2.0"))
+
+    def test_an_unreadable_version_is_not_swept_up(self):
+        e = {"version": "1.5.1", "upto": True}
+        self.assertFalse(main._verdict_covers_version(e, "beta"))
 
 
 class TestTwoModsCannotOwnTheSameFile(unittest.TestCase):
