@@ -62,7 +62,7 @@ import {
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
 } from "./theme";
-import { PageBackdrop, SectionHeading, StatChip } from "./chrome";
+import { PageBackdrop, SectionHeading, StatChip, WarningBox } from "./chrome";
 import { DownloadsButton } from "./DownloadsButton";
 
 function fmtSize(sizeKb: number): string {
@@ -113,6 +113,9 @@ export function ModDetailPage() {
   // which defeats the setting entirely, since the mod page is where the art
   // is biggest.
   const [blurAdult, setBlurAdult] = useState(false);
+  // A refusal that needs explaining, kept on the page rather than in a
+  // toast that truncates it and then leaves.
+  const [blocked, setBlocked] = useState<string | undefined>();
   useEffect(() => {
     getShowAdult()
       .then((r) => setBlurAdult(Boolean(r.ok && r.show_adult && r.blur_adult)))
@@ -293,6 +296,7 @@ export function ModDetailPage() {
     setProgress(undefined);
     nameDownload(mod.modId, mod.name, game.appId);
     try {
+      setBlocked(undefined);
       const result = await installMod(
         game.nexusDomain,
         mod.modId,
@@ -361,6 +365,15 @@ export function ModDetailPage() {
             ? `Tap here to restart ${game.displayName} and load it.`
             : `It will load next time ${game.displayName} starts.`,
           onClick: () => restartGame(game.appId),
+        });
+      } else if (result.mod_conflict || result.script_conflict) {
+        // Not a broken mod: something already installed is in the way, and
+        // the way out is a sentence long. The box says it in full; the
+        // toast only points at the box.
+        setBlocked(result.error ?? "Another mod is in the way.");
+        toaster.toast({
+          title: "Install blocked",
+          body: "Details on the mod page.",
         });
       } else {
         toaster.toast({ title: "Install failed", body: result.error ?? "Unknown error" });
@@ -893,6 +906,9 @@ export function ModDetailPage() {
         <DownloadsButton />
       </Focusable>
       </Focusable>
+      {blocked && (
+        <WarningBox title="This mod cannot install yet" body={blocked} />
+      )}
       {files && !files.ok && (
         <div style={{ opacity: 0.8, fontSize: "13px" }}>
           Could not load files: {files.error}

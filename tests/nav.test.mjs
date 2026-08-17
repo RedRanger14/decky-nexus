@@ -376,6 +376,33 @@ test("focus scrolling stops short of the pinned block, not under it", () => {
   );
 });
 
+test("a blocked install explains itself on the page, not in a toast", () => {
+  // The regulation.bin refusal names the mod in the way AND says what to
+  // do about it - two clauses, where a toast shows about half of one and
+  // then disappears. Michael: "you forget how little information will fit
+  // on a toast message - i think there needs to an orange warning info box
+  // or something so the user is informed why it install blocked".
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /mod_conflict \|\| result\.script_conflict/.test(page),
+    "a conflict refusal is handled as a plain install failure, so its " +
+      "explanation goes to a toast that truncates it"
+  );
+  assert.ok(
+    page.includes("<WarningBox"),
+    "nothing renders the refusal on the page itself"
+  );
+  assert.ok(
+    page.includes("setBlocked(undefined)"),
+    "the warning is never cleared, so it outlives the problem it describes"
+  );
+  const chrome = read("chrome.tsx");
+  assert.ok(
+    /background:\s*"rgba\(21[0-9], 1[0-9][0-9], [0-9]+, /.test(chrome),
+    "the warning box is not orange - it reads as another panel of text"
+  );
+});
+
 test("the store opens at its top, not scrolled past the nav", () => {
   // The hero grid takes autoFocus so the D-pad has somewhere to land -
   // without it you had to press RB twice to leave the Store. Steam scrolls
