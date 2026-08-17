@@ -3874,7 +3874,12 @@ function VersionBadge() {
         padding: "0 16px",
       }}
     >
-      v{version}
+      {/* "Unofficial" belongs where the user actually looks, not only in a
+          README they will never open. Michael works at Nexus Mods, which
+          makes this a necessity rather than modesty: nothing here is an
+          official product and nobody should take a bug to their support
+          team. "beta" sets the expectation in the same breath. */}
+      v{version} · unofficial beta
     </div>
   );
 }
