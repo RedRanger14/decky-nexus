@@ -12599,6 +12599,35 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
             source = fh.read()
         self.assertIn("urllib.parse.quote(link", source)
 
+    def test_a_stale_native_installs_switched_off(self):
+        # From scratch, nobody should have to know which mod to disable.
+        # Michael, after being handed four dll names: "package it up nicely
+        # so that when I install from scratch the user doesnt have to
+        # disable individual mods etc."
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        wrapper = source[source.index("        payload_choice picks a folder"):]
+        wrapper = wrapper[:wrapper.index("    async def get_user_prefs")]
+        # One check, both paths: skip in a collection, off on its own.
+        self.assertIn('record_source == "collection"', wrapper)
+        self.assertIn("_disable_me3_record(", wrapper)
+        self.assertIn('result["installed_disabled"] = True', wrapper)
+        # And the reason travels with it, or the row cannot explain itself.
+        self.assertIn('result["warning"] = stale_note', wrapper)
+
+    def test_disabling_a_record_rewrites_the_profile(self):
+        # A record flipped off without rewriting the profile still loads:
+        # the profile is what me3 reads, not our settings file.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _disable_me3_record"):]
+        fn = fn[:fn.index("def _me3_records")]
+        self.assertIn("_write_me3_profile(", fn)
+        self.assertIn("_save_settings(", fn)
+        self.assertIn('rec["enabled"] = False', fn)
+        # And it must refuse to touch anything that is not an me3 record.
+        self.assertIn('rec.get("mode") != "me3"', fn)
+
     def test_the_gate_runs_before_the_worker(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()

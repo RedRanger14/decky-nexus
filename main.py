@@ -4331,6 +4331,30 @@ def _me3_toml_str(value: str) -> str:
     return f'"{escaped}"'
 
 
+def _disable_me3_record(game_domain: str, folder: str) -> bool:
+    """Switch a just-installed me3 mod off and rewrite the profile.
+
+    Used for natives built before the game's current patch. Installing them
+    enabled means the next launch stops on a "Could not find signature!"
+    box, and the only way out was knowing which mod to switch off - which
+    is knowledge a console player has no way to have. Michael, after being
+    told four dll names instead of four mod names: "package it up nicely so
+    that when I install from scratch the user doesnt have to disable
+    individual mods etc."
+
+    Installed and off, rather than refused: the files are there, the row
+    says why, and one press turns it on for anyone who wants to try.
+    """
+    settings = _load_settings()
+    rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+    if not rec or rec.get("mode") != "me3":
+        return False
+    rec["enabled"] = False
+    _write_me3_profile(game_domain, settings)
+    _save_settings(settings)
+    return True
+
+
 def _me3_records(settings: dict, game_domain: str) -> list:
     """(key, record) pairs for this game's me3 mods, in install order so
     the profile's load order is stable across rewrites."""
@@ -8948,26 +8972,26 @@ query Link($slug: String!, $domainName: String!) {
             # on the page and the user decides - here nobody chose this mod
             # individually, so spending a download on a message box nobody
             # asked for is the wrong default.
-            if (
-                install_mode == "me3"
-                and not repair_only
-                and record_source == "collection"
-            ):
-                note = ""
+            stale_note = ""
+            if install_mode == "me3" and not repair_only:
                 try:
-                    note = await self._stale_native_warning(
+                    stale_note = await self._stale_native_warning(
                         game_domain, int(mod_id), int(file_id), mod_name,
                         int(app_id or 0),
                     )
                 except Exception as e:  # noqa: BLE001 - never break a run
                     decky.logger.debug(f"stale check failed: {e}")
-                if note:
+                # In a collection: skipped outright, no download spent.
+                # On its own: installed but switched off, because the user
+                # picked this mod deliberately and the files being there
+                # makes it one press to try anyway.
+                if stale_note and record_source == "collection":
                     decky.logger.info(
                         f"collection skipped {mod_name!r} "
                         f"({game_domain}/{mod_id}): built for an older patch"
                     )
                     await _emit_progress(mod_id, "error", 0, "older patch")
-                    return {"ok": False, "stale_skip": True, "error": note}
+                    return {"ok": False, "stale_skip": True, "error": stale_note}
             result = await self._install_mod_inner(
                 game_domain,
                 mod_id,
@@ -8996,6 +9020,14 @@ query Link($slug: String!, $domainName: String!) {
                 pakpatch_layout,
                 repair_only,
             )
+            if result.get("ok") and stale_note:
+                if _disable_me3_record(game_domain, _safe_name(mod_name)):
+                    decky.logger.info(
+                        f"installed {mod_name!r} switched OFF: built for an "
+                        "older patch than this game build"
+                    )
+                    result["installed_disabled"] = True
+                    result["warning"] = stale_note
             if not result.get("ok") and result.get("error"):
                 # UI rows show failures the log never saw - record every
                 # failed install so remote diagnosis has evidence.
