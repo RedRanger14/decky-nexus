@@ -653,3 +653,31 @@ test("a skipped mod never wears a tick", () => {
       "explanation - which is the complaint"
   );
 });
+
+test("a dll loader is exempt from the older-patch rule", () => {
+  // Elden Mod Loader was last updated in 2022 and the date rule skipped it,
+  // taking out the one mod in the collection that works. It is not the
+  // game's framework in our config - me3 is, and we ship it - so
+  // frameworkModIds never covered it, and the first fix could not have
+  // worked. Michael: "it skipped every mod again!"
+  const games = read("games.ts");
+  assert.ok(
+    /loaderModIds: \[117\]/.test(games),
+    "Elden Mod Loader is not declared as a loader, so the date rule skips it"
+  );
+  const helper = games.slice(
+    games.indexOf("export function stalenessExemptModIds"),
+    games.indexOf("export function frameworkModIds")
+  );
+  assert.ok(
+    /frameworkModIds\(game\)/.test(helper) && /loaderModIds/.test(helper),
+    "the exemption list must cover BOTH the framework and dll loaders"
+  );
+  // Both install call sites, or one path skips what the other exempts.
+  for (const f of ["install.ts", "ModDetailPage.tsx"]) {
+    assert.ok(
+      read(f).includes("stalenessExemptModIds(game)"),
+      `${f} passes the framework list only, so its installs still skip loaders`
+    );
+  }
+});

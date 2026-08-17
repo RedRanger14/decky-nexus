@@ -38,7 +38,7 @@ import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
 import { popOurPage } from "./Tabs";
 import { getCompatHint } from "./compat";
-import { frameworkModIds, modeParams } from "./games";
+import { frameworkModIds, modeParams, stalenessExemptModIds } from "./games";
 import { finishFomod, installLatest } from "./install";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 
@@ -349,7 +349,7 @@ export function ModDetailPage() {
         false,
         // A loader is exempt from the older-patch rule - it loads dlls
         // rather than patching game code.
-        frameworkModIds(game)
+        stalenessExemptModIds(game)
       );
       if (result.needs_fomod && result.fomod_token && result.wizard) {
         // FOMOD archive: run the wizard, then finish with the choices.

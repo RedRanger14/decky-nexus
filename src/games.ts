@@ -18,6 +18,12 @@ import type { InstallMode } from "./api";
  *
  * One function, every caller, so the two can never disagree again.
  */
+/** Mods the built-for-an-older-patch rule must never skip: the game's
+ * framework, plus any dll loader other mods load through. */
+export function stalenessExemptModIds(game: SupportedGame): number[] {
+  return [...frameworkModIds(game), ...(game.me3?.loaderModIds ?? [])];
+}
+
 export function frameworkModIds(game: SupportedGame): number[] {
   return [
     game.framework?.nexusModId,
@@ -170,6 +176,17 @@ export interface SupportedGame {
     gameExe: string;
     /** Mods everyone installs first, named in the setup copy */
     headlineMod?: string;
+    /** Nexus mod ids of dll loaders that other mods load THROUGH.
+     *
+     * Exempt from the built-for-an-older-patch rule. A proxy loader does
+     * not search the game's code for a signature, so a game patch cannot
+     * age it out - Elden Mod Loader was last updated in 2022 and boots
+     * clean on a 2026 build. These are not the game's framework (me3 is,
+     * and we ship it), so frameworkModIds does not cover them: without
+     * this the date rule skipped every mod in a collection including the
+     * one that works. Michael: "it skipped every mod again!"
+     */
+    loaderModIds?: number[];
   };
   /** dataDir mode: plugins.txt path relative to the Proton prefix's
    * AppData/Local (e.g. "Skyrim Special Edition/plugins.txt") */
@@ -817,6 +834,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     me3: {
       gameExe: "Game/eldenring.exe",
       headlineMod: "Seamless Co-op",
+      // Elden Mod Loader: other mods are loaded BY it, and it has booted
+      // on every build tested.
+      loaderModIds: [117],
     },
     // me3's profile redirects the modded session to its own save file,
     // so vanilla characters are safe without our save-profile machinery.
