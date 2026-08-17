@@ -12721,11 +12721,29 @@ class TestStaleNativeWarning(unittest.TestCase):
         self.assertEqual(main._stale_native_note(0, self.JUL_2026, "x"), "")
         self.assertEqual(main._stale_native_note(self.JAN_2022, 0, "x"), "")
 
-    def test_the_game_update_time_is_read_from_the_manifest(self):
-        with open(main.__file__, encoding="utf-8") as fh:
-            source = fh.read()
-        self.assertIn("LastUpdated", source)
-        self.assertEqual(main._game_updated_at(0), 0)
+    def test_the_manifests_own_lowercase_key_is_read(self):
+        # Elden Ring's appmanifest spells it "lastupdated". A
+        # case-sensitive match returned 0 for every game, and 0 means
+        # cannot-tell, so the warning went silent everywhere and looked
+        # like it was working. Michael: "I cant see the box".
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        os.makedirs(os.path.join(d, "common"), exist_ok=True)
+        acf = os.path.join(d, "appmanifest_1245620.acf")
+        tab = chr(9)
+        body = chr(10).join([
+            chr(34) + "AppState" + chr(34), "{",
+            tab + chr(34) + "buildid" + chr(34) + tab + chr(34) + "22984413" + chr(34),
+            tab + chr(34) + "lastupdated" + chr(34) + tab + chr(34) + "1780000000" + chr(34),
+            "}",
+        ])
+        with open(acf, "w") as f:
+            f.write(body + chr(10))
+        with mock.patch.object(main, "STEAM_COMMON",
+                               os.path.join(d, "common")):
+            self.assertEqual(main._game_updated_at(1245620), 1780000000)
+            self.assertEqual(main._game_updated_at(0), 0)
+            self.assertEqual(main._game_updated_at(999999), 0)
 
 
 if __name__ == "__main__":
