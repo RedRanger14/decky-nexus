@@ -563,3 +563,26 @@ test("a refusal is on screen before the install button is pressed", () => {
       "behaviour this replaced"
   );
 });
+
+test("a stale installed-mods read cannot overwrite a newer one", () => {
+  // Six call sites fire refreshInstalled, several during a run, so reads
+  // overlap and can land out of order. An older response landing last put
+  // the pre-install picture back: after a clean 4-mod run the button read
+  // "Install required (5)", and leaving and reopening the page fixed it -
+  // the records were right, the newest read just lost the race.
+  const page = read("CollectionPage.tsx");
+  const fn = page.slice(
+    page.indexOf("const refreshInstalled = () => {"),
+    page.indexOf("const refreshInstalled = () => {") + 1400
+  );
+  assert.ok(
+    /\+\+refreshSeq\.current/.test(fn),
+    "refreshInstalled does not stamp its reads, so it cannot tell which " +
+      "response is newest"
+  );
+  assert.ok(
+    /if \(stale\(\)\) return;/.test(fn),
+    "nothing discards a superseded read, so an old picture can overwrite " +
+      "a current one"
+  );
+});
