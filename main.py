@@ -4478,12 +4478,35 @@ def _me3_natives(path: str, assets_subpath):
         rel_dir = os.path.relpath(root, path).replace(os.sep, "/")
         if rel_dir != "." and inside_assets(rel_dir):
             continue
+        # A bundled copy of the LOADER is not mod content. The Convergence
+        # ships me3 itself, for both platforms - me3/Linux/win64/
+        # me3_mod_host.dll and me3/Windows/me3_mod_host.dll - and those two
+        # got read as "several versions of the same mod", so the biggest
+        # Elden Ring overhaul there is was refused outright and the user
+        # told to go and pick a version that does not exist as a choice.
+        #
+        # We install our own me3 and launch through it, so anything under a
+        # bundled me3/ directory is ignored rather than offered.
+        if rel_dir != "." and _me3_bundled_loader(rel_dir):
+            continue
         for name in names:
             if not name.lower().endswith(".dll"):
                 continue
             rel = os.path.relpath(os.path.join(root, name), path)
             dlls.append(rel.replace(os.sep, "/"))
     return sorted(dlls)
+
+
+def _me3_bundled_loader(rel_dir: str) -> bool:
+    """Whether this directory is a bundled copy of me3 rather than mod content.
+
+    Big FromSoft overhauls ship the loader alongside the mod so a Windows
+    user has everything in one download. We provide our own and launch
+    through it, so the bundled one is noise - and worse than noise: its
+    per-platform builds of the same dll look exactly like an option pack.
+    """
+    first = rel_dir.split("/")[0].lower()
+    return first in ("me3", "modengine2", "mod engine 2", "modengine")
 
 
 def _route_me3_payload(scratch: str, mod_name: str):

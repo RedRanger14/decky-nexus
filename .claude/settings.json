@@ -15,7 +15,8 @@
       "Bash(python -m unittest tests.test_backend -k \"AddressLibrary\")",
       "Bash(python -m unittest tests.test_backend -k \"AddressLibraryTarget\")",
       "Bash(python -m unittest tests.test_backend -k \"Mangled\")",
-      "Bash(python -m unittest tests.test_backend -k \"BlockedCollections\")"
+      "Bash(python -m unittest tests.test_backend -k \"BlockedCollections\")",
+      "Bash(python -m unittest tests.test_backend -k \"BundledMe3\")"
     ]
   }
 }

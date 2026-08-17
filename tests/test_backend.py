@@ -7473,6 +7473,68 @@ class TestBlockedCollectionsLeaveTheStore(unittest.TestCase):
         self.assertEqual(len(r["collections"]), 1)
 
 
+class TestBundledMe3LoaderIsIgnored(unittest.TestCase):
+    """The Convergence bundles me3 itself, for both platforms.
+
+    Michael, testing Elden Ring: "i installed a mod organiser fine but then
+    failed on instlaling mod the convergence". The refusal read:
+
+        The Convergence contains several versions of the same mod
+        (me3/Linux/win64/me3_mod_host.dll, me3/Windows/me3_mod_host.dll)
+
+    Those are not versions of a mod. They are per-platform builds of the
+    LOADER, shipped so a Windows user has one download - and we install our
+    own me3 and launch through it. So the biggest Elden Ring overhaul there
+    is was refused outright, and the user was told to pick a version that
+    does not exist as a choice."""
+
+    def setUp(self):
+        self.scratch = os.path.join(TEST_ROOT, "me3-conv")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+
+    def tearDown(self):
+        shutil.rmtree(self.scratch, ignore_errors=True)
+
+    def put(self, rel):
+        p = os.path.join(self.scratch, *rel.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w").close()
+
+    def test_the_bundled_loader_is_recognised(self):
+        for d in ("me3", "me3/Linux/win64", "ModEngine2", "modengine"):
+            self.assertTrue(main._me3_bundled_loader(d), d)
+
+    def test_real_mod_folders_are_not(self):
+        for d in ("natives", "parts", "chr", "mods", "regulation"):
+            self.assertFalse(main._me3_bundled_loader(d), d)
+
+    def test_the_convergence_shape_installs(self):
+        # The real archive: mod content plus a bundled me3 for two
+        # platforms.
+        self.put("regulation.bin")
+        self.put("parts/aaa.partsbnd.dcx")
+        self.put("me3/Linux/win64/me3_mod_host.dll")
+        self.put("me3/Windows/me3_mod_host.dll")
+        root, assets, dlls, err = main._route_me3_payload(
+            self.scratch, "The Convergence")
+        self.assertIsNone(err, err)
+        # The loader's dlls are not offered as natives...
+        self.assertEqual(dlls, [])
+        # ...and the mod's own content is what gets installed.
+        self.assertIsNotNone(root)
+
+    def test_a_genuine_option_pack_is_still_refused(self):
+        # The safeguard must survive: two copies of one early-load native
+        # crash the game, and choosing for the user is a guess.
+        self.put("Full version/ersc.dll")
+        self.put("Lite version/ersc.dll")
+        _root, _assets, _dlls, err = main._route_me3_payload(
+            self.scratch, "Some Mod")
+        self.assertIsNotNone(err)
+        self.assertEqual(err[0], "choice")
+
+
 class TestWitcherExpansionsAreProvable(unittest.TestCase):
     """Owning Blood & Wine is a directory check, not a guess.
 
