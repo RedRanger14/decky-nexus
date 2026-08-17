@@ -102,38 +102,51 @@ a standalone app. Everything below is done in Gaming Mode with the controller.
 There are two ways in, and they trade off differently. Read both before you
 pick.
 
-### 1. Add the custom store (recommended)
+### First: turn on Decky's developer mode
 
-Quick Access Menu (**…**) → the plug icon → **gear** → **Settings** → **Other**
-→ paste the store URL into **Custom store URL**, then find *Nexus Mods* in the
-Decky store and install it.
+Both routes below need it, and it is not obvious.
+
+Quick Access Menu (**...**) → the plug icon → **gear** (Decky settings) →
+**General** → scroll to the bottom → **Developer mode** on. A new
+**Developer** tab appears in that settings menu, and that is where the
+install options live.
+
+### 1. Install from URL (easiest)
+
+Decky settings → **Developer** tab → **Install from URL** → paste:
+
+```
+https://github.com/RedRanger14/decky-nexus/releases/download/v0.257.0/Nexus-Mods-0.257.0.zip
+```
+
+- **Nothing else changes.** Decky's normal plugin store is untouched, so
+  other plugins install as usual.
+- **No Desktop Mode**, no file manager, no cable.
+- **The catch: no automatic updates.** You will not be told when a new
+  version exists. Updating means pasting the newer URL again, which is at
+  least a thirty second job from the couch.
+
+The same tab has **Install from zip** if you would rather download the file
+first and pick it from disk.
+
+### 2. Add the custom store
+
+Decky settings → **General** → **Custom store URL**, paste the store URL,
+then find *Nexus Mods* in the Decky store and install it.
 
 - **Updates arrive automatically**, the same as any Decky plugin.
-- **Setup stays on the couch.** No Desktop Mode and no file manager needed.
-  (The whole plugin is controller-first, not controller-only: a mouse and
-  keyboard work fine if you have them.)
 - **The catch: a custom store REPLACES Decky's default store rather than
   adding to it.** While ours is set, the usual Decky plugin listing is not
-  shown, so installing other plugins means switching the URL back. That is
-  Decky's behaviour rather than ours, and it is the main reason to consider
-  option 2.
-
-### 2. Install the release zip by hand
-
-Download the release `.zip`, then extract it to
-`~/homebrew/plugins/Nexus-Mods` on the Deck and restart Decky.
-
-- **Decky's default store is untouched**, so other plugins install normally.
-- **The catch: no automatic updates.** You will not be told a new version
-  exists, and you have to go and look.
-- **The catch: Desktop Mode every time.** Not once at setup: each update means
-  switching to Desktop Mode (or SSH) again to replace the files.
+  shown, so installing other plugins means switching the URL back. Decky
+  does not support several stores at once
+  ([open request](https://github.com/SteamDeckHomebrew/decky-loader/issues/746)),
+  and this is the main reason to prefer option 1.
 
 ### Which to choose
 
-If this is the only Decky plugin you use, or you would rather never think
-about updates, take option 1. If you already run other Decky plugins and want
-their store to stay put, take option 2 and check back for updates yourself.
+Take option 1 unless you are sure you want automatic updates more than you
+want Decky's own store. Most people run other plugins, and losing the store
+listing is a bigger daily annoyance than checking back here occasionally.
 
 ### Beta
 

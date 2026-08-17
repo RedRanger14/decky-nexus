@@ -44,7 +44,16 @@ Copy-Item (Join-Path $root "dist\index.js") (Join-Path $plugin "dist")
 
 $out = Join-Path $root "dist\Nexus-Mods-$version.zip"
 if (Test-Path $out) { Remove-Item -Force $out }
-Compress-Archive -Path $plugin -DestinationPath $out -CompressionLevel Optimal
+# NOT Compress-Archive. PowerShell writes Windows path separators into the
+# zip entries, so a Linux tool sees one file literally named
+# "Nexus-Mods\LICENSE" instead of a folder, and Decky sat on "PARSING ZIP
+# FILE" forever. Python's zipfile writes forward slashes, which is what the
+# format specifies. The bug is invisible on Windows, where the separators
+# are normalised away on read: it took listing the entries on the device.
+$pyFile = Join-Path $env:TEMP "decky-nexus-zip.py"
+Copy-Item (Join-Path $root "tools\makezip.py") $pyFile
+python $pyFile $stage $out
+if ($LASTEXITCODE -ne 0) { throw "zip build failed" }
 
 $size = [math]::Round((Get-Item $out).Length / 1KB, 1)
 Write-Host ""
