@@ -1,4 +1,4 @@
-# Nexus Mods: Decky Loader Plugin
+# Nexus Mods: Decky Loader Plugin (Unofficial)
 
 Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods.com) content for the currently selected game, entirely from Gaming Mode with a controller, on SteamOS and Bazzite. No Desktop Mode required.
 
