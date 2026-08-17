@@ -284,6 +284,24 @@ test("a deleted mod is skipped for good, not every session", () => {
   );
 });
 
+test("the store opens at its top, not scrolled past the nav", () => {
+  // The hero grid takes autoFocus so the D-pad has somewhere to land -
+  // without it you had to press RB twice to leave the Store. Steam scrolls
+  // whatever it focuses into view, and the hero sits below the tab bar and
+  // search, so opening the page shoved both off the top. Michael: "it is
+  // auto scrolling down a bit and hiding the nav and search".
+  const page = read("BrowsePage.tsx");
+  assert.ok(
+    page.includes("<ScrollHeaderIntoView />"),
+    "nothing puts the store's scroll back after autoFocus"
+  );
+  assert.ok(
+    /autoFocus=\{!typedRecently\(\)\}/.test(page),
+    "the hero lost its autoFocus - the D-pad has nowhere to land, which " +
+      "is the bug this replaced"
+  );
+});
+
 test("a network drop pauses a collection instead of eating the queue", () => {
   // 47 mods failed on DNS in five minutes and landed on the button as
   // "still to install" with no reason attached. A network error says

@@ -16,7 +16,8 @@
       "Bash(python -m unittest tests.test_backend -k \"AddressLibraryTarget\")",
       "Bash(python -m unittest tests.test_backend -k \"Mangled\")",
       "Bash(python -m unittest tests.test_backend -k \"BlockedCollections\")",
-      "Bash(python -m unittest tests.test_backend -k \"BundledMe3\")"
+      "Bash(python -m unittest tests.test_backend -k \"BundledMe3\")",
+      "Bash(scp -o ConnectTimeout=25 /c/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/er_top_mods.py deck@steamdeck.local:/tmp/er_top_mods.py)"
     ]
   }
 }

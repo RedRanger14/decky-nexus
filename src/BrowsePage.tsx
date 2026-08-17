@@ -99,6 +99,24 @@ function VerifiedBadge({ state }: { state: CollectionVerdictState }) {
   );
 }
 
+/** Undo the scroll that autoFocus causes, so the page opens at its top. */
+function ScrollHeaderIntoView() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // After the focus pass, not with it: zeroing scrollTop in the same
+    // frame is simply overwritten by Steam scrolling its focus into view.
+    const timer = setTimeout(() => {
+      let el: HTMLElement | null = ref.current;
+      while (el) {
+        if (el.scrollTop) el.scrollTop = 0;
+        el = el.parentElement;
+      }
+    }, 80);
+    return () => clearTimeout(timer);
+  }, []);
+  return <div ref={ref} style={{ height: 0 }} />;
+}
+
 function CollectionCard({
   game,
   c,
@@ -769,6 +787,15 @@ export function BrowsePage() {
         position: "relative",
       }}
     >
+      {/* The hero grid takes autoFocus so the D-pad has somewhere to land -
+          without it you had to press RB twice to leave the Store. But
+          Steam scrolls whatever it focuses into view, and the hero sits
+          below the tab bar and search, so opening the page shoved both off
+          the top. Michael: "it is auto scrolling down a bit and hiding the
+          nav and search".
+          Focus stays where it was; only the scroll is put back, once, after
+          the focus has settled. */}
+      <ScrollHeaderIntoView />
       <Scroller
         focusable={false}
         onButtonDown={handleTabButtons("store")}
