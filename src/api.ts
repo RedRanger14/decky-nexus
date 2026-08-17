@@ -211,6 +211,19 @@ export const getModFiles = callable<[game_domain: string, mod_id: number], Files
   "get_mod_files"
 );
 
+/** Would this install be refused? Asked when the page opens, so the reason
+ * is on screen before the user spends anything finding out. */
+export const getInstallBlock = callable<
+  [
+    game_domain: string,
+    mod_id: number,
+    file_id: number,
+    mod_name: string,
+    install_mode: string
+  ],
+  { ok: boolean; blocked: boolean; reason?: string; owner?: string }
+>("get_install_block");
+
 export const installMod = callable<
   [
     game_domain: string,
