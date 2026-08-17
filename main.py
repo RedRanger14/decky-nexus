@@ -10273,16 +10273,24 @@ query Link($slug: String!, $domainName: String!) {
             if w3_err and w3_err[0] == "conflicts":
                 conflicts = w3_err[1]
                 settings_now = _load_settings()
-                # Auto-merge is OFF by default (2026-07-24). A line-merge
-                # can produce a structurally-valid script that still won't
-                # compile - and a bad merged mod even crashed BEFORE the
-                # compile stage on device. Skipping the second mod with a
-                # clear note is the reliable default: the game always
-                # boots, the higher-priority mod wins, and merging is an
-                # explicit opt-in (settings 'w3_auto_merge') for when a
-                # future health-check can validate the result.
+                # ON by default since 2026-08-17. It was disabled on
+                # 2026-07-24 because a merged mod crashed the game before
+                # the compile stage - and the likely reason is now fixed:
+                # nothing wrote the compile trigger, so the game kept
+                # running compiled scripts from a DIFFERENT set of mods
+                # while the merged sources sat unused. A mismatch of that
+                # kind is exactly the shape of that crash.
+                #
+                # Measured on the #1 Witcher 3 collection, 2026-08-17:
+                # 30 mods were being skipped for script conflicts, 25 of
+                # them merged cleanly into 36 scripts, and the game booted
+                # and played with no errors. The 2 that still refused are
+                # genuine overlapping edits, which _w3_merge3 declines by
+                # design rather than guessing.
+                #
+                # Set 'w3_auto_merge' to false to go back to skipping.
                 merged_rels = None
-                if settings_now.get("w3_auto_merge"):
+                if settings_now.get("w3_auto_merge", True):
                     # Worker thread: difflib on 10k-line scripts froze the
                     # whole event loop when run inline.
                     merged_rels = await asyncio.to_thread(
