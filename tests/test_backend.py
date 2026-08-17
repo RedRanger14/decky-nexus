@@ -12617,6 +12617,21 @@ class TestRegulationClashBeforeDownload(unittest.TestCase):
         self.assertNotIn("stale_note and record_source", wrapper)
         self.assertIn('result["warning"] = stale_note', wrapper)
 
+    def test_a_verdict_is_about_a_version_not_a_mod(self):
+        # Seamless Co-op 1.5.1, the version Elden Essentials pins, fails on
+        # this build; 1.9.9 from the mod page works, because the mod is hard
+        # version-locked to the game. _known_broken_mods filters on build
+        # only, so without this the verdict would take the working release
+        # with it - and Michael has a co-op setup he asked us not to break.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        wrapper = source[source.index("        payload_choice picks a folder"):]
+        wrapper = wrapper[:wrapper.index("    async def get_user_prefs")]
+        self.assertIn('recorded = (broken.get("version")', wrapper)
+        self.assertIn("recorded != str(mod_version", wrapper)
+        # An empty recorded version must still apply to every version.
+        self.assertIn("if recorded and recorded !=", wrapper)
+
     def test_a_stale_native_installs_switched_off(self):
         # From scratch, nobody should have to know which mod to disable.
         # Michael, after being handed four dll names: "package it up nicely
