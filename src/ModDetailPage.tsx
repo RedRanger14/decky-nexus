@@ -382,7 +382,17 @@ export function ModDetailPage() {
         );
         return;
       }
-      if (result.ok) {
+      if (result.ok && result.installed_disabled) {
+        // Installed and deliberately off. The box stays on the page with
+        // the reason, so nothing depends on catching a toast.
+        setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
+        refreshInstalled(sel);
+        setStale(result.warning);
+        toaster.toast({
+          title: `${mod.name} installed, switched off`,
+          body: "Built for an older patch - see the mod page",
+        });
+      } else if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
         refreshInstalled(sel);
         toaster.toast({

@@ -77,6 +77,10 @@ export interface InstallResult {
   /** Built for an older patch than the installed game: skipped in a
    * collection run rather than downloaded to fail. */
   stale_skip?: boolean;
+  /** Installed, but left switched off: built for an older patch, and
+   * enabling it would stop the next launch on a message box. */
+  installed_disabled?: boolean;
+  warning?: string;
   /** Archive layout we can't recognize - parked as skipped so it stops
    * counting as remaining (retrying can't change the layout). */
   unsupported_layout?: boolean;
