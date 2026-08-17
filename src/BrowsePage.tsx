@@ -6,7 +6,7 @@ import {
   ScrollPanelGroup,
   TextField,
 } from "@decky/ui";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FaArrowDown, FaCheck, FaThumbsUp } from "react-icons/fa";
 
 import {
@@ -97,6 +97,33 @@ function VerifiedBadge({ state }: { state: CollectionVerdictState }) {
       {look.text}
     </div>
   );
+}
+
+/** Measures the pinned nav+search, so focus scrolling can stop short of it.
+ *
+ * A sticky block paints OVER the content: the scroller has no idea part of
+ * its viewport is covered, so scrolling the focused hero "into view" put it
+ * under the pinned block. Michael: "now the top part of hero mods are being
+ * cut off". Steam honours CSS scroll-padding here - that is already why
+ * scrollPaddingBottom keeps the last row clear of the SteamOS footer bar -
+ * so the fix is the same trick at the top, with the height measured rather
+ * than guessed, since the header grows with the game art and title.
+ */
+function usePinnedTop() {
+  const ref = useRef<HTMLDivElement>(null);
+  // Tabs plus a 52px art row, until the real thing has been measured.
+  const [height, setHeight] = useState(128);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const h = ref.current?.offsetHeight;
+      if (h) setHeight(h);
+    };
+    measure();
+    // Again once the header art has loaded and settled the row's height.
+    const timer = setTimeout(measure, 300);
+    return () => clearTimeout(timer);
+  }, []);
+  return { ref, height };
 }
 
 /** Undo the scroll that autoFocus causes, so the page opens at its top. */
@@ -761,6 +788,7 @@ export function BrowsePage() {
     (t) => !heroMods.some((h) => h.modId === t.modId)
   );
   const railTitle = heroIsCurated ? "Trending now" : "Also trending";
+  const pinned = usePinnedTop();
 
   return (
     // onCancel: B returns to the plugin's QAM panel instead of dumping the
@@ -806,6 +834,9 @@ export function BrowsePage() {
           // stop short of it (scroll-padding), so the last row is usable.
           padding: "0 24px 110px",
           scrollPaddingBottom: "110px",
+          // ...and the same at the top, so focusing a row never slides it
+          // under the pinned nav and search.
+          scrollPaddingTop: `${pinned.height}px`,
           position: "relative",
         }}
       >
@@ -828,6 +859,7 @@ export function BrowsePage() {
             on screen wherever the page happens to be. It needs its own
             opaque background, or the rails scroll through underneath it. */}
         <div
+          ref={pinned.ref}
           style={{
             position: "sticky",
             top: 0,

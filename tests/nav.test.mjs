@@ -353,6 +353,29 @@ test("the store pins both its nav and its search out of the scroll", () => {
   );
 });
 
+test("focus scrolling stops short of the pinned block, not under it", () => {
+  // A sticky block paints over the content - the scroller does not know part
+  // of its viewport is covered, so scrolling the focused hero "into view"
+  // parked it underneath. Michael: "now the top part of hero mods are being
+  // cut off". Steam honours CSS scroll-padding here, which is already how
+  // the last row clears the SteamOS footer bar.
+  const page = read("BrowsePage.tsx");
+  assert.ok(
+    /scrollPaddingTop:\s*`\$\{pinned\.height\}px`/.test(page),
+    "nothing keeps focus scrolling clear of the pinned nav and search, so " +
+      "the row Steam focuses ends up hidden behind them"
+  );
+  assert.ok(
+    page.includes("scrollPaddingBottom"),
+    "the footer clearance went with it - the last row is unreachable again"
+  );
+  assert.ok(
+    /ref=\{pinned\.ref\}/.test(page),
+    "the pinned height is not measured from the block itself, so it will " +
+      "drift the moment the header changes size"
+  );
+});
+
 test("the store opens at its top, not scrolled past the nav", () => {
   // The hero grid takes autoFocus so the D-pad has somewhere to land -
   // without it you had to press RB twice to leave the Store. Steam scrolls
