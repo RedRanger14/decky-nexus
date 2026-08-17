@@ -12828,6 +12828,21 @@ class TestW3DebugOverlaysAreSwitchedOff(unittest.TestCase):
         # an already-modified file.
         self.assertIn("if not os.path.isfile(backup):", fn)
 
+    def test_what_was_switched_off_is_remembered(self):
+        # The run that fixes it is the only run that CAN report it - the
+        # next check finds nothing on and says nothing. Michael: "I clicked
+        # refresh and saw a brief message about debug mode but then it went
+        # once the refresh finished."
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _w3_quiet_debug_overlays"):]
+        fn = fn[:fn.index("def _prefix_user_path")]
+        self.assertIn('setdefault("w3_debug_quieted", {})', fn)
+        check = source[source.index("        if game_domain == \"witcher3\" and app_id:"):]
+        check = check[:check.index("script = _redscript_report")]
+        # Reported from the store, not from this run's return value.
+        self.assertIn('get("w3_debug_quieted")', check)
+
     def test_both_renderers_settings_files_are_covered(self):
         # Next-gen DX12 writes dx12user.settings; classic writes
         # user.settings; a device can have either or both.
