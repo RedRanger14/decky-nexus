@@ -817,7 +817,31 @@ export function BrowsePage() {
       />
 
       <div style={{ position: "relative", zIndex: 1 }}>
-        <TabBar currentId="store" />
+        {/* STICKY, because restoring the scroll was not enough. The hero
+            grid must keep autoFocus (without it the D-pad has nowhere to
+            land and you press RB twice to leave the Store), Steam scrolls
+            whatever it focuses into view, and it does so after anything we
+            set - so the header kept going off the top however it was put
+            back. Michael: "the top menu is still being cut off by default.
+            Maybe we should make it sticky anyway?"
+            Sticky stops fighting the focus scroll and simply keeps the nav
+            on screen wherever the page happens to be. It needs its own
+            opaque background, or the rails scroll through underneath it. */}
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 3,
+            // The page's own dark ground, so content passing behind is
+            // hidden rather than ghosting through the tabs.
+            background: "#0e141b",
+            margin: "0 -24px",
+            padding: "0 24px",
+            boxShadow: "0 6px 12px -8px rgba(0,0,0,0.9)",
+          }}
+        >
+          <TabBar currentId="store" />
+        </div>
         {/* ---- Header: [game art] [title/count] ..... [search] [sort] ---- */}
         <Focusable
           style={{

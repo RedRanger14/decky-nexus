@@ -284,6 +284,25 @@ test("a deleted mod is skipped for good, not every session", () => {
   );
 });
 
+test("the store's tab bar is sticky, so focus scrolling cannot hide it", () => {
+  // Restoring the scroll was not enough: the hero grid must keep autoFocus,
+  // Steam scrolls whatever it focuses into view, and it does so after
+  // anything we set - so the header went off the top however it was put
+  // back. Michael: "the top menu is still being cut off by default. Maybe
+  // we should make it sticky anyway?"
+  const page = read("BrowsePage.tsx");
+  const bar = page.slice(0, page.indexOf('<TabBar currentId="store" />'));
+  const block = bar.slice(-900);
+  assert.ok(
+    block.includes('position: "sticky"'),
+    "the store's tab bar is not sticky, so a focus scroll hides the nav"
+  );
+  assert.ok(
+    /background:\s*"#/.test(block),
+    "a sticky bar with no opaque background lets the rails ghost through it"
+  );
+});
+
 test("the store opens at its top, not scrolled past the nav", () => {
   // The hero grid takes autoFocus so the D-pad has somewhere to land -
   // without it you had to press RB twice to leave the Store. Steam scrolls
