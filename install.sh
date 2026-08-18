@@ -150,7 +150,24 @@ sudo sh -c "
 #
 # Read from /dev/tty, not stdin: this whole script arrives through a pipe
 # from curl, so stdin is the script itself and `read` would consume it.
-if [ -z "$API_KEY" ] && [ -r /dev/tty ]; then
+# Already have one? Do not ask again. Michael: "it prompts me for my api key
+# again when I install so looks like we have to do that each time which is
+# annoying." An update should ask for nothing.
+EXISTING=""
+if [ -f "$HOME/homebrew/settings/$PLUGIN/settings.json" ]; then
+    EXISTING="$(python3 -c '
+import json, sys
+try:
+    print((json.load(open(sys.argv[1])).get("api_key") or "").strip())
+except Exception:
+    pass
+' "$HOME/homebrew/settings/$PLUGIN/settings.json" 2>/dev/null || true)"
+fi
+
+if [ -n "$EXISTING" ] && [ -z "$API_KEY" ]; then
+    say ""
+    say "Your API key is already saved, so nothing else to do."
+elif [ -z "$API_KEY" ] && [ -r /dev/tty ]; then
     say ""
     say "Paste your Nexus Mods API key now, or press Enter to skip."
     say "  (Nexus Mods -> your profile -> Site preferences -> API Keys ->"

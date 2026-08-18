@@ -1341,8 +1341,10 @@ test("a report body is trimmed to fit a GitHub URL", () => {
   // triples it, so 5500 characters became a URL of about 15000.
   const long = "line of log text with braces {} and quotes \"x\"\n".repeat(400);
   const out = fitReportBody(long);
+  // 1200, not 4000: signing in to GitHub carries the whole URL through a
+  // redirect and it answered 4000 with a 500.
   assert.ok(
-    encodeURIComponent(out).length <= 4000,
+    encodeURIComponent(out).length <= 1200,
     `encoded length ${encodeURIComponent(out).length} still over budget`
   );
   assert.match(out, /log truncated/);

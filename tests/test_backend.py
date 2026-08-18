@@ -13110,6 +13110,25 @@ class TestTwoModsCannotOwnTheSameFile(unittest.TestCase):
         self.assertIn('not rec.get("enabled", True)', fn)
 
 
+class TestReportBodyStaysShort(unittest.TestCase):
+    """The report goes into a GitHub URL. An over-long one fails, and fails
+    with a 500 when the user has to sign in on the way - which is exactly
+    when it happened to Michael."""
+
+    def test_the_log_is_named_not_embedded(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def build_report"):]
+        fn = fn[:fn.index("async def get_health_check")]
+        # The log tail used to be pasted into the body wholesale.
+        self.assertNotIn("_plugin_log_tail(", fn)
+        self.assertIn("### Log", fn)
+
+    def test_the_helper_still_exists_for_other_callers(self):
+        # Kept: a future attachment or a bug-report file would want it.
+        self.assertTrue(callable(main._plugin_log_tail))
+
+
 class TestFreeAccountIsToldPlainly(unittest.TestCase):
     """Michael tried a free account: the download failed, correctly, but the
     message read like a missing feature rather than "this will not work for

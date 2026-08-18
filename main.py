@@ -14552,10 +14552,21 @@ query CollectionInstructions($slug: String!) {
                     f"- {rec.get('name') or key} "
                     f"v{rec.get('version') or '?'}{mark}"
                 )
-        tail = _plugin_log_tail(60)
-        if tail:
-            lines += ["", "### Plugin log (last 60 lines)", "",
-                      "```", tail, "```"]
+        # NOT the log. It goes in the URL, and GitHub fails an over-long
+        # issue link - with a 500 when the user has to sign in on the way,
+        # which is the worst possible moment. The summary above is what makes
+        # a report diagnosable; the log is named so anyone who can attach it
+        # will, and anyone who cannot has still filed something useful.
+        log_dir = os.path.join(decky.DECKY_PLUGIN_LOG_DIR or "", "")
+        if log_dir:
+            lines += [
+                "",
+                "### Log",
+                "",
+                f"The newest file in `{log_dir}` has the detail. Attach it "
+                "here if you can get to it - Desktop Mode, or ask and we "
+                "will say how.",
+            ]
         return {"ok": True, "body": chr(10).join(lines)}
 
     async def get_health_check(

@@ -1015,12 +1015,17 @@ export function pauseAllControl(
  * quotes all become %XX, so 5500 characters of body became a URL of about
  * 15000 and GitHub refused it.
  *
+ * 4000 was still too long: signing in to GitHub on the way to the issue form
+ * carries the whole URL through a redirect, and GitHub answered that with a
+ * 500. 1200 encoded characters survives it. The log is no longer in the body
+ * at all for the same reason - it is named instead, so it can be attached.
+ *
  * So the budget is measured after encoding, and whole lines are dropped from
  * the end - the log tail is last in the body, which makes it the first thing
  * to go and the least missed. The reader keeps the setup summary and the mod
  * list, and is told the log was cut.
  */
-export function fitReportBody(body: string, budget = 4000): string {
+export function fitReportBody(body: string, budget = 1200): string {
   if (encodeURIComponent(body).length <= budget) return body;
   const note = "\n\n_(log truncated to fit a GitHub link)_";
   const lines = body.split("\n");

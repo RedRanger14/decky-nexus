@@ -77,7 +77,9 @@
       "Bash(scp -q -o ConnectTimeout=30 src/api.ts src/CollectionPage.tsx deck@192.168.50.202:/tmp/citest/src/)",
       "Bash(scp -q -o ConnectTimeout=40 main.py package.json deck@192.168.50.202:/tmp/citest/)",
       "Bash(scp -q -o ConnectTimeout=40 tests/*.py deck@192.168.50.202:/tmp/citest/tests/)",
-      "Bash(python tools/makestore.py dist/Nexus-Mods-0.262.0.zip)"
+      "Bash(python tools/makestore.py dist/Nexus-Mods-0.262.0.zip)",
+      "Bash(python tools/makestore.py dist/Nexus-Mods-0.263.0.zip)",
+      "Bash(scp -q -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i8.sh)"
     ]
   }
 }
