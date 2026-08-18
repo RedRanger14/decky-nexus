@@ -99,45 +99,46 @@ and it is the whole economy these mods run on.
 You need [Decky Loader](https://decky.xyz) first: this is a Decky plugin, not
 a standalone app.
 
-Three steps, once. Everything after this is Gaming Mode on a controller.
+Open a terminal on the Deck (Steam button -> Power -> Switch to Desktop, then
+open **Konsole**) and paste this:
 
-### Step 1: turn on Decky's developer mode
+```sh
+curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.sh | sh
+```
 
-Quick Access Menu (**...**) -> the plug icon -> **gear** (Decky settings) ->
-**General** -> scroll to the bottom -> **Developer mode** on. A **Developer**
-tab appears in that settings menu. That is where the install options live.
+It asks for your password, because Decky owns its plugin folder. Then return
+to Gaming Mode, open the Quick Access Menu, press the plug icon, and Nexus
+Mods is there.
 
-### Step 2: get the zip onto the Deck
-
-Download the latest `Nexus-Mods-<version>.zip` from
-[Releases](https://github.com/RedRanger14/decky-nexus/releases) and put it in
-your **Downloads** folder. Any route works: the Deck's own browser in Desktop
-Mode, a USB stick, or `scp` from another machine.
-
-### Step 3: install it
-
-Decky settings -> **Developer** tab -> **Install from zip** -> Home ->
-Downloads -> pick the zip. Decky installs it and reloads.
-
-Open the Quick Access Menu, press the plug icon, and Nexus Mods is in the
-list. The panel footer should read `unofficial beta` with the version.
+That is the whole install. It is the same shape as Decky's own installer, and
+it is deliberately the only thing you have to type.
 
 ### Updating
 
-Download the newer zip and install it the same way. It replaces the old
-version in place; your installed mods and settings are untouched.
+Run the same line again. It fetches the newest release, checks it is complete
+before removing the old version, and restarts Decky. Your installed mods, API
+key and settings live outside the plugin folder and are not touched.
+
+### If you would rather not run a script
+
+Download the latest `Nexus-Mods-<version>.zip` from
+[Releases](https://github.com/RedRanger14/decky-nexus/releases), put it in
+your **Downloads** folder, then in Gaming Mode: Quick Access Menu -> plug icon
+-> **gear** -> **General** -> turn on **Developer mode** at the bottom, then
+the **Developer** tab -> **Install from zip** -> Home -> Downloads -> pick the
+zip.
 
 ### A note on "Install from URL"
 
-The Developer tab also offers **Install from URL**, and it does not work with
+That same Developer tab offers **Install from URL**, and it does not work with
 this plugin. Decky takes the plugin's name from the URL rather than from the
-zip, and then stops during install with nothing written to its log, so the
-screen sits on "PARSING ZIP FILE" forever. The same zip installs fine through
-**Install from zip**. Nothing to do with the download or the archive: both
-were verified byte for byte on the device.
+zip, then stops during install with nothing written to its log, so the screen
+sits on "PARSING ZIP FILE" forever. The identical zip installs correctly
+through **Install from zip**, and the download and archive were both verified
+byte for byte on the device, so it is neither.
 
-Do not use it, and do not wait for it. If it starts working, this section
-will say so.
+Do not use it, and do not wait for it. If it starts working, this section will
+say so.
 
 ### Beta
 
