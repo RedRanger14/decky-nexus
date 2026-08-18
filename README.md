@@ -117,9 +117,9 @@ curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.s
 **4. Open Konsole.** Bottom-left menu (the launcher icon) -> type `konsole`
 -> open it.
 
-**5. Paste and press Enter.** Pasting in Konsole is **Ctrl+Shift+V**, or
-right-click -> Paste. If you have no keyboard attached, **Steam button + X**
-brings up the on-screen one.
+**5. Paste and press Enter.** **Right-click in the Konsole window -> Paste.**
+Ctrl+Shift+V does not work from the Deck's on-screen keyboard, so use
+right-click. (On the touchscreen, hold a finger down to right-click.)
 
 **6. Type your password when it asks.** Nothing appears on screen as you
 type, which is normal. It is the same password you set when you installed
@@ -128,6 +128,11 @@ needs permission.
 
 **7. Wait for it to say `Done`.** It prints each step as it goes: finding the
 release, downloading, extracting, installing, restarting Decky.
+
+Steam's interface will flicker at the end, and Decky may show a toast saying
+something failed. **Ignore it.** Restarting Decky restarts part of Steam's UI
+with it, and Decky reports losing its own connection as a failure. The
+terminal is the one telling the truth: if it says `Done`, it is done.
 
 **8. Return to Gaming Mode.** The **Return to Gaming Mode** icon is on the
 desktop.

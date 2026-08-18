@@ -100,11 +100,29 @@ sudo sh -c "
     chown -R $(id -u):$(id -g) '$PLUGIN_DIR/$PLUGIN'
 " || die "install failed"
 
-say "Restarting Decky..."
+# Restarting Decky restarts part of Steam's UI with it, so Decky loses its
+# own frontend connection and shows a toast saying something failed. The
+# install has already finished by then. Said out loud here because a user
+# who reads "failed" after "Done" will believe the toast over the terminal.
+say "Restarting Decky (Steam's interface will flicker)..."
 sudo systemctl restart plugin_loader || die "could not restart Decky"
 
+# Evidence, not optimism: read the version back off disk before claiming
+# success.
+INSTALLED="$(python3 -c '
+import json, sys
+try:
+    print(json.load(open(sys.argv[1]))["version"])
+except Exception:
+    sys.exit(1)
+' "$PLUGIN_DIR/$PLUGIN/package.json" 2>/dev/null)"     || die "installed, but could not read the version back - check Decky's plugin list"
+
 say ""
-say "Done. $VERSION installed."
+say "Done. Version $INSTALLED is installed."
+say ""
+say "If Decky showed a toast saying something failed, ignore it: restarting"
+say "Decky disconnects its own interface for a moment and it reports that as"
+say "a failure. The plugin is installed - this script just read it back."
 say "Open the Quick Access Menu, press the plug icon, and Nexus Mods is there."
 say ""
 say "You need a Nexus Mods Premium account to download mods. Add your API key"

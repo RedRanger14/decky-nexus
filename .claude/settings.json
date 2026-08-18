@@ -45,7 +45,9 @@
       "Bash(ssh-keygen -R 192.168.50.202)",
       "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/install.sh)",
       "Bash(sed -n '/^## Installing/,/^\\\\*\\\\*1\\\\./p' README.md)",
-      "Bash(sed -n '/unofficial beta`. If your/,/go back there/p' README.md)"
+      "Bash(sed -n '/unofficial beta`. If your/,/go back there/p' README.md)",
+      "Bash(sh -n install.sh)",
+      "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i2.sh)"
     ]
   }
 }
