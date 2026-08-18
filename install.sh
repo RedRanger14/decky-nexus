@@ -101,12 +101,19 @@ python3 -m zipfile -e "$TMP/plugin.zip" "$TMP/stage"
 
 say ""
 say "Installing to $PLUGIN_DIR/$PLUGIN (this needs your password)..."
+# Copy in beside the old version, then swap. The previous version of this
+# did `rm -rf` and then `cp`, which means a copy that fails for any reason
+# (full disk, permissions, a cancelled sudo) leaves the user with NO plugin
+# at all rather than the one they had. The swap below is the last thing to
+# happen and the only destructive step.
 sudo sh -c "
     mkdir -p '$PLUGIN_DIR' &&
+    rm -rf '$PLUGIN_DIR/.$PLUGIN.new' &&
+    cp -r '$TMP/stage/$PLUGIN' '$PLUGIN_DIR/.$PLUGIN.new' &&
+    chown -R $(id -u):$(id -g) '$PLUGIN_DIR/.$PLUGIN.new' &&
     rm -rf '$PLUGIN_DIR/$PLUGIN' &&
-    cp -r '$TMP/stage/$PLUGIN' '$PLUGIN_DIR/' &&
-    chown -R $(id -u):$(id -g) '$PLUGIN_DIR/$PLUGIN'
-" || die "install failed"
+    mv '$PLUGIN_DIR/.$PLUGIN.new' '$PLUGIN_DIR/$PLUGIN'
+" || die "install failed - your previous version, if any, is untouched"
 
 # Restarting Decky restarts part of Steam's UI with it, so Decky loses its
 # own frontend connection and shows a toast saying something failed. The
