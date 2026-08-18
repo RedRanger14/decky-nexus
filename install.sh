@@ -18,6 +18,14 @@
 
 set -eu
 
+# Optional: your Nexus Mods API key, saved for you so it never has to be
+# typed on a controller. The clipboard does not survive the switch from
+# Desktop Mode to Gaming Mode, so a key copied from the website is gone by
+# the time the plugin asks for it.
+#
+#   curl -L .../install.sh | sh -s -- YOUR_API_KEY
+API_KEY="${1:-}"
+
 REPO="RedRanger14/decky-nexus"
 PLUGIN="Nexus Mods"
 PLUGIN_DIR="$HOME/homebrew/plugins"
@@ -125,5 +133,31 @@ say "Decky disconnects its own interface for a moment and it reports that as"
 say "a failure. The plugin is installed - this script just read it back."
 say "Open the Quick Access Menu, press the plug icon, and Nexus Mods is there."
 say ""
-say "You need a Nexus Mods Premium account to download mods. Add your API key"
-say "in the plugin's Settings page the first time you open it."
+if [ -n "$API_KEY" ]; then
+    # Written to the SETTINGS directory, not the plugin directory: settings
+    # are owned by the user, survive updates, and an update never touches
+    # them. Also means this works before the plugin has ever been opened.
+    SET_DIR="$HOME/homebrew/settings/Nexus-Mods"
+    mkdir -p "$SET_DIR"
+    python3 -c 'import json, os, sys
+path, key = sys.argv[1], sys.argv[2].strip()
+data = {}
+if os.path.isfile(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+data["api_key"] = key
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+' "$SET_DIR/settings.json" "$API_KEY" || die "could not save the API key"
+    say ""
+    say "API key saved. The plugin will use it straight away, and an update"
+    say "will not overwrite it."
+else
+    say "You will need your Nexus Mods API key. The clipboard does not survive"
+    say "the switch to Gaming Mode, so the easiest way is to run this again"
+    say "with the key on the end:"
+    say "  curl -L https://raw.githubusercontent.com/$REPO/main/install.sh | sh -s -- YOUR_KEY"
+fi

@@ -101,6 +101,11 @@ a standalone app.
 
 Installing is done from Desktop Mode and takes about two minutes.
 
+**If you have never set a password on your Deck**, do that first, because
+Decky needs it and so does this. In Desktop Mode open **Konsole** and run
+`passwd`. It asks for a new password twice and nothing appears as you type,
+which is normal. Then install Decky, then come back here.
+
 **1. Switch to Desktop Mode.** Steam button -> **Power** -> **Switch to
 Desktop**. The Deck reboots into a desktop.
 
@@ -134,10 +139,27 @@ something failed. **Ignore it.** Restarting Decky restarts part of Steam's UI
 with it, and Decky reports losing its own connection as a failure. The
 terminal is the one telling the truth: if it says `Done`, it is done.
 
-**8. Return to Gaming Mode.** The **Return to Gaming Mode** icon is on the
+**8. Get your API key while you are still in Desktop Mode.** You will need
+it, and **the clipboard does not survive the switch to Gaming Mode**, so
+fetching it later means coming back here.
+
+In the browser: log in to [Nexus Mods](https://www.nexusmods.com) -> your
+profile picture, top right -> **Account settings** -> **API Keys** in the
+left-hand menu -> scroll to the very bottom -> copy the **Personal API Key**.
+
+Then paste it into Konsole on the end of this line and press Enter:
+
+```sh
+curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.sh | sh -s -- YOUR_KEY_HERE
+```
+
+That saves the key for you, so the plugin is ready to use and you never type
+it on a controller. (It is the same install line; running it twice is safe.)
+
+**9. Return to Gaming Mode.** The **Return to Gaming Mode** icon is on the
 desktop.
 
-**9. Open the Quick Access Menu** (the **...** button) -> the **plug** icon
+**10. Open the Quick Access Menu** (the **...** button) -> the **plug** icon
 -> **Nexus Mods**.
 
 The panel footer shows the version and the words `unofficial beta`. If your
