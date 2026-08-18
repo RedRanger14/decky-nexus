@@ -111,27 +111,43 @@ which is normal. Then install Decky, then come back here.
    Steam button -> **Power** -> **Switch to Desktop**. The Deck reboots into
    a desktop.
 
-2. **Open this page on the Deck**, in the browser there.
+2. **Get your Nexus Mods API key.**
+
+   Do this first, because **the clipboard does not survive the switch back to
+   Gaming Mode**. Fetching the key afterwards means coming back to Desktop
+   Mode for it.
+
+   In the browser: log in to [Nexus Mods](https://www.nexusmods.com) -> your
+   profile picture, top right -> **Account settings** -> **API Keys** in the
+   left-hand menu -> scroll to the very bottom -> copy the **Personal API
+   Key**.
+
+3. **Open this page on the Deck**, in the browser there.
 
    You want to copy the command below rather than type it: it is long, and a
    single wrong character produces a failure that looks exactly like a broken
    install.
 
-3. **Copy this line.**
-
-   ```sh
-   curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.sh | sh
-   ```
-
 4. **Open Konsole.**
 
    Bottom-left menu (the launcher icon) -> type `konsole` -> open it.
 
-5. **Paste it and press Enter.**
+5. **Paste this line, put your API key on the end, and press Enter.**
+
+   ```sh
+   curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.sh | sh -s -- YOUR_KEY_HERE
+   ```
+
+   Replace `YOUR_KEY_HERE` with the key you copied. One command does
+   everything: it installs the plugin and saves your key.
 
    **Right-click in the Konsole window -> Paste.** Ctrl+Shift+V does not work
    from the Deck's on-screen keyboard. On the touchscreen, hold a finger down
    to right-click.
+
+   *Rather not paste your key into a terminal? Leave it off the end and run
+   the line as-is. You can add the key later on the plugin's Settings page,
+   though you will be typing it on a controller.*
 
 6. **Type your password when it asks.**
 
@@ -142,7 +158,7 @@ which is normal. Then install Decky, then come back here.
 7. **Wait for it to say `Done`.**
 
    It prints each step as it goes: finding the release, downloading,
-   extracting, installing, restarting Decky.
+   extracting, installing, restarting Decky, saving your key.
 
    Steam's interface will flicker at the end, and Decky may show a toast
    saying something failed. **Ignore it.** Restarting Decky restarts part of
@@ -150,36 +166,18 @@ which is normal. Then install Decky, then come back here.
    failure. The terminal is the one telling the truth: if it says `Done`, it
    is done.
 
-8. **Get your API key now, while you are still in Desktop Mode.**
-
-   You will need it, and **the clipboard does not survive the switch to
-   Gaming Mode**, so fetching it later means coming back here.
-
-   In the browser: log in to [Nexus Mods](https://www.nexusmods.com) -> your
-   profile picture, top right -> **Account settings** -> **API Keys** in the
-   left-hand menu -> scroll to the very bottom -> copy the **Personal API
-   Key**.
-
-   Then paste it on the end of this line in Konsole and press Enter:
-
-   ```sh
-   curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.sh | sh -s -- YOUR_KEY_HERE
-   ```
-
-   That saves the key, so the plugin is ready to use and you never type it on
-   a controller. It is the same install line, and running it twice is safe.
-
-9. **Return to Gaming Mode.**
+8. **Return to Gaming Mode.**
 
    The **Return to Gaming Mode** icon is on the desktop.
 
-10. **Open the plugin.**
+9. **Open the plugin.**
 
-    Quick Access Menu (the **...** button) -> the **plug** icon -> **Nexus
-    Mods**.
+   Quick Access Menu (the **...** button) -> the **plug** icon -> **Nexus
+   Mods**.
 
-    The panel footer shows the version and the words `unofficial beta`. If
-    your game is supported and installed, it will already have found it.
+   The panel footer shows the version and the words `unofficial beta`. If
+   your game is supported and installed, it will already have found it, and
+   your key is already in place.
 
 That is Desktop Mode done with for using the plugin. Browsing, installing
 mods, collections and health checks all happen from the Quick Access Menu on
