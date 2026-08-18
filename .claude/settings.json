@@ -50,7 +50,11 @@
       "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i2.sh)",
       "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i3.sh)",
       "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i4.sh)",
-      "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i5.sh)"
+      "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i5.sh)",
+      "Bash(scp -o ConnectTimeout=40 'deck@192.168.50.202:'\\\\''__CMDSUB_OUTPUT__'\\\\''' C:/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/shot.png)",
+      "Bash(awk '{print $5}')",
+      "Bash(scp -o ConnectTimeout=40 \"deck@192.168.50.202:/home/deck/Pictures/Screenshots/Screenshot_20260818_101555.png\" \"C:/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/shot.png\")",
+      "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i6.sh)"
     ]
   }
 }

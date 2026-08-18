@@ -140,6 +140,22 @@ say "Decky disconnects its own interface for a moment and it reports that as"
 say "a failure. The plugin is installed - this script just read it back."
 say "Open the Quick Access Menu, press the plug icon, and Nexus Mods is there."
 say ""
+# Ask for the key rather than making it an argument. Passing it on the end of
+# the command means the user has to land a paste after a space, and on a
+# handheld they do not: Michael's paste produced `sh -s --YlpTRX...`, which
+# sh read as one invalid option. A prompt has no such edge.
+#
+# Read from /dev/tty, not stdin: this whole script arrives through a pipe
+# from curl, so stdin is the script itself and `read` would consume it.
+if [ -z "$API_KEY" ] && [ -r /dev/tty ]; then
+    say ""
+    say "Paste your Nexus Mods API key now, or press Enter to skip."
+    say "  (Nexus Mods -> your profile -> Site preferences -> API Keys ->"
+    say "   scroll to the bottom. Right-click to paste: left trigger is L2.)"
+    printf 'API key: '
+    read -r API_KEY < /dev/tty || API_KEY=""
+fi
+
 if [ -n "$API_KEY" ]; then
     # Written to the SETTINGS directory, not the plugin directory: settings
     # are owned by the user, survive updates, and an update never touches
@@ -163,8 +179,7 @@ with open(path, "w") as f:
     say "API key saved. The plugin will use it straight away, and an update"
     say "will not overwrite it."
 else
-    say "You will need your Nexus Mods API key. The clipboard does not survive"
-    say "the switch to Gaming Mode, so the easiest way is to run this again"
-    say "with the key on the end:"
-    say "  curl -L https://raw.githubusercontent.com/$REPO/main/install.sh | sh -s -- YOUR_KEY"
+    say ""
+    say "No API key saved. Add one on the plugin's Settings page, or run this"
+    say "script again and paste the key when it asks."
 fi
