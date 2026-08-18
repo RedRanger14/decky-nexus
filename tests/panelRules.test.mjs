@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  fitReportBody,
   crashHuntVerdict,
   cancellableDownload,
   directNote,
@@ -1331,4 +1332,34 @@ test("several read in the plural and count the rest", () => {
   const msg = directNote(["A", "B", "C", "D"]);
   assert.match(msg, /A, B, C and 1 more/);
   assert.match(msg, /They were checked/);
+});
+
+test("a report body is trimmed to fit a GitHub URL", () => {
+  // GitHub answers an over-long issue URL with "Whoops, something went
+  // wrong!" and a support link, which tells the user nothing. Michael got
+  // exactly that: the cap was on the RAW body, and percent-encoding roughly
+  // triples it, so 5500 characters became a URL of about 15000.
+  const long = "line of log text with braces {} and quotes \"x\"\n".repeat(400);
+  const out = fitReportBody(long);
+  assert.ok(
+    encodeURIComponent(out).length <= 4000,
+    `encoded length ${encodeURIComponent(out).length} still over budget`
+  );
+  assert.match(out, /log truncated/);
+});
+
+test("a short report body is left exactly as it is", () => {
+  const body = "### What happened\n\nnothing\n";
+  assert.equal(fitReportBody(body), body);
+});
+
+test("the trim keeps the top of the report, not the bottom", () => {
+  // The setup summary is what makes a report diagnosable; the log tail is
+  // last in the body and so is the first thing dropped.
+  const body =
+    "### Setup\n\n- Plugin: 1.2.3\n- Game: eldenring\n\n### Plugin log\n\n" +
+    "noise\n".repeat(500);
+  const out = fitReportBody(body);
+  assert.match(out, /Plugin: 1\.2\.3/);
+  assert.match(out, /Game: eldenring/);
 });

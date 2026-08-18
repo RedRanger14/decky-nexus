@@ -36,7 +36,7 @@ import { buildReport, getHealthCheck, getModDetails } from "./api";
 import { PageBackdrop, SectionHeading, StatChip } from "./chrome";
 import { SupportedGame, frameworkModIds, getActiveGame } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
-import { healthVerdict } from "./panelRules";
+import { fitReportBody, healthVerdict } from "./panelRules";
 import { installLatest } from "./install";
 import { LINK_CHIP_CLASS } from "./theme";
 import { setDetailOrigin, setSelectedMod } from "./state";
@@ -800,7 +800,7 @@ export default function HealthCheckPage() {
                 game.appId
               ).catch(() => undefined);
               const body = encodeURIComponent(
-                (r?.body ?? "").slice(0, 5500)
+                fitReportBody(r?.body ?? "")
               );
               const title = encodeURIComponent(
                 `[${game.displayName}] `

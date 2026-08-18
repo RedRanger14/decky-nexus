@@ -120,7 +120,7 @@ import {
   troubleshootingCount,
 
   frameworkStepNumbers,
-  installedDepsNote,} from "./panelRules";
+  installedDepsNote, fitReportBody } from "./panelRules";
 import {
   ALL_GAMES,
   DEFAULT_GAME,
@@ -3679,7 +3679,7 @@ function DevSection() {
             Navigation.NavigateToExternalWeb(
               "https://github.com/RedRanger14/decky-nexus/issues/new" +
                 `?title=${encodeURIComponent(`[${game.displayName}] `)}` +
-                `&body=${encodeURIComponent((r?.body ?? "").slice(0, 5500))}`
+                `&body=${encodeURIComponent(fitReportBody(r?.body ?? ""))}`
             );
           }}
         >

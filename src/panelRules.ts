@@ -1006,3 +1006,35 @@ export function pauseAllControl(
     label: paused ? "▶ Resume" : "⏸ Pause all",
   };
 }
+
+/** Trim a report body so the finished GitHub URL is short enough to load.
+ *
+ * GitHub answers an over-long issue URL with "Whoops, something went wrong!"
+ * and a link to their support, which tells the user nothing. Our cap was on
+ * the RAW body, but percent-encoding roughly triples it: newlines, braces and
+ * quotes all become %XX, so 5500 characters of body became a URL of about
+ * 15000 and GitHub refused it.
+ *
+ * So the budget is measured after encoding, and whole lines are dropped from
+ * the end - the log tail is last in the body, which makes it the first thing
+ * to go and the least missed. The reader keeps the setup summary and the mod
+ * list, and is told the log was cut.
+ */
+export function fitReportBody(body: string, budget = 4000): string {
+  if (encodeURIComponent(body).length <= budget) return body;
+  const note = "\n\n_(log truncated to fit a GitHub link)_";
+  const lines = body.split("\n");
+  while (lines.length > 1) {
+    lines.pop();
+    const trimmed = lines.join("\n") + note;
+    if (encodeURIComponent(trimmed).length <= budget) return trimmed;
+  }
+  // Nothing left to drop by lines: cut hard rather than return something
+  // that cannot load. Cut on a character boundary encodeURIComponent is
+  // happy with by re-encoding after the slice.
+  let cut = body.slice(0, budget / 3);
+  while (cut.length && encodeURIComponent(cut).length > budget) {
+    cut = cut.slice(0, -50);
+  }
+  return cut + note;
+}
