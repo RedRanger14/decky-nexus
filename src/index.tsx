@@ -3633,7 +3633,7 @@ function AccountSection() {
       <PanelSectionRow>
         <TextField
           label="Personal API key"
-          description="nexusmods.com → account settings → API keys. A Nexus Mods Premium account is required for downloads."
+          description="nexusmods.com, your profile picture, Site preferences, API Keys, then scroll to the bottom. A Nexus Mods Premium account is required for downloads."
           bIsPassword={true}
           value={draft}
           onChange={(e) => setDraft(e?.target?.value ?? "")}

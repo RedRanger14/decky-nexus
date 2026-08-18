@@ -68,6 +68,33 @@ hardware, so the list grows slowly and on purpose.
 Not supported yet: manual load order editing, Vortex profile import, and
 mods that need a Windows tool to install.
 
+## How to use it
+
+The plugin shows mods for **the game you are currently looking at**, so it
+needs to know which game you mean. There are two ways to tell it, and both
+are things you were probably doing anyway:
+
+- **Open the game's page in your library.** Select the game in Steam so its
+  page is on screen, then open the Quick Access Menu. That is enough, the
+  game does not need to be running.
+- **Or launch the game.** While it is running, the plugin is scoped to it.
+
+If you open the plugin from the Steam home screen or a menu, it has no game
+to work with and will say so rather than guess.
+
+From there:
+
+- **Store** browses that game's mods and collections, with search and sort.
+- **Downloads** shows what is in flight, and lets you pause everything.
+- **My Mods** lists what is installed, and switches any of it on or off.
+- **Updates** checks the installed mods against Nexus.
+- **Health** reads the game's own logs and says what is actually broken,
+  which is the page to open when something does not work.
+
+Mods apply the next time the game starts. Nothing is written into the game
+until you install something, and every supported game can be put back to
+vanilla from the plugin.
+
 ## What you need
 
 - **A Nexus Mods Premium account.** This is not optional. Free accounts
