@@ -56,3 +56,25 @@ cli/
 cli/*
 cli/decky
 .test-build/
+
+# ---- internal docs -------------------------------------------------------
+# The repo is public. These are working notes, business decisions, unsent
+# letters, API findings from an employee's access, and a candid account of
+# how the project is run. None of it is secret exactly, but none of it is
+# addressed to strangers either, and some of it (the Decky submission
+# letter, the free-user business decision, the internal API notes) reads
+# very differently without the room it was written in.
+#
+# Kept locally, ignored here. docs/install-flow.md stays in the repo because
+# it documents what a user is asked to run.
+docs/crucible.md
+docs/free-user-design.md
+docs/shipping-plan.md
+docs/decky-submission-letter.md
+docs/feedback-plan.md
+docs/nexus-v3-api-notes.md
+docs/api-request-*.md
+docs/how-we-work.md
+docs/games-1.0-roadmap.md
+docs/gate-to-sovngarde-findings.md
+docs/research/
