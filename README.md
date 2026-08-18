@@ -137,7 +137,7 @@ first, then the key gets pasted onto the end of it.
 5. **Now go and get your Nexus Mods API key.**
 
    Back in the browser: log in to [Nexus Mods](https://www.nexusmods.com) ->
-   your profile picture, top right -> **Account settings** -> **API Keys** in
+   your profile picture, top right -> **Site preferences** -> **API Keys** in
    the left-hand menu -> scroll to the very bottom -> copy the **Personal API
    Key**.
 
