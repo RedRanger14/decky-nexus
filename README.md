@@ -122,11 +122,9 @@ right-click -> Paste. If you have no keyboard attached, **Steam button + X**
 brings up the on-screen one.
 
 **6. Type your password when it asks.** Nothing appears on screen as you
-type, which is normal. This is the password for the Deck itself; if you have
-never set one, run `passwd` first and pick one.
-
-*(Decky owns its plugin folder as root, so installing anything into it needs
-your password. Decky's own installer asks for the same thing.)*
+type, which is normal. It is the same password you set when you installed
+Decky, because Decky owns its plugin folder as root and installing into it
+needs permission.
 
 **7. Wait for it to say `Done`.** It prints each step as it goes: finding the
 release, downloading, extracting, installing, restarting Decky.
@@ -140,15 +138,25 @@ desktop.
 The panel footer shows the version and the words `unofficial beta`. If your
 game is supported and installed, it will already have found it.
 
-That is Desktop Mode done with. Browsing, installing mods, collections,
-health checks and updates all happen from the Quick Access Menu on the
-controller, and you will not need to go back there.
+That is Desktop Mode done with for using the plugin. Browsing, installing
+mods, collections and health checks all happen from the Quick Access Menu on
+the controller.
+
+Updating is the one exception, and it is the same two minutes: see below.
 
 ### Updating
 
-Run the same line again. It fetches the newest release, checks it is complete
-before removing the old version, and restarts Decky. Your installed mods, API
-key and settings live outside the plugin folder and are not touched.
+Repeat the install: Desktop Mode, Konsole, same line. It fetches the newest
+release, checks it is complete before removing the old version, and restarts
+Decky. Your installed mods, API key and settings live outside the plugin
+folder and are not touched.
+
+There is no automatic update yet, and the plugin cannot update itself:
+Decky's plugin folder is owned by root, which is why installing needs your
+password in the first place. Automatic updates need this plugin to be served
+from a Decky store, which is planned but does not exist yet. Until then,
+check [Releases](https://github.com/RedRanger14/decky-nexus/releases) when
+you fancy it. Nothing breaks by staying on an older version.
 
 ### If you would rather not run a script
 
