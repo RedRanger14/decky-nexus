@@ -128,9 +128,9 @@ first, then the key gets pasted onto the end of it.
 
 4. **Paste it into Konsole, but do NOT press Enter yet.**
 
-   **Right-click in the Konsole window -> Paste.** Ctrl+Shift+V does not work
-   from the Deck's on-screen keyboard. On the touchscreen, hold a finger down
-   to right-click.
+   **Right-click in the Konsole window -> Paste.** The easiest way to
+   right-click on a Deck is the **left trigger (L2)**. Ctrl+Shift+V does not
+   work from the on-screen keyboard, so use right-click.
 
    The line ends with `--` and nothing after it. Your key goes there.
 
@@ -143,8 +143,8 @@ first, then the key gets pasted onto the end of it.
 
 6. **Back in Konsole, paste the key on the end, then press Enter.**
 
-   Right-click -> Paste again. The cursor is already at the end of the line,
-   so the key lands after the `--`. Then Enter.
+   Left trigger (L2) to right-click -> Paste again. The cursor is already at
+   the end of the line, so the key lands after the `--`. Then Enter.
 
    *Rather not paste your key into a terminal? Press Enter without it. You can
    add the key on the plugin's Settings page instead, though you will be
