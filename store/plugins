@@ -1,0 +1,22 @@
+[
+  {
+    "id": 1,
+    "name": "Nexus Mods",
+    "author": "Michael Finney",
+    "description": "Browse, install and manage Nexus Mods for the game you are playing, from Gaming Mode on a controller. Unofficial Decky Loader plugin.",
+    "tags": [
+      "mods",
+      "nexus",
+      "unofficial",
+      "beta"
+    ],
+    "image_url": "https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/store/banner.png",
+    "versions": [
+      {
+        "name": "0.259.0",
+        "hash": "68e1b268afb563e351935bb180006436f9bdc7c65367e2e156994b288bb5b578",
+        "artifact": "https://github.com/RedRanger14/decky-nexus/releases/download/v0.259.0/Nexus-Mods-0.259.0.zip"
+      }
+    ]
+  }
+]
