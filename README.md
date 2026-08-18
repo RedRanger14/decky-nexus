@@ -99,19 +99,47 @@ and it is the whole economy these mods run on.
 You need [Decky Loader](https://decky.xyz) first: this is a Decky plugin, not
 a standalone app.
 
-Open a terminal on the Deck (Steam button -> Power -> Switch to Desktop, then
-open **Konsole**) and paste this:
+It takes about two minutes, once. You will not need Desktop Mode again after
+this.
+
+**1. Switch to Desktop Mode.** Steam button -> **Power** -> **Switch to
+Desktop**. The Deck reboots into a desktop.
+
+**2. Open this page on the Deck**, in the browser there. You want to copy the
+command below rather than type it, because it is long and a single wrong
+character looks exactly like a broken install.
+
+**3. Copy this line:**
 
 ```sh
 curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.sh | sh
 ```
 
-It asks for your password, because Decky owns its plugin folder. Then return
-to Gaming Mode, open the Quick Access Menu, press the plug icon, and Nexus
-Mods is there.
+**4. Open Konsole.** Bottom-left menu (the launcher icon) -> type `konsole`
+-> open it.
 
-That is the whole install. It is the same shape as Decky's own installer, and
-it is deliberately the only thing you have to type.
+**5. Paste and press Enter.** Pasting in Konsole is **Ctrl+Shift+V**, or
+right-click -> Paste. If you have no keyboard attached, **Steam button + X**
+brings up the on-screen one.
+
+**6. Type your password when it asks.** Nothing appears on screen as you
+type, which is normal. This is the password for the Deck itself; if you have
+never set one, run `passwd` first and pick one.
+
+*(Decky owns its plugin folder as root, so installing anything into it needs
+your password. Decky's own installer asks for the same thing.)*
+
+**7. Wait for it to say `Done`.** It prints each step as it goes: finding the
+release, downloading, extracting, installing, restarting Decky.
+
+**8. Return to Gaming Mode.** The **Return to Gaming Mode** icon is on the
+desktop.
+
+**9. Open the Quick Access Menu** (the **...** button) -> the **plug** icon
+-> **Nexus Mods**.
+
+The panel footer shows the version and the words `unofficial beta`. If your
+game is supported and installed, it will already have found it.
 
 ### Updating
 
