@@ -99,8 +99,7 @@ and it is the whole economy these mods run on.
 You need [Decky Loader](https://decky.xyz) first: this is a Decky plugin, not
 a standalone app.
 
-This is the only part that needs Desktop Mode, and it takes about two
-minutes. Everything after it happens in Gaming Mode on the controller.
+Installing is done from Desktop Mode and takes about two minutes.
 
 **1. Switch to Desktop Mode.** Steam button -> **Power** -> **Switch to
 Desktop**. The Deck reboots into a desktop.
@@ -140,6 +139,10 @@ desktop.
 
 The panel footer shows the version and the words `unofficial beta`. If your
 game is supported and installed, it will already have found it.
+
+That is Desktop Mode done with. Browsing, installing mods, collections,
+health checks and updates all happen from the Quick Access Menu on the
+controller, and you will not need to go back there.
 
 ### Updating
 
