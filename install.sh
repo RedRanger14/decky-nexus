@@ -32,8 +32,19 @@ PLUGIN_DIR="$HOME/homebrew/plugins"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-say() { printf '%s\n' "$*"; }
-die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+# Everything printed is also appended to a log, so a failed install can be
+# read afterwards instead of photographed. Two failures so far have had their
+# message only on screen, and the second one was gone before anyone saw it.
+LOG="/tmp/nexus-install.log"
+: > "$LOG" 2>/dev/null || LOG="/dev/null"
+
+say() { printf '%s\n' "$*"; printf '%s\n' "$*" >> "$LOG"; }
+die() {
+    printf 'ERROR: %s\n' "$*" >&2
+    printf 'ERROR: %s\n' "$*" >> "$LOG"
+    printf 'A log of this attempt is at %s\n' "$LOG" >&2
+    exit 1
+}
 
 say "Nexus Mods plugin installer"
 say ""
@@ -83,7 +94,7 @@ say "Found $VERSION"
 # ---- download and verify ---------------------------------------------------
 
 say "Downloading..."
-curl -fsSL "$URL" -o "$TMP/plugin.zip" || die "download failed: $URL"
+curl -fsSL "$URL" -o "$TMP/plugin.zip" 2>>"$LOG" || die "download failed: $URL"
 
 python3 - "$TMP/plugin.zip" "$PLUGIN" <<'PY' || die "the downloaded file is not a usable plugin zip"
 import sys, zipfile
@@ -100,7 +111,7 @@ if need not in names:
 PY
 
 say "Extracting..."
-python3 -m zipfile -e "$TMP/plugin.zip" "$TMP/stage"
+python3 -m zipfile -e "$TMP/plugin.zip" "$TMP/stage" 2>>"$LOG"
 [ -f "$TMP/stage/$PLUGIN/plugin.json" ] || die "extraction did not produce $PLUGIN/plugin.json"
 [ -f "$TMP/stage/$PLUGIN/main.py" ] || die "extraction is missing main.py"
 [ -f "$TMP/stage/$PLUGIN/dist/index.js" ] || die "extraction is missing dist/index.js"
@@ -124,14 +135,14 @@ sudo sh -c "
     chown -R $(id -u):$(id -g) '$PLUGIN_DIR/.$PLUGIN.new' &&
     rm -rf '$PLUGIN_DIR/$PLUGIN' &&
     mv '$PLUGIN_DIR/.$PLUGIN.new' '$PLUGIN_DIR/$PLUGIN'
-" || die "install failed - your previous version, if any, is untouched"
+" 2>>"$LOG" || die "install failed - your previous version, if any, is untouched"
 
 # Restarting Decky restarts part of Steam's UI with it, so Decky loses its
 # own frontend connection and shows a toast saying something failed. The
 # install has already finished by then. Said out loud here because a user
 # who reads "failed" after "Done" will believe the toast over the terminal.
 say "Restarting Decky (Steam's interface will flicker)..."
-sudo systemctl restart plugin_loader || die "could not restart Decky"
+sudo systemctl restart plugin_loader 2>>"$LOG" || die "could not restart Decky"
 
 # Evidence, not optimism: read the version back off disk before claiming
 # success.
