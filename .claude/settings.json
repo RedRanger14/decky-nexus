@@ -42,7 +42,8 @@
       "Bash(awk -F: '$1>3745')",
       "PowerShell(.\\\\release.ps1)",
       "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File release.ps1)",
-      "Bash(ssh-keygen -R 192.168.50.202)"
+      "Bash(ssh-keygen -R 192.168.50.202)",
+      "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/install.sh)"
     ]
   }
 }
