@@ -137,31 +137,12 @@ sudo sh -c "
     mv '$PLUGIN_DIR/.$PLUGIN.new' '$PLUGIN_DIR/$PLUGIN'
 " 2>>"$LOG" || die "install failed - your previous version, if any, is untouched"
 
-# Restarting Decky restarts part of Steam's UI with it, so Decky loses its
-# own frontend connection and shows a toast saying something failed. The
-# install has already finished by then. Said out loud here because a user
-# who reads "failed" after "Done" will believe the toast over the terminal.
-say "Restarting Decky (Steam's interface will flicker)..."
-sudo systemctl restart plugin_loader 2>>"$LOG" || die "could not restart Decky"
+# The key is written BEFORE Decky restarts. The other way round - restart,
+# then ask - is what shipped first, and it does not work: the plugin loads,
+# reads settings with no key in them, and caches that. Michael's key was
+# written 35 seconds after the plugin had already started, so Gaming Mode
+# showed him signed out with an empty key field.
 
-# Evidence, not optimism: read the version back off disk before claiming
-# success.
-INSTALLED="$(python3 -c '
-import json, sys
-try:
-    print(json.load(open(sys.argv[1]))["version"])
-except Exception:
-    sys.exit(1)
-' "$PLUGIN_DIR/$PLUGIN/package.json" 2>/dev/null)"     || die "installed, but could not read the version back - check Decky's plugin list"
-
-say ""
-say "Done. Version $INSTALLED is installed."
-say ""
-say "If Decky showed a toast saying something failed, ignore it: restarting"
-say "Decky disconnects its own interface for a moment and it reports that as"
-say "a failure. The plugin is installed - this script just read it back."
-say "Open the Quick Access Menu, press the plug icon, and Nexus Mods is there."
-say ""
 # Ask for the key rather than making it an argument. Passing it on the end of
 # the command means the user has to land a paste after a space, and on a
 # handheld they do not: Michael's paste produced `sh -s --YlpTRX...`, which
@@ -205,3 +186,31 @@ else
     say "No API key saved. Add one on the plugin's Settings page, or run this"
     say "script again and paste the key when it asks."
 fi
+
+
+# Restarting Decky restarts part of Steam's UI with it, so Decky loses its
+# own frontend connection and shows a toast saying something failed. The
+# install has already finished by then. Said out loud here because a user
+# who reads "failed" after "Done" will believe the toast over the terminal.
+say "Restarting Decky (Steam's interface will flicker)..."
+sudo systemctl restart plugin_loader 2>>"$LOG" || die "could not restart Decky"
+
+# Evidence, not optimism: read the version back off disk before claiming
+# success.
+INSTALLED="$(python3 -c '
+import json, sys
+try:
+    print(json.load(open(sys.argv[1]))["version"])
+except Exception:
+    sys.exit(1)
+' "$PLUGIN_DIR/$PLUGIN/package.json" 2>/dev/null)"     || die "installed, but could not read the version back - check Decky's plugin list"
+
+say ""
+say "Done. Version $INSTALLED is installed."
+say ""
+say "If Decky showed a toast saying something failed, ignore it: restarting"
+say "Decky disconnects its own interface for a moment and it reports that as"
+say "a failure. The plugin is installed - this script just read it back."
+say "Open the Quick Access Menu, press the plug icon, and Nexus Mods is there."
+say ""
+say "Open the Quick Access Menu, press the plug icon, and Nexus Mods is there."
