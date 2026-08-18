@@ -55,7 +55,8 @@
       "Bash(awk '{print $5}')",
       "Bash(scp -o ConnectTimeout=40 \"deck@192.168.50.202:/home/deck/Pictures/Screenshots/Screenshot_20260818_101555.png\" \"C:/Users/micha/AppData/Local/Temp/claude/c--Users-micha-deckyNexus/08c3f3d8-f1ea-4da8-9539-bef4a1a6d97e/scratchpad/shot.png\")",
       "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i6.sh)",
-      "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i7.sh)"
+      "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i7.sh)",
+      "Bash(python tools/makestore.py dist/Nexus-Mods-0.260.0.zip)"
     ]
   }
 }
