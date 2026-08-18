@@ -106,56 +106,57 @@ Decky needs it and so does this. In Desktop Mode open **Konsole** and run
 `passwd`. It asks for a new password twice and nothing appears as you type,
 which is normal. Then install Decky, then come back here.
 
+There is one clipboard, so the order below matters: the command goes in
+first, then the key gets pasted onto the end of it.
+
 1. **Switch to Desktop Mode.**
 
    Steam button -> **Power** -> **Switch to Desktop**. The Deck reboots into
    a desktop.
 
-2. **Get your Nexus Mods API key.**
+2. **Open this page on the Deck**, in the browser there, and open **Konsole**
+   as well.
 
-   Do this first, because **the clipboard does not survive the switch back to
-   Gaming Mode**. Fetching the key afterwards means coming back to Desktop
-   Mode for it.
+   Konsole is in the bottom-left menu (the launcher icon): type `konsole` and
+   open it. Leave both open, you will switch between them.
 
-   In the browser: log in to [Nexus Mods](https://www.nexusmods.com) -> your
-   profile picture, top right -> **Account settings** -> **API Keys** in the
-   left-hand menu -> scroll to the very bottom -> copy the **Personal API
-   Key**.
-
-3. **Open this page on the Deck**, in the browser there.
-
-   You want to copy the command below rather than type it: it is long, and a
-   single wrong character produces a failure that looks exactly like a broken
-   install.
-
-4. **Open Konsole.**
-
-   Bottom-left menu (the launcher icon) -> type `konsole` -> open it.
-
-5. **Paste this line, put your API key on the end, and press Enter.**
+3. **Copy this line.**
 
    ```sh
-   curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.sh | sh -s -- YOUR_KEY_HERE
+   curl -L https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/install.sh | sh -s --
    ```
 
-   Replace `YOUR_KEY_HERE` with the key you copied. One command does
-   everything: it installs the plugin and saves your key.
+4. **Paste it into Konsole, but do NOT press Enter yet.**
 
    **Right-click in the Konsole window -> Paste.** Ctrl+Shift+V does not work
    from the Deck's on-screen keyboard. On the touchscreen, hold a finger down
    to right-click.
 
-   *Rather not paste your key into a terminal? Leave it off the end and run
-   the line as-is. You can add the key later on the plugin's Settings page,
-   though you will be typing it on a controller.*
+   The line ends with `--` and nothing after it. Your key goes there.
 
-6. **Type your password when it asks.**
+5. **Now go and get your Nexus Mods API key.**
+
+   Back in the browser: log in to [Nexus Mods](https://www.nexusmods.com) ->
+   your profile picture, top right -> **Account settings** -> **API Keys** in
+   the left-hand menu -> scroll to the very bottom -> copy the **Personal API
+   Key**.
+
+6. **Back in Konsole, paste the key on the end, then press Enter.**
+
+   Right-click -> Paste again. The cursor is already at the end of the line,
+   so the key lands after the `--`. Then Enter.
+
+   *Rather not paste your key into a terminal? Press Enter without it. You can
+   add the key on the plugin's Settings page instead, though you will be
+   typing it on a controller.*
+
+7. **Type your password when it asks.**
 
    Nothing appears on screen as you type, which is normal. It is the same
    password you set when you installed Decky, because Decky owns its plugin
    folder as root and installing into it needs permission.
 
-7. **Wait for it to say `Done`.**
+8. **Wait for it to say `Done`.**
 
    It prints each step as it goes: finding the release, downloading,
    extracting, installing, restarting Decky, saving your key.
@@ -166,18 +167,18 @@ which is normal. Then install Decky, then come back here.
    failure. The terminal is the one telling the truth: if it says `Done`, it
    is done.
 
-8. **Return to Gaming Mode.**
+9. **Return to Gaming Mode.**
 
    The **Return to Gaming Mode** icon is on the desktop.
 
-9. **Open the plugin.**
+10. **Open the plugin.**
 
-   Quick Access Menu (the **...** button) -> the **plug** icon -> **Nexus
-   Mods**.
+    Quick Access Menu (the **...** button) -> the **plug** icon -> **Nexus
+    Mods**.
 
-   The panel footer shows the version and the words `unofficial beta`. If
-   your game is supported and installed, it will already have found it, and
-   your key is already in place.
+    The panel footer shows the version and the words `unofficial beta`. If
+    your game is supported and installed, it will already have found it, and
+    your key is already in place.
 
 That is Desktop Mode done with for using the plugin. Browsing, installing
 mods, collections and health checks all happen from the Quick Access Menu on
