@@ -163,7 +163,12 @@ if [ -n "$API_KEY" ]; then
     # Written to the SETTINGS directory, not the plugin directory: settings
     # are owned by the user, survive updates, and an update never touches
     # them. Also means this works before the plugin has ever been opened.
-    SET_DIR="$HOME/homebrew/settings/Nexus-Mods"
+    # Named after the plugin, because that is what Decky names it: the
+    # plugin folder is "Nexus Mods" and so is its settings folder. This said
+    # "Nexus-Mods" - the hyphenated name used by the DEV deploy script - so
+    # the key was written correctly to a directory the plugin never reads,
+    # and Michael got an empty key field three runs in a row.
+    SET_DIR="$HOME/homebrew/settings/$PLUGIN"
     mkdir -p "$SET_DIR"
     python3 -c 'import json, os, sys
 path, key = sys.argv[1], sys.argv[2].strip()
