@@ -99,8 +99,8 @@ and it is the whole economy these mods run on.
 You need [Decky Loader](https://decky.xyz) first: this is a Decky plugin, not
 a standalone app.
 
-It takes about two minutes, once. You will not need Desktop Mode again after
-this.
+This is the only part that needs Desktop Mode, and it takes about two
+minutes. Everything after it happens in Gaming Mode on the controller.
 
 **1. Switch to Desktop Mode.** Steam button -> **Power** -> **Switch to
 Desktop**. The Deck reboots into a desktop.
