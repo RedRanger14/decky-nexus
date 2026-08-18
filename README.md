@@ -127,6 +127,10 @@ which is normal. Then install Decky, then come back here.
    right-click on a Deck is the **left trigger (L2)**. Ctrl+Shift+V does not
    work from the on-screen keyboard.
 
+   Do **not** put `sudo` in front of it. The script asks for your password
+   itself, at the one step that needs it. Running the whole thing as root
+   looks in the wrong home folder and fails.
+
 4. **Type your password when it asks.**
 
    Nothing appears on screen as you type, which is normal. It is the same

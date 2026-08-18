@@ -40,6 +40,17 @@ say ""
 
 # ---- checks before anything is downloaded ---------------------------------
 
+# Do NOT run this whole script as root. As root, $HOME is /root, so it would
+# look for /root/homebrew, find nothing, and report Decky as missing on a
+# machine that has it - or worse, install somewhere nothing reads. The script
+# calls sudo itself for the two steps that need it. A reasonable person will
+# try `curl | sudo sh` at some point, so say why rather than misbehave.
+if [ "$(id -u)" = "0" ]; then
+    die "do not run this with sudo.
+Run it as your normal user - it will ask for your password when it needs it:
+  curl -L https://raw.githubusercontent.com/$REPO/main/install.sh | sh"
+fi
+
 [ -d "$HOME/homebrew" ] || die "Decky Loader is not installed (no ~/homebrew).
 Install Decky first: https://decky.xyz"
 
