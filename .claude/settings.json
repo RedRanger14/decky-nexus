@@ -60,7 +60,16 @@
       "Bash(python tools/makestore.py dist/Nexus-Mods-0.261.0.zip)",
       "Bash(curl -s -o /dev/null -w \"store/plugins: HTTP %{http_code}\\\\n\" \"https://redranger14.github.io/decky-nexus/store/plugins\")",
       "Bash(curl -s \"https://redranger14.github.io/decky-nexus/store/plugins?sort_by=name\")",
-      "Bash(python -m pip show pyflakes)"
+      "Bash(python -m pip show pyflakes)",
+      "Bash(curl -fsSL \"https://api.github.com/repos/RedRanger14/decky-nexus/actions/runs?per_page=2\")",
+      "Bash(curl -fsSL \"https://api.github.com/repos/RedRanger14/decky-nexus/actions/runs/32127514985/jobs\")",
+      "Bash(curl -fsSL \"https://api.github.com/repos/RedRanger14/decky-nexus/actions/runs/32127513273\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d['name'], '|', d['path']\\)\")",
+      "Bash(scp -q -o ConnectTimeout=30 main.py deck@192.168.50.202:/tmp/citest/)",
+      "Bash(scp -q -r -o ConnectTimeout=30 tests deck@192.168.50.202:/tmp/citest/)",
+      "Bash(scp -q -o ConnectTimeout=30 tests/test_backend.py deck@192.168.50.202:/tmp/citest/tests/)",
+      "Bash(scp -q -o ConnectTimeout=30 package.json deck@192.168.50.202:/tmp/citest/)",
+      "Bash(scp -q -o ConnectTimeout=40 src/api.ts src/CollectionPage.tsx deck@192.168.50.202:/tmp/citest/src/)"
     ]
   }
 }

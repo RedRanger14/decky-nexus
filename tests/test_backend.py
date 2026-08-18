@@ -11658,10 +11658,21 @@ class TestDataDirInstallEndToEnd(unittest.TestCase):
             "Mixed Case",
             ["Data/Scripts/Source/a.psc", "Data/scripts/source/b.psc"],
         )
+        # ONE directory, whichever casing won. The point of the test is that
+        # a mod naming Data/Scripts and Data/scripts does not produce two
+        # folders where the game reads one - not which of the two spellings
+        # ends up on disk. Asserting "Scripts" specifically passed on
+        # Windows, where the filesystem folds case for you, and failed on
+        # Linux, where the first spelling seen wins. CI runs on Linux.
         scripts = [d for d in os.listdir(self.data) if d.lower() == "scripts"]
-        self.assertEqual(scripts, ["Scripts"])
+        self.assertEqual(len(scripts), 1, scripts)
+        source = [
+            d for d in os.listdir(os.path.join(self.data, scripts[0]))
+            if d.lower() == "source"
+        ]
+        self.assertEqual(len(source), 1, source)
         self.assertCountEqual(
-            os.listdir(os.path.join(self.data, "Scripts", "Source")),
+            os.listdir(os.path.join(self.data, scripts[0], source[0])),
             ["a.psc", "b.psc"],
         )
 
