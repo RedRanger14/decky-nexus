@@ -69,7 +69,10 @@
       "Bash(scp -q -r -o ConnectTimeout=30 tests deck@192.168.50.202:/tmp/citest/)",
       "Bash(scp -q -o ConnectTimeout=30 tests/test_backend.py deck@192.168.50.202:/tmp/citest/tests/)",
       "Bash(scp -q -o ConnectTimeout=30 package.json deck@192.168.50.202:/tmp/citest/)",
-      "Bash(scp -q -o ConnectTimeout=40 src/api.ts src/CollectionPage.tsx deck@192.168.50.202:/tmp/citest/src/)"
+      "Bash(scp -q -o ConnectTimeout=40 src/api.ts src/CollectionPage.tsx deck@192.168.50.202:/tmp/citest/src/)",
+      "Bash(curl -sf -o /dev/null \"https://redranger14.github.io/decky-nexus/store/plugins.json\")",
+      "Bash(curl -sI \"https://redranger14.github.io/decky-nexus/store/plugins.json\")",
+      "Bash(curl -s \"https://redranger14.github.io/decky-nexus/store/plugins.json?sort_by=name\")"
     ]
   }
 }
