@@ -1086,9 +1086,17 @@ def _download_forbidden_reason(body: str, is_premium=None) -> str:
         # Premium and still refused: whatever this is, it is not the
         # account, and guessing again would repeat the original mistake.
         return message or "Nexus refused the download for this file"
+    # Not premium, and the body did not blame the file. Say the actual
+    # situation rather than describing our roadmap: Michael tried a free
+    # account and got a message that read like a missing feature instead of
+    # "this will not work for you". Free accounts genuinely cannot download
+    # through the API at all - the website's own flow hands a browser a
+    # one-off token, which is not something a Gaming Mode plugin can use.
     return (
-        "Direct downloads need a Premium account "
-        "(free-user flow not implemented yet)"
+        "This does not work with a free Nexus Mods account. Downloading mods "
+        "needs Premium: free accounts can only download through the Nexus "
+        "website in a browser, which this plugin cannot do for you. You can "
+        "browse and read everything here, but nothing will install."
     )
 
 
@@ -11844,9 +11852,13 @@ query Link($slug: String!, $domainName: String!) {
                     link_url, headers=_api_headers(api_key), ssl=SSL_CONTEXT
                 ) as resp:
                     if resp.status == 403:
+                        # One wording for this, wherever it happens.
                         return {
                             "ok": False,
-                            "error": "Direct downloads need a Premium account",
+                            "error": _download_forbidden_reason(
+                                await resp.text(),
+                                _load_settings().get("is_premium"),
+                            ),
                         }
                     if resp.status != 200:
                         return {

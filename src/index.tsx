@@ -3596,8 +3596,10 @@ function AccountSection() {
         {!auth.is_premium && (
           <PanelSectionRow>
             <Field label="⚠ Premium required">
-              Downloads need a Nexus Mods Premium account — free accounts
-              can browse, but installs won't work on this device.
+              Nothing will install on a free account. Downloading mods needs
+              Nexus Mods Premium: free accounts can only download through the
+              website in a browser, which cannot be done from Gaming Mode.
+              Browsing here works fine.
             </Field>
           </PanelSectionRow>
         )}

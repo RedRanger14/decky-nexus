@@ -5483,9 +5483,12 @@ class TestDownloadForbiddenReason(unittest.TestCase):
             )
 
     def test_a_free_account_still_gets_the_premium_message(self):
-        # The original message was right for the case it was written for.
+        # Wording changed 2026-08-18 - "Premium account" became "needs
+        # Premium" in a sentence that leads with the situation rather than
+        # the requirement. Asserting the fact, not the phrasing.
         msg = main._download_forbidden_reason('{"code":403}', False)
-        self.assertIn("Premium account", msg)
+        self.assertIn("Premium", msg)
+        self.assertIn("free", msg.lower())
 
     def test_a_premium_account_is_never_told_to_get_premium(self):
         # The bug, stated as a test. Whatever an unrecognised 403 means on
@@ -13094,6 +13097,42 @@ class TestTwoModsCannotOwnTheSameFile(unittest.TestCase):
         fn = source[source.index("def _me3_asset_clash"):]
         fn = fn[:fn.index("def _preview_has_dll")]
         self.assertIn('not rec.get("enabled", True)', fn)
+
+
+class TestFreeAccountIsToldPlainly(unittest.TestCase):
+    """Michael tried a free account: the download failed, correctly, but the
+    message read like a missing feature rather than "this will not work for
+    you". A free user deserves to know where they stand in one sentence."""
+
+    def test_a_free_account_is_told_it_will_not_work(self):
+        msg = main._download_forbidden_reason("{}", False)
+        self.assertIn("free", msg.lower())
+        self.assertIn("Premium", msg)
+        # No roadmap language: "not implemented yet" reads as "coming soon".
+        self.assertNotIn("not implemented", msg.lower())
+        self.assertNotIn("yet", msg.lower())
+
+    def test_a_deleted_mod_does_not_blame_the_account(self):
+        # The original bug this function was written for: telling a Premium
+        # user to buy Premium because an author deleted a mod.
+        msg = main._download_forbidden_reason(
+            '{"code":403,"message":"Mod not available: 502"}', False)
+        self.assertIn("removed", msg.lower())
+        self.assertNotIn("Premium", msg)
+
+    def test_moderation_is_named_as_moderation(self):
+        msg = main._download_forbidden_reason(
+            '{"code":403,"message":"File currently not available. X is '
+            'under moderation"}', True)
+        self.assertIn("reviewed", msg.lower())
+
+    def test_one_wording_everywhere(self):
+        # A second copy of this message drifted for weeks. Both 403 paths
+        # now call the same function.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertNotIn('"error": "Direct downloads need a Premium', source)
+        self.assertGreaterEqual(source.count("_download_forbidden_reason("), 3)
 
 
 class TestABadgeCannotOverstate(unittest.TestCase):
