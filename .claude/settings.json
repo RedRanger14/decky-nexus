@@ -57,7 +57,10 @@
       "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i6.sh)",
       "Bash(scp -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i7.sh)",
       "Bash(python tools/makestore.py dist/Nexus-Mods-0.260.0.zip)",
-      "Bash(python tools/makestore.py dist/Nexus-Mods-0.261.0.zip)"
+      "Bash(python tools/makestore.py dist/Nexus-Mods-0.261.0.zip)",
+      "Bash(curl -s -o /dev/null -w \"store/plugins: HTTP %{http_code}\\\\n\" \"https://redranger14.github.io/decky-nexus/store/plugins\")",
+      "Bash(curl -s \"https://redranger14.github.io/decky-nexus/store/plugins?sort_by=name\")",
+      "Bash(python -m pip show pyflakes)"
     ]
   }
 }
