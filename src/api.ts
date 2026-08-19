@@ -1174,6 +1174,9 @@ export const getHealthCheck = callable<
      * Already done - listed so the page can say so rather than changing
      * someone's settings silently. */
     debug_quieted?: string[];
+    /** Bannerlord mods whose rejected shader cache we removed, so the game
+     * can boot and recompile them. */
+    shader_caches_fixed?: string[];
     needs_mods?: {
       name: string;
       mod_id?: number;

@@ -1423,6 +1423,124 @@ def _plugin_log_tail(count: int) -> str:
         return ""
 
 
+def _prefix_drive_c(app_id: int, *parts: str) -> str:
+    """A path inside the Proton prefix's C: drive, outside the user profile.
+
+    Bannerlord writes its engine logs to ProgramData, not Documents, which is
+    where the one line that explains an unbootable game lives.
+    """
+    return os.path.join(
+        decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "compatdata",
+        str(int(app_id)), "pfx", "drive_c", *parts,
+    )
+
+
+# ---- Bannerlord: a module's stale shader cache stops the game booting ------
+# Open Source Armory ships a shader cache compiled 9 July 2026. The game
+# updated to build 119303 on 11 August, rejects the cache, and CRASHES at the
+# splash screen. Nothing reaches the user: no message, no menu, and the crash
+# uploader then fails under Proton because dxdiag does not exist, so they get
+# a dialog about collecting files and a game that will not start.
+#
+# The game names the cause exactly, in its own log:
+#
+#   rgl_post_warning_line: Shader cache version of the external module
+#   (OpenSourceArmory) is invalid.
+#
+# Deleting that module's Shaders folder fixes it completely - the game
+# compiles the shaders itself on the next launch, slowly once and then never
+# again. Verified on device: crashed twice with the cache, booted twice
+# without it, and the item XMLs then loaded with an empty error log.
+#
+# Same shape as the Cyberpunk redscript oracle: the game states the problem,
+# so we act on evidence rather than inference.
+_BL_LOG_DIR = ("ProgramData", "Mount and Blade II Bannerlord", "logs")
+_BL_SHADER_INVALID_RE = re.compile(
+    r"[Ss]hader cache version of the external module \(([^)]+)\) is invalid"
+)
+
+
+def _bl_newest_log(app_id: int) -> str:
+    """The newest engine log, or "" - not the errors log, which stays empty."""
+    if not app_id:
+        return ""
+    try:
+        logs = [
+            p for p in glob.glob(
+                _prefix_drive_c(app_id, *_BL_LOG_DIR, "rgl_log_*.txt")
+            )
+            if "errors" not in os.path.basename(p)
+        ]
+        if not logs:
+            return ""
+        return max(logs, key=os.path.getmtime)
+    except OSError:
+        return ""
+
+
+def _bl_invalid_shader_modules(app_id: int) -> list:
+    """Module names the game refused a shader cache for, newest log only."""
+    path = _bl_newest_log(app_id)
+    if not path:
+        return []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return []
+    found = []
+    for name in _BL_SHADER_INVALID_RE.findall(text):
+        name = name.strip()
+        if name and name not in found:
+            found.append(name)
+    return found
+
+
+def _bl_clear_stale_shader_caches(
+    game_domain: str, install_path: str, app_id: int
+) -> list:
+    """Remove rejected shader caches from mods WE installed. Returns names.
+
+    Only our own records are touched. If the game ever complains about an
+    official module's cache that is a game-files problem and deleting from
+    the game's own modules would be a different and much worse thing to do.
+    """
+    names = _bl_invalid_shader_modules(app_id)
+    if not names or not install_path:
+        return []
+    records = _load_settings().get("installed", {}).get(game_domain, {}) or {}
+    ours = {str(k).lower(): k for k in records}
+    ours.update({
+        str((r or {}).get("moduleId") or "").lower(): k
+        for k, r in records.items() if (r or {}).get("moduleId")
+    })
+    fixed = []
+    for name in names:
+        key = ours.get(name.lower())
+        if not key:
+            decky.logger.info(
+                f"BL shader cache rejected for {name!r}, which is not one of "
+                "ours - left alone"
+            )
+            continue
+        shaders = os.path.join(install_path, "Modules", key, "Shaders")
+        if not os.path.isdir(shaders):
+            continue
+        stale = shaders + ".invalid"
+        try:
+            _force_rmtree(stale)
+            shutil.move(shaders, stale)
+        except OSError as e:
+            decky.logger.warning(f"could not move {shaders}: {e}")
+            continue
+        fixed.append(records.get(key, {}).get("name") or key)
+        decky.logger.info(
+            f"BL: removed the rejected shader cache from {key!r} - the game "
+            "will compile its shaders on the next launch"
+        )
+    return fixed
+
+
 def _prefix_user_path(app_id: int, *parts: str) -> str:
     """A path inside the Proton prefix's Windows user profile."""
     return os.path.join(
@@ -14628,6 +14746,14 @@ query CollectionInstructions($slug: String!) {
             )
         else:
             debug_quieted = []
+        # Bannerlord: a module shader cache the game refuses stops it booting
+        # at the splash screen with nothing said to the user. Removed here,
+        # from our own installs only, and reported rather than done silently.
+        shader_caches_fixed = (
+            _bl_clear_stale_shader_caches(game_domain, install_path, app_id)
+            if game_domain == "mountandblade2bannerlord"
+            else []
+        )
         script = _redscript_report(install_path, records)
         # The Bethesda half of the same question. Same authority - the game
         # itself - and the same translation job: the extender names DLLs,
@@ -14951,6 +15077,7 @@ query CollectionInstructions($slug: String!) {
             # Already done, not a task for the user - listed so the report
             # can say so rather than silently changing their settings.
             "debug_quieted": debug_quieted,
+            "shader_caches_fixed": shader_caches_fixed,
             # What the game itself reported, and the only part of this
             # report that is evidence rather than inference.
             "script_log": {

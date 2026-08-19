@@ -224,6 +224,8 @@ export default function HealthCheckPage() {
     already_fixed: { name: string; for: string }[];
     /** Mod debug overlays we switched off in the game's own settings. */
     debug_quieted: string[];
+    /** Bannerlord mods whose rejected shader cache we removed. */
+    shader_caches_fixed: string[];
     known_bad: { name: string; for: string; why: string; mod_id?: number }[];
     se_parked: string[];
     address_library?: { runtime: string; have: string[]; matches: boolean };
@@ -280,6 +282,7 @@ export default function HealthCheckPage() {
                 owned_dlc: r.owned_dlc ?? [],
                 already_fixed: r.already_fixed ?? [],
                 debug_quieted: r.debug_quieted ?? [],
+                shader_caches_fixed: r.shader_caches_fixed ?? [],
                 known_bad: r.known_bad ?? [],
                 script_extender: r.script_extender ?? [],
                 se_parked: r.se_parked ?? [],
@@ -814,6 +817,25 @@ export default function HealthCheckPage() {
             Report a problem
           </ButtonItem>
         </Focusable>
+
+        {(report?.shader_caches_fixed?.length ?? 0) > 0 && (
+          <>
+            <SectionHeading title="Fixed for you" />
+            <FindingCard
+              key="shader-cache"
+              tone="150, 160, 220"
+              icon={<FaPuzzlePiece size={16} />}
+              title="Cleared a shader cache the game refused"
+              detail={
+                `${report!.shader_caches_fixed.join(", ")} shipped a shader ` +
+                "cache built for an older version of the game, and the game " +
+                "refuses it and closes before reaching the menu. Removed, so " +
+                "the game builds its own instead. The next launch takes " +
+                "longer than usual while it does that, once."
+              }
+            />
+          </>
+        )}
 
         {(report?.debug_quieted?.length ?? 0) > 0 && (
           <>

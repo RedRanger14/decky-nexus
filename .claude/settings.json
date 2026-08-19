@@ -86,7 +86,13 @@
       "Bash(scp -q -o ConnectTimeout=20 /tmp/blreq.py deck@192.168.50.77:/tmp/)",
       "Bash(sed -i 's/\\\\[Int!\\\\]/[String!]/; s/\"ids\": \\\\[4, 118, 49\\\\]/\"ids\": [\"4\", \"118\", \"49\"]/' /tmp/blreq.py)",
       "Bash(awk 'NR>=14700 && NR<=14735' main.py)",
-      "Bash(awk 'NR>=14722 && NR<=14742' main.py)"
+      "Bash(awk 'NR>=14722 && NR<=14742' main.py)",
+      "Bash(python -m unittest tests.test_backend.TestBannerlordShaderCache)",
+      "Bash(scp -q -o ConnectTimeout=30 main.py deck@192.168.50.77:/tmp/citest/)",
+      "Bash(scp -q -o ConnectTimeout=30 tests/test_backend.py deck@192.168.50.77:/tmp/citest/tests/)",
+      "Bash(scp -q -o ConnectTimeout=40 main.py package.json deck@192.168.50.77:/tmp/citest/)",
+      "Bash(scp -q -o ConnectTimeout=40 tests/*.py deck@192.168.50.77:/tmp/citest/tests/)",
+      "Bash(scp -q -o ConnectTimeout=40 src/api.ts src/CollectionPage.tsx deck@192.168.50.77:/tmp/citest/src/)"
     ]
   }
 }

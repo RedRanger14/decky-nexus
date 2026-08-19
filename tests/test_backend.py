@@ -12800,6 +12800,79 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestBannerlordShaderCache(unittest.TestCase):
+    """Open Source Armory ships a shader cache compiled 9 July 2026. The game
+    updated on 11 August, rejects the cache, and crashes at the splash screen
+    with nothing said to the user. Verified on device: crashed twice with the
+    cache present, booted twice with it removed, item XMLs then loaded with an
+    empty error log."""
+
+    LINE = ("rgl_post_warning_line: Shader cache version of the external "
+            "module (OpenSourceArmory) is invalid.")
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def test_the_games_own_words_are_parsed(self):
+        self.assertEqual(
+            main._BL_SHADER_INVALID_RE.findall(self.LINE), ["OpenSourceArmory"])
+
+    def test_an_ordinary_log_line_is_not_a_match(self):
+        self.assertEqual(main._BL_SHADER_INVALID_RE.findall(
+            "rglShader_manager::read_compressed_shader_cache_package : 0.1"),
+            [])
+
+    def _stage(self, module, with_record=True):
+        os.makedirs(os.path.join(self.dir, "Modules", module, "Shaders", "D3D11"))
+        open(os.path.join(self.dir, "Modules", module, "Shaders", "D3D11",
+                          "compressed_shader_cache.sack"), "w").close()
+        recs = {module: {"mode": "folder", "moduleId": module,
+                         "name": "Open Source Armory"}} if with_record else {}
+        return {"installed": {"mountandblade2bannerlord": recs}}
+
+    def test_our_own_mods_cache_is_moved_aside(self):
+        settings = self._stage("OpenSourceArmory")
+        with mock.patch.object(main, "_load_settings", return_value=settings),                 mock.patch.object(main, "_bl_invalid_shader_modules",
+                                  return_value=["OpenSourceArmory"]):
+            fixed = main._bl_clear_stale_shader_caches(
+                "mountandblade2bannerlord", self.dir, 261550)
+        self.assertEqual(fixed, ["Open Source Armory"])
+        base = os.path.join(self.dir, "Modules", "OpenSourceArmory")
+        self.assertFalse(os.path.isdir(os.path.join(base, "Shaders")))
+        # Moved, not destroyed: reinstalling the mod is not the only way back.
+        self.assertTrue(os.path.isdir(os.path.join(base, "Shaders.invalid")))
+
+    def test_a_module_we_did_not_install_is_left_alone(self):
+        # If the game ever rejects an OFFICIAL module's cache that is a game
+        # files problem, and deleting from the game's own modules would be a
+        # different and much worse thing to do.
+        settings = self._stage("Native", with_record=False)
+        with mock.patch.object(main, "_load_settings", return_value=settings),                 mock.patch.object(main, "_bl_invalid_shader_modules",
+                                  return_value=["Native"]):
+            fixed = main._bl_clear_stale_shader_caches(
+                "mountandblade2bannerlord", self.dir, 261550)
+        self.assertEqual(fixed, [])
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.dir, "Modules", "Native", "Shaders")))
+
+    def test_nothing_rejected_means_nothing_touched(self):
+        settings = self._stage("OpenSourceArmory")
+        with mock.patch.object(main, "_load_settings", return_value=settings),                 mock.patch.object(main, "_bl_invalid_shader_modules",
+                                  return_value=[]):
+            self.assertEqual(main._bl_clear_stale_shader_caches(
+                "mountandblade2bannerlord", self.dir, 261550), [])
+        self.assertTrue(os.path.isdir(os.path.join(
+            self.dir, "Modules", "OpenSourceArmory", "Shaders")))
+
+    def test_only_bannerlord_runs_this(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        block = source[source.index("shader_caches_fixed = ("):]
+        block = block[:block.index("script = _redscript_report")]
+        self.assertIn('game_domain == "mountandblade2bannerlord"', block)
+
+
 class TestW3GameBranchVariants(unittest.TestCase):
     """Witcher 3 ships two branches and mods follow, often on separate Nexus
     pages - so matching requirements by mod id cannot tell that one satisfies
