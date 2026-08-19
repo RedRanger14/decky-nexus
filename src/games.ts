@@ -778,14 +778,29 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       url: "nexusmods.com/mountandblade2bannerlord/mods/1",
       nexusModId: 1, // verified: "Bannerlord Software Extender (BLSE)"
       installKind: "copyRoot",
-      // NO launch template yet: the LauncherEx swap broke boot on device
-      // (2026-07-22). The recorded guess was "missing .NET runtime in the
-      // prefix" and that is WRONG: checked on device 2026-08-18, the game
-      // ships its own runtime in bin/Win64_Shipping_Client
-      // (Microsoft.NETCore.App, Microsoft.AspNetCore.App,
-      // Microsoft.WindowsDesktop.App). So the cause is something else -
-      // the Standalone loader is the next candidate, and whoever picks
-      // this up should not spend a day installing dotnet into the prefix.
+      // BLSE only takes effect if the game is launched through one of ITS
+      // executables - installing the files changes nothing on its own, which
+      // is why this step used to install a framework the game never loaded.
+      // BLSE ships three entry points, and the choice matters here:
+      //
+      //   Bannerlord.BLSE.LauncherEx.exe  BUTRLoader's own UI. Tried
+      //                                   2026-07-22, broke boot on device.
+      //   Bannerlord.BLSE.Launcher.exe    wraps the VANILLA launcher. Fewest
+      //                                   moving parts under Proton, and the
+      //                                   launcher UI is where module
+      //                                   activation lives, which this
+      //                                   plugin writes via LauncherData.xml.
+      //   Bannerlord.BLSE.Standalone.exe  CLI, no launcher at all. The
+      //                                   fallback if the wrapper fails.
+      //
+      // So: the vanilla wrapper. Same exe-swap recipe as Skyrim's SKSE.
+      //
+      // The old note here blamed a missing .NET runtime in the prefix. That
+      // was wrong: checked on device 2026-08-18, the game ships its own
+      // (Microsoft.NETCore.App and friends in bin/Win64_Shipping_Client).
+      launchOptionsTemplate:
+        "bash -c 'exec \"$" +
+        "{@/Bannerlord.exe/Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
     },
     // Modules activate via the launcher's XML (Vortex manages the same
     // file). Created by the launcher on first run - activation is

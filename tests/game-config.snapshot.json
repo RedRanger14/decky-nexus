@@ -56,7 +56,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "BLSE",
-    "launchOptionsTemplate": null,
+    "launchOptionsTemplate": "bash -c 'exec \"${@/Bannerlord.exe/Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
     "prefixTools": [
       "1"
     ],

@@ -92,7 +92,10 @@
       "Bash(scp -q -o ConnectTimeout=30 tests/test_backend.py deck@192.168.50.77:/tmp/citest/tests/)",
       "Bash(scp -q -o ConnectTimeout=40 main.py package.json deck@192.168.50.77:/tmp/citest/)",
       "Bash(scp -q -o ConnectTimeout=40 tests/*.py deck@192.168.50.77:/tmp/citest/tests/)",
-      "Bash(scp -q -o ConnectTimeout=40 src/api.ts src/CollectionPage.tsx deck@192.168.50.77:/tmp/citest/src/)"
+      "Bash(scp -q -o ConnectTimeout=40 src/api.ts src/CollectionPage.tsx deck@192.168.50.77:/tmp/citest/src/)",
+      "Bash(awk 'NR>=680 && NR<=712' src/index.tsx)",
+      "Bash(awk 'NR>=398 && NR<=404' src/games.ts)",
+      "Bash(node -e ' *)"
     ]
   }
 }
