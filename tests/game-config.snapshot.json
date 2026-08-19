@@ -68,6 +68,7 @@
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
     "cleanupPrefixes": [
+      "\"bin/Win64_Shipping_Client/Bannerlord.BLSE.*\"",
       "\"Modules/Bannerlord.Harmony\""
     ]
   },
