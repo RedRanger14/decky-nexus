@@ -165,6 +165,26 @@
     ]
   },
   {
+    "appId": "553850",
+    "displayName": "Helldivers 2",
+    "nexusDomain": "helldivers2",
+    "installDirName": "Helldivers 2",
+    "modsSubdir": "data",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "1030300",
     "displayName": "Hollow Knight: Silksong",
     "nexusDomain": "hollowknightsilksong",

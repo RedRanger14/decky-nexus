@@ -223,6 +223,10 @@ export interface SupportedGame {
    * from the mods dir, not folders - installs move matching files flat
    * with per-file records. Lists the loadable extensions. */
   flatModExtensions?: string[];
+  /** Helldivers 2: mods are <hash>.patch_N file swaps dropped flat into
+   * data/, renumbered per archive hash so two mods patching the same
+   * archive coexist instead of the second silently overwriting the first. */
+  hd2Layout?: boolean;
   /** Shown at the top of the game panel until the given Documents-file
    * exists - for games that must run once before modding works (their
    * launcher creates the activation config on first run). For
@@ -967,6 +971,26 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         installKind: "copyRoot",
       },
     ],
+  },
+  553850: {
+    appId: 553850,
+    displayName: "Helldivers 2",
+    nexusDomain: "helldivers2", // verified: ~16k mods, HD2ModManager top
+    installDirName: "Helldivers 2", // verified on device
+    // Mods are numbered patch files overlaid on hash-named archives, flat
+    // in data/. No folders, no loader, nothing executable.
+    modsSubdir: "data",
+    hd2Layout: true,
+    moddedSaveWarning: false, // progression is server-side
+    processName: "helldivers2.exe", // verified on device
+    // The anti-cheat question, asked BEFORE this config existed. HD2 ships
+    // GameGuard (bin/GameGuard on device) and is online-only. Per mod
+    // authors in the beta channel: it does not act on cosmetic file swaps,
+    // and the developers' stated concern is currency cheating. Everything
+    // this tier installs is an asset swap - no code, no injection. The
+    // FromSoft never-online rule cannot apply to a game with no offline
+    // mode, so the honest posture is: cosmetic swaps only, said plainly.
+    // ROADMAP until installed, booted and played on hardware.
   },
 };
 

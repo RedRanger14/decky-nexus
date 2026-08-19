@@ -12800,6 +12800,61 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestHelldivers2Patches(unittest.TestCase):
+    """HD2 mods are <hash>.patch_N file swaps in data/. The game loads
+    patch_0, patch_1, ... per archive hash, so two mods patching the same
+    archive coexist by renumbering - the community norm. Without it, the
+    flat branch would silently overwrite the first mod's patch_0."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def test_grouping_keeps_triplets_together(self):
+        groups = main._hd2_patch_groups([
+            "/x/9bc33b7058a2bd5a.patch_0",
+            "/x/9bc33b7058a2bd5a.patch_0.gpu_resources",
+            "/x/9bc33b7058a2bd5a.patch_0.stream",
+            "/x/readme.txt",
+        ])
+        self.assertEqual(list(groups), [("9bc33b7058a2bd5a", 0)])
+        self.assertEqual(len(groups[("9bc33b7058a2bd5a", 0)]), 3)
+
+    def test_screenshots_and_readmes_stay_behind(self):
+        self.assertEqual(main._hd2_patch_groups(
+            ["/x/readme.txt", "/x/preview.png", "/x/02582f3da1f8daf5"]), {})
+
+    def test_the_second_mod_takes_the_next_number(self):
+        open(os.path.join(self.dir, "9bc33b7058a2bd5a.patch_0"), "w").close()
+        self.assertEqual(main._hd2_next_free_number(
+            self.dir, "9bc33b7058a2bd5a", set()), 1)
+
+    def test_numbers_fill_gaps_not_just_append(self):
+        open(os.path.join(self.dir, "9bc33b7058a2bd5a.patch_1"), "w").close()
+        self.assertEqual(main._hd2_next_free_number(
+            self.dir, "9bc33b7058a2bd5a", set()), 0)
+
+    def test_a_reinstall_reuses_its_own_numbers(self):
+        # Otherwise every reinstall stacks patch_1, patch_2, ... forever.
+        open(os.path.join(self.dir, "9bc33b7058a2bd5a.patch_0"), "w").close()
+        self.assertEqual(main._hd2_next_free_number(
+            self.dir, "9bc33b7058a2bd5a",
+            {"9bc33b7058a2bd5a.patch_0"}), 0)
+
+    def test_other_archives_numbers_do_not_interfere(self):
+        open(os.path.join(self.dir, "02582f3da1f8daf5.patch_0"), "w").close()
+        self.assertEqual(main._hd2_next_free_number(
+            self.dir, "9bc33b7058a2bd5a", set()), 0)
+
+    def test_the_flat_branch_renumbers_for_hd2(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("if flat_extensions or hd2_layout:")
+        block = source[i:i + 4000]
+        self.assertIn("_hd2_next_free_number(", block)
+        self.assertIn("_hd2_patch_groups(", block)
+
+
 class TestCollectionVersionPinning(unittest.TestCase):
     """Every collection revision declares its target game version, and the
     top three Bannerlord collections all target older builds. The prose

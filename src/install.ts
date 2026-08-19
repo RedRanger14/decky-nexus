@@ -130,7 +130,8 @@ function installModWith(
     // Loaders are exempt from the built-for-an-older-patch rule: they load
     // other dlls rather than patching game code, so a game update does not
     // age them out.
-    stalenessExemptModIds(game)
+    stalenessExemptModIds(game),
+    game.hd2Layout ?? false
   );
 }
 

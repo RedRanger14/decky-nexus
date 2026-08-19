@@ -275,7 +275,8 @@ export const installMod = callable<
     cp77_layout: boolean,
     pakpatch_layout: boolean,
     repair_only: boolean,
-    framework_ids: number[]
+    framework_ids: number[],
+    hd2_layout: boolean
   ],
   InstallResult
 >("install_mod");

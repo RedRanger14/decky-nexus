@@ -433,6 +433,63 @@ def _versions_mismatch(collection_refs: list, installed: str) -> bool:
     return True
 
 
+# ---- Helldivers 2: numbered patch files ------------------------------------
+# HD2 mods are file swaps: a mod ships <16-hex-hash>.patch_0 (optionally with
+# .gpu_resources and .stream siblings) and the game overlays them onto the
+# archive with that hash, loading patch_0, patch_1, ... in sequence. Dropped
+# flat into data/. The community norm (and what the requester's own manager,
+# Arsenal, does) is renumbering: when two mods patch the SAME archive, the
+# second becomes patch_1. Without that, the second install would silently
+# overwrite the first - the silent-loser pattern again.
+#
+# The anti-cheat question was asked before any of this was built: per mod
+# authors in the beta channel, GameGuard does not act on cosmetic file swaps
+# and the developers' stated concern is currency cheating. These are asset
+# swaps only - the plugin installs nothing executable for this game.
+_HD2_PATCH_RE = re.compile(
+    r"^([0-9a-f]{16})\.patch_([0-9]+)((?:\.[a-z_]+)?)$", re.IGNORECASE
+)
+
+
+def _hd2_patch_groups(paths: list) -> dict:
+    """Group extracted files into (hash, number) -> [(suffix, path)].
+
+    Only files matching the patch shape are returned: readmes and
+    screenshots in the archive are not game content and stay behind.
+    """
+    groups = {}
+    for path in paths:
+        m = _HD2_PATCH_RE.match(os.path.basename(path))
+        if not m:
+            continue
+        key = (m.group(1).lower(), int(m.group(2)))
+        groups.setdefault(key, []).append((m.group(3).lower(), path))
+    return groups
+
+
+def _hd2_next_free_number(data_dir: str, archive_hash: str,
+                          reusable: set) -> int:
+    """The first patch number free for this archive hash.
+
+    Numbers occupied by files in `reusable` (a previous install of the SAME
+    mod) do not count as taken: a reinstall overwrites itself rather than
+    stacking patch_1, patch_2, ... forever.
+    """
+    taken = set()
+    try:
+        for name in os.listdir(data_dir):
+            m = _HD2_PATCH_RE.match(name)
+            if m and m.group(1).lower() == archive_hash:
+                if name.lower() not in reusable:
+                    taken.add(int(m.group(2)))
+    except OSError:
+        pass
+    n = 0
+    while n in taken:
+        n += 1
+    return n
+
+
 def _game_paths(install_dir: str, mods_subdir: str):
     install_path = os.path.join(STEAM_COMMON, install_dir)
     mods_path = os.path.join(install_path, mods_subdir)
@@ -9864,7 +9921,11 @@ query Link($slug: String!, $domainName: String!) {
         cp77_layout: bool = False,
         pakpatch_layout: bool = False,
         repair_only: bool = False,
+        # Order matters: these are passed POSITIONALLY from the frontend,
+        # framework_ids first. Getting this backwards would silently send a
+        # boolean where a list is read, which no type checker here would see.
         framework_ids: list = None,
+        hd2_layout: bool = False,
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -10001,6 +10062,7 @@ query Link($slug: String!, $domainName: String!) {
                 cp77_layout,
                 pakpatch_layout,
                 repair_only,
+                hd2_layout,
             )
             if result.get("ok") and game_domain == "mountandblade2bannerlord":
                 try:
@@ -10289,6 +10351,7 @@ query Link($slug: String!, $domainName: String!) {
         cp77_layout: bool = False,
         pakpatch_layout: bool = False,
         repair_only: bool = False,
+        hd2_layout: bool = False,
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -11255,34 +11318,65 @@ query Link($slug: String!, $domainName: String!) {
 
         # Flat-file games (Cyberpunk archive/pc/mod): the game loads files,
         # not folders - move matching files flat and keep a per-file record.
-        if flat_extensions:
-            exts = tuple(e.lower() for e in flat_extensions)
+        if flat_extensions or hd2_layout:
+            exts = tuple(e.lower() for e in flat_extensions or [])
             flat = []
             for root, _dirs, names in os.walk(scratch):
-                flat.extend(
-                    os.path.join(root, n)
-                    for n in names
-                    if n.lower().endswith(exts)
-                )
+                for n in names:
+                    if hd2_layout:
+                        if _HD2_PATCH_RE.match(n):
+                            flat.append(os.path.join(root, n))
+                    elif n.lower().endswith(exts):
+                        flat.append(os.path.join(root, n))
             if not flat:
                 _force_rmtree(scratch)
+                expected = (
+                    "hash.patch_N files" if hd2_layout
+                    else ", ".join(flat_extensions)
+                )
                 return {
                     "ok": False,
                     "error": "No loadable mod files found in this archive "
-                    f"(expected {', '.join(flat_extensions)})",
+                    f"(expected {expected})",
                 }
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path
             )
             os.makedirs(mods_path, exist_ok=True)
             moved = []
-            for src in flat:
-                name = os.path.basename(src)
-                dst = os.path.join(mods_path, name)
-                if os.path.isfile(dst):
-                    os.remove(dst)
-                shutil.move(src, dst)
-                moved.append(name)
+            if hd2_layout:
+                # Renumber per archive hash instead of overwriting: HD2
+                # loads <hash>.patch_0, patch_1, ... in sequence, so two
+                # mods patching the same archive coexist by taking the next
+                # number - which is what the community's own managers do.
+                # A reinstall of the SAME mod reuses its old numbers rather
+                # than stacking new ones forever.
+                prior = {
+                    f.lower()
+                    for f in (_load_settings().get("installed", {})
+                              .get(game_domain, {})
+                              .get(_safe_name(mod_name), {})
+                              .get("files") or [])
+                }
+                for (ahash, _num), members in sorted(
+                    _hd2_patch_groups(flat).items()
+                ):
+                    n = _hd2_next_free_number(mods_path, ahash, prior)
+                    for suffix, src in sorted(members):
+                        name = f"{ahash}.patch_{n}{suffix}"
+                        dst = os.path.join(mods_path, name)
+                        if os.path.isfile(dst):
+                            os.remove(dst)
+                        shutil.move(src, dst)
+                        moved.append(name)
+            else:
+                for src in flat:
+                    name = os.path.basename(src)
+                    dst = os.path.join(mods_path, name)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.move(src, dst)
+                    moved.append(name)
             _force_rmtree(scratch)
             try:
                 os.remove(archive_path)
