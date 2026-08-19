@@ -377,7 +377,7 @@ function CollectionHero({
             {run.finished} of {run.total} mods
             {eta ? ` · ${eta}` : ""}
             {skipped > 0 && (
-              <span style={{ color: "#4aa9ff" }}> · {skipped} need choices</span>
+              <span style={{ opacity: 0.8 }}> · {skipped} skipped</span>
             )}
           </div>
           {run.running && activeNames.length > 0 && (
@@ -404,7 +404,11 @@ function CollectionHero({
               }}
             >
               <span>{pct}%</span>
-              <span>{run.running ? "tap to open" : "tap to finish setup"}</span>
+              {/* "tap to finish setup" promised a wizard for rows that
+                  were skipped ON PURPOSE (older-game, tools) - Michael went
+                  looking and there was nothing to finish. The collection
+                  page says what needs doing, when anything does. */}
+              <span>{run.running ? "tap to open" : "tap to view"}</span>
             </div>
             <div
               style={{

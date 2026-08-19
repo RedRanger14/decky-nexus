@@ -1005,10 +1005,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               reason: "tool",
               options: [],
             });
-            toaster.toast({
-              title: `${f.modName}: PC tool - skipped`,
-              body: "Utilities like this run on a desktop, not in-game",
-            });
+            // (no per-mod toast: the summary counts skips and the row shows why)
           } else if (result.stale_skip) {
             // Built before the game's current patch: it would install and
             // then hang the game on a "Could not find signature!" box. Not
@@ -1025,10 +1022,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               reason: "older-game",
               options: [],
             });
-            toaster.toast({
-              title: `${f.modName}: built for an older patch - skipped`,
-              body: "It would stop the game booting cleanly",
-            });
+            // (no per-mod toast: the summary counts skips and the row shows why)
           } else if (result.script_conflict || result.mod_conflict) {
             // Conflicts with something already installed: parking it
             // keeps the button honest ("everything installed" when only

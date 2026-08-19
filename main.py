@@ -861,6 +861,15 @@ def _merge_install_record(existing: dict, new: dict) -> dict:
     if not existing:
         return new
     merged = dict(new)
+    # Ownership is first-come. A mod the user installed on its own belongs
+    # to THEM: when a collection later reinstalls it, claiming it moves the
+    # record into the collection's group in My Mods (Michael: "installing a
+    # collection that has a mod you already have shouldnt make it disappear
+    # from your mod list") and, worse, uninstalling the collection would rip
+    # out a mod they chose deliberately.
+    if not (existing.get("collection_slug") or existing.get("source")):
+        merged["collection_slug"] = ""
+        merged["source"] = ""
     same_file = existing.get("file_id") == new.get("file_id")
     for field in ("files", "plugins"):
         old_vals = existing.get(field) or []
@@ -5751,6 +5760,13 @@ def _bl_manifest_game_mismatch(module_dir: str, installed: str) -> str:
     for ver in declared:
         vt = _version_tuple(ver)
         if vt and len(vt) >= 2:
+            # v1.0.0.* is BUTR's "any version" placeholder, not a pin:
+            # ButterLib, UIExtenderEx and MCM ALL declare it against the
+            # official modules while running fine on v1.4.8. Reading it as
+            # a real 1.0 pin would have skipped the entire working library
+            # stack on its next reinstall.
+            if tuple(vt[:2]) == (1, 0):
+                continue
             majors.add(tuple(vt[:2]))
     if not majors:
         return ""

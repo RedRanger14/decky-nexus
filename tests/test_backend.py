@@ -12800,6 +12800,42 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestRecordOwnershipIsFirstCome(unittest.TestCase):
+    """Michael installed ButterLib on its own, then a collection containing
+    it: the record was claimed by the collection, so ButterLib vanished from
+    his flat mod list and would have been ripped out by a collection
+    uninstall. A mod the user installed deliberately stays theirs."""
+
+    def test_a_users_mod_is_not_claimed_by_a_collection(self):
+        existing = {"mod_id": 2018, "name": "ButterLib",
+                    "collection_slug": "", "source": "", "files": ["a"]}
+        merged = main._merge_install_record(existing, {
+            "mod_id": 2018, "name": "ButterLib",
+            "collection_slug": "pjkqjk", "source": "collection",
+            "files": ["a"],
+        })
+        self.assertEqual(merged.get("collection_slug"), "")
+        self.assertEqual(merged.get("source"), "")
+
+    def test_a_collections_own_mod_keeps_its_slug(self):
+        existing = {"mod_id": 5, "name": "X",
+                    "collection_slug": "pjkqjk", "source": "collection",
+                    "files": ["a"]}
+        merged = main._merge_install_record(existing, {
+            "mod_id": 5, "name": "X",
+            "collection_slug": "pjkqjk", "source": "collection",
+            "files": ["a"],
+        })
+        self.assertEqual(merged.get("collection_slug"), "pjkqjk")
+
+    def test_a_fresh_install_keeps_whatever_it_says(self):
+        merged = main._merge_install_record({}, {
+            "mod_id": 5, "collection_slug": "pjkqjk",
+            "source": "collection", "files": [],
+        })
+        self.assertEqual(merged.get("collection_slug"), "pjkqjk")
+
+
 class TestBannerlordManifestGate(unittest.TestCase):
     """A Bannerlord module pins its game branch INSIDE the archive:
     SubModule.xml carries version attributes against the official modules.
@@ -12850,6 +12886,22 @@ class TestBannerlordManifestGate(unittest.TestCase):
                      '</DependedModules></Module>')
         self.assertEqual(
             main._bl_manifest_game_mismatch(self.dir, "v1.4.8"), "v1.2")
+
+    def test_the_butr_placeholder_is_not_a_pin(self):
+        # ButterLib, UIExtenderEx and MCM all declare version="v1.0.0.*"
+        # against the official modules while running fine on v1.4.8: it is
+        # BUTR's "any version" placeholder. Reading it as a real 1.0 pin
+        # would have skipped the entire working library stack on its next
+        # reinstall - MCM's real manifest is the fixture here.
+        self._module('<Module><Id value="Bannerlord.MBOptionScreen" />'
+                     '<DependedModuleMetadatas>'
+                     '<DependedModuleMetadata id="Native" '
+                     'order="LoadAfterThis" version="v1.0.0.*" />'
+                     '<DependedModuleMetadata id="SandBoxCore" '
+                     'order="LoadAfterThis" version="v1.0.0.*" '
+                     'optional="true" /></DependedModuleMetadatas></Module>')
+        self.assertEqual(
+            main._bl_manifest_game_mismatch(self.dir, "v1.4.8"), "")
 
     def test_constraints_on_other_mods_do_not_count(self):
         # A version pin against RBM or MCM says nothing about the GAME.
