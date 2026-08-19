@@ -12800,6 +12800,71 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestFrameworkCleanupWildcard(unittest.TestCase):
+    """BLSE drops eight files into the game's bin folder with no manifest, so
+    reset left all of them and Step 1 then offered "Install remaining
+    frameworks (1)" on a machine with nothing installed."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.bin = os.path.join(self.dir, "bin", "Win64_Shipping_Client")
+        os.makedirs(self.bin)
+        for name in ("Bannerlord.BLSE.Launcher.exe",
+                     "Bannerlord.BLSE.Shared.dll",
+                     "Bannerlord.exe", "TaleWorlds.Library.dll"):
+            open(os.path.join(self.bin, name), "w").close()
+
+    def _reset(self, prefixes):
+        return run(self.plugin.reset_game_modding(
+            "mountandblade2bannerlord", os.path.basename(self.dir), "Modules",
+            0, "", "starred", [], prefixes,
+        )) if hasattr(self, "plugin") else None
+
+    def test_the_wildcard_removes_only_the_matching_files(self):
+        # Behavioural, because this code DELETES things: build a real game
+        # folder, reset it, and check what survived.
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        game = "BL Wildcard Test"
+        install = os.path.join(main.STEAM_COMMON, game)
+        shutil.rmtree(install, ignore_errors=True)
+        binpath = os.path.join(install, "bin", "Win64_Shipping_Client")
+        os.makedirs(binpath)
+        self.addCleanup(shutil.rmtree, install, ignore_errors=True)
+        for name in ("Bannerlord.BLSE.Launcher.exe",
+                     "Bannerlord.BLSE.Shared.dll",
+                     "Bannerlord.exe", "TaleWorlds.Library.dll"):
+            open(os.path.join(binpath, name), "w").close()
+        plugin = main.Plugin()
+        result = run(plugin.reset_game_modding(
+            "mountandblade2bannerlord", game, "Modules", "folder", 0, "",
+            "starred", ["bin/Win64_Shipping_Client/Bannerlord.BLSE.*"],
+        ))
+        self.assertTrue(result.get("ok"), result)
+        left = sorted(os.listdir(binpath))
+        self.assertEqual(left, ["Bannerlord.exe", "TaleWorlds.Library.dll"],
+                         "reset removed the wrong files")
+
+    def test_a_bare_folder_wildcard_cannot_be_declared(self):
+        # "bin/*" would delete the game. The pattern needs a stem.
+        source = open(main.__file__, encoding="utf-8").read()
+        block = source[source.index('head, sep, tail = rel.rpartition("/")'):]
+        block = block[:block.index("target = os.path.join(install_path")]
+        self.assertIn("len(tail) > 1", block)
+
+    def test_blse_declares_its_files_for_reset(self):
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "src", "games.ts")
+        with open(path, encoding="utf-8") as fh:
+            games = fh.read()
+        self.assertIn(
+            '"bin/Win64_Shipping_Client/Bannerlord.BLSE.*"', games,
+            "BLSE has no cleanup prefixes, so reset leaves it behind and "
+            "Step 1 reports the wrong count")
+
+
 class TestFrameworkModuleActivation(unittest.TestCase):
     """Harmony installed into Modules/ and sat there DISABLED, so the game
     ignored it and BLSE could not find it. Michael, at the launcher: "i can

@@ -12866,6 +12866,35 @@ query Link($slug: String!, $domainName: String!) {
                 rel = str(prefix).replace("\\", "/")
                 if not _safe_rel_path(rel):
                     continue
+                # A trailing * on the LAST segment globs inside that folder.
+                # BLSE drops eight files into bin/Win64_Shipping_Client and
+                # has no manifest, so reset left every one of them and Step 1
+                # still counted it installed - Michael, after a reset: "step 1
+                # says Install remaining frameworks (1)... it should be 2".
+                # Listing eight filenames would rot the moment BLSE adds one.
+                #
+                # Deliberately narrow: the pattern must have something before
+                # the *, and only the last segment may glob, so "bin/*" cannot
+                # be declared and reset cannot eat the game.
+                head, sep, tail = rel.rpartition("/")
+                if tail.endswith("*") and len(tail) > 1 and "*" not in head:
+                    folder = os.path.join(install_path, *head.split("/"))
+                    stem = tail[:-1]
+                    if os.path.isdir(folder):
+                        for name in sorted(os.listdir(folder)):
+                            if not name.startswith(stem):
+                                continue
+                            target = os.path.join(folder, name)
+                            try:
+                                if (os.path.isdir(target)
+                                        and not os.path.islink(target)):
+                                    _force_rmtree(target)
+                                else:
+                                    os.remove(target)
+                                framework_files.append(f"{head}/{name}")
+                            except OSError as e:
+                                errors.append(f"{head}/{name}: {e}")
+                    continue
                 target = os.path.join(install_path, *rel.split("/"))
                 if not os.path.lexists(target):
                     continue

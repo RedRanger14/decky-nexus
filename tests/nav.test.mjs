@@ -817,10 +817,13 @@ test("BLSE has Harmony declared as a prerequisite", () => {
   //
   //   System.TypeLoadException: Could not load file or assembly '0Harmony...'
   const games = read("games.ts");
-  const bl = games.slice(
-    games.indexOf("mountandblade2bannerlord"),
-    games.indexOf("mountandblade2bannerlord") + 4500
-  );
+  // Slice to the END of the Bannerlord entry rather than a fixed number of
+  // characters: a fixed window silently stops covering the config the moment
+  // a comment is added above what it was checking, which is exactly what
+  // happened when BLSE's cleanup prefixes went in.
+  const start = games.indexOf("mountandblade2bannerlord");
+  const nextGame = games.indexOf("nexusDomain:", games.indexOf("nexusDomain:", start) + 1);
+  const bl = games.slice(start, nextGame > start ? nextGame : games.length);
   assert.ok(
     /nexusModId: 2006/.test(bl),
     "Harmony (mod 2006) is not declared for Bannerlord, so the setup step " +

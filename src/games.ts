@@ -775,6 +775,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     framework: {
       name: "BLSE",
       detectFile: "bin/Win64_Shipping_Client/Bannerlord.BLSE.LauncherEx.exe",
+      // BLSE drops eight files into the game's bin folder and ships no
+      // manifest, so reset left every one of them: after a reset Step 1
+      // counted BLSE as installed and offered "Install remaining
+      // frameworks (1)" on a machine with nothing installed. The trailing *
+      // globs that one folder for that one prefix.
+      cleanupPrefixes: ["bin/Win64_Shipping_Client/Bannerlord.BLSE.*"],
       url: "nexusmods.com/mountandblade2bannerlord/mods/1",
       nexusModId: 1, // verified: "Bannerlord Software Extender (BLSE)"
       installKind: "copyRoot",
