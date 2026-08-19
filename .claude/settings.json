@@ -79,7 +79,14 @@
       "Bash(scp -q -o ConnectTimeout=40 tests/*.py deck@192.168.50.202:/tmp/citest/tests/)",
       "Bash(python tools/makestore.py dist/Nexus-Mods-0.262.0.zip)",
       "Bash(python tools/makestore.py dist/Nexus-Mods-0.263.0.zip)",
-      "Bash(scp -q -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i8.sh)"
+      "Bash(scp -q -o ConnectTimeout=20 install.sh deck@192.168.50.202:/tmp/i8.sh)",
+      "Bash(ssh-keygen -R steamdeck.local)",
+      "Bash(ssh-keygen -R 192.168.50.77)",
+      "Bash(awk 'NR>=755 && NR<=800' src/games.ts)",
+      "Bash(scp -q -o ConnectTimeout=20 /tmp/blreq.py deck@192.168.50.77:/tmp/)",
+      "Bash(sed -i 's/\\\\[Int!\\\\]/[String!]/; s/\"ids\": \\\\[4, 118, 49\\\\]/\"ids\": [\"4\", \"118\", \"49\"]/' /tmp/blreq.py)",
+      "Bash(awk 'NR>=14700 && NR<=14735' main.py)",
+      "Bash(awk 'NR>=14722 && NR<=14742' main.py)"
     ]
   }
 }

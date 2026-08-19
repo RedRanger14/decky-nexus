@@ -779,8 +779,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       nexusModId: 1, // verified: "Bannerlord Software Extender (BLSE)"
       installKind: "copyRoot",
       // NO launch template yet: the LauncherEx swap broke boot on device
-      // (2026-07-22) - likely a missing .NET runtime in the prefix. The
-      // Standalone loader is the next candidate; verify before shipping.
+      // (2026-07-22). The recorded guess was "missing .NET runtime in the
+      // prefix" and that is WRONG: checked on device 2026-08-18, the game
+      // ships its own runtime in bin/Win64_Shipping_Client
+      // (Microsoft.NETCore.App, Microsoft.AspNetCore.App,
+      // Microsoft.WindowsDesktop.App). So the cause is something else -
+      // the Standalone loader is the next candidate, and whoever picks
+      // this up should not spend a day installing dotnet into the prefix.
     },
     // Modules activate via the launcher's XML (Vortex manages the same
     // file). Created by the launcher on first run - activation is
