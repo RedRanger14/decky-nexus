@@ -56,7 +56,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "BLSE",
-    "launchOptionsTemplate": "bash -c 'exec \"${@/Bannerlord.exe/Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
+    "launchOptionsTemplate": "bash -c 'exec \"${@/TaleWorlds.MountAndBlade.Launcher.exe/Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
     "prefixTools": [
       "1"
     ],

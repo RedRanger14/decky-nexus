@@ -12865,6 +12865,50 @@ class TestBannerlordShaderCache(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(
             self.dir, "Modules", "OpenSourceArmory", "Shaders")))
 
+    def test_a_cache_older_than_the_game_build_is_stripped_at_install(self):
+        # Catching it at install beats waiting for a crash: the reactive
+        # version needs the game to have died once, with no message, and the
+        # user to think of opening the Health page.
+        os.makedirs(os.path.join(self.dir, "Modules", "OSA", "Shaders", "D3D11"))
+        cache = os.path.join(self.dir, "Modules", "OSA", "Shaders", "D3D11",
+                             "compressed_shader_cache.sack")
+        open(cache, "w").close()
+        os.utime(cache, (1_000_000, 1_000_000))  # long before the game build
+        settings = {"installed": {"mountandblade2bannerlord": {
+            "OSA": {"name": "Open Source Armory"}}}}
+        with mock.patch.object(main, "_load_settings", return_value=settings),                 mock.patch.object(main, "_game_updated_at",
+                                  return_value=2_000_000):
+            moved = main._bl_strip_outdated_shader_caches(
+                "mountandblade2bannerlord", self.dir, 261550)
+        self.assertEqual(moved, ["Open Source Armory"])
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.dir, "Modules", "OSA", "Shaders.invalid")))
+
+    def test_a_cache_newer_than_the_game_build_is_kept(self):
+        # A valid cache is a real benefit - the game loads faster with it.
+        os.makedirs(os.path.join(self.dir, "Modules", "OSA", "Shaders", "D3D11"))
+        cache = os.path.join(self.dir, "Modules", "OSA", "Shaders", "D3D11",
+                             "compressed_shader_cache.sack")
+        open(cache, "w").close()
+        os.utime(cache, (3_000_000, 3_000_000))
+        settings = {"installed": {"mountandblade2bannerlord": {"OSA": {}}}}
+        with mock.patch.object(main, "_load_settings", return_value=settings),                 mock.patch.object(main, "_game_updated_at",
+                                  return_value=2_000_000):
+            self.assertEqual(main._bl_strip_outdated_shader_caches(
+                "mountandblade2bannerlord", self.dir, 261550), [])
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.dir, "Modules", "OSA", "Shaders")))
+
+    def test_an_unknown_game_build_strips_nothing(self):
+        # No date to compare against means no action, not a guess.
+        os.makedirs(os.path.join(self.dir, "Modules", "OSA", "Shaders", "D3D11"))
+        open(os.path.join(self.dir, "Modules", "OSA", "Shaders", "D3D11",
+                          "x.sack"), "w").close()
+        settings = {"installed": {"mountandblade2bannerlord": {"OSA": {}}}}
+        with mock.patch.object(main, "_load_settings", return_value=settings),                 mock.patch.object(main, "_game_updated_at", return_value=0):
+            self.assertEqual(main._bl_strip_outdated_shader_caches(
+                "mountandblade2bannerlord", self.dir, 261550), [])
+
     def test_only_bannerlord_runs_this(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()

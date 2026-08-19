@@ -1423,6 +1423,55 @@ def _plugin_log_tail(count: int) -> str:
         return ""
 
 
+def _bl_strip_outdated_shader_caches(
+    game_domain: str, install_path: str, app_id: int
+) -> list:
+    """Move aside module shader caches built before the game's current build.
+
+    The reactive version of this reads the game's log and needs a crash to
+    have happened first, which means the user meets an unbootable game with
+    no message and has to think of opening the Health page. This catches it
+    at install instead.
+
+    It is not a guess about mod quality: a shader cache is compiled against a
+    specific game build, and the game rejects one that predates its own. Open
+    Source Armory's cache is stamped 9 July; the game updated on 11 August;
+    the game refuses it and closes at the splash screen.
+
+    Costs one slower launch while the game compiles its own, which is a good
+    trade against a game that will not start.
+    """
+    updated = _game_updated_at(app_id)
+    if not updated or not install_path:
+        return []
+    records = _load_settings().get("installed", {}).get(game_domain, {}) or {}
+    moved = []
+    for key, rec in records.items():
+        shaders = os.path.join(install_path, "Modules", key, "Shaders")
+        if not os.path.isdir(shaders):
+            continue
+        caches = glob.glob(os.path.join(shaders, "*", "*.sack"))
+        if not caches:
+            continue
+        newest = max(os.path.getmtime(c) for c in caches)
+        if newest >= updated:
+            continue
+        stale = shaders + ".invalid"
+        try:
+            _force_rmtree(stale)
+            shutil.move(shaders, stale)
+        except OSError as e:
+            decky.logger.warning(f"could not move {shaders}: {e}")
+            continue
+        moved.append((rec or {}).get("name") or key)
+        decky.logger.info(
+            f"BL: {key!r} ships a shader cache older than the game build "
+            "- moved aside so the game compiles its own instead of refusing "
+            "to start"
+        )
+    return moved
+
+
 def _prefix_drive_c(app_id: int, *parts: str) -> str:
     """A path inside the Proton prefix's C: drive, outside the user profile.
 
@@ -9583,6 +9632,18 @@ query Link($slug: String!, $domainName: String!) {
                 pakpatch_layout,
                 repair_only,
             )
+            if result.get("ok") and game_domain == "mountandblade2bannerlord":
+                try:
+                    stripped = _bl_strip_outdated_shader_caches(
+                        game_domain,
+                        _game_paths(install_dir, mods_subdir)[0],
+                        int(app_id or 0),
+                    )
+                except Exception as e:  # noqa: BLE001 - never fail an install
+                    decky.logger.debug(f"shader cache precheck failed: {e}")
+                    stripped = []
+                if stripped:
+                    result["shader_caches_stripped"] = stripped
             if result.get("ok") and stale_note and not broken:
                 # Not skipped, not disabled - just said out loud, so an old
                 # dll mod that turns out to fail is one the user was warned

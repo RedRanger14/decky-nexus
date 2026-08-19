@@ -798,9 +798,20 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // The old note here blamed a missing .NET runtime in the prefix. That
       // was wrong: checked on device 2026-08-18, the game ships its own
       // (Microsoft.NETCore.App and friends in bin/Win64_Shipping_Client).
+      // The exe Steam launches is TaleWorlds.MountAndBlade.Launcher.exe, NOT
+      // Bannerlord.exe. Read off the device from decky-launch-options' own
+      // debug log:
+      //
+      //   proton waitforexitandrun .../TaleWorlds.MountAndBlade.Launcher.exe
+      //
+      // The first version of this swapped Bannerlord.exe, matched nothing,
+      // and silently launched vanilla - so the step looked applied and BLSE
+      // still never loaded. Substituting the wrong name is indistinguishable
+      // from having no template at all, which is why this needs the real one.
       launchOptionsTemplate:
         "bash -c 'exec \"$" +
-        "{@/Bannerlord.exe/Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
+        "{@/TaleWorlds.MountAndBlade.Launcher.exe/" +
+        "Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
     },
     // Modules activate via the launcher's XML (Vortex manages the same
     // file). Created by the launcher on first run - activation is

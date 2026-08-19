@@ -95,7 +95,8 @@
       "Bash(scp -q -o ConnectTimeout=40 src/api.ts src/CollectionPage.tsx deck@192.168.50.77:/tmp/citest/src/)",
       "Bash(awk 'NR>=680 && NR<=712' src/index.tsx)",
       "Bash(awk 'NR>=398 && NR<=404' src/games.ts)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(node --input-type=module -e ' *)"
     ]
   }
 }
