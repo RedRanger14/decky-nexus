@@ -5575,6 +5575,160 @@ def _launcher_xml_path(app_id: int, subpath: str) -> str:
     )
 
 
+BL_LAUNCHER_XML_SUBPATH = (
+    "Mount and Blade II Bannerlord/Configs/LauncherData.xml"
+)
+
+
+def _bl_module_constraints(install_path: str) -> dict:
+    """id(lower) -> (canonical id, set of ids that must load BEFORE it).
+
+    Bannerlord modules declare their own ordering in SubModule.xml, which
+    makes this the rare game where load order is solvable locally, with no
+    curator data:
+
+      DependedModules/DependedModule Id="X"            X before me
+      DependedModuleMetadata id="X" order="LoadBeforeThis"   X before me
+      DependedModuleMetadata id="X" order="LoadAfterThis"    me before X
+      ModulesToLoadAfterThis/Module Id="Y"             me before Y
+
+    Ids are matched case-insensitively because the launcher file and the
+    manifests genuinely disagree ("Sandbox" vs "SandBox" on this very
+    device). Constraints against absent modules are dropped by the caller.
+    """
+    out = {}
+    modules_dir = os.path.join(install_path, "Modules")
+    if not os.path.isdir(modules_dir):
+        return out
+    for folder in sorted(os.listdir(modules_dir)):
+        manifest = os.path.join(modules_dir, folder, "SubModule.xml")
+        if not os.path.isfile(manifest):
+            continue
+        try:
+            with open(manifest, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        m = re.search(r'<Id\s+value\s*=\s*"([^"]+)"', text)
+        mod_id = (m.group(1) if m else folder).strip()
+        before = set()
+        after = set()
+        for dm in re.findall(r'<DependedModule\s+Id="([^"]+)"', text):
+            before.add(dm.strip().lower())
+        for mid, order in re.findall(
+            r'<DependedModuleMetadata\s+id="([^"]+)"[^>]*order="([^"]+)"',
+            text,
+        ):
+            if order == "LoadBeforeThis":
+                before.add(mid.strip().lower())
+            elif order == "LoadAfterThis":
+                after.add(mid.strip().lower())
+        block = re.search(
+            r"<ModulesToLoadAfterThis>(.*?)</ModulesToLoadAfterThis>",
+            text, re.DOTALL,
+        )
+        if block:
+            for mid in re.findall(r'<Module\s+Id="([^"]+)"', block.group(1)):
+                after.add(mid.strip().lower())
+        out[mod_id.lower()] = (mod_id, before, after)
+    return out
+
+
+def _bl_sorted_module_order(order: list, install_path: str) -> list:
+    """The launcher's module ids, topologically sorted by the modules' own
+    declarations. Stable: unconstrained modules keep their relative order.
+
+    A cycle - two mods each demanding to load first - cannot be satisfied,
+    so the members keep their current order and the log says which they
+    were, rather than the sort silently inventing an answer.
+    """
+    cons = _bl_module_constraints(install_path)
+    present = {mid.lower(): i for i, mid in enumerate(order)}
+    # before-edges only: X must precede M.
+    needs = {}
+    for i, mid in enumerate(order):
+        low = mid.lower()
+        entry = cons.get(low)
+        needs.setdefault(low, set())
+        if not entry:
+            continue
+        _canon, before, after = entry
+        for b in before:
+            if b in present:
+                needs[low].add(b)
+        for a in after:
+            if a in present:
+                needs.setdefault(a, set()).add(low)
+    result, done = [], set()
+    remaining = [mid for mid in order]
+    while remaining:
+        pick = None
+        for mid in remaining:
+            if needs.get(mid.lower(), set()) <= done:
+                pick = mid
+                break
+        if pick is None:
+            # Cycle: unsatisfiable constraints. Keep the rest as they are.
+            cyc = ", ".join(remaining[:6])
+            decky.logger.warning(
+                f"BL load order: constraint cycle among [{cyc}] - keeping "
+                "their current order"
+            )
+            result.extend(remaining)
+            break
+        remaining.remove(pick)
+        done.add(pick.lower())
+        result.append(pick)
+    return result
+
+
+def _bl_apply_launcher_order(path: str, install_path: str) -> int:
+    """Reorder LauncherData.xml by the modules' declared constraints.
+
+    Returns how many entries moved. Everything about each entry except its
+    position - IsSelected, any fields the launcher added - is preserved,
+    because this file is the launcher's, not ours.
+    """
+    if not os.path.isfile(path):
+        return 0
+    try:
+        root = xml_parse_file(path)
+    except Exception:  # noqa: BLE001 - a corrupt file is the launcher's to fix
+        return 0
+    parent = None
+    for node in root.iter():
+        if any(c.tag == "UserModData" for c in node):
+            parent = node
+            break
+    if parent is None:
+        return 0
+    entries = [c for c in parent.children if c.tag == "UserModData"]
+    by_id = {}
+    order = []
+    for e in entries:
+        idn = e.find("Id")
+        mid = (idn.text or "").strip() if idn is not None else ""
+        if not mid:
+            return 0
+        by_id[mid] = e
+        order.append(mid)
+    new_order = _bl_sorted_module_order(order, install_path)
+    if new_order == order:
+        return 0
+    moved = sum(1 for a, b in zip(order, new_order) if a != b)
+    others = [c for c in parent.children if c.tag != "UserModData"]
+    parent.children = others + [by_id[mid] for mid in new_order]
+    try:
+        xml_write_file(path, root)
+    except OSError:
+        return 0
+    decky.logger.info(
+        f"BL load order: reordered {moved} launcher entries to satisfy the "
+        "modules' own constraints"
+    )
+    return moved
+
+
 def _bl_module_loads_first(install_path: str, module_id: str) -> bool:
     """Does this module declare that the official modules load AFTER it?
 
@@ -11141,6 +11295,12 @@ query Link($slug: String!, $domainName: String!) {
                             )
                     installed_rec[child] = rec
                 _save_settings(settings)
+                if launcher_xml_subpath:
+                    # One sort after all entries land, not one per module.
+                    _bl_apply_launcher_order(
+                        _launcher_xml_path(app_id, launcher_xml_subpath),
+                        install_path,
+                    )
                 _force_rmtree(scratch)
                 try:
                     os.remove(archive_path)
@@ -11201,6 +11361,13 @@ query Link($slug: String!, $domainName: String!) {
                     _launcher_xml_path(app_id, launcher_xml_subpath),
                     module_id,
                     True,
+                )
+                # Position matters as much as the tick: modules declare
+                # their own ordering, and appending broke ButterLib the
+                # moment a collection added BetterExceptionWindow.
+                _bl_apply_launcher_order(
+                    _launcher_xml_path(app_id, launcher_xml_subpath),
+                    install_path,
                 )
                 decky.logger.info(
                     f"module {module_id!r} activation: "
@@ -11439,6 +11606,12 @@ query Link($slug: String!, $domainName: String!) {
                         f"framework module {module_id!r} switched on in the "
                         f"launcher{' (first in the load order)' if first else ''}"
                     )
+                # Then sort the WHOLE list by the modules' declarations:
+                # insert-first was only ever the crude version of this.
+                _bl_apply_launcher_order(
+                    _launcher_xml_path(app_id, launcher_xml_subpath),
+                    install_path,
+                )
         return result
 
     async def seed_game_ini(
@@ -15014,6 +15187,17 @@ query CollectionInstructions($slug: String!) {
             if game_domain == "mountandblade2bannerlord"
             else []
         )
+        # And the load order, from the modules' own declarations. Fixes
+        # installs that predate the sort - the "ButterLib is loaded before
+        # BetterExceptionWindow" dialog - without a reinstall.
+        load_order_moved = (
+            _bl_apply_launcher_order(
+                _launcher_xml_path(app_id, BL_LAUNCHER_XML_SUBPATH),
+                install_path,
+            )
+            if game_domain == "mountandblade2bannerlord" and app_id
+            else 0
+        )
         script = _redscript_report(install_path, records)
         # The Bethesda half of the same question. Same authority - the game
         # itself - and the same translation job: the extender names DLLs,
@@ -15338,6 +15522,7 @@ query CollectionInstructions($slug: String!) {
             # can say so rather than silently changing their settings.
             "debug_quieted": debug_quieted,
             "shader_caches_fixed": shader_caches_fixed,
+            "load_order_moved": load_order_moved,
             # What the game itself reported, and the only part of this
             # report that is evidence rather than inference.
             "script_log": {

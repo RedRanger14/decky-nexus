@@ -226,6 +226,7 @@ export default function HealthCheckPage() {
     debug_quieted: string[];
     /** Bannerlord mods whose rejected shader cache we removed. */
     shader_caches_fixed: string[];
+    load_order_moved: number;
     known_bad: { name: string; for: string; why: string; mod_id?: number }[];
     se_parked: string[];
     address_library?: { runtime: string; have: string[]; matches: boolean };
@@ -283,6 +284,7 @@ export default function HealthCheckPage() {
                 already_fixed: r.already_fixed ?? [],
                 debug_quieted: r.debug_quieted ?? [],
                 shader_caches_fixed: r.shader_caches_fixed ?? [],
+                load_order_moved: r.load_order_moved ?? 0,
                 known_bad: r.known_bad ?? [],
                 script_extender: r.script_extender ?? [],
                 se_parked: r.se_parked ?? [],
@@ -817,6 +819,26 @@ export default function HealthCheckPage() {
             Report a problem
           </ButtonItem>
         </Focusable>
+
+        {(report?.load_order_moved ?? 0) > 0 && (
+          <>
+            <SectionHeading title="Fixed for you" />
+            <FindingCard
+              key="load-order"
+              tone="150, 160, 220"
+              icon={<FaPuzzlePiece size={16} />}
+              title="Corrected the mod load order"
+              detail={
+                `${report!.load_order_moved} module` +
+                `${report!.load_order_moved === 1 ? "" : "s"} ` +
+                "were loading in an order the mods themselves say is wrong, " +
+                "which shows up as warnings like 'X is loaded before Y' at " +
+                "launch. Reordered to what the mods declare. Nothing was " +
+                "enabled or disabled."
+              }
+            />
+          </>
+        )}
 
         {(report?.shader_caches_fixed?.length ?? 0) > 0 && (
           <>

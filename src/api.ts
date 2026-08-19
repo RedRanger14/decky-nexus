@@ -1195,6 +1195,9 @@ export const getHealthCheck = callable<
     /** Bannerlord mods whose rejected shader cache we removed, so the game
      * can boot and recompile them. */
     shader_caches_fixed?: string[];
+    /** Bannerlord: launcher entries moved to satisfy the modules' own
+     * declared load-order constraints. */
+    load_order_moved?: number;
     needs_mods?: {
       name: string;
       mod_id?: number;

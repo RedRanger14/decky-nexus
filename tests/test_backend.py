@@ -12800,6 +12800,131 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestBannerlordLoadOrder(unittest.TestCase):
+    """Bannerlord modules declare their own load order in SubModule.xml, and
+    our launcher writer appended in install order. The most popular
+    collection then broke at launch: "Bannerlord.ButterLib is loaded before
+    the BetterExceptionWindow!" - ButterLib itself declares
+    BetterExceptionWindow order="LoadBeforeThis". The data to prevent it was
+    on disk all along."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def _module(self, folder, mod_id=None, before=(), after=()):
+        d = os.path.join(self.dir, "Modules", folder)
+        os.makedirs(d, exist_ok=True)
+        mid = mod_id or folder
+        parts = ['<Module><Id value="%s" />' % mid]
+        if before:
+            parts.append("<DependedModuleMetadatas>")
+            for b in before:
+                parts.append(
+                    '<DependedModuleMetadata id="%s" order="LoadBeforeThis" '
+                    'optional="true" />' % b)
+            parts.append("</DependedModuleMetadatas>")
+        if after:
+            parts.append("<ModulesToLoadAfterThis>")
+            for a in after:
+                parts.append('<Module Id="%s" />' % a)
+            parts.append("</ModulesToLoadAfterThis>")
+        parts.append("</Module>")
+        with open(os.path.join(d, "SubModule.xml"), "w", encoding="utf-8") as f:
+            f.write("".join(parts))
+
+    def _launcher(self, order):
+        path = os.path.join(self.dir, "LauncherData.xml")
+        rows = "".join(
+            "<UserModData><Id>%s</Id><IsSelected>true</IsSelected>"
+            "</UserModData>" % m for m in order)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("<UserData><SingleplayerData><ModDatas>%s</ModDatas>"
+                    "</SingleplayerData></UserData>" % rows)
+        return path
+
+    def _order(self, path):
+        import re as _re
+        with open(path, encoding="utf-8") as f:
+            return _re.findall(r"<Id>([^<]+)</Id>", f.read())
+
+    def test_michaels_exact_case(self):
+        # ButterLib declares BEW LoadBeforeThis; launcher had ButterLib at
+        # the top and BEW at slot 60.
+        self._module("Bannerlord.ButterLib",
+                     before=("BetterExceptionWindow",))
+        self._module("BetterExceptionWindow")
+        self._module("Native")
+        path = self._launcher(
+            ["Bannerlord.ButterLib", "Native", "BetterExceptionWindow"])
+        moved = main._bl_apply_launcher_order(path, self.dir)
+        self.assertGreater(moved, 0)
+        order = self._order(path)
+        self.assertLess(order.index("BetterExceptionWindow"),
+                        order.index("Bannerlord.ButterLib"))
+
+    def test_loads_after_this_pushes_the_module_up(self):
+        # Harmony's declaration: the official modules load AFTER it.
+        self._module("Bannerlord.Harmony", after=("Native",))
+        self._module("Native")
+        path = self._launcher(["Native", "Bannerlord.Harmony"])
+        main._bl_apply_launcher_order(path, self.dir)
+        order = self._order(path)
+        self.assertEqual(order, ["Bannerlord.Harmony", "Native"])
+
+    def test_case_differences_between_launcher_and_manifest_still_match(self):
+        # Real case on device: launcher says "Sandbox", the folder and
+        # manifest say "SandBox".
+        self._module("SandBox", mod_id="SandBox")
+        self._module("ModX", before=("sandbox",))
+        path = self._launcher(["ModX", "Sandbox"])
+        main._bl_apply_launcher_order(path, self.dir)
+        order = self._order(path)
+        self.assertEqual(order, ["Sandbox", "ModX"])
+
+    def test_a_satisfied_order_is_left_untouched(self):
+        self._module("A")
+        self._module("B", before=("A",))
+        path = self._launcher(["A", "B"])
+        before_text = open(path, encoding="utf-8").read()
+        self.assertEqual(main._bl_apply_launcher_order(path, self.dir), 0)
+        self.assertEqual(open(path, encoding="utf-8").read(), before_text)
+
+    def test_unconstrained_modules_keep_their_relative_order(self):
+        for m in ("M1", "M2", "M3"):
+            self._module(m)
+        path = self._launcher(["M1", "M2", "M3"])
+        main._bl_apply_launcher_order(path, self.dir)
+        self.assertEqual(self._order(path), ["M1", "M2", "M3"])
+
+    def test_a_cycle_keeps_current_order_rather_than_inventing_one(self):
+        self._module("A", before=("B",))
+        self._module("B", before=("A",))
+        path = self._launcher(["A", "B"])
+        main._bl_apply_launcher_order(path, self.dir)
+        self.assertEqual(self._order(path), ["A", "B"])
+
+    def test_selection_flags_survive_the_reorder(self):
+        self._module("On", before=("Off",))
+        self._module("Off")
+        path = os.path.join(self.dir, "LauncherData.xml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("<UserData><SingleplayerData><ModDatas>"
+                    "<UserModData><Id>On</Id><IsSelected>true</IsSelected>"
+                    "</UserModData>"
+                    "<UserModData><Id>Off</Id><IsSelected>false</IsSelected>"
+                    "</UserModData>"
+                    "</ModDatas></SingleplayerData></UserData>")
+        main._bl_apply_launcher_order(path, self.dir)
+        text = open(path, encoding="utf-8").read()
+        self.assertLess(text.index("<Id>Off</Id>"), text.index("<Id>On</Id>"))
+        import re as _re
+        # xml_write_file pretty-prints, so allow whitespace between tags.
+        flags = dict(_re.findall(
+            r"<Id>([^<]+)</Id>\s*<IsSelected>([^<]+)</IsSelected>", text))
+        self.assertEqual(flags, {"On": "true", "Off": "false"})
+
+
 class TestBrowsePagingHonesty(unittest.TestCase):
     """Two paging defects found by a user searching the store:
 
