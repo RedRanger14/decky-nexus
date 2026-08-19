@@ -182,9 +182,11 @@ test("no bash launch template starts with an assignment", () => {
 test("every launch template hands off to %command%", () => {
   // The interface declares the field too; only the ones with a value are
   // templates.
-  const lines = GAMES_SRC.split("launchOptionsTemplate")
+  // Split on the PROPERTY, not the word: this test used to match the
+  // identifier anywhere, so mentioning it in a comment failed the suite.
+  const lines = GAMES_SRC.split(/launchOptionsTemplate\s*\??:/)
     .slice(1)
-    .filter((c) => !/^\??:\s*string/.test(c));
+    .filter((c) => !/^\s*string/.test(c));
   assert.ok(lines.length >= 2, `only ${lines.length} templates found`);
   for (const chunk of lines) {
     const upto = chunk.slice(0, 700);
@@ -806,37 +808,34 @@ test("the panel says unofficial and beta where the user can see it", () => {
   );
 });
 
-test("BLSE has Harmony declared as a prerequisite", () => {
-  // BLSE cannot run without Harmony and fails in a way that teaches nobody
-  // anything: its exception handler is built on Harmony, so without
-  // 0Harmony.dll it dies inside its own error handler and writes no log. The
-  // game closes before the launcher appears. Two separate failures - the
-  // LauncherEx attempt on 2026-07-22 and the Launcher attempt on 2026-08-19 -
-  // were both this, and both were misread as Proton problems. Found by running
-  // the wrapper under Proton by hand:
+test("Bannerlord's framework is Harmony, and there is no BLSE launch path", () => {
+  // BLSE is what the whole library ecosystem requires, and it cannot run under
+  // Proton: all three entry points die on Mono resolving a field type eagerly
+  // before BLSE's own assembly resolver can find Harmony. A BLSE launch
+  // template therefore makes the game unbootable - Michael, after installing
+  // both frameworks: "tried booting but bannerlord crashes instantly".
   //
-  //   System.TypeLoadException: Could not load file or assembly '0Harmony...'
+  // So Harmony is the framework and there is no launch template. If someone
+  // reinstates one, the game stops starting, which is why this is pinned.
   const games = read("games.ts");
-  // Slice to the END of the Bannerlord entry rather than a fixed number of
-  // characters: a fixed window silently stops covering the config the moment
-  // a comment is added above what it was checking, which is exactly what
-  // happened when BLSE's cleanup prefixes went in.
   const start = games.indexOf("mountandblade2bannerlord");
-  const nextGame = games.indexOf("nexusDomain:", games.indexOf("nexusDomain:", start) + 1);
+  const nextGame = games.indexOf(
+    "nexusDomain:",
+    games.indexOf("nexusDomain:", start) + 1
+  );
   const bl = games.slice(start, nextGame > start ? nextGame : games.length);
   assert.ok(
-    /nexusModId: 2006/.test(bl),
-    "Harmony (mod 2006) is not declared for Bannerlord, so the setup step " +
-      "installs BLSE and the game closes before the launcher appears"
+    /name: "Harmony"/.test(bl) && /nexusModId: 2006/.test(bl),
+    "Bannerlord's framework should be Harmony (mod 2006)"
   );
   assert.ok(
-    /Bannerlord\.Harmony/.test(bl),
-    "nothing detects or cleans up the Harmony module"
+    !/launchOptionsTemplate\s*:/.test(bl),
+    "Bannerlord has a launch template again - a BLSE swap makes the game " +
+      "unbootable under Proton"
   );
-  // And the launch template must name the exe Steam actually runs.
+  // Reset must still clear a BLSE installed before this decision.
   assert.ok(
-    /TaleWorlds\.MountAndBlade\.Launcher\.exe/.test(bl),
-    "the launch template does not swap the exe Steam launches, which is " +
-      "indistinguishable from having no template at all"
+    /Bannerlord\.BLSE\.\*/.test(bl),
+    "reset no longer removes BLSE, so Step 1 will miscount after a reset"
   );
 });

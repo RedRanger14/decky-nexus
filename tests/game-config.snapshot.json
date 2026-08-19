@@ -55,10 +55,9 @@
     "pluginsTxtSubpath": null,
     "pluginsTxtStyle": null,
     "installMode": null,
-    "frameworkName": "BLSE",
-    "launchOptionsTemplate": "bash -c 'exec \"${@/TaleWorlds.MountAndBlade.Launcher.exe/Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
+    "frameworkName": "Harmony",
+    "launchOptionsTemplate": null,
     "prefixTools": [
-      "1",
       "2006"
     ],
     "manualTools": 0,
@@ -68,8 +67,7 @@
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
     "cleanupPrefixes": [
-      "\"bin/Win64_Shipping_Client/Bannerlord.BLSE.*\"",
-      "\"Modules/Bannerlord.Harmony\""
+      "\"Modules/Bannerlord.Harmony\", \"bin/Win64_Shipping_Client/Bannerlord.BLSE.*\","
     ]
   },
   {

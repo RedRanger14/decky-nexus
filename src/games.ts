@@ -772,79 +772,49 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // Archive verified: bin/Win64_Shipping_Client + Gaming.Desktop variant
     // at root -> copyRoot merges into the game root (no-flatten rule keys
     // off the detect file's "bin/" component).
+    // Harmony is the framework, NOT BLSE. Decided 2026-08-19 after BLSE was
+    // proven unusable under Proton, and recorded in full because the obvious
+    // reading of the mod ecosystem says otherwise.
+    //
+    // BLSE is what ButterLib, UIExtenderEx and MCM all require, so on paper it
+    // is the centre of Bannerlord modding. Under Proton it cannot run at all.
+    // All three of its entry points - Launcher, LauncherEx and Standalone -
+    // die identically:
+    //
+    //   System.TypeLoadException: Could not load type of field
+    //   'Bannerlord.BLSE.Shared.Utils.LauncherExceptionHandler:_harmony'
+    //   due to: Could not load file or assembly '0Harmony, Version=2.2.2.0'
+    //
+    // Mono resolves a field's type eagerly when the method is JITted, so
+    // BLSE's own assembly resolver never runs - and that resolver is what
+    // would have found Harmony in Modules/. On Windows the CLR defers the
+    // resolution and it works. Copying Harmony's assemblies next to BLSE does
+    // make it start, but Harmony then warns "loaded from another location...
+    // expect issues" in a dialog on EVERY launch, so it is not shippable.
+    //
+    // Worse, a BLSE launch template makes the game UNBOOTABLE: it swaps the
+    // exe for one that cannot start. Michael, after installing both
+    // frameworks: "tried booting but bannerlord crashes instantly". A setup
+    // step that bricks the game is worse than a missing feature.
+    //
+    // So: Harmony alone. Asset mods work, Harmony-only code mods work, and
+    // anything needing the library stack does not - which the requirement
+    // checker states honestly rather than us pretending otherwise.
     framework: {
-      name: "BLSE",
-      detectFile: "bin/Win64_Shipping_Client/Bannerlord.BLSE.LauncherEx.exe",
-      // BLSE drops eight files into the game's bin folder and ships no
-      // manifest, so reset left every one of them: after a reset Step 1
-      // counted BLSE as installed and offered "Install remaining
-      // frameworks (1)" on a machine with nothing installed. The trailing *
-      // globs that one folder for that one prefix.
-      cleanupPrefixes: ["bin/Win64_Shipping_Client/Bannerlord.BLSE.*"],
-      url: "nexusmods.com/mountandblade2bannerlord/mods/1",
-      nexusModId: 1, // verified: "Bannerlord Software Extender (BLSE)"
-      installKind: "copyRoot",
-      // BLSE only takes effect if the game is launched through one of ITS
-      // executables - installing the files changes nothing on its own, which
-      // is why this step used to install a framework the game never loaded.
-      // BLSE ships three entry points, and the choice matters here:
-      //
-      //   Bannerlord.BLSE.LauncherEx.exe  BUTRLoader's own UI. Tried
-      //                                   2026-07-22, broke boot on device.
-      //   Bannerlord.BLSE.Launcher.exe    wraps the VANILLA launcher. Fewest
-      //                                   moving parts under Proton, and the
-      //                                   launcher UI is where module
-      //                                   activation lives, which this
-      //                                   plugin writes via LauncherData.xml.
-      //   Bannerlord.BLSE.Standalone.exe  CLI, no launcher at all. The
-      //                                   fallback if the wrapper fails.
-      //
-      // So: the vanilla wrapper. Same exe-swap recipe as Skyrim's SKSE.
-      //
-      // The old note here blamed a missing .NET runtime in the prefix. That
-      // was wrong: checked on device 2026-08-18, the game ships its own
-      // (Microsoft.NETCore.App and friends in bin/Win64_Shipping_Client).
-      // The exe Steam launches is TaleWorlds.MountAndBlade.Launcher.exe, NOT
-      // Bannerlord.exe. Read off the device from decky-launch-options' own
-      // debug log:
-      //
-      //   proton waitforexitandrun .../TaleWorlds.MountAndBlade.Launcher.exe
-      //
-      // The first version of this swapped Bannerlord.exe, matched nothing,
-      // and silently launched vanilla - so the step looked applied and BLSE
-      // still never loaded. Substituting the wrong name is indistinguishable
-      // from having no template at all, which is why this needs the real one.
-      launchOptionsTemplate:
-        "bash -c 'exec \"$" +
-        "{@/TaleWorlds.MountAndBlade.Launcher.exe/" +
-        "Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
+      name: "Harmony",
+      detectFile: "Modules/Bannerlord.Harmony/SubModule.xml",
+      url: "nexusmods.com/mountandblade2bannerlord/mods/2006",
+      nexusModId: 2006, // verified: "Harmony", v2.4.2.248 (2026-07-21)
+      // Both prefixes: reset must still remove a BLSE installed before this
+      // decision, and BLSE ships eight files with no manifest, hence the *.
+      cleanupPrefixes: [
+        "Modules/Bannerlord.Harmony",
+        "bin/Win64_Shipping_Client/Bannerlord.BLSE.*",
+      ],
+      // No launch template, deliberately: see the note above. Harmony is a
+      // module, and the game loads it from the launcher's module list, which
+      // this plugin writes and activates.
     },
-    // BLSE cannot run without Harmony, and it fails in a way that teaches
-    // nobody anything: its own exception handler is built on Harmony, so
-    // without 0Harmony.dll it dies inside its error handler and writes no
-    // log at all. The game just closes before the launcher appears.
-    //
-    // Found by running the wrapper under Proton by hand, 2026-08-19:
-    //
-    //   System.TypeLoadException: Could not load file or assembly
-    //   '0Harmony, Version=2.2.2.0'
-    //
-    // Nexus declares it too - BLSE lists Harmony (mod 2006) as a requirement
-    // - and our framework step had been ignoring declared requirements. Two
-    // earlier failures (2026-07-22 LauncherEx, 2026-08-19 Launcher) were both
-    // this, and both were misread as Proton problems.
-    //
-    // Install order does not matter: BLSE only needs Harmony present when the
-    // game LAUNCHES, not when BLSE is installed.
-    extraFrameworks: [
-      {
-        name: "Harmony",
-        detectFile: "Modules/Bannerlord.Harmony/SubModule.xml",
-        url: "nexusmods.com/mountandblade2bannerlord/mods/2006",
-        nexusModId: 2006, // verified: "Harmony", v2.4.2.248 (2026-07-21)
-        cleanupPrefixes: ["Modules/Bannerlord.Harmony"],
-      },
-    ],
     // Modules activate via the launcher's XML (Vortex manages the same
     // file). Created by the launcher on first run - activation is
     // best-effort until then; the launcher also auto-detects modules.
