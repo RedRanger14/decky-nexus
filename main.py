@@ -3727,6 +3727,12 @@ class XmlNode:
     def append(self, node):
         self.children.append(node)
 
+    def insert(self, index, node):
+        """Needed for load-order-sensitive files: Bannerlord's launcher list
+        is an ORDER, so a module that must load before the game's own has to
+        go in at the front rather than on the end."""
+        self.children.insert(index, node)
+
     def remove(self, node):
         self.children.remove(node)
 
@@ -5487,8 +5493,40 @@ def _launcher_xml_path(app_id: int, subpath: str) -> str:
     )
 
 
-def _set_module_selected(path: str, module_id: str, selected: bool) -> bool:
-    """Set (or append) a module's IsSelected in LauncherData.xml. Best
+def _bl_module_loads_first(install_path: str, module_id: str) -> bool:
+    """Does this module declare that the official modules load AFTER it?
+
+    Harmony does, and it matters: every mod that patches the game needs
+    Harmony in memory before the game's own modules initialise. Its manifest
+    is explicit -
+
+      <ModulesToLoadAfterThis>
+        <Module Id="Native" /> <Module Id="SandBoxCore" /> ...
+
+    - so appending it to the end of the launcher's list, which is what a
+    plain install does, puts it in exactly the wrong place.
+    """
+    path = os.path.join(install_path, "Modules", module_id, "SubModule.xml")
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return False
+    block = re.search(
+        r"<ModulesToLoadAfterThis>(.*?)</ModulesToLoadAfterThis>",
+        text, re.DOTALL | re.IGNORECASE,
+    )
+    if not block:
+        return False
+    return bool(re.search(r'Id\s*=\s*"Native"', block.group(1), re.IGNORECASE))
+
+
+def _set_module_selected(
+    path: str, module_id: str, selected: bool, first: bool = False
+) -> bool:
+    """Set (or add) a module's IsSelected in LauncherData.xml. Best
     effort: returns False when the file doesn't exist yet (launcher never
     run) - the launcher also auto-detects modules, so this is convenience,
     not correctness."""
@@ -5528,7 +5566,12 @@ def _set_module_selected(path: str, module_id: str, selected: bool) -> bool:
         sel = XmlNode("IsSelected")
         sel.text = "true" if selected else "false"
         entry.append(sel)
-        parent.append(entry)
+        if first:
+            # Harmony and anything else declaring ModulesToLoadAfterThis has
+            # to be ahead of the game's own modules, not appended after them.
+            parent.insert(0, entry)
+        else:
+            parent.append(entry)
         xml_write_file(path, root)
         return True
     except Exception:  # noqa: BLE001
@@ -11244,6 +11287,7 @@ query Link($slug: String!, $domainName: String!) {
         install_subdir: str = "",
         mods_subdir: str = "",
         app_id: int = 0,
+        launcher_xml_subpath: str = "",
     ) -> dict:
         """Download a mod-loader framework (e.g. SMAPI) from Nexus - so the
         author gets the download credit - and run its unattended installer
@@ -11261,7 +11305,7 @@ query Link($slug: String!, $domainName: String!) {
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path
             )
-        return await self._install_framework_inner(
+        result = await self._install_framework_inner(
             game_domain,
             mod_id,
             install_dir,
@@ -11270,6 +11314,36 @@ query Link($slug: String!, $domainName: String!) {
             avoid_file_keywords,
             install_subdir,
         )
+        # A framework that IS a game module has to be switched on like any
+        # other module, and our framework installs never did it: Harmony
+        # arrived in Modules/ and sat there disabled, so the game ignored it
+        # and BLSE could not find it. Michael, at the launcher: "i can see
+        # harmony in the mod list and its disabled, shall I enable it?" - a
+        # setup step should not need that question.
+        #
+        # Ordering matters as much as the tick. Harmony declares that the
+        # official modules load AFTER it, so appending it to the end of the
+        # launcher's list - what a plain install does - is exactly wrong.
+        if result.get("ok") and launcher_xml_subpath and app_id:
+            install_path, _mods, _d = _game_paths(install_dir, mods_subdir)
+            module_id = (
+                result.get("moduleId")
+                or os.path.basename(str(result.get("folder") or ""))
+            )
+            if module_id and os.path.isdir(
+                os.path.join(install_path, "Modules", module_id)
+            ):
+                first = _bl_module_loads_first(install_path, module_id)
+                if _set_module_selected(
+                    _launcher_xml_path(app_id, launcher_xml_subpath),
+                    module_id, True, first,
+                ):
+                    result["activated"] = module_id
+                    decky.logger.info(
+                        f"framework module {module_id!r} switched on in the "
+                        f"launcher{' (first in the load order)' if first else ''}"
+                    )
+        return result
 
     async def seed_game_ini(
         self,

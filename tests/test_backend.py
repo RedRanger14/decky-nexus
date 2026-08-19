@@ -12800,6 +12800,73 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestFrameworkModuleActivation(unittest.TestCase):
+    """Harmony installed into Modules/ and sat there DISABLED, so the game
+    ignored it and BLSE could not find it. Michael, at the launcher: "i can
+    see harmony in the mod list and its disabled, shall I enable it?" A setup
+    step should not need that question."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def _module(self, module_id, loads_first):
+        d = os.path.join(self.dir, "Modules", module_id)
+        os.makedirs(d)
+        after = ("<ModulesToLoadAfterThis><Module Id=\"Native\" />"
+                 "</ModulesToLoadAfterThis>") if loads_first else ""
+        with open(os.path.join(d, "SubModule.xml"), "w", encoding="utf-8") as f:
+            f.write("<Module><Id value=\"%s\" />%s</Module>" % (module_id, after))
+
+    def test_harmony_declares_that_it_loads_first(self):
+        self._module("Bannerlord.Harmony", True)
+        self.assertTrue(main._bl_module_loads_first(
+            self.dir, "Bannerlord.Harmony"))
+
+    def test_an_ordinary_module_does_not(self):
+        self._module("OpenSourceArmory", False)
+        self.assertFalse(main._bl_module_loads_first(
+            self.dir, "OpenSourceArmory"))
+
+    def test_a_missing_module_is_not_assumed_to_load_first(self):
+        self.assertFalse(main._bl_module_loads_first(self.dir, "NotThere"))
+
+    def test_a_load_first_module_is_inserted_ahead_of_the_others(self):
+        path = os.path.join(self.dir, "LauncherData.xml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("<UserData><SingleplayerData><ModDatas>"
+                    "<UserModData><Id>Native</Id>"
+                    "<IsSelected>true</IsSelected></UserModData>"
+                    "</ModDatas></SingleplayerData></UserData>")
+        self.assertTrue(main._set_module_selected(
+            path, "Bannerlord.Harmony", True, True))
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        self.assertLess(text.index("Bannerlord.Harmony"), text.index("Native"),
+                        "Harmony must sit ahead of the official modules")
+
+    def test_an_ordinary_module_is_appended(self):
+        path = os.path.join(self.dir, "LauncherData.xml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("<UserData><SingleplayerData><ModDatas>"
+                    "<UserModData><Id>Native</Id>"
+                    "<IsSelected>true</IsSelected></UserModData>"
+                    "</ModDatas></SingleplayerData></UserData>")
+        self.assertTrue(main._set_module_selected(path, "SomeMod", True, False))
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        self.assertGreater(text.index("SomeMod"), text.index("Native"))
+
+    def test_the_framework_install_activates_the_module(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def install_framework"):]
+        fn = fn[:fn.index("async def seed_game_ini")]
+        self.assertIn("_set_module_selected(", fn)
+        self.assertIn("_bl_module_loads_first(", fn)
+        self.assertIn('result["activated"]', fn)
+
+
 class TestBannerlordShaderCache(unittest.TestCase):
     """Open Source Armory ships a shader cache compiled 9 July 2026. The game
     updated on 11 August, rejects the cache, and crashes at the splash screen

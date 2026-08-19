@@ -793,7 +793,10 @@ function CurrentGameSection() {
             game.framework.installSubdir ?? "",
             // So the vanilla baseline is taken before the framework lands.
             game.modsSubdir,
-            game.appId
+            game.appId,
+            // Bannerlord's Harmony is a MODULE: installing it is not enough,
+            // it has to be switched on in the game's launcher too.
+            game.launcherXmlSubpath ?? ""
           );
       // Some games need ini blocks before mods load at all (e.g. FO4's
       // archive invalidation) - apply them as part of framework setup.
@@ -913,7 +916,8 @@ function CurrentGameSection() {
           fw.avoidFileKeywords ?? [],
           fw.installSubdir ?? "",
           game.modsSubdir,
-          game.appId
+          game.appId,
+          game.launcherXmlSubpath ?? ""
         );
         if (!result.ok) {
           failed++;

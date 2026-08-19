@@ -480,9 +480,19 @@ export const installFramework = callable<
     /** So the vanilla baseline can be taken BEFORE the framework lands -
      * it is the first thing to touch the game folder. */
     mods_subdir: string,
-    app_id: number
+    app_id: number,
+    /** So a framework that IS a game module gets switched on in the game's
+     * launcher, and placed first when its manifest says the game's own
+     * modules load after it. Harmony arrived disabled without this. */
+    launcher_xml_subpath: string
   ],
-  { ok: boolean; install_path?: string; error?: string }
+  {
+    ok: boolean;
+    install_path?: string;
+    error?: string;
+    /** The module id we activated, when the framework is a module. */
+    activated?: string;
+  }
 >("install_framework");
 
 // Skyrim/FO4 read plugins.txt AS the load order. How many enabled
