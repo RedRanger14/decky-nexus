@@ -12800,6 +12800,52 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestBlseLaunchScript(unittest.TestCase):
+    """BLSE under Proton: all three entry points die on a TypeLoadException
+    for 0Harmony because Mono resolves the field type eagerly, before BLSE's
+    own assembly resolver exists. MONO_PATH at the Harmony module's bin dir
+    fixes it - measured on device, control run threw, both path forms
+    survived. Delivered as a backend-written script at a no-space path,
+    because decky-launch-options mangles quoted env assignments."""
+
+    def test_the_script_is_written_and_executable(self):
+        path = main._ensure_blse_launch_script()
+        self.assertTrue(os.path.isfile(path))
+        if os.name != "nt":
+            self.assertTrue(os.access(path, os.X_OK))
+        self.assertNotIn(" ", path, "the whole point is a no-space path")
+
+    def test_the_script_is_refreshed_when_stale(self):
+        path = main._ensure_blse_launch_script()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("#!/bin/bash\necho old\n")
+        main._ensure_blse_launch_script()
+        with open(path, encoding="utf-8") as f:
+            body = f.read()
+        self.assertIn("MONO_PATH", body)
+
+    def test_the_script_sets_mono_path_and_swaps_the_exe(self):
+        body = main._BLSE_SCRIPT_BODY
+        self.assertIn('export MONO_PATH="Z:$harmony"', body)
+        self.assertIn(
+            "${@/TaleWorlds.MountAndBlade.Launcher.exe/"
+            "Bannerlord.BLSE.Launcher.exe}", body)
+
+    def test_missing_harmony_degrades_to_vanilla_not_unbootable(self):
+        # The one property that must never regress: our setup step bricked
+        # the game once by swapping to an exe that could not start.
+        body = main._BLSE_SCRIPT_BODY
+        tail = body[body.rindex("fi"):]
+        self.assertIn('exec "$@"', tail)
+
+    def test_game_status_maintains_the_script(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def get_game_status"):]
+        fn = fn[:fn.index("decky.logger.info(f\"game status")]
+        self.assertIn("_ensure_blse_launch_script()", fn)
+
+
 class TestFrameworkCleanupWildcard(unittest.TestCase):
     """BLSE drops eight files into the game's bin folder with no manifest, so
     reset left all of them and Step 1 then offered "Install remaining

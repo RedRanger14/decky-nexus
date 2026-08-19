@@ -772,49 +772,48 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // Archive verified: bin/Win64_Shipping_Client + Gaming.Desktop variant
     // at root -> copyRoot merges into the game root (no-flatten rule keys
     // off the detect file's "bin/" component).
-    // Harmony is the framework, NOT BLSE. Decided 2026-08-19 after BLSE was
-    // proven unusable under Proton, and recorded in full because the obvious
-    // reading of the mod ecosystem says otherwise.
+    // BLSE, made to work under Proton on 2026-08-19 after a month of looking
+    // impossible. The whole story is in main.py next to BLSE_LAUNCH_SCRIPT;
+    // the short version:
     //
-    // BLSE is what ButterLib, UIExtenderEx and MCM all require, so on paper it
-    // is the centre of Bannerlord modding. Under Proton it cannot run at all.
-    // All three of its entry points - Launcher, LauncherEx and Standalone -
-    // die identically:
+    //   - All three BLSE entry points die under wine-mono with a
+    //     TypeLoadException for 0Harmony, because Mono resolves the field
+    //     type eagerly, before BLSE's own assembly resolver exists.
+    //   - MONO_PATH pointed at the Harmony MODULE's bin dir fixes it, and
+    //     because the assembly then loads from the path the Harmony module
+    //     expects, the "loaded from another location" warning never fires.
+    //   - Delivered via a backend-written script at a no-space path, because
+    //     decky-launch-options mangles quoted env assignments and the game
+    //     path has spaces. The script swaps the exe AND sets MONO_PATH, and
+    //     falls back to a vanilla boot if Harmony or BLSE is missing - a
+    //     missing dependency must never produce an unbootable game.
     //
-    //   System.TypeLoadException: Could not load type of field
-    //   'Bannerlord.BLSE.Shared.Utils.LauncherExceptionHandler:_harmony'
-    //   due to: Could not load file or assembly '0Harmony, Version=2.2.2.0'
-    //
-    // Mono resolves a field's type eagerly when the method is JITted, so
-    // BLSE's own assembly resolver never runs - and that resolver is what
-    // would have found Harmony in Modules/. On Windows the CLR defers the
-    // resolution and it works. Copying Harmony's assemblies next to BLSE does
-    // make it start, but Harmony then warns "loaded from another location...
-    // expect issues" in a dialog on EVERY launch, so it is not shippable.
-    //
-    // Worse, a BLSE launch template makes the game UNBOOTABLE: it swaps the
-    // exe for one that cannot start. Michael, after installing both
-    // frameworks: "tried booting but bannerlord crashes instantly". A setup
-    // step that bricks the game is worse than a missing feature.
-    //
-    // So: Harmony alone. Asset mods work, Harmony-only code mods work, and
-    // anything needing the library stack does not - which the requirement
-    // checker states honestly rather than us pretending otherwise.
+    // {blse_script} is substituted from game_status, which also (re)writes
+    // the script, so the options never point at a file that does not exist.
     framework: {
-      name: "Harmony",
-      detectFile: "Modules/Bannerlord.Harmony/SubModule.xml",
-      url: "nexusmods.com/mountandblade2bannerlord/mods/2006",
-      nexusModId: 2006, // verified: "Harmony", v2.4.2.248 (2026-07-21)
-      // Both prefixes: reset must still remove a BLSE installed before this
-      // decision, and BLSE ships eight files with no manifest, hence the *.
-      cleanupPrefixes: [
-        "Modules/Bannerlord.Harmony",
-        "bin/Win64_Shipping_Client/Bannerlord.BLSE.*",
-      ],
-      // No launch template, deliberately: see the note above. Harmony is a
-      // module, and the game loads it from the launcher's module list, which
-      // this plugin writes and activates.
+      name: "BLSE",
+      detectFile: "bin/Win64_Shipping_Client/Bannerlord.BLSE.Launcher.exe",
+      url: "nexusmods.com/mountandblade2bannerlord/mods/1",
+      nexusModId: 1, // verified: "Bannerlord Software Extender (BLSE)"
+      installKind: "copyRoot",
+      // Eight files, no manifest: the * globs that one folder for that stem,
+      // so reset removes them all (Step 1 miscounted after reset without it).
+      cleanupPrefixes: ["bin/Win64_Shipping_Client/Bannerlord.BLSE.*"],
+      launchOptionsTemplate: "{blse_script} %command%",
     },
+    extraFrameworks: [
+      {
+        // BLSE cannot run without Harmony - it is a declared requirement on
+        // Nexus, and BLSE's own exception handler is built on it, so without
+        // 0Harmony.dll it dies inside its error handler with no log at all.
+        name: "Harmony",
+        detectFile: "Modules/Bannerlord.Harmony/SubModule.xml",
+        url: "nexusmods.com/mountandblade2bannerlord/mods/2006",
+        nexusModId: 2006, // verified: "Harmony", v2.4.2.248 (2026-07-21)
+        installKind: "copyRoot",
+        cleanupPrefixes: ["Modules/Bannerlord.Harmony"],
+      },
+    ],
     // Modules activate via the launcher's XML (Vortex manages the same
     // file). Created by the launcher on first run - activation is
     // best-effort until then; the launcher also auto-detects modules.

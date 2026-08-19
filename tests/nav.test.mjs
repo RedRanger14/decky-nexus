@@ -808,15 +808,12 @@ test("the panel says unofficial and beta where the user can see it", () => {
   );
 });
 
-test("Bannerlord's framework is Harmony, and there is no BLSE launch path", () => {
-  // BLSE is what the whole library ecosystem requires, and it cannot run under
-  // Proton: all three entry points die on Mono resolving a field type eagerly
-  // before BLSE's own assembly resolver can find Harmony. A BLSE launch
-  // template therefore makes the game unbootable - Michael, after installing
-  // both frameworks: "tried booting but bannerlord crashes instantly".
-  //
-  // So Harmony is the framework and there is no launch template. If someone
-  // reinstates one, the game stops starting, which is why this is pinned.
+test("Bannerlord launches BLSE through the script, never a raw env var", () => {
+  // MONO_PATH is what makes BLSE work under Proton, and it cannot go in the
+  // launch options directly: the game path has spaces, and
+  // decky-launch-options splits tokens naively, so a quoted assignment gets
+  // mangled (the Fallout 3 incident, same mechanism). The backend writes a
+  // script at a no-space path instead, and the template points at it.
   const games = read("games.ts");
   const start = games.indexOf("mountandblade2bannerlord");
   const nextGame = games.indexOf(
@@ -825,17 +822,26 @@ test("Bannerlord's framework is Harmony, and there is no BLSE launch path", () =
   );
   const bl = games.slice(start, nextGame > start ? nextGame : games.length);
   assert.ok(
-    /name: "Harmony"/.test(bl) && /nexusModId: 2006/.test(bl),
-    "Bannerlord's framework should be Harmony (mod 2006)"
+    /launchOptionsTemplate: "\{blse_script\} %command%"/.test(bl),
+    "Bannerlord's launch template is not the backend-written script"
+  );
+  // On the template VALUE, not the slice: comments may (and do) explain
+  // MONO_PATH. The property itself must never contain an assignment,
+  // because dlo lifts any VAR= token and mangles quoted values with spaces.
+  const template = bl.match(/launchOptionsTemplate: "([^"]*)"/);
+  assert.ok(template, "no launch template found for Bannerlord");
+  assert.ok(
+    !template[1].includes("="),
+    `the launch template contains an assignment (${template[1]}) - dlo ` +
+      "will mangle it"
   );
   assert.ok(
-    !/launchOptionsTemplate\s*:/.test(bl),
-    "Bannerlord has a launch template again - a BLSE swap makes the game " +
-      "unbootable under Proton"
+    /nexusModId: 2006/.test(bl) && /Bannerlord\.Harmony/.test(bl),
+    "Harmony (mod 2006) is no longer declared - BLSE dies without it, " +
+      "silently, inside its own exception handler"
   );
-  // Reset must still clear a BLSE installed before this decision.
   assert.ok(
     /Bannerlord\.BLSE\.\*/.test(bl),
-    "reset no longer removes BLSE, so Step 1 will miscount after a reset"
+    "reset no longer removes BLSE's eight unmanifested files"
   );
 });

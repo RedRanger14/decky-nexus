@@ -55,9 +55,10 @@
     "pluginsTxtSubpath": null,
     "pluginsTxtStyle": null,
     "installMode": null,
-    "frameworkName": "Harmony",
-    "launchOptionsTemplate": null,
+    "frameworkName": "BLSE",
+    "launchOptionsTemplate": "{blse_script} %command%",
     "prefixTools": [
+      "1",
       "2006"
     ],
     "manualTools": 0,
@@ -67,7 +68,8 @@
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
     "cleanupPrefixes": [
-      "\"Modules/Bannerlord.Harmony\", \"bin/Win64_Shipping_Client/Bannerlord.BLSE.*\","
+      "\"bin/Win64_Shipping_Client/Bannerlord.BLSE.*\"",
+      "\"Modules/Bannerlord.Harmony\""
     ]
   },
   {

@@ -168,6 +168,9 @@ export interface GameStatus {
   mods_path: string;
   mods_dir_exists: boolean;
   framework_installed?: boolean;
+  /** Bannerlord only: the launch script the backend maintains, substituted
+   * into the framework's launch template as {blse_script}. */
+  blse_script?: string;
 }
 
 export const getMods = callable<

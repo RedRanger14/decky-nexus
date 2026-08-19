@@ -692,10 +692,9 @@ function CurrentGameSection() {
         gameName={game.displayName}
         appId={game.appId}
         gameDomain={game.nexusDomain}
-        options={game.framework.launchOptionsTemplate.replace(
-          "{install_path}",
-          status.install_path
-        )}
+        options={game.framework.launchOptionsTemplate
+          .replace("{install_path}", status.install_path)
+          .replace("{blse_script}", status.blse_script ?? "")}
         onDone={markDone}
       />
     );
