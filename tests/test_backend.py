@@ -12800,6 +12800,47 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestCollectionVersionPinning(unittest.TestCase):
+    """Every collection revision declares its target game version, and the
+    top three Bannerlord collections all target older builds. The prose
+    downgrade check could never see "Best&Correct Mods 1.2.11": its target
+    lives in a field, not in a sentence about downgrading. Michael installed
+    it on v1.4.8 and got the game's own submodule load error for a mod whose
+    name says "for v1.2.10"."""
+
+    def test_the_crashing_case_is_flagged(self):
+        self.assertTrue(main._versions_mismatch(["v1.2.11"], "v1.4.8"))
+
+    def test_author_lagging_one_patch_is_not_flagged(self):
+        # v1.4.7 on v1.4.8 is the ordinary case; flagging it would cry wolf
+        # on collections that work, which is the age-rule mistake again.
+        self.assertFalse(main._versions_mismatch(["v1.4.7"], "v1.4.8"))
+
+    def test_any_matching_ref_clears_the_flag(self):
+        self.assertFalse(
+            main._versions_mismatch(["v1.2.11", "v1.4.2"], "v1.4.8"))
+
+    def test_no_claim_without_evidence(self):
+        self.assertFalse(main._versions_mismatch([], "v1.4.8"))
+        self.assertFalse(main._versions_mismatch(["v1.2.11"], ""))
+        self.assertFalse(main._versions_mismatch(["beta"], "v1.4.8"))
+
+    def test_bannerlord_version_reads_from_the_native_manifest(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _bl_installed_game_version"):]
+        fn = fn[:fn.index("def _versions_mismatch")]
+        self.assertIn('"Native", "SubModule.xml"', fn)
+
+    def test_the_collections_query_asks_for_game_versions(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("gameVersions { reference }", source)
+        fn = source[source.index("async def get_collections"):]
+        fn = fn[:fn.index("async def get_mods")]
+        self.assertIn("_versions_mismatch(", fn)
+
+
 class TestBannerlordLoadOrder(unittest.TestCase):
     """Bannerlord modules declare their own load order in SubModule.xml, and
     our launcher writer appended in install order. The most popular

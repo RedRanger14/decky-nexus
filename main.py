@@ -376,6 +376,63 @@ def _api_headers(api_key=None) -> dict:
     return headers
 
 
+# ---- Collections pinned to a different game version ------------------------
+# Every collection revision declares its target game version in the API -
+# gameVersions { reference } - and the top three Bannerlord collections all
+# target builds older than the installed game. The prose-based downgrade
+# detection could never see that: "Best&Correct Mods 1.2.11" states its
+# target in a FIELD (and its name), not in a sentence about downgrading.
+# Michael installed it on v1.4.8 and got the game's own submodule load error
+# for a mod whose name literally says "for v1.2.10".
+#
+# Only games where the installed version is locally readable get the check:
+# a comparison against a guess would produce false badges, which is worse
+# than the prose heuristic this augments.
+_GAME_VERSION_READERS = {
+    "mountandblade2bannerlord": lambda: _bl_installed_game_version(),
+}
+
+
+def _bl_installed_game_version() -> str:
+    """Bannerlord's version, from Native/SubModule.xml. "" when unknown."""
+    install_path = _game_paths("Mount & Blade II Bannerlord", "Modules")[0]
+    manifest = os.path.join(
+        install_path, "Modules", "Native", "SubModule.xml"
+    )
+    try:
+        with open(manifest, "r", encoding="utf-8", errors="replace") as f:
+            m = re.search(r'<Version\s+value\s*=\s*"([^"]+)"', f.read())
+        return (m.group(1) if m else "").strip()
+    except OSError:
+        return ""
+
+
+def _versions_mismatch(collection_refs: list, installed: str) -> bool:
+    """Whether a collection's declared game versions all miss the installed
+    one, compared on major.minor.
+
+    major.minor, deliberately: a v1.4.7 collection on a v1.4.8 game is the
+    ordinary author-lagging-a-patch case and flagging it would cry wolf,
+    while v1.2.x on v1.4.x is the case that crashed on device. No refs, or
+    an unreadable installed version, means no claim either way.
+    """
+    if not installed:
+        return False
+    inst = _version_tuple(installed)
+    if not inst or len(inst) < 2:
+        return False
+    refs = [r for r in (collection_refs or []) if r]
+    if not refs:
+        return False
+    for ref in refs:
+        rv = _version_tuple(str(ref))
+        if not rv or len(rv) < 2:
+            return False  # cannot read a ref: make no claim
+        if tuple(rv[:2]) == tuple(inst[:2]):
+            return False
+    return True
+
+
 def _game_paths(install_dir: str, mods_subdir: str):
     install_path = os.path.join(STEAM_COMMON, install_dir)
     mods_path = os.path.join(install_path, mods_subdir)
@@ -8630,7 +8687,11 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
       tileImage { thumbnailUrl(size: small) }
       user { name }
       description
-      latestPublishedRevision { modCount totalSize }
+      latestPublishedRevision {
+        modCount
+        totalSize
+        gameVersions { reference }
+      }
     }
   }
 }"""
@@ -8707,7 +8768,16 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                     # a different coat: somebody who knows their setup
                     # cannot act on a collection they cannot see, and
                     # nobody learns why it went.
-                    needs_older = bool(
+                    rev = n.get("latestPublishedRevision") or {}
+                    refs = [
+                        (g or {}).get("reference")
+                        for g in (rev.get("gameVersions") or [])
+                    ]
+                    reader = _GAME_VERSION_READERS.get(game_domain)
+                    version_pinned = bool(
+                        reader and _versions_mismatch(refs, reader())
+                    )
+                    needs_older = version_pinned or bool(
                         slug in blocked_slugs
                         or _collection_downgrade_reason(
                             n.get("description") or ""
