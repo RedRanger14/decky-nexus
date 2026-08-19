@@ -12912,6 +12912,26 @@ class TestBannerlordManifestGate(unittest.TestCase):
         self.assertEqual(
             main._bl_manifest_game_mismatch(self.dir, "v1.4.8"), "")
 
+    def test_a_dll_module_is_recognised(self):
+        self._module('<Module><Id value="X" /><SubModules><SubModule>'
+                     '<DLLName value="ServeAsSoldier.dll"/>'
+                     '</SubModule></SubModules></Module>')
+        self.assertTrue(main._bl_module_ships_dll(self.dir))
+
+    def test_an_asset_module_is_not(self):
+        self._module('<Module><Id value="X" /><SubModules/></Module>')
+        self.assertFalse(main._bl_module_ships_dll(self.dir))
+
+    def test_the_collection_scope_dll_rule_is_wired(self):
+        # Undeclared CODE mods from a version-pinned collection skip; the
+        # same mod installed alone is untouched (record_source gates it).
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("_bl_module_ships_dll(os.path.join(mods_path, folder))")
+        block = source[i - 600:i + 600]
+        self.assertIn('record_source == "collection"', block)
+        self.assertIn("_collection_built_for(", block)
+
     def test_unknown_installed_version_makes_no_claim(self):
         self._module('<Module><Id value="X" /><DependedModuleMetadatas>'
                      '<DependedModuleMetadata id="Native" '

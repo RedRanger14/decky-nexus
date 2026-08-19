@@ -5716,6 +5716,52 @@ _BL_OFFICIAL_IDS = {
 }
 
 
+# slug -> declared game version ("v1.2.11") or "". In-process cache: one
+# lookup per collection per session, not one per mod install.
+_COLLECTION_BUILT_FOR = {}
+
+
+async def _collection_built_for(slug: str) -> str:
+    """The game version a collection's latest revision declares, or ""."""
+    if not slug:
+        return ""
+    if slug in _COLLECTION_BUILT_FOR:
+        return _COLLECTION_BUILT_FOR[slug]
+    built = ""
+    try:
+        data = await _gql_query_vars(
+            """
+query CollectionGameVersion($slug: String!) {
+  collection(slug: $slug, viewAdultContent: true) {
+    latestPublishedRevision { gameVersions { reference } }
+  }
+}""",
+            {"slug": slug},
+            _load_settings().get("api_key"),
+        )
+        refs = (((data.get("collection") or {})
+                 .get("latestPublishedRevision") or {})
+                .get("gameVersions") or [])
+        if refs:
+            built = str((refs[0] or {}).get("reference") or "")
+    except Exception as e:  # noqa: BLE001 - a lookup failure blocks nothing
+        decky.logger.debug(f"collection version lookup failed for {slug}: {e}")
+        _COLLECTION_BUILT_FOR[slug] = ""
+        return ""
+    _COLLECTION_BUILT_FOR[slug] = built
+    return built
+
+
+def _bl_module_ships_dll(module_dir: str) -> bool:
+    """Whether the module's manifest declares any DLL submodule."""
+    manifest = os.path.join(module_dir, "SubModule.xml")
+    try:
+        with open(manifest, "r", encoding="utf-8", errors="replace") as f:
+            return bool(re.search(r'<DLLName\s+value\s*=\s*"[^"]', f.read()))
+    except OSError:
+        return False
+
+
 def _bl_manifest_game_mismatch(module_dir: str, installed: str) -> str:
     """What game version a module declares, when it is not this one.
 
@@ -11630,6 +11676,26 @@ query Link($slug: String!, $domainName: String!) {
                 mismatch = _bl_manifest_game_mismatch(
                     os.path.join(mods_path, folder), reader()
                 )
+                # Second rule, collection scope only: a CODE mod from a
+                # collection pinned to another game branch, declaring
+                # nothing. Declared-nothing is fine for assets and XML -
+                # they degrade gracefully - but a v1.2-era DLL on v1.4.8 is
+                # the crash-at-launch class Michael hit four times in one
+                # evening (Xorberax, WealthyWorkshops, Warlord, Serve As
+                # Soldier), one boot each, each needing its own verdict.
+                # The collection's own declared version is the tiebreak the
+                # module withheld.
+                if (
+                    not mismatch
+                    and record_source == "collection"
+                    and collection_slug
+                    and _bl_module_ships_dll(os.path.join(mods_path, folder))
+                ):
+                    built = await _collection_built_for(collection_slug)
+                    if built and _versions_mismatch([built], reader()):
+                        mismatch = _version_tuple(built) and (
+                            "v%d.%d" % tuple(_version_tuple(built)[:2])
+                        ) or built
             if mismatch and record_source == "collection":
                 _force_rmtree(os.path.join(mods_path, folder))
                 installed_recs = _load_settings().get("installed", {}).get(

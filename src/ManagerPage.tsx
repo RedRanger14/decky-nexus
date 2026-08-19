@@ -487,10 +487,13 @@ export function ManagerPage() {
   };
 
   // ---- split each game's mods into loose vs per-collection ----
-  // Membership comes from the collection's registered mod-id list when
-  // available: a mod installed individually (or by another collection)
-  // still counts toward every collection that pins it. Record slugs are
-  // the fallback for entries registered before mod_ids existed.
+  // Membership needs BOTH halves: the collection pins the mod (its mod-id
+  // list) AND the record is collection-owned. Matching on the id list alone
+  // meant a mod the user installed on their own was swallowed by any
+  // collection that happened to pin it - ButterLib vanished from Michael's
+  // flat list the moment Best&Correct was installed, twice, because the
+  // first fix changed record ownership and this grouping never looked at
+  // ownership at all. A mod with no collection markings is always loose.
   interface CollectionEntry {
     slug: string;
     info?: InstalledCollectionInfo;
@@ -506,8 +509,10 @@ export function ManagerPage() {
       const idSet = new Set(info.mod_ids ?? []);
       const members = mods.filter(
         (m) =>
-          (m.mod_id !== undefined && idSet.has(m.mod_id)) ||
-          m.collection_slug === slug
+          m.collection_slug === slug ||
+          (m.mod_id !== undefined &&
+            idSet.has(m.mod_id) &&
+            collectionSlugOf(m) !== undefined)
       );
       if (members.length === 0) continue;
       const pendingChoices = (attention[slug] ?? []).filter(
