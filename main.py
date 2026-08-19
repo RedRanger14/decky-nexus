@@ -1521,10 +1521,17 @@ for a in "$@"; do
   esac
 done
 harmony="$root/Modules/Bannerlord.Harmony/bin/Win64_Shipping_Client"
-blse="$root/bin/Win64_Shipping_Client/Bannerlord.BLSE.Launcher.exe"
+# LauncherEx (BUTRLoader), not the vanilla wrapper. The vanilla launcher
+# re-sorts and REWRITES LauncherData.xml at launch with its own resolution,
+# which ignores optional ordering metadata - it clobbered our topological
+# sort within a minute and put ButterLib back above BetterExceptionWindow.
+# Correct metadata-aware sorting is LauncherEx's headline feature. Its July
+# failure was the missing-Harmony death, not a fault of its own: verified
+# under MONO_PATH on 2026-08-19, it runs clean.
+blse="$root/bin/Win64_Shipping_Client/Bannerlord.BLSE.LauncherEx.exe"
 if [ -n "$root" ] && [ -d "$harmony" ] && [ -f "$blse" ]; then
   export MONO_PATH="Z:$harmony"
-  exec "${@/TaleWorlds.MountAndBlade.Launcher.exe/Bannerlord.BLSE.Launcher.exe}"
+  exec "${@/TaleWorlds.MountAndBlade.Launcher.exe/Bannerlord.BLSE.LauncherEx.exe}"
 fi
 # Harmony or BLSE missing: boot vanilla rather than swap to an exe that
 # cannot start.

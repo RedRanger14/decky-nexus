@@ -12984,9 +12984,15 @@ class TestBlseLaunchScript(unittest.TestCase):
     def test_the_script_sets_mono_path_and_swaps_the_exe(self):
         body = main._BLSE_SCRIPT_BODY
         self.assertIn('export MONO_PATH="Z:$harmony"', body)
+        # LauncherEx, not the vanilla wrapper: the vanilla launcher re-sorts
+        # and rewrites LauncherData.xml at launch, ignoring optional ordering
+        # metadata - it clobbered the topological sort within a minute.
+        # Metadata-aware sorting is LauncherEx's headline feature.
         self.assertIn(
             "${@/TaleWorlds.MountAndBlade.Launcher.exe/"
-            "Bannerlord.BLSE.Launcher.exe}", body)
+            "Bannerlord.BLSE.LauncherEx.exe}", body)
+        self.assertNotIn("Bannerlord.BLSE.Launcher.exe}", body.replace(
+            "Bannerlord.BLSE.LauncherEx.exe}", ""))
 
     def test_missing_harmony_degrades_to_vanilla_not_unbootable(self):
         # The one property that must never regress: our setup step bricked
