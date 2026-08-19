@@ -22,7 +22,7 @@ import {
   CollectionVerdictState,
   getCollectionVerdicts,
 } from "./api";
-import { SupportedGame, getActiveGame, modeParams } from "./games";
+import { SupportedGame, frameworkModIds, getActiveGame, modeParams } from "./games";
 import {
   getBrowseGame,
   markBrowseReturn,
@@ -678,7 +678,11 @@ export function BrowsePage() {
         // A short page now means the source ran dry, not that the
         // filter took a few - the backend keeps reading until the row is
         // full or there is nothing left.
-        setLastPageFull((result.mods ?? []).length >= PAGE_SIZE);
+        // The backend says whether the source has more; page fullness is
+        // only the fallback for a backend that predates has_more.
+        setLastPageFull(
+          result.has_more ?? (result.mods ?? []).length >= PAGE_SIZE
+        );
         setMods((prev) => (append ? [...prev, ...(result.mods ?? [])] : result.mods ?? []));
       } else {
         setError(result.error);
@@ -785,10 +789,16 @@ export function BrowsePage() {
   // user already has installed never take a slot (they'd be dead weight
   // right after Step 1); if literally everything is installed, fall back
   // to the unfiltered blend rather than showing an empty band.
+  // Frameworks never take a hero slot, installed or not. They have no
+  // install records, so installedIds cannot see them - BLSE sat in the hero
+  // band on a device where it was already installed and running. And even
+  // uninstalled, a framework is Step 1's job; a hero tile saying "install
+  // BLSE" duplicates the setup flow one screen away.
+  const fwIds = new Set(frameworkModIds(game));
   const heroBlend = [
     ...recommended,
     ...trending.filter((t) => !recommended.some((r) => r.modId === t.modId)),
-  ];
+  ].filter((m) => !fwIds.has(m.modId));
   const heroMods = [
     ...heroBlend.filter((m) => !installedIds.has(m.modId)),
     ...heroBlend.filter((m) => installedIds.has(m.modId)),

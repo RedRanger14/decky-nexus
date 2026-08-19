@@ -12800,6 +12800,38 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestBrowsePagingHonesty(unittest.TestCase):
+    """Two paging defects found by a user searching the store:
+
+    - The Load more button sat there doing nothing at the end of a search,
+      because page fullness cannot distinguish "filtered short" from "no
+      more mods" and only the backend, which saw the raw pages, knows.
+    - Backfill fetched double, trimmed the surplus, and advanced next_offset
+      past everything fetched, so the trimmed rows were silently skipped by
+      the next page."""
+
+    def test_the_source_reports_exhaustion(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("    async def get_mods("):]
+        fn = fn[:fn.index("async def get_endorsement")]
+        self.assertIn('"has_more"', fn)
+        self.assertIn("exhausted = True", fn)
+
+    def test_next_offset_stops_at_the_last_row_used(self):
+        # Item-by-item consumption: the offset advances per raw row taken,
+        # and the loop stops the moment the page is full - so nothing
+        # fetched-but-unshown is ever skipped.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("    async def get_mods("):]
+        fn = fn[:fn.index("async def get_endorsement")]
+        self.assertIn("for node in raw:", fn)
+        self.assertIn("src_offset += 1", fn)
+        # The trim-after-the-fact is gone.
+        self.assertNotIn("mods = mods[:wanted]", fn)
+
+
 class TestBlseLaunchScript(unittest.TestCase):
     """BLSE under Proton: all three entry points die on a TypeLoadException
     for 0Harmony because Mono resolves the field type eagerly, before BLSE's

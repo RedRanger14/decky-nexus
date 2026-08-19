@@ -40,6 +40,11 @@ export interface ModsResult {
    * gate, or known-broken on this build), so paging must advance by this
    * rather than by page size or it re-requests rows already shown. */
   next_offset?: number;
+  /** Whether the SOURCE has more rows. Page fullness cannot tell "filtered
+   * short" from "no more mods" - only the backend, which saw the raw pages,
+   * knows. This is why the Load more button used to sit there doing
+   * nothing at the end of a search. */
+  has_more?: boolean;
   error?: string;
 }
 

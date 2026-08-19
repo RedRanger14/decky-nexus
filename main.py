@@ -8183,6 +8183,7 @@ class Plugin:
         wanted = max(int(count), 1)
         src_offset = int(offset)
         mods, hidden, total = [], [], 0
+        exhausted = False
         try:
             for _round in range(COLLECTION_BACKFILL_ROUNDS):
                 if len(mods) >= wanted:
@@ -8201,21 +8202,33 @@ class Plugin:
                 page = body["data"]["mods"]
                 total = page["nodesCount"]
                 raw = page["nodes"]
-                src_offset += len(raw)
-                kept, dropped = _hide_known_broken(
-                    game_domain, app_id, _gate_adult_nodes(raw)
-                )
-                mods.extend(kept)
-                hidden.extend(dropped)
+                # Item by item, so next_offset can stop at the last row the
+                # page actually USED. The old code fetched double, trimmed
+                # the surplus, and advanced the offset past everything it
+                # had fetched - so the trimmed rows were never seen again
+                # and every backfilled page silently skipped mods.
+                for node in raw:
+                    src_offset += 1
+                    kept, dropped = _hide_known_broken(
+                        game_domain, app_id, _gate_adult_nodes([node])
+                    )
+                    mods.extend(kept)
+                    hidden.extend(dropped)
+                    if len(mods) >= wanted:
+                        break
                 if len(raw) < take:
-                    break  # source exhausted, not merely filtered
+                    # The source ran out, not merely the filter. This is the
+                    # fact the frontend needs: page fullness cannot tell
+                    # "filtered short" from "no more mods", which is how the
+                    # Load more button sat there doing nothing.
+                    exhausted = True
+                    break
         except aiohttp.ClientError as e:
             return {"ok": False, "error": f"Network error: {type(e).__name__}"}
         except asyncio.TimeoutError:
             return {"ok": False, "error": "Nexus Mods API timed out"}
         except (RuntimeError, KeyError) as e:
             return {"ok": False, "error": str(e)}
-        mods = mods[:wanted]
         if hidden:
             decky.logger.info(
                 f"get_mods({game_domain!r}): hid {len(hidden)} mod(s) known "
@@ -8230,6 +8243,7 @@ class Plugin:
             "total": total,
             "mods": mods,
             "next_offset": src_offset,
+            "has_more": (not exhausted) and src_offset < int(total or 0),
         }
 
     async def get_endorsement(self, game_domain: str, mod_id: int) -> dict:

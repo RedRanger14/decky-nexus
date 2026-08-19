@@ -845,3 +845,32 @@ test("Bannerlord launches BLSE through the script, never a raw env var", () => {
     "reset no longer removes BLSE's eight unmanifested files"
   );
 });
+test("frameworks never take a hero slot", () => {
+  // BLSE sat in the hero band on a device where it was installed and
+  // running: frameworks have no install records, so installedIds cannot see
+  // them. And even uninstalled, a framework is Step 1's job - a hero tile
+  // saying "install BLSE" duplicates the setup flow one screen away.
+  const page = read("BrowsePage.tsx");
+  assert.ok(
+    /const fwIds = new Set\(frameworkModIds\(game\)\)/.test(page),
+    "the hero band does not know which mods are frameworks"
+  );
+  const blend = page.slice(
+    page.indexOf("const heroBlend"),
+    page.indexOf("const heroMods")
+  );
+  assert.ok(
+    /filter\(\(m\) => !fwIds\.has\(m\.modId\)\)/.test(blend),
+    "frameworks are not filtered out of the hero blend"
+  );
+});
+
+test("load more trusts the backend's has_more over page fullness", () => {
+  // Page fullness cannot tell "filtered short" from "no more mods": the
+  // button sat at the end of a search doing nothing when pressed.
+  const page = read("BrowsePage.tsx");
+  assert.ok(
+    /result\.has_more \?\?/.test(page),
+    "paging still infers more-ness from page size alone"
+  );
+});
