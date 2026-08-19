@@ -11638,10 +11638,44 @@ query Link($slug: String!, $domainName: String!) {
                 installed_rec = settings.setdefault("installed", {}).setdefault(
                     game_domain, {}
                 )
+                skipped_children = []
                 for child in children:
                     dst = os.path.join(mods_path, child)
                     _force_rmtree(dst)
                     shutil.move(os.path.join(wrapper, child), dst)
+                    # The same era gate as the single-module path. Its
+                    # absence HERE is how seven v1.2-era code mods from
+                    # Eagle Rising installed enabled while thirty-eight
+                    # single-module ones were skipped: Modules/-layout
+                    # archives take this branch, and the branch was ungated.
+                    # One of the seven pinned v1.2.0.* explicitly.
+                    reader = _GAME_VERSION_READERS.get(game_domain)
+                    if reader and record_source == "collection":
+                        mm = _bl_manifest_game_mismatch(dst, reader())
+                        if (
+                            not mm
+                            and collection_slug
+                            and _bl_module_ships_dll(dst)
+                        ):
+                            built = await _collection_built_for(
+                                collection_slug
+                            )
+                            if built and _versions_mismatch(
+                                [built], reader()
+                            ):
+                                vt = _version_tuple(built)
+                                mm = (
+                                    "v%d.%d" % tuple(vt[:2]) if vt else built
+                                )
+                        if mm:
+                            _force_rmtree(dst)
+                            skipped_children.append(child)
+                            decky.logger.info(
+                                f"collection skipped {child!r} (from "
+                                f"{mod_name!r}): built for game {mm}, "
+                                f"installed is {reader()}"
+                            )
+                            continue
                     rec = {
                         "mod_id": mod_id,
                         "file_id": file_id,
@@ -11665,6 +11699,18 @@ query Link($slug: String!, $domainName: String!) {
                             )
                     installed_rec[child] = rec
                 _save_settings(settings)
+                if skipped_children and len(skipped_children) == len(children):
+                    _force_rmtree(scratch)
+                    await _emit_progress(mod_id, "error", 0, "older game")
+                    return {
+                        "ok": False,
+                        "stale_skip": True,
+                        "error": (
+                            f"{mod_name} is built for an older version of "
+                            "the game. Skipped rather than installed into "
+                            "a crash at launch."
+                        ),
+                    }
                 if launcher_xml_subpath:
                     # One sort after all entries land, not one per module.
                     _bl_apply_launcher_order(

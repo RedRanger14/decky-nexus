@@ -12800,6 +12800,25 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestMultiModuleBranchIsGated(unittest.TestCase):
+    """Seven v1.2-era code mods from Eagle Rising installed ENABLED while
+    thirty-eight single-module ones were skipped: Modules/-layout archives
+    take the multi-module branch, and only the single-module branch was
+    gated. One of the seven pinned v1.2.0.* explicitly. The gate now exists
+    in both branches; this pins the second one."""
+
+    def test_both_install_branches_carry_the_gate(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        multi = source[source.index("skipped_children = []"):]
+        multi = multi[:multi.index("_save_settings(settings)")]
+        self.assertIn("_bl_manifest_game_mismatch(dst", multi)
+        self.assertIn("_bl_module_ships_dll(dst)", multi)
+        self.assertIn("_collection_built_for(", multi)
+        # And it removes what it skipped rather than leaving orphan folders.
+        self.assertIn("_force_rmtree(dst)", multi)
+
+
 class TestEraQuarantine(unittest.TestCase):
     """Records installed before the era gate existed sailed past it, and one
     of them crashed the game silently after everything newer was fixed. The
