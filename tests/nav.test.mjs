@@ -805,3 +805,35 @@ test("the panel says unofficial and beta where the user can see it", () => {
     "the README does not disclaim official status up front"
   );
 });
+
+test("BLSE has Harmony declared as a prerequisite", () => {
+  // BLSE cannot run without Harmony and fails in a way that teaches nobody
+  // anything: its exception handler is built on Harmony, so without
+  // 0Harmony.dll it dies inside its own error handler and writes no log. The
+  // game closes before the launcher appears. Two separate failures - the
+  // LauncherEx attempt on 2026-07-22 and the Launcher attempt on 2026-08-19 -
+  // were both this, and both were misread as Proton problems. Found by running
+  // the wrapper under Proton by hand:
+  //
+  //   System.TypeLoadException: Could not load file or assembly '0Harmony...'
+  const games = read("games.ts");
+  const bl = games.slice(
+    games.indexOf("mountandblade2bannerlord"),
+    games.indexOf("mountandblade2bannerlord") + 4500
+  );
+  assert.ok(
+    /nexusModId: 2006/.test(bl),
+    "Harmony (mod 2006) is not declared for Bannerlord, so the setup step " +
+      "installs BLSE and the game closes before the launcher appears"
+  );
+  assert.ok(
+    /Bannerlord\.Harmony/.test(bl),
+    "nothing detects or cleans up the Harmony module"
+  );
+  // And the launch template must name the exe Steam actually runs.
+  assert.ok(
+    /TaleWorlds\.MountAndBlade\.Launcher\.exe/.test(bl),
+    "the launch template does not swap the exe Steam launches, which is " +
+      "indistinguishable from having no template at all"
+  );
+});

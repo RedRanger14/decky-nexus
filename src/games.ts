@@ -813,6 +813,32 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         "{@/TaleWorlds.MountAndBlade.Launcher.exe/" +
         "Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
     },
+    // BLSE cannot run without Harmony, and it fails in a way that teaches
+    // nobody anything: its own exception handler is built on Harmony, so
+    // without 0Harmony.dll it dies inside its error handler and writes no
+    // log at all. The game just closes before the launcher appears.
+    //
+    // Found by running the wrapper under Proton by hand, 2026-08-19:
+    //
+    //   System.TypeLoadException: Could not load file or assembly
+    //   '0Harmony, Version=2.2.2.0'
+    //
+    // Nexus declares it too - BLSE lists Harmony (mod 2006) as a requirement
+    // - and our framework step had been ignoring declared requirements. Two
+    // earlier failures (2026-07-22 LauncherEx, 2026-08-19 Launcher) were both
+    // this, and both were misread as Proton problems.
+    //
+    // Install order does not matter: BLSE only needs Harmony present when the
+    // game LAUNCHES, not when BLSE is installed.
+    extraFrameworks: [
+      {
+        name: "Harmony",
+        detectFile: "Modules/Bannerlord.Harmony/SubModule.xml",
+        url: "nexusmods.com/mountandblade2bannerlord/mods/2006",
+        nexusModId: 2006, // verified: "Harmony", v2.4.2.248 (2026-07-21)
+        cleanupPrefixes: ["Modules/Bannerlord.Harmony"],
+      },
+    ],
     // Modules activate via the launcher's XML (Vortex manages the same
     // file). Created by the launcher on first run - activation is
     // best-effort until then; the launcher also auto-detects modules.

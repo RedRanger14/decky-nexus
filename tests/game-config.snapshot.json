@@ -58,7 +58,8 @@
     "frameworkName": "BLSE",
     "launchOptionsTemplate": "bash -c 'exec \"${@/TaleWorlds.MountAndBlade.Launcher.exe/Bannerlord.BLSE.Launcher.exe}\"' -- %command%",
     "prefixTools": [
-      "1"
+      "1",
+      "2006"
     ],
     "manualTools": 0,
     "hasLauncherBypass": false,
@@ -66,7 +67,9 @@
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
-    "cleanupPrefixes": []
+    "cleanupPrefixes": [
+      "\"Modules/Bannerlord.Harmony\""
+    ]
   },
   {
     "appId": "292030",
