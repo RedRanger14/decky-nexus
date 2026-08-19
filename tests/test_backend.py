@@ -12800,6 +12800,74 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestBannerlordManifestGate(unittest.TestCase):
+    """A Bannerlord module pins its game branch INSIDE the archive:
+    SubModule.xml carries version attributes against the official modules.
+    A collection targeting v1.2.11 on a v1.4.8 game should skip those mods
+    with a named reason - the Elden Ring rule - not wear a blanket badge
+    that reads as blocking everything. Michael: "What weve done for
+    collections in other games is skipped the mods inside the collection
+    that are broken or outdated rather than ruling out the entire
+    collection - can something similar not be applied here?"."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+
+    def _module(self, xml):
+        with open(os.path.join(self.dir, "SubModule.xml"), "w",
+                  encoding="utf-8") as f:
+            f.write(xml)
+
+    def test_a_v12_pin_on_a_v14_game_is_a_mismatch(self):
+        self._module('<Module><Id value="X" /><DependedModuleMetadatas>'
+                     '<DependedModuleMetadata id="Native" '
+                     'order="LoadAfterThis" version="v1.2.*" />'
+                     '</DependedModuleMetadatas></Module>')
+        self.assertEqual(
+            main._bl_manifest_game_mismatch(self.dir, "v1.4.8"), "v1.2")
+
+    def test_a_matching_pin_is_not_a_mismatch(self):
+        self._module('<Module><Id value="X" /><DependedModuleMetadatas>'
+                     '<DependedModuleMetadata id="Native" '
+                     'order="LoadAfterThis" version="v1.4.*" />'
+                     '</DependedModuleMetadatas></Module>')
+        self.assertEqual(
+            main._bl_manifest_game_mismatch(self.dir, "v1.4.8"), "")
+
+    def test_declaring_nothing_is_not_a_mismatch(self):
+        # Most older mods declare nothing; the observed-crash verdicts
+        # handle those. This gate acts only on an explicit claim.
+        self._module('<Module><Id value="X" /><DependedModules>'
+                     '<DependedModule Id="Native" />'
+                     '</DependedModules></Module>')
+        self.assertEqual(
+            main._bl_manifest_game_mismatch(self.dir, "v1.4.8"), "")
+
+    def test_dependent_version_on_official_modules_counts(self):
+        self._module('<Module><Id value="X" /><DependedModules>'
+                     '<DependedModule Id="Native" DependentVersion="v1.2.8" />'
+                     '</DependedModules></Module>')
+        self.assertEqual(
+            main._bl_manifest_game_mismatch(self.dir, "v1.4.8"), "v1.2")
+
+    def test_constraints_on_other_mods_do_not_count(self):
+        # A version pin against RBM or MCM says nothing about the GAME.
+        self._module('<Module><Id value="X" /><DependedModuleMetadatas>'
+                     '<DependedModuleMetadata id="Bannerlord.MBOptionScreen" '
+                     'order="LoadBeforeThis" version="v5.1.1" />'
+                     '</DependedModuleMetadatas></Module>')
+        self.assertEqual(
+            main._bl_manifest_game_mismatch(self.dir, "v1.4.8"), "")
+
+    def test_unknown_installed_version_makes_no_claim(self):
+        self._module('<Module><Id value="X" /><DependedModuleMetadatas>'
+                     '<DependedModuleMetadata id="Native" '
+                     'order="LoadAfterThis" version="v1.2.*" />'
+                     '</DependedModuleMetadatas></Module>')
+        self.assertEqual(main._bl_manifest_game_mismatch(self.dir, ""), "")
+
+
 class TestHelldivers2Patches(unittest.TestCase):
     """HD2 mods are <hash>.patch_N file swaps in data/. The game loads
     patch_0, patch_1, ... per archive hash, so two mods patching the same

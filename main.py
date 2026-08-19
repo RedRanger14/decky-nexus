@@ -5701,6 +5701,65 @@ BL_LAUNCHER_XML_SUBPATH = (
 )
 
 
+_BL_OFFICIAL_IDS = {
+    "native", "sandboxcore", "sandbox", "storymode", "custombattle",
+    "birthanddeath", "multiplayer",
+}
+
+
+def _bl_manifest_game_mismatch(module_dir: str, installed: str) -> str:
+    """What game version a module declares, when it is not this one.
+
+    Returns "" when compatible or unknowable. Bannerlord modules pin the
+    game version INSIDE the archive: SubModule.xml carries version
+    attributes against the official modules (DependedModuleMetadata
+    version="v1.2.*", DependedModule DependentVersion="v1.4.8"). A module
+    whose every declared official-module version names a different
+    major.minor than the installed game is built for another branch - the
+    collection case that crashed on device was a mod whose NAME said
+    "for v1.2.10" on a v1.4.8 game.
+
+    Declaring nothing is not a mismatch: most older mods declare nothing,
+    and the observed-crash verdicts handle those. This gate only acts on a
+    mod's own explicit claim.
+    """
+    inst = _version_tuple(installed)
+    if not inst or len(inst) < 2:
+        return ""
+    manifest = os.path.join(module_dir, "SubModule.xml")
+    if not os.path.isfile(manifest):
+        return ""
+    try:
+        with open(manifest, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    declared = []
+    for mid, ver in re.findall(
+        r'<DependedModuleMetadata\s+id="([^"]+)"[^>]*version="([^"]+)"',
+        text,
+    ):
+        if mid.strip().lower() in _BL_OFFICIAL_IDS:
+            declared.append(ver)
+    for mid, ver in re.findall(
+        r'<DependedModule\s+Id="([^"]+)"[^>]*DependentVersion="([^"]+)"',
+        text,
+    ):
+        if mid.strip().lower() in _BL_OFFICIAL_IDS:
+            declared.append(ver)
+    majors = set()
+    for ver in declared:
+        vt = _version_tuple(ver)
+        if vt and len(vt) >= 2:
+            majors.add(tuple(vt[:2]))
+    if not majors:
+        return ""
+    if tuple(inst[:2]) in majors:
+        return ""
+    low = sorted(majors)[0]
+    return "v%d.%d" % low
+
+
 def _bl_module_constraints(install_path: str) -> dict:
     """id(lower) -> (canonical id, set of ids that must load BEFORE it).
 
@@ -8652,6 +8711,15 @@ class Plugin:
                         ),
                         "TOO_SOON_AFTER_DOWNLOAD": "Wait 15 minutes after downloading to endorse",
                         "IS_OWN_MOD": "You can't endorse your own mod",
+                        # The AUTHOR's choice, not a failure and not a
+                        # cooldown. Harmony's page has endorsements switched
+                        # off, and Michael reasonably read the refusal as a
+                        # bug in us. Verified against the live API:
+                        # HTTP 403 {"message":"ENDORSING_DISABLED"}.
+                        "ENDORSING_DISABLED": (
+                            "The author has turned endorsements off for "
+                            "this mod, so nobody can endorse it"
+                        ),
                     }
                     for code, text in friendly.items():
                         if code in message:
@@ -8834,6 +8902,9 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                     version_pinned = bool(
                         reader and _versions_mismatch(refs, reader())
                     )
+                    built_for = (
+                        str(refs[0]) if version_pinned and refs else ""
+                    )
                     needs_older = version_pinned or bool(
                         slug in blocked_slugs
                         or _collection_downgrade_reason(
@@ -8849,6 +8920,13 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                             # The tile shows a warning rather than the
                             # collection vanishing.
                             "needs_older_game": needs_older,
+                            # The fact, not just the verdict: which version
+                            # the collection declares, so the tile can say
+                            # "BUILT FOR v1.2.11" and the user can judge.
+                            # Michael: "I dont like what weve done... its
+                            # every single collection" - a blanket badge
+                            # with no version reads as a blanket block.
+                            "built_for": built_for,
                             "summary": n.get("summary") or "",
                             "endorsements": n.get("endorsements") or 0,
                             "author": (n.get("user") or {}).get("name") or "",
@@ -11525,13 +11603,47 @@ query Link($slug: String!, $domainName: String!) {
         # launcher's XML config; the Id lives in the module's SubModule.xml.
         if launcher_xml_subpath:
             module_id = _submodule_id(os.path.join(mods_path, folder))
+            # A module whose manifest pins another game branch. In a
+            # collection: skipped, named, no boot spent on it - the Elden
+            # Ring rule. Installed alone: kept but NOT activated, with the
+            # reason returned, because the user chose it deliberately and
+            # one tick in the launcher tries it anyway.
+            mismatch = ""
+            reader = _GAME_VERSION_READERS.get(game_domain)
+            if module_id and reader:
+                mismatch = _bl_manifest_game_mismatch(
+                    os.path.join(mods_path, folder), reader()
+                )
+            if mismatch and record_source == "collection":
+                _force_rmtree(os.path.join(mods_path, folder))
+                installed_recs = _load_settings().get("installed", {}).get(
+                    game_domain, {}
+                )
+                if folder in installed_recs:
+                    del installed_recs[folder]
+                decky.logger.info(
+                    f"collection skipped {mod_name!r}: its manifest pins "
+                    f"game {mismatch}, installed is {reader()}"
+                )
+                await _emit_progress(mod_id, "error", 0, "older game")
+                return {
+                    "ok": False,
+                    "stale_skip": True,
+                    "error": (
+                        f"{mod_name} declares it is built for game "
+                        f"{mismatch}, and this game is {reader()}. Skipped "
+                        "rather than downloaded into a crash at launch."
+                    ),
+                }
             if module_id:
                 record["moduleId"] = module_id
                 record["launcherXml"] = launcher_xml_subpath
+                if mismatch:
+                    record["enabled"] = False
                 activated = _set_module_selected(
                     _launcher_xml_path(app_id, launcher_xml_subpath),
                     module_id,
-                    True,
+                    not mismatch,
                 )
                 # Position matters as much as the tick: modules declare
                 # their own ordering, and appending broke ButterLib the
@@ -11540,6 +11652,8 @@ query Link($slug: String!, $domainName: String!) {
                     _launcher_xml_path(app_id, launcher_xml_subpath),
                     install_path,
                 )
+                if mismatch:
+                    record["disabled_reason"] = "older-game"
                 decky.logger.info(
                     f"module {module_id!r} activation: "
                     f"{'ok' if activated else 'deferred (no LauncherData.xml yet)'}"
@@ -11551,7 +11665,17 @@ query Link($slug: String!, $domainName: String!) {
 
         decky.logger.info(f"installed {mod_name!r} -> {mods_path}/{folder}")
         await _emit_progress(mod_id, "done", 100)
-        return {"ok": True, "folder": folder}
+        result = {"ok": True, "folder": folder}
+        if launcher_xml_subpath and record.get("disabled_reason") == "older-game":
+            # Same shape as the me3 stale-native path: installed, switched
+            # off, and the reason on the page rather than in a toast.
+            result["installed_disabled"] = True
+            result["warning"] = (
+                f"{mod_name} declares it is built for game {mismatch}, and "
+                "this game is newer. Installed but left switched off; "
+                "enable it in the game's launcher to try it anyway."
+            )
+        return result
 
     async def install_fomod(self, token: str, selected_ids: list) -> dict:
         """Finish a parked FOMOD install with the user's wizard selections.

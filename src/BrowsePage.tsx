@@ -230,11 +230,13 @@ function CollectionCard({
               fontSize: "9.5px",
               fontWeight: 700,
               letterSpacing: "0.4px",
-              background: "rgba(200, 90, 70, 0.92)",
+              background: "rgba(200, 130, 50, 0.92)",
               color: "#fff",
             }}
           >
-            NEEDS AN OLDER GAME
+            {c.built_for
+              ? `BUILT FOR ${c.built_for.toUpperCase()}`
+              : "NEEDS AN OLDER GAME"}
           </div>
         )}
         {SHOW_VERIFIED_BADGES && verdict && <VerifiedBadge state={verdict} />}

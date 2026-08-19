@@ -842,6 +842,12 @@ export interface CollectionSummary {
    * the tile rather than hiding the collection: somebody who knows their
    * setup cannot act on something they cannot see. */
   needs_older_game?: boolean;
+  /** The game version the collection declares (e.g. "v1.2.11"), when it
+   * differs from the installed game. The tile states this FACT rather than
+   * a blanket "needs an older game": on Bannerlord every top collection
+   * targets an older branch, and a verdict with no version reads as a
+   * blanket block when installing is genuinely allowed and partly works. */
+  built_for?: string;
 }
 
 export interface CollectionFile {
