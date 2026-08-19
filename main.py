@@ -5752,6 +5752,65 @@ query CollectionGameVersion($slug: String!) {
     return built
 
 
+async def _bl_quarantine_era_locked(
+    game_domain: str, install_path: str, app_id: int
+) -> list:
+    """Deactivate era-locked code mods installed before the gate existed.
+
+    The install-time rule (collection-owned + ships a DLL + no credible
+    version claim + collection pinned to another game branch) only protects
+    NEW installs. Records from earlier runs sailed past it: Michael's silent
+    crash after the gate shipped came from an old Diplomacy installed two
+    runs earlier - a BUTR-tooling mod, so its manifest declares v1.0.0.*
+    placeholders and slips the manifest gate too. Same rule, applied to
+    what is already on disk, from the health check.
+
+    Deactivates in the launcher (the mod stays installed and one tick tries
+    it again); never touches user-owned records, because a deliberate
+    choice outranks a heuristic. Returns the names it switched off.
+    """
+    reader = _GAME_VERSION_READERS.get(game_domain)
+    if not reader or not app_id:
+        return []
+    installed_version = reader()
+    if not installed_version:
+        return []
+    settings = _load_settings()
+    records = settings.get("installed", {}).get(game_domain, {}) or {}
+    launcher = _launcher_xml_path(app_id, BL_LAUNCHER_XML_SUBPATH)
+    quarantined = []
+    for key, rec in records.items():
+        if not (rec or {}).get("collection_slug"):
+            continue
+        if rec.get("enabled") is False or rec.get("disabled_reason"):
+            continue
+        module_id = rec.get("moduleId") or key
+        module_dir = os.path.join(install_path, "Modules", key)
+        if not os.path.isdir(module_dir):
+            continue
+        if not _bl_module_ships_dll(module_dir):
+            continue
+        if _bl_manifest_game_mismatch(module_dir, installed_version):
+            pass  # explicit claim: quarantine below
+        else:
+            built = await _collection_built_for(rec["collection_slug"])
+            if not built or not _versions_mismatch(
+                [built], installed_version
+            ):
+                continue
+        if _set_module_selected(launcher, module_id, False):
+            rec["enabled"] = False
+            rec["disabled_reason"] = "older-game"
+            quarantined.append(rec.get("name") or key)
+            decky.logger.info(
+                f"BL quarantine: {key!r} switched off - code mod from a "
+                "collection pinned to another game branch"
+            )
+    if quarantined:
+        _save_settings(settings)
+    return quarantined
+
+
 def _bl_module_ships_dll(module_dir: str) -> bool:
     """Whether the module's manifest declares any DLL submodule."""
     manifest = os.path.join(module_dir, "SubModule.xml")
@@ -15575,6 +15634,11 @@ query CollectionInstructions($slug: String!) {
             if game_domain == "mountandblade2bannerlord" and app_id
             else 0
         )
+        era_quarantined = (
+            await _bl_quarantine_era_locked(game_domain, install_path, app_id)
+            if game_domain == "mountandblade2bannerlord" and app_id
+            else []
+        )
         script = _redscript_report(install_path, records)
         # The Bethesda half of the same question. Same authority - the game
         # itself - and the same translation job: the extender names DLLs,
@@ -15900,6 +15964,7 @@ query CollectionInstructions($slug: String!) {
             "debug_quieted": debug_quieted,
             "shader_caches_fixed": shader_caches_fixed,
             "load_order_moved": load_order_moved,
+            "era_quarantined": era_quarantined,
             # What the game itself reported, and the only part of this
             # report that is evidence rather than inference.
             "script_log": {

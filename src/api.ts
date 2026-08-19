@@ -1205,6 +1205,9 @@ export const getHealthCheck = callable<
     /** Bannerlord: launcher entries moved to satisfy the modules' own
      * declared load-order constraints. */
     load_order_moved?: number;
+    /** Bannerlord: era-locked code mods from a version-pinned collection,
+     * switched off in the launcher rather than left to crash the boot. */
+    era_quarantined?: string[];
     needs_mods?: {
       name: string;
       mod_id?: number;

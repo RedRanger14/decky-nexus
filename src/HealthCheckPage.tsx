@@ -227,6 +227,7 @@ export default function HealthCheckPage() {
     /** Bannerlord mods whose rejected shader cache we removed. */
     shader_caches_fixed: string[];
     load_order_moved: number;
+    era_quarantined: string[];
     known_bad: { name: string; for: string; why: string; mod_id?: number }[];
     se_parked: string[];
     address_library?: { runtime: string; have: string[]; matches: boolean };
@@ -285,6 +286,7 @@ export default function HealthCheckPage() {
                 debug_quieted: r.debug_quieted ?? [],
                 shader_caches_fixed: r.shader_caches_fixed ?? [],
                 load_order_moved: r.load_order_moved ?? 0,
+                era_quarantined: r.era_quarantined ?? [],
                 known_bad: r.known_bad ?? [],
                 script_extender: r.script_extender ?? [],
                 se_parked: r.se_parked ?? [],
@@ -819,6 +821,24 @@ export default function HealthCheckPage() {
             Report a problem
           </ButtonItem>
         </Focusable>
+
+        {(report?.era_quarantined?.length ?? 0) > 0 && (
+          <>
+            <SectionHeading title="Fixed for you" />
+            <FindingCard
+              key="era-quarantine"
+              tone="150, 160, 220"
+              icon={<FaPuzzlePiece size={16} />}
+              title="Switched off mods built for an older game version"
+              detail={
+                report!.era_quarantined.join(", ") +
+                " - code mods from a collection built for an older version " +
+                "of the game, which crash at launch on this one. Switched " +
+                "off in the game's launcher; tick one there to try it anyway."
+              }
+            />
+          </>
+        )}
 
         {(report?.load_order_moved ?? 0) > 0 && (
           <>

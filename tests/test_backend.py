@@ -12800,6 +12800,24 @@ class TestLooseFromSoftAssets(unittest.TestCase):
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
 
 
+class TestEraQuarantine(unittest.TestCase):
+    """Records installed before the era gate existed sailed past it, and one
+    of them crashed the game silently after everything newer was fixed. The
+    health check applies the same rule to what is already on disk."""
+
+    def test_the_health_check_runs_the_quarantine(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("era_quarantined = (", source)
+        fn = source[source.index("async def _bl_quarantine_era_locked"):]
+        fn = fn[:fn.index("def _bl_module_ships_dll")]
+        # User-owned records are never touched.
+        self.assertIn('rec or {}).get("collection_slug")', fn)
+        # Deactivated, not deleted: one tick tries it again.
+        self.assertIn("_set_module_selected(launcher, module_id, False)", fn)
+        self.assertNotIn("_force_rmtree", fn)
+
+
 class TestRecordOwnershipIsFirstCome(unittest.TestCase):
     """Michael installed ButterLib on its own, then a collection containing
     it: the record was claimed by the collection, so ButterLib vanished from
