@@ -13066,15 +13066,13 @@ class TestBannerlordManifestGate(unittest.TestCase):
 
 
 class TestHd2StaleWarning(unittest.TestCase):
-    """Measured on device: a 10-month-old patch file (Megumin, 2025-10)
-    loads fine while a 27-month one (Star Wars Ships, 2024-05) makes the
-    game refuse to boot with its own 0x44415441 DATA error - and both
-    predate the game's latest update, because Helldivers 2 updates
-    constantly. So upload AGE is the signal here, not the game-update
-    comparison, with a year of slack; and it is a WARNING, because one of
-    the two measured cases works."""
+    """The 2026-08-19 repack settled how HD2 mods age: every game update
+    invalidates patch files built before it, and authors re-release within
+    days - a mod updated twenty hours after the repack shipped plain patch
+    files. So the warning line is the game's own lastupdated, not a
+    birthday; this replaced a 365-day rule within a day of writing it."""
 
-    def test_hd2_routes_to_the_age_rule(self):
+    def test_hd2_routes_to_the_update_rule(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
         fn = source[source.index("async def _stale_native_warning"):]
@@ -13082,22 +13080,47 @@ class TestHd2StaleWarning(unittest.TestCase):
         self.assertIn('if game_domain == "helldivers2":', fn)
         self.assertIn("_hd2_stale_warning(", fn)
 
-    def test_the_threshold_clears_the_working_case(self):
-        # Megumin at ~10 months must stay quiet; Star Wars at ~27 months
-        # must warn. 365 days sits between them with margin both ways.
-        self.assertGreater(365, 305)   # Megumin's age when measured
-        self.assertLess(365, 820)      # Star Wars' age when measured
-        with open(main.__file__, encoding="utf-8") as fh:
-            source = fh.read()
-        self.assertIn("_HD2_STALE_DAYS = 365", source)
-
-    def test_it_is_a_warning_not_a_block(self):
+    def test_the_line_is_the_games_own_update(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
         i = source.index("async def _hd2_stale_warning")
-        block = source[i:i + 1600]
-        self.assertIn("It may work", block)
+        block = source[i:source.index("async def _stale_native_warning", i)]
+        self.assertIn("_game_updated_at(app_id)", block)
+        self.assertIn("uploaded >= game_updated", block)
+        # And it stays a warning, because sound mods sometimes survive.
+        self.assertIn("sometimes survive", block)
         self.assertNotIn('"blocked": True', block)
+
+    def test_browse_nodes_carry_the_same_fact(self):
+        # The tile badge and the pre-download warning must agree, so both
+        # read the game's lastupdated. Stamped at every tile source: the
+        # browse filter, the hero/recommended batch, and trending.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertEqual(source.count("_stamp_pre_update(game_domain,"), 3)
+
+    def test_the_stamp_is_a_fact_not_a_verdict(self):
+        # The real timeline: the repack landed 2026-08-19 16:26; BFA's
+        # file is from the 13th (stamped), the Suomi skin from the 20th
+        # (not stamped).
+        game_updated = 1787156760
+        nodes = [
+            {"modId": 1, "updatedAt": "2026-08-13T00:00:00+00:00"},
+            {"modId": 2, "updatedAt": "2026-08-20T12:57:00+00:00"},
+            {"modId": 3},  # unknown date: no claim
+        ]
+        import unittest.mock as mock
+        with mock.patch.object(main, "_game_updated_at",
+                               return_value=game_updated):
+            main._stamp_pre_update("helldivers2", nodes)
+        self.assertTrue(nodes[0].get("preGameUpdate"))
+        self.assertNotIn("preGameUpdate", nodes[1])
+        self.assertNotIn("preGameUpdate", nodes[2])
+
+    def test_other_games_are_never_stamped(self):
+        nodes = [{"modId": 1, "updatedAt": "2020-01-01T00:00:00+00:00"}]
+        main._stamp_pre_update("skyrimspecialedition", nodes)
+        self.assertNotIn("preGameUpdate", nodes[0])
 
 
 class TestHelldivers2Patches(unittest.TestCase):

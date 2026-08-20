@@ -20,6 +20,10 @@ export interface NexusMod {
   thumbnailBlurredUrl?: string;
   pictureUrl?: string;
   updatedAt: string;
+  /** Live-service games only: this mod was last updated BEFORE the game's
+   * own last update, which usually breaks mods. A fact, not a verdict -
+   * sound mods sometimes survive - so tiles badge it and the page warns. */
+  preGameUpdate?: boolean;
   adultContent: boolean;
   /** Full description (bbcode/html soup) - present via getModDetails */
   description?: string;

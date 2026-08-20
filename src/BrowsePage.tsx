@@ -434,6 +434,23 @@ function ModTile({
         <div style={{ fontSize: "12px", opacity: 0.7 }}>
           <StatsLine mod={mod} />
         </div>
+        {mod.preGameUpdate && (
+          <div
+            style={{
+              display: "inline-flex",
+              marginTop: "4px",
+              padding: "1px 7px",
+              borderRadius: "3px",
+              fontSize: "9.5px",
+              fontWeight: 700,
+              letterSpacing: "0.4px",
+              background: "rgba(200, 130, 50, 0.92)",
+              color: "#fff",
+            }}
+          >
+            PRE-UPDATE
+          </div>
+        )}
       </div>
     </Focusable>
   );

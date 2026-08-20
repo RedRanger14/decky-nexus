@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import glob
 import hashlib
 import json
@@ -7,7 +8,6 @@ import re
 import shutil
 import ssl
 import time
-import datetime
 import urllib.parse
 
 import aiohttp
@@ -1094,6 +1094,50 @@ def _show_adult() -> bool:
     so an unverified user can never enable it from the device."""
     gate = _load_settings().get("content_gate") or {}
     return bool(gate.get("adult_pref")) and bool(gate.get("age_verified"))
+
+
+# Live-service games that invalidate their mod library at every update.
+# domain -> app id, for reading the manifest's lastupdated.
+_UPDATE_BREAKS_MODS = {"helldivers2": 553850}
+
+
+def _iso_to_epoch(value: str) -> float:
+    """Best-effort ISO-8601 -> epoch. 0 when unparseable."""
+    try:
+        return datetime.datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        ).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _stamp_pre_update(game_domain: str, nodes: list) -> list:
+    """Mark mods last updated BEFORE the game's own last update.
+
+    Michael, after the 2026-08-19 repack made the existing library inert:
+    "it is pretty devastating for the existing mod library and users could
+    do with that being flagged, it means updated working mods will surface
+    more too". The flag is a FACT (older than the game's last patch), not a
+    verdict - sound mods sometimes survive - so the tile badge and the mod
+    page state it and let the user judge, the same contract as the
+    Bannerlord BUILT FOR badge.
+    """
+    app_id = _UPDATE_BREAKS_MODS.get(game_domain)
+    if not app_id or not nodes:
+        return nodes
+    game_updated = _game_updated_at(app_id)
+    if not game_updated:
+        return nodes
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        # v2 nodes carry ISO updatedAt; v1 (trending) an epoch int.
+        mod_updated = _iso_to_epoch(n.get("updatedAt") or "") or float(
+            n.get("updated_timestamp") or 0
+        )
+        if mod_updated and mod_updated < game_updated:
+            n["preGameUpdate"] = True
+    return nodes
 
 
 def _gate_adult_nodes(nodes, key: str = "adultContent") -> list:
@@ -2292,6 +2336,10 @@ def _hide_known_broken(game_domain: str, app_id: int, mods: list) -> tuple:
 
     Returns (kept, hidden_names).
     """
+    # Every browse-bound node passes through here, so this is also where
+    # live-service mods older than the game's own last update get their
+    # flag stamped (see _stamp_pre_update).
+    _stamp_pre_update(game_domain, mods)
     if not app_id:
         return mods, []
     known = _known_broken_mods(game_domain, _steam_build_id(app_id))
@@ -10065,6 +10113,7 @@ query Link($slug: String!, $domainName: String!) {
             )
             order = {mod_id: idx for idx, mod_id in enumerate(ids)}
             nodes.sort(key=lambda n: order.get(n.get("modId"), len(ids)))
+            _stamp_pre_update(game_domain, nodes)
             return {"ok": True, "mods": nodes}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
@@ -10099,6 +10148,9 @@ query Link($slug: String!, $domainName: String!) {
             for m in _gate_adult_nodes(body, "contains_adult_content")
             if m.get("name") and m.get("available", True)
         ][: int(count)]
+        # After mapping: _map_v1_mod normalises to the v2 shape, so the
+        # stamp reads updatedAt the same way everywhere.
+        _stamp_pre_update(game_domain, mods)
         mods, hidden = _hide_known_broken(game_domain, app_id, mods)
         if hidden:
             decky.logger.info(
@@ -10153,30 +10205,34 @@ query Link($slug: String!, $domainName: String!) {
             "owner": owner,
         }
 
-    # Warn, never block: measured on device, a 10-month-old patch file
-    # (Megumin, 2025-10) loads fine while a 27-month one (Star Wars Ships,
-    # 2024-05) hard-fails with the engine's own 0x44415441 "DATA" error -
-    # and BOTH predate the game's latest update, because Helldivers 2
-    # updates constantly (yesterday, at the time of measuring). So the
-    # game-update comparison over-fires here; upload AGE is the signal,
-    # with a year of slack so maintained mods stay quiet.
-    _HD2_STALE_DAYS = 365
-
     async def _hd2_stale_warning(
         self, game_domain: str, mod_id: int, file_id: int, mod_name: str,
     ) -> str:
+        """Warn when the picked file predates the game's own last update.
+
+        This REPLACED a 365-day age rule within a day of writing it. The
+        2026-08-19 repack settled how HD2 mods actually age: every game
+        update invalidates patch files built before it (visual mods go
+        inert or throw the engine's 0x44415441 DATA error; sound sometimes
+        survives), and authors re-release within days - a mod updated
+        twenty hours after the repack shipped plain patch files that work.
+        So the game's own lastupdated is the line, not a birthday.
+        """
+        app_id = _UPDATE_BREAKS_MODS.get(game_domain)
+        if not app_id:
+            return ""
+        game_updated = _game_updated_at(app_id)
+        if not game_updated:
+            return ""
         uploaded = await _file_uploaded_at(game_domain, mod_id, file_id)
-        if not uploaded:
+        if not uploaded or uploaded >= game_updated:
             return ""
-        age_days = (time.time() - uploaded) / 86400
-        if age_days < self._HD2_STALE_DAYS:
-            return ""
-        months = int(age_days // 30)
         return (
-            f"{mod_name} was uploaded {months} months ago, and Helldivers 2 "
-            "changes its data files with every update. Old patch files can "
-            "make the game refuse to load (error 0x44415441). It may work - "
-            "but if the game errors on boot, uninstall this mod first."
+            f"{mod_name}'s newest file is from before the game's last "
+            "update, which usually breaks Helldivers 2 mods (sound mods "
+            "sometimes survive). It may install and then do nothing, or "
+            "stop the game loading (error 0x44415441). Check the mod page "
+            "for a version dated after the game update."
         )
 
     async def _stale_native_warning(
