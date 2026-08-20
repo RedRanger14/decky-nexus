@@ -13098,6 +13098,40 @@ class TestBrowseFilters(unittest.TestCase):
         self.assertIn("_game_updated_at(int(app_id))", fn)
 
 
+class TestReshadeInstall(unittest.TestCase):
+    """Michael: "Build the reshade but lets just put a warning on related
+    mods that it might trigger the anti cheat because its injected." A
+    ReShade-shaped archive (no patch files, reshade markers) installs
+    beside the exe with per-file records; the result carries the warning
+    and the frontend applies the dxgi override launch options."""
+
+    def test_the_install_path_exists_and_warns(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("if is_reshade and reshade_subdir:")
+        block = source[i:i + 4500]
+        self.assertIn('"reshade": True', block)
+        self.assertIn('"target": reshade_subdir', block)
+        self.assertIn("use at", block)
+        self.assertIn("own risk", block)
+
+    def test_without_a_subdir_the_refusal_stands(self):
+        # Games with no reshade config keep the honest refusal.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("if is_reshade and reshade_subdir:")
+        tail = source[i:i + 5000]
+        self.assertIn("does not install for this game", tail)
+
+    def test_reshade_named_mods_warn_before_download(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _hd2_stale_warning"):]
+        fn = fn[:fn.index("async def _stale_native_warning")]
+        self.assertIn('"reshade" in (mod_name or "").lower()', fn)
+        self.assertIn("injection is a different", fn)
+
+
 class TestHd2StaleWarning(unittest.TestCase):
     """The 2026-08-19 repack settled how HD2 mods age: every game update
     invalidates patch files built before it, and authors re-release within
@@ -13271,8 +13305,11 @@ class TestHelldivers2Patches(unittest.TestCase):
             source = fh.read()
         # To the record write, not a byte count: a fixed window silently
         # stops covering the code the moment the block above it grows.
+        # To the flat-mode record's target, which only the patch path
+        # writes - the ReShade block above it now also mentions record
+        # keys, so the old anchor cut the slice short.
         i = source.index("if flat_extensions or hd2_layout:")
-        block = source[i:source.index('record_key = _safe_name(mod_name)', i)]
+        block = source[i:source.index('"target": mods_subdir', i)]
         self.assertIn("_hd2_next_free_number(", block)
         self.assertIn("_hd2_patch_groups(", block)
 

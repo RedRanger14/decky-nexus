@@ -96,10 +96,10 @@ export interface InstallResult {
   /** Option-style archive: the user must pick one of `options` and retry
    * with payload_choice set. */
   needs_choice?: boolean;
-  /** Whether "install everything (merge)" is a valid answer. False for
-   * Helldivers 2 variant archives, where every option patches the SAME
-   * game file and merging is impossible by construction. */
   merge_allowed?: boolean;
+  /** The install was a ReShade package: injector/preset files beside the
+   * exe. The caller applies the game's reshade launch options. */
+  reshade?: boolean;
   options?: string[];
   /** FOMOD archive: show the wizard, then call installFomod with the
    * token and selected plugin ids. */
@@ -298,7 +298,9 @@ export const installMod = callable<
     pakpatch_layout: boolean,
     repair_only: boolean,
     framework_ids: number[],
-    hd2_layout: boolean
+    hd2_layout: boolean,
+    /** Where ReShade-shaped archives install (the exe's dir), "" = refuse. */
+    reshade_subdir?: string
   ],
   InstallResult
 >("install_mod");

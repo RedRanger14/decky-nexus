@@ -131,7 +131,8 @@ function installModWith(
     // other dlls rather than patching game code, so a game update does not
     // age them out.
     stalenessExemptModIds(game),
-    game.hd2Layout ?? false
+    game.hd2Layout ?? false,
+    game.reshade?.subdir ?? ""
   );
 }
 

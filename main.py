@@ -10297,6 +10297,16 @@ query Link($slug: String!, $domainName: String!) {
     async def _hd2_stale_warning(
         self, game_domain: str, mod_id: int, file_id: int, mod_name: str,
     ) -> str:
+        if "reshade" in (mod_name or "").lower():
+            # Michael: "lets just put a warning on related mods that it
+            # might trigger the anti cheat because its injected." Before
+            # the download, in the same box the staleness warning uses.
+            return (
+                f"{mod_name} is ReShade-based. ReShade injects a DLL into "
+                "the game's process - asset swaps are known to be "
+                "tolerated by the anti-cheat, but injection is a different "
+                "category. Use at your own risk."
+            )
         """Warn when the picked file predates the game's own last update.
 
         This REPLACED a 365-day age rule within a day of writing it. The
@@ -10420,6 +10430,7 @@ query Link($slug: String!, $domainName: String!) {
         # boolean where a list is read, which no type checker here would see.
         framework_ids: list = None,
         hd2_layout: bool = False,
+        reshade_subdir: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -10561,6 +10572,7 @@ query Link($slug: String!, $domainName: String!) {
                 pakpatch_layout,
                 repair_only,
                 hd2_layout,
+                reshade_subdir,
             )
             if result.get("ok") and game_domain == "mountandblade2bannerlord":
                 try:
@@ -10850,6 +10862,7 @@ query Link($slug: String!, $domainName: String!) {
         pakpatch_layout: bool = False,
         repair_only: bool = False,
         hd2_layout: bool = False,
+        reshade_subdir: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -11827,14 +11840,80 @@ query Link($slug: String!, $domainName: String!) {
                     elif n.lower().endswith(exts):
                         flat.append(os.path.join(root, n))
             if not flat:
-                # Name the real reason when we can see it. "Low Quality
-                # Preset Reborn" is a ReShade preset - an injector config,
-                # not a data mod - and "expected hash.patch_N files" told
-                # the user nothing about why it can never install here.
                 is_reshade = hd2_layout and any(
                     "reshade" in n.lower() or n.lower().endswith(".ini")
                     for _r, _d, names in os.walk(scratch) for n in names
                 )
+                if is_reshade and reshade_subdir:
+                    # ReShade installs beside the game's exe: the injector
+                    # dll, the preset inis, and the reshade-shaders tree,
+                    # relative paths preserved. Per-file records into the
+                    # target subdir, so uninstall removes exactly these.
+                    # Asked for by Michael with the risk stated up front:
+                    # "Build the reshade but lets just put a warning on
+                    # related mods that it might trigger the anti cheat
+                    # because its injected."
+                    dest_base = os.path.join(
+                        install_path, *reshade_subdir.split("/")
+                    )
+                    moved_rel = []
+                    for root, _dirs, names in os.walk(scratch):
+                        for n in names:
+                            src = os.path.join(root, n)
+                            rel = os.path.relpath(src, scratch).replace(
+                                os.sep, "/"
+                            )
+                            if not _safe_rel_path(rel):
+                                continue
+                            dst = os.path.join(dest_base, *rel.split("/"))
+                            _makedirs_for(dst)
+                            if os.path.isfile(dst):
+                                os.remove(dst)
+                            shutil.move(src, dst)
+                            moved_rel.append(rel)
+                    _force_rmtree(scratch)
+                    try:
+                        os.remove(archive_path)
+                    except OSError:
+                        pass
+                    settings = _load_settings()
+                    installed = settings.setdefault(
+                        "installed", {}
+                    ).setdefault(game_domain, {})
+                    record_key = _safe_name(mod_name)
+                    installed[record_key] = _merge_install_record(
+                        installed.get(record_key) or {},
+                        {
+                            "mod_id": mod_id, "file_id": file_id,
+                            "name": mod_name, "version": mod_version,
+                            "file_name": file_name,
+                            "installed_at": int(time.time()),
+                            "page_version": page_version,
+                            "source": record_source,
+                            "collection_slug": collection_slug,
+                            "mode": "files", "target": reshade_subdir,
+                            "files": moved_rel, "reshade": True,
+                        },
+                    )
+                    _save_settings(settings)
+                    decky.logger.info(
+                        f"installed ReShade package {mod_name!r}: "
+                        f"{len(moved_rel)} file(s) -> {reshade_subdir}"
+                    )
+                    await _emit_progress(mod_id, "done", 100)
+                    return {
+                        "ok": True,
+                        "folder": record_key,
+                        "reshade": True,
+                        "warning": (
+                            "ReShade injects a DLL into the game's own "
+                            "process. This game runs anti-cheat, and while "
+                            "asset-swap mods are known to be tolerated, "
+                            "injection is a different category - use at "
+                            "your own risk. Launch options have been set "
+                            "so the injector loads under Proton."
+                        ),
+                    }
                 _force_rmtree(scratch)
                 if is_reshade:
                     return {
@@ -11842,7 +11921,7 @@ query Link($slug: String!, $domainName: String!) {
                         "error": (
                             "This is a ReShade preset, not a game mod - it "
                             "needs the ReShade injector, which this plugin "
-                            "does not install."
+                            "does not install for this game."
                         ),
                     }
                 expected = (

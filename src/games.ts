@@ -235,6 +235,9 @@ export interface SupportedGame {
   /** Shown as a banner at the top of the QAM panel: support for this game
    * is real but rough. Honest signposting beats silent rough edges. */
   underConstruction?: string;
+  /** ReShade support: where the game's exe lives (injector files land
+   * there), and the launch options Proton needs to load a native dxgi. */
+  reshade?: { subdir: string; launchOptionsTemplate: string };
   /** Shown at the top of the game panel until the given Documents-file
    * exists - for games that must run once before modding works (their
    * launcher creates the activation config on first run). For
@@ -994,6 +997,14 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // device that cannot run either. Michael: "it appears in the hero mods
     // and obviously wont work well on steamos in big picture mode."
     heroExcludeModIds: [109, 4664],
+    // ReShade packages install beside the exe. Proton's builtin dxgi wins
+    // unless overridden - same mechanism as the winhttp/dinput8 loaders.
+    // The install carries an anti-cheat warning: injection is a different
+    // category from the asset swaps GameGuard is known to tolerate.
+    reshade: {
+      subdir: "bin",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dxgi=n,b" %command%',
+    },
     // The under-construction banner lived here for one build. Michael:
     // "Remove the under construction bit please as it takes up way too
     // much space and I am hopeful this will work as more updated mods get

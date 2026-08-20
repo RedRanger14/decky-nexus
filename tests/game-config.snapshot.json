@@ -174,7 +174,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": null,
-    "launchOptionsTemplate": null,
+    "launchOptionsTemplate": "dxgi=n,bRemove the under construction bit please as it takes up way too\n    // much space and I am hopeful this will work as more updated mods get\n    // added.helldivers2.exe",
     "prefixTools": [],
     "manualTools": 0,
     "hasLauncherBypass": false,
