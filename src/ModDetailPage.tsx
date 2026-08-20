@@ -393,6 +393,7 @@ export function ModDetailPage() {
           <PayloadChoiceModal
             modName={mod.name}
             options={result.options}
+            allowMerge={result.merge_allowed !== false}
             onPick={(opt) => onInstall(file, opt)}
           />
         );

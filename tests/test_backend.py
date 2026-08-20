@@ -13176,11 +13176,26 @@ class TestHelldivers2Patches(unittest.TestCase):
         self.assertEqual(main._hd2_variant_groups(
             ["/x/9bc33b7058a2bd5a.patch_0"]), {})
 
+    def test_merge_all_is_refused_with_an_explanation(self):
+        # "Install everything" exists for replacer packs whose folders
+        # combine. HD2 variants collide - all of them together is
+        # impossible by construction. Michael clicked merge and got "That
+        # option wasn't in the archive", which explained nothing.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index('if payload_choice == "*":', source.index(
+            "variants = _hd2_variant_groups(flat)"))
+        block = source[i:i + 900]
+        self.assertIn("only ONE can be installed", block)
+        # And the choice offer says merging is off the table.
+        j = source.index('"needs_choice": True', i)
+        self.assertIn('"merge_allowed": False', source[j:j + 400])
+
     def test_the_installer_asks_rather_than_guessing(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
         i = source.index("variants = _hd2_variant_groups(flat)")
-        block = source[i:i + 1600]
+        block = source[i:source.index("_record_vanilla_baseline", i)]
         self.assertIn('"needs_choice": True', block)
         # And an explicit pick is honoured rather than re-asked.
         self.assertIn("if payload_choice:", block)
@@ -13188,8 +13203,10 @@ class TestHelldivers2Patches(unittest.TestCase):
     def test_the_flat_branch_renumbers_for_hd2(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
+        # To the record write, not a byte count: a fixed window silently
+        # stops covering the code the moment the block above it grows.
         i = source.index("if flat_extensions or hd2_layout:")
-        block = source[i:i + 4000]
+        block = source[i:source.index('record_key = _safe_name(mod_name)', i)]
         self.assertIn("_hd2_next_free_number(", block)
         self.assertIn("_hd2_patch_groups(", block)
 

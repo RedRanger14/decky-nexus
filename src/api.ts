@@ -92,6 +92,10 @@ export interface InstallResult {
   /** Option-style archive: the user must pick one of `options` and retry
    * with payload_choice set. */
   needs_choice?: boolean;
+  /** Whether "install everything (merge)" is a valid answer. False for
+   * Helldivers 2 variant archives, where every option patches the SAME
+   * game file and merging is impossible by construction. */
+  merge_allowed?: boolean;
   options?: string[];
   /** FOMOD archive: show the wizard, then call installFomod with the
    * token and selected plugin ids. */

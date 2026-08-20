@@ -8,11 +8,15 @@ export function PayloadChoiceModal({
   options,
   onPick,
   closeModal,
+  allowMerge,
 }: {
   modName: string;
   options: string[];
   onPick: (option: string) => void;
   closeModal?: () => void;
+  /** Offer "install everything"? Replacer packs want it; HD2 variant
+   * archives must not see it - their folders all patch the same file. */
+  allowMerge?: boolean;
 }) {
   return (
     <ModalRoot closeModal={closeModal}>
@@ -21,7 +25,7 @@ export function PayloadChoiceModal({
         This mod's archive offers alternative folders — pick the one to
         install. (Check the mod's description if you're unsure.)
       </div>
-      {options.length > 1 && (
+      {options.length > 1 && allowMerge !== false && (
         <ButtonItem
           layout="below"
           description="Replacer packs usually want all folders combined"

@@ -11684,6 +11684,23 @@ query Link($slug: String!, $domainName: String!) {
             if hd2_layout:
                 variants = _hd2_variant_groups(flat)
                 if variants:
+                    if payload_choice == "*":
+                        # "Install everything" exists for replacer packs
+                        # whose folders COMBINE. These folders collide -
+                        # every one patches the same archive slot - so all
+                        # of them together is impossible by construction,
+                        # not merely unwise. Michael clicked merge and got
+                        # "That option wasn't in the archive", which
+                        # explained nothing.
+                        _force_rmtree(scratch)
+                        return {
+                            "ok": False,
+                            "error": (
+                                "These options replace the same game file, "
+                                "so only ONE can be installed - pick a "
+                                "single option instead of merging."
+                            ),
+                        }
                     if payload_choice:
                         pick = os.path.join(scratch, *payload_choice.split("/"))
                         chosen = variants.get(os.path.normpath(pick))
@@ -11711,6 +11728,9 @@ query Link($slug: String!, $domainName: String!) {
                             "ok": False,
                             "needs_choice": True,
                             "options": options,
+                            # The modal must not offer "merge all" here:
+                            # these folders collide by definition.
+                            "merge_allowed": False,
                         }
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path
