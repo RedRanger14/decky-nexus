@@ -13111,6 +13111,45 @@ class TestHelldivers2Patches(unittest.TestCase):
         self.assertEqual(main._hd2_next_free_number(
             self.dir, "9bc33b7058a2bd5a", set()), 0)
 
+    def test_variant_folders_are_a_choice_not_a_bulk_install(self):
+        # "Super Destroyer RGB" ships 275 files as ~90 colour variants,
+        # every folder holding the same 9ba626afa44a3aa3.patch_0. Installing
+        # them all would renumber ninety alternatives into ninety slots.
+        paths = []
+        for colour in ("Bright Green", "Dark Blue", "Red"):
+            for suffix in ("", ".gpu_resources", ".stream"):
+                paths.append(
+                    "/x/Front Ship Tiny Lights/%s/"
+                    "9ba626afa44a3aa3.patch_0%s" % (colour, suffix))
+        groups = main._hd2_variant_groups(paths)
+        self.assertEqual(len(groups), 3)
+        for members in groups.values():
+            self.assertEqual(len(members), 3)  # the triplet stays together
+
+    def test_folders_with_different_numbers_install_together(self):
+        # Automaton Helmets ships patch_461 in Commissar/ and patch_463 in
+        # Incen/ - a set the author split up, not a choice.
+        paths = [
+            "/x/Commissar/9ba626afa44a3aa3.patch_461",
+            "/x/Commissar/9ba626afa44a3aa3.patch_461.stream",
+            "/x/Incen/9ba626afa44a3aa3.patch_463",
+            "/x/Incen/9ba626afa44a3aa3.patch_463.stream",
+        ]
+        self.assertEqual(main._hd2_variant_groups(paths), {})
+
+    def test_a_single_folder_is_never_a_choice(self):
+        self.assertEqual(main._hd2_variant_groups(
+            ["/x/9bc33b7058a2bd5a.patch_0"]), {})
+
+    def test_the_installer_asks_rather_than_guessing(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("variants = _hd2_variant_groups(flat)")
+        block = source[i:i + 1600]
+        self.assertIn('"needs_choice": True', block)
+        # And an explicit pick is honoured rather than re-asked.
+        self.assertIn("if payload_choice:", block)
+
     def test_the_flat_branch_renumbers_for_hd2(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()

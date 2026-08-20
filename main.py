@@ -451,6 +451,55 @@ _HD2_PATCH_RE = re.compile(
 )
 
 
+def _hd2_variant_groups(paths: list) -> dict:
+    """Folder -> its patch files, when an archive ships mutually exclusive
+    variants rather than one payload.
+
+    HD2 authors package choices as sibling FOLDERS holding the same archive
+    hash at the same patch number: "Super Destroyer RGB" ships 275 files as
+    ~90 colour variants ("Front Ship Tiny Lights/Bright Green/",
+    ".../Dark Blue/", ...), every one of them
+    9ba626afa44a3aa3.patch_0. Walking the tree and taking everything -
+    which is what the flat installer does - would renumber all ninety into
+    separate slots and apply them at once.
+
+    Distinguishing feature, and the reason this can be decided without
+    asking Nexus anything: variants COLLIDE. Two folders offering the same
+    (hash, number) cannot both be meant. Folders holding DIFFERENT numbers
+    are a set the author split up for tidiness (Automaton Helmets ships
+    patch_461 and patch_463 in Commissar/ and Incen/) and those install
+    together.
+
+    Returns {} when the archive is not variant-shaped, so the ordinary path
+    is untouched.
+    """
+    by_folder = {}
+    for path in paths:
+        m = _HD2_PATCH_RE.match(os.path.basename(path))
+        if not m:
+            continue
+        folder = os.path.dirname(path)
+        key = (m.group(1).lower(), int(m.group(2)))
+        by_folder.setdefault(folder, set()).add(key)
+    if len(by_folder) < 2:
+        return {}
+    # Any two folders claiming the same slot means these are alternatives.
+    seen, collides = set(), False
+    for keys in by_folder.values():
+        if seen & keys:
+            collides = True
+            break
+        seen |= keys
+    if not collides:
+        return {}
+    groups = {}
+    for path in paths:
+        if not _HD2_PATCH_RE.match(os.path.basename(path)):
+            continue
+        groups.setdefault(os.path.dirname(path), []).append(path)
+    return groups
+
+
 def _hd2_patch_groups(paths: list) -> dict:
     """Group extracted files into (hash, number) -> [(suffix, path)].
 
@@ -11602,6 +11651,37 @@ query Link($slug: String!, $domainName: String!) {
                     "error": "No loadable mod files found in this archive "
                     f"(expected {expected})",
                 }
+            if hd2_layout:
+                variants = _hd2_variant_groups(flat)
+                if variants:
+                    if payload_choice:
+                        pick = os.path.join(scratch, *payload_choice.split("/"))
+                        chosen = variants.get(os.path.normpath(pick))
+                        if not chosen:
+                            _force_rmtree(scratch)
+                            return {
+                                "ok": False,
+                                "error": "That option wasn't in the archive",
+                            }
+                        flat = chosen
+                    else:
+                        options = sorted(
+                            os.path.relpath(d, scratch).replace(os.sep, "/")
+                            for d in variants
+                        )
+                        _force_rmtree(scratch)
+                        try:
+                            os.remove(archive_path)
+                        except OSError:
+                            pass
+                        await _emit_progress(
+                            mod_id, "error", 0, "choose a version"
+                        )
+                        return {
+                            "ok": False,
+                            "needs_choice": True,
+                            "options": options,
+                        }
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path
             )
