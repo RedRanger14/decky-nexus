@@ -1948,7 +1948,14 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               return (
                 <Focusable
                   key={f.fileId}
-                  onActivate={() => toggleExpand(f)}
+                  // A Focusable WITH onActivate is a leaf: the controller can
+                  // never reach anything inside it, so the eye button in an
+                  // expanded row existed but was untappable. Michael: "the
+                  // eye icon when you expand the mod is not focusable with a
+                  // controller". Closed rows activate to expand; open rows
+                  // hand focus to their children (eye, Finish setup) and the
+                  // title collapses them.
+                  onActivate={open ? undefined : () => toggleExpand(f)}
                   style={{
                     padding: "6px 10px",
                     // Downloading rows fill orange left-to-right with the
@@ -1968,7 +1975,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                     fontSize: "13px",
                   }}
                 >
-                  <div
+                  <Focusable
+                    // When the row is open, the row itself no longer
+                    // activates (so its buttons become reachable) and the
+                    // title line is the collapse control instead.
+                    onActivate={open ? () => toggleExpand(f) : undefined}
                     style={{ display: "flex", justifyContent: "space-between" }}
                   >
                     <span
@@ -2021,7 +2032,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                           (small and huge alike) - unknown, not big */}
                       {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "—"}
                     </span>
-                  </div>
+                  </Focusable>
                   {open && (
                     <div
                       style={{
@@ -2142,7 +2153,8 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               return (
                 <Focusable
                   key={f.fileId}
-                  onActivate={() => toggleExpand(f)}
+                  // Same leaf problem as the row above: see that comment.
+                  onActivate={open ? undefined : () => toggleExpand(f)}
                   style={{
                     padding: "5px 10px",
                     background:
@@ -2156,7 +2168,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                     opacity: pct !== undefined ? 1 : 0.8,
                   }}
                 >
-                  <div
+                  <Focusable
+                    // When the row is open, the row itself no longer
+                    // activates (so its buttons become reachable) and the
+                    // title line is the collapse control instead.
+                    onActivate={open ? () => toggleExpand(f) : undefined}
                     style={{ display: "flex", justifyContent: "space-between" }}
                   >
                     <span
@@ -2173,7 +2189,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                     <span style={{ flexShrink: 0, marginLeft: "10px" }}>
                       {f.sizeKb > 0 ? fmtBytes(f.sizeKb * 1024) : "—"}
                     </span>
-                  </div>
+                  </Focusable>
                   {open && (
                     <div
                       style={{

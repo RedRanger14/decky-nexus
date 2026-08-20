@@ -877,3 +877,22 @@ test("load more trusts the backend's has_more over page fullness", () => {
     "paging still infers more-ness from page size alone"
   );
 });
+
+test("an expanded collection row hands focus to its buttons", () => {
+  // A Focusable WITH onActivate is a leaf: the controller can never reach
+  // anything inside it. The eye button in an expanded row existed and was
+  // untappable - Michael: "the eye icon when you expand the mod is not
+  // focusable with a controller". Closed rows activate to expand; open rows
+  // release activation to their children and the title line collapses.
+  const page = read("CollectionPage.tsx");
+  const rows = page.match(/onActivate=\{open \? undefined : \(\) => toggleExpand\(f\)\}/g);
+  assert.ok(
+    rows && rows.length === 2,
+    `expected both collection rows to release activation when open, found ${rows ? rows.length : 0}`
+  );
+  const titles = page.match(/onActivate=\{open \? \(\) => toggleExpand\(f\) : undefined\}/g);
+  assert.ok(
+    titles && titles.length === 2,
+    "open rows have no collapse control - the title line should activate"
+  );
+});
