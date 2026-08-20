@@ -10153,11 +10153,41 @@ query Link($slug: String!, $domainName: String!) {
             "owner": owner,
         }
 
+    # Warn, never block: measured on device, a 10-month-old patch file
+    # (Megumin, 2025-10) loads fine while a 27-month one (Star Wars Ships,
+    # 2024-05) hard-fails with the engine's own 0x44415441 "DATA" error -
+    # and BOTH predate the game's latest update, because Helldivers 2
+    # updates constantly (yesterday, at the time of measuring). So the
+    # game-update comparison over-fires here; upload AGE is the signal,
+    # with a year of slack so maintained mods stay quiet.
+    _HD2_STALE_DAYS = 365
+
+    async def _hd2_stale_warning(
+        self, game_domain: str, mod_id: int, file_id: int, mod_name: str,
+    ) -> str:
+        uploaded = await _file_uploaded_at(game_domain, mod_id, file_id)
+        if not uploaded:
+            return ""
+        age_days = (time.time() - uploaded) / 86400
+        if age_days < self._HD2_STALE_DAYS:
+            return ""
+        months = int(age_days // 30)
+        return (
+            f"{mod_name} was uploaded {months} months ago, and Helldivers 2 "
+            "changes its data files with every update. Old patch files can "
+            "make the game refuse to load (error 0x44415441). It may work - "
+            "but if the game errors on boot, uninstall this mod first."
+        )
+
     async def _stale_native_warning(
         self, game_domain: str, mod_id: int, file_id: int, mod_name: str,
         app_id: int,
     ) -> str:
         """Warn when a memory-patching mod predates the game's own patch."""
+        if game_domain == "helldivers2":
+            return await self._hd2_stale_warning(
+                game_domain, mod_id, file_id, mod_name
+            )
         game_updated = _game_updated_at(app_id)
         if not game_updated:
             return ""

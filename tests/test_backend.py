@@ -13065,6 +13065,41 @@ class TestBannerlordManifestGate(unittest.TestCase):
         self.assertEqual(main._bl_manifest_game_mismatch(self.dir, ""), "")
 
 
+class TestHd2StaleWarning(unittest.TestCase):
+    """Measured on device: a 10-month-old patch file (Megumin, 2025-10)
+    loads fine while a 27-month one (Star Wars Ships, 2024-05) makes the
+    game refuse to boot with its own 0x44415441 DATA error - and both
+    predate the game's latest update, because Helldivers 2 updates
+    constantly. So upload AGE is the signal here, not the game-update
+    comparison, with a year of slack; and it is a WARNING, because one of
+    the two measured cases works."""
+
+    def test_hd2_routes_to_the_age_rule(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _stale_native_warning"):]
+        fn = fn[:fn.index("async def get_mod_files")]
+        self.assertIn('if game_domain == "helldivers2":', fn)
+        self.assertIn("_hd2_stale_warning(", fn)
+
+    def test_the_threshold_clears_the_working_case(self):
+        # Megumin at ~10 months must stay quiet; Star Wars at ~27 months
+        # must warn. 365 days sits between them with margin both ways.
+        self.assertGreater(365, 305)   # Megumin's age when measured
+        self.assertLess(365, 820)      # Star Wars' age when measured
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("_HD2_STALE_DAYS = 365", source)
+
+    def test_it_is_a_warning_not_a_block(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("async def _hd2_stale_warning")
+        block = source[i:i + 1600]
+        self.assertIn("It may work", block)
+        self.assertNotIn('"blocked": True', block)
+
+
 class TestHelldivers2Patches(unittest.TestCase):
     """HD2 mods are <hash>.patch_N file swaps in data/. The game loads
     patch_0, patch_1, ... per archive hash, so two mods patching the same
