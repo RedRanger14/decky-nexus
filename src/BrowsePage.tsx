@@ -796,7 +796,13 @@ export function BrowsePage() {
   // band on a device where it was already installed and running. And even
   // uninstalled, a framework is Step 1's job; a hero tile saying "install
   // BLSE" duplicates the setup flow one screen away.
-  const fwIds = new Set(frameworkModIds(game));
+  const fwIds = new Set([
+    ...frameworkModIds(game),
+    // Desktop tools the game's config names: HD2's two most-endorsed
+    // "mods" are Windows mod managers, which would headline the hero band
+    // on a device that cannot run either.
+    ...(game.heroExcludeModIds ?? []),
+  ]);
   const heroBlend = [
     ...recommended,
     ...trending.filter((t) => !recommended.some((r) => r.modId === t.modId)),

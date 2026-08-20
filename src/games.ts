@@ -227,6 +227,11 @@ export interface SupportedGame {
    * data/, renumbered per archive hash so two mods patching the same
    * archive coexist instead of the second silently overwriting the first. */
   hd2Layout?: boolean;
+  /** Mods that must never take a hero slot: desktop tools with big
+   * endorsement counts (mod managers) that a Gaming Mode plugin cannot run
+   * and should not showcase. The install-time tool refusal still catches
+   * them if someone finds them by search. */
+  heroExcludeModIds?: number[];
   /** Shown at the top of the game panel until the given Documents-file
    * exists - for games that must run once before modding works (their
    * launcher creates the activation config on first run). For
@@ -981,6 +986,11 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // in data/. No folders, no loader, nothing executable.
     modsSubdir: "data",
     hd2Layout: true,
+    // The two most-endorsed "mods" for this game are Windows mod managers
+    // (HD2ModManager and Arsenal). They would headline the hero band on a
+    // device that cannot run either. Michael: "it appears in the hero mods
+    // and obviously wont work well on steamos in big picture mode."
+    heroExcludeModIds: [109, 4664],
     moddedSaveWarning: false, // progression is server-side
     processName: "helldivers2.exe", // verified on device
     // The anti-cheat question, asked BEFORE this config existed. HD2 ships

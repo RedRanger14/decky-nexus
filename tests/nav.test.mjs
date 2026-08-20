@@ -851,8 +851,11 @@ test("frameworks never take a hero slot", () => {
   // them. And even uninstalled, a framework is Step 1's job - a hero tile
   // saying "install BLSE" duplicates the setup flow one screen away.
   const page = read("BrowsePage.tsx");
+  // The set now also carries per-game hero exclusions (desktop tools), so
+  // match the construction loosely: what matters is that frameworkModIds
+  // feeds it and the blend filters on it.
   assert.ok(
-    /const fwIds = new Set\(frameworkModIds\(game\)\)/.test(page),
+    /const fwIds = new Set\(\[?\s*\.{0,3}frameworkModIds\(game\)/.test(page),
     "the hero band does not know which mods are frameworks"
   );
   const blend = page.slice(
