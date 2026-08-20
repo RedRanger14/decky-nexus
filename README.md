@@ -2,6 +2,13 @@
 
 Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods.com) content for the currently selected game, entirely from Gaming Mode with a controller, on SteamOS and Bazzite. No Desktop Mode required.
 
+> **Built with AI, tested by hand.** Nearly all of this plugin's code was
+> written by Claude, Anthropic's AI. What makes it trustworthy is not the
+> author but the process around it: hundreds of hours of human direction,
+> hands-on testing, and every supported game installed, modded and played on
+> real hardware before it shipped. We state this plainly because you deserve
+> to know how the thing you are installing was made.
+
 > **Unofficial, and in beta.** This is a community-built plugin. It is not an
 > official Nexus Mods product, is not supported by Nexus Mods, and nothing
 > here is endorsed by them. It uses their public API like any other
@@ -16,19 +23,28 @@ care about.
 
 ## Supported games
 
-Nine games, each one installed, modded and played on real hardware before it
-shipped. That is what supported means here: not that the code has a config
+Eleven games, each one installed, modded and played on real hardware before
+it shipped. That is what supported means here: not that the code has a config
 entry for it, but that someone finished a session with mods running.
 
 1. Cyberpunk 2077
 2. Elden Ring
 3. Fallout 4
 4. Fallout: New Vegas
-5. Resident Evil 4
-6. Skyrim Special Edition
-7. Slay the Spire 2
-8. Stardew Valley
-9. The Witcher 3
+5. Helldivers 2 (*)
+6. Mount & Blade II: Bannerlord
+7. Resident Evil 4
+8. Skyrim Special Edition
+9. Slay the Spire 2
+10. Stardew Valley
+11. The Witcher 3
+
+(*) Helldivers 2 is a live-service game that changes its data files with
+every update, which breaks most mods until their authors release new
+versions. The plugin flags out-of-date mods with a PRE-UPDATE badge and can
+filter to mods updated since the game's last patch, but a mod that installed
+cleanly and does nothing usually just needs its author to catch up. That is
+the game, not the plugin, and it is the same in every mod manager.
 
 ### On the roadmap
 
@@ -37,7 +53,6 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
-- Mount & Blade II: Bannerlord
 - Palworld
 
 Want one moved up, or a new one added? Open a [game request][issues] and say
@@ -62,6 +77,16 @@ hardware, so the list grows slowly and on purpose.
 - **Enable and disable** any installed mod, and reset a game to vanilla.
 - **A health check** that reads the game's own logs and says what is actually
   broken, rather than guessing.
+- **Updates**, checked against Nexus per mod, applied with one tap, and when
+  an update offers versions the picker opens right there.
+- **Filters next to sort**: the game's own categories, recently updated, and
+  on live-service games "since the game's last update".
+- **Load order for Bannerlord** is solved from the mods' own declared rules,
+  and the launcher used is the one that honours them.
+- **ReShade packages install** on games configured for it, with the launch
+  options set automatically and the risk stated plainly: ReShade injects
+  into the game's process, which anti-cheat may treat differently from
+  ordinary mods. The warning is on the mod page before you download.
 - **Endorsements and author support links**, so the people who made the mods
   still get credit.
 
