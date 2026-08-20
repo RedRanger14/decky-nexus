@@ -3043,10 +3043,18 @@ def _load_order_report(data_path: str, names: list, cache: dict = None) -> int:
 # Matched on name because these are listed as ordinary Nexus mods with real
 # mod ids; nothing in the API marks them as tooling.
 _MANAGER_REQUIREMENT_RE = re.compile(
+    # "mod manager" generically (catches "HD2 Arsenal - Mod Manager" and
+    # "HD2ModManager" - zero spaces allowed): any requirement whose NAME
+    # says it is a mod manager is one, and this plugin is the manager here.
     r"fluffy\s*(mod\s*)?manager|vortex|mod\s*organizer|\bMO2\b|"
-    r"nexus\s*mod\s*manager|\bNMM\b",
+    r"nexus\s*mod\s*manager|\bNMM\b|mod\s*manager|hd2\s*arsenal",
     re.IGNORECASE,
 )
+
+# And by id, for manager mods whose short names dodge the regex ("Arsenal"
+# alone). Same ids the hero band excludes, kept backend-side because the
+# health check runs here.
+_MANAGER_MOD_IDS = {"helldivers2": {109, 4664}}
 
 
 # Expansions that ship as FOLDERS rather than master files.
@@ -9926,6 +9934,16 @@ query Link($slug: String!, $domainName: String!) {
                 f"check_updates({game_domain!r}): "
                 f"{sum(1 for u in updates.values() if u['update_available'])} of "
                 f"{len(updates)} tracked mods have updates"
+                + (
+                    " - "
+                    + ", ".join(
+                        f"{k} ({u['installed']} -> {u['current']})"
+                        for k, u in updates.items()
+                        if u["update_available"]
+                    )
+                    if any(u["update_available"] for u in updates.values())
+                    else ""
+                )
             )
             return {"ok": True, "updates": updates}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
@@ -10401,6 +10419,10 @@ query Link($slug: String!, $domainName: String!) {
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
         the website-issued free-download token from an nxm:// link;
         payload_choice picks a folder from an option-style archive."""
+        decky.logger.info(
+            f"install_mod: {game_domain}/{mod_id} file {file_id} "
+            f"({mod_name!r} v{mod_version!r}, src={record_source!r})"
+        )
         try:
             # Ask before spending the bandwidth. A regulation.bin clash was
             # only caught after extraction, which meant ELDEN RING Reforged
@@ -11799,7 +11821,24 @@ query Link($slug: String!, $domainName: String!) {
                     elif n.lower().endswith(exts):
                         flat.append(os.path.join(root, n))
             if not flat:
+                # Name the real reason when we can see it. "Low Quality
+                # Preset Reborn" is a ReShade preset - an injector config,
+                # not a data mod - and "expected hash.patch_N files" told
+                # the user nothing about why it can never install here.
+                is_reshade = hd2_layout and any(
+                    "reshade" in n.lower() or n.lower().endswith(".ini")
+                    for _r, _d, names in os.walk(scratch) for n in names
+                )
                 _force_rmtree(scratch)
+                if is_reshade:
+                    return {
+                        "ok": False,
+                        "error": (
+                            "This is a ReShade preset, not a game mod - it "
+                            "needs the ReShade injector, which this plugin "
+                            "does not install."
+                        ),
+                    }
                 expected = (
                     "hash.patch_N files" if hd2_layout
                     else ", ".join(flat_extensions)
@@ -16133,6 +16172,9 @@ query CollectionInstructions($slug: String!) {
                 # A mod manager is not a missing dependency: this plugin IS
                 # the manager, and the mod is already installed.
                 and not _MANAGER_REQUIREMENT_RE.search(r.get("modName") or "")
+                and int(r["modId"]) not in _MANAGER_MOD_IDS.get(
+                    game_domain, set()
+                )
                 # The same mod for the other branch of the game does not
                 # need installing - and must not be, on a next-gen setup.
                 and not (
