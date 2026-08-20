@@ -121,6 +121,8 @@ def _build_mods_query(
     trending_since=None,
     include_adult: bool = False,
     language: str = "",
+    category: str = "",
+    updated_since: int = 0,
 ) -> str:
     """Compose the browse query. WILDCARD does substring matching
     server-side; date filters take epoch seconds (verified - ISO datetimes
@@ -140,6 +142,19 @@ def _build_mods_query(
         filters.append(f"languageName: [{excl}]")
     elif language and language != "all":
         filters.append('languageName: [{ value: "%s" }]' % language)
+    if category:
+        # Server-side category names come from the game's own category
+        # list (get_game_categories), so the value is trusted-ish - but it
+        # is still interpolated, so quotes are stripped rather than escaped.
+        filters.append(
+            'categoryName: [{ value: "%s" }]' % category.replace('"', "")
+        )
+    if updated_since > 0:
+        # Epoch seconds, like the trending window: ISO datetimes break the
+        # backing Lucene query (verified when trending was built).
+        filters.append(
+            'updatedAt: [{ value: "%d", op: GT }]' % int(updated_since)
+        )
     params = "$domain: String!, $count: Int!, $offset: Int!"
     if with_search:
         filters.append("name: [{ value: $search, op: WILDCARD }]")
@@ -8719,6 +8734,41 @@ class Plugin:
 
     # ---- Mod browsing (GraphQL v2) ------------------------------------------
 
+    # domain -> category names, one lookup per session. The game-named
+    # root category (v1 lists the game itself as category 1) is dropped:
+    # "filter Helldivers 2 by Helldivers 2" is not a filter.
+    _CATEGORY_CACHE: dict = {}
+
+    async def get_game_categories(self, game_domain: str) -> dict:
+        """The game's own mod categories, for the browse filter."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        if game_domain in self._CATEGORY_CACHE:
+            return {"ok": True, "categories": self._CATEGORY_CACHE[game_domain]}
+        url = f"{NEXUS_API_BASE}/v1/games/{game_domain}.json"
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.get(
+                    url,
+                    headers=_api_headers(_load_settings().get("api_key")),
+                    ssl=SSL_CONTEXT,
+                ) as resp:
+                    if resp.status != 200:
+                        return {"ok": False, "error": f"HTTP {resp.status}"}
+                    body = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return {"ok": False, "error": f"Network error: {type(e).__name__}"}
+        names = [
+            str(c.get("name"))
+            for c in (body.get("categories") or [])
+            if c.get("name")
+            and str(c.get("name")).lower() != str(body.get("name") or "").lower()
+        ]
+        self._CATEGORY_CACHE[game_domain] = names
+        return {"ok": True, "categories": names}
+
     async def get_mods(
         self,
         game_domain: str,
@@ -8727,16 +8777,29 @@ class Plugin:
         offset: int = 0,
         search: str = "",
         app_id: int = 0,
+        category: str = "",
+        updated_within_days: int = 0,
     ) -> dict:
         """Browse or search a game's mods, sorted server-side. Public data -
         works without a key, but we send it when present.
 
         `app_id` is optional and only used to hide mods this device has
         watched fail on the installed build - see _hide_known_broken. A
-        caller that omits it gets exactly what it always got."""
+        caller that omits it gets exactly what it always got.
+
+        category filters by the game's own category names; updated_within_days
+        keeps only recently-updated mods (-1 = since the game's own last
+        update - the filter that matters on live-service games, where the
+        store fills with PRE-UPDATE mods after every patch)."""
         if sort not in SORT_FIELDS:
             return {"ok": False, "error": f"Unknown sort {sort!r}"}
         search = (search or "").strip()
+        updated_since = 0
+        days = int(updated_within_days or 0)
+        if days > 0:
+            updated_since = int(time.time()) - days * 86400
+        elif days == -1 and app_id:
+            updated_since = _game_updated_at(int(app_id))
         trending_since = (
             int(time.time()) - TRENDING_WINDOW_DAYS * 86400
             if sort == "trending"
@@ -8764,6 +8827,8 @@ class Plugin:
                     trending_since,
                     include_adult=_show_adult(),
                     language=_user_prefs()["mod_language"],
+                    category=str(category or ""),
+                    updated_since=updated_since,
                 ),
                 "variables": variables,
             }

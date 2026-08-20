@@ -232,6 +232,9 @@ export interface SupportedGame {
    * and should not showcase. The install-time tool refusal still catches
    * them if someone finds them by search. */
   heroExcludeModIds?: number[];
+  /** Shown as a banner at the top of the QAM panel: support for this game
+   * is real but rough. Honest signposting beats silent rough edges. */
+  underConstruction?: string;
   /** Shown at the top of the game panel until the given Documents-file
    * exists - for games that must run once before modding works (their
    * launcher creates the activation config on first run). For
@@ -991,6 +994,11 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // device that cannot run either. Michael: "it appears in the hero mods
     // and obviously wont work well on steamos in big picture mode."
     heroExcludeModIds: [109, 4664],
+    // Michael, after the 08-19 repack broke the catalogue mid-testing:
+    // "Lets leave helldivers for now but dont black it off - just mark it
+    // as under construction or something at the top of the QAM."
+    underConstruction:
+      "Helldivers 2 support is under construction. Installs work, but the game breaks most mods at every update - prefer mods updated after the game's last patch (no PRE-UPDATE badge).",
     moddedSaveWarning: false, // progression is server-side
     processName: "helldivers2.exe", // verified on device
     // The anti-cheat question, asked BEFORE this config existed. HD2 ships

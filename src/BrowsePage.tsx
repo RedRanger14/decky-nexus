@@ -14,6 +14,7 @@ import {
   ModsResult,
   NexusMod,
   getCollections,
+  getGameCategories,
   getInstalledMods,
   getMods,
   getModsByIds,
@@ -540,6 +541,11 @@ export function BrowsePage() {
   const [restored] = useState(() => takeBrowseRestore(game.appId));
 
   const [sort, setSort] = useState(restored?.sort ?? "featured");
+  // The filter beside sort. "" = all; "d:N" = updated within N days
+  // ("d:-1" = since the game's own last update); anything else is one of
+  // the game's category names, fetched once per game.
+  const [filter, setFilter] = useState("");
+  const [categories, setCategories] = useState<string[]>([]);
   const [search, setSearch] = useState(restored?.search ?? "");
 
   // list mode
@@ -580,6 +586,12 @@ export function BrowsePage() {
     });
   }, []);
   useEffect(() => {
+    setFilter("");
+    getGameCategories(game.nexusDomain).then((r) =>
+      setCategories(r.ok ? r.categories ?? [] : [])
+    );
+  }, [game.appId]);
+  useEffect(() => {
     setInstalledIds(new Set());
     getInstalledMods(
       game.nexusDomain,
@@ -600,7 +612,8 @@ export function BrowsePage() {
 
   // The API rejects 1-char wildcard searches - treat them as no search.
   const effectiveSearch = search.trim().length >= 2 ? search.trim() : "";
-  const isHome = sort === "featured" && effectiveSearch === "";
+  // A filter means the user wants the LIST, even from the featured home.
+  const isHome = sort === "featured" && effectiveSearch === "" && filter === "";
   const effectiveSort = sort === "featured" ? "endorsements" : sort;
 
   // Focus restore: switching home<->list unmounts the focused element and
@@ -682,7 +695,9 @@ export function BrowsePage() {
         PAGE_SIZE,
         offset,
         effectiveSearch,
-        game.appId
+        game.appId,
+        filter.startsWith("d:") ? "" : filter,
+        filter.startsWith("d:") ? parseInt(filter.slice(2), 10) : 0
       );
       if (result.ok) {
         setError(undefined);
@@ -785,7 +800,7 @@ export function BrowsePage() {
     // Debounce while typing; instant for sort changes.
     const timer = setTimeout(() => fetchPage(0, false), search ? 500 : 0);
     return () => clearTimeout(timer);
-  }, [game.appId, sort, search]);
+  }, [game.appId, sort, search, filter]);
 
   // Keep the hand-back cache current so opening a mod detail can restore.
   useEffect(() => {
@@ -973,6 +988,25 @@ export function BrowsePage() {
               selectedOption={sort}
               onChange={(opt) => setSort(opt.data)}
               strDefaultLabel="Sort"
+            />
+          </div>
+          <div style={{ width: "190px", flexShrink: 0 }}>
+            <Dropdown
+              rgOptions={[
+                { data: "", label: "All mods" },
+                // The recency options lead because they answer the
+                // question this filter exists for on live-service games:
+                // "which of these actually work right now?"
+                ...(game.hd2Layout
+                  ? [{ data: "d:-1", label: "Since game update" }]
+                  : []),
+                { data: "d:7", label: "Updated this week" },
+                { data: "d:30", label: "Updated this month" },
+                ...categories.map((c) => ({ data: c, label: c })),
+              ]}
+              selectedOption={filter}
+              onChange={(opt) => setFilter(opt.data)}
+              strDefaultLabel="Filter"
             />
           </div>
           </>

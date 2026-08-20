@@ -1042,6 +1042,13 @@ function CurrentGameSection() {
           {gameIsRunning ? game.displayName : `${game.displayName} · not running`}
         </Field>
       </PanelSectionRow>
+      {game.underConstruction && (
+        <PanelSectionRow>
+          <Field label="🚧 Under construction">
+            {game.underConstruction}
+          </Field>
+        </PanelSectionRow>
+      )}
       {status && !status.installed && (
         <PanelSectionRow>
           <Field label="Installed">Not found in main Steam library</Field>

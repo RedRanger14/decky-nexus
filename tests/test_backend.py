@@ -13065,6 +13065,39 @@ class TestBannerlordManifestGate(unittest.TestCase):
         self.assertEqual(main._bl_manifest_game_mismatch(self.dir, ""), "")
 
 
+class TestBrowseFilters(unittest.TestCase):
+    """The filter dropdown next to sort. Server-side via the v2 filter
+    schema (categoryName, updatedAt) - introspected live before building,
+    because the API is the boundary of what a filter can offer."""
+
+    def test_category_goes_into_the_query(self):
+        q = main._build_mods_query(False, category="Audio")
+        self.assertIn('categoryName: [{ value: "Audio" }]', q)
+
+    def test_category_quotes_are_stripped_not_injected(self):
+        q = main._build_mods_query(False, category='Au"dio')
+        self.assertIn('categoryName: [{ value: "Audio" }]', q)
+
+    def test_updated_since_uses_epoch_seconds(self):
+        # ISO datetimes break the backing Lucene query - the trending
+        # window learned this first; the filter reuses the convention.
+        q = main._build_mods_query(False, updated_since=1787240000)
+        self.assertIn('updatedAt: [{ value: "1787240000", op: GT }]', q)
+
+    def test_no_filter_means_no_filter_clauses(self):
+        q = main._build_mods_query(False)
+        self.assertNotIn("categoryName", q)
+        self.assertNotIn("updatedAt: [", q)
+
+    def test_minus_one_means_since_the_games_own_update(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def get_mods("):]
+        fn = fn[:fn.index("async def _fetch")]
+        self.assertIn("days == -1 and app_id", fn)
+        self.assertIn("_game_updated_at(int(app_id))", fn)
+
+
 class TestHd2StaleWarning(unittest.TestCase):
     """The 2026-08-19 repack settled how HD2 mods age: every game update
     invalidates patch files built before it, and authors re-release within

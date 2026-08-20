@@ -200,10 +200,20 @@ export const getMods = callable<
     /** Optional. Only used to hide mods this device has already watched
      * fail on the installed build - the browse rows are a highlights page,
      * not a catalogue. */
-    app_id: number
+    app_id: number,
+    /** Filter by the game's own category names ("" = all). */
+    category?: string,
+    /** Keep only mods updated within N days; -1 = since the game's own
+     * last update (the filter that matters on live-service games). */
+    updated_within_days?: number
   ],
   ModsResult
 >("get_mods");
+
+export const getGameCategories = callable<
+  [game_domain: string],
+  { ok: boolean; categories?: string[]; error?: string }
+>("get_game_categories");
 
 export interface UpdateInfo {
   installed: string;

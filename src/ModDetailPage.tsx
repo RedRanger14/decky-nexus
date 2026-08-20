@@ -283,6 +283,10 @@ export function ModDetailPage() {
     try {
       const missing = requirements.filter((r) => {
         const c = classifyRequirement(r);
+        // Desktop managers (Arsenal-class) are never "missing" - the
+        // plugin does their job, and installing one would drop a Windows
+        // exe into the game folder.
+        if ((game.heroExcludeModIds ?? []).includes(r.modId)) return false;
         return !c.external && !c.have && !c.optional;
       });
       for (const req of missing) {
@@ -822,6 +826,8 @@ export function ModDetailPage() {
                 </span>
                 {requirements.some((r) => {
                   const c = classifyRequirement(r);
+                  if ((game.heroExcludeModIds ?? []).includes(r.modId))
+                    return false;
                   return !c.external && !c.have && !c.optional;
                 }) && (
                   <DialogButton
@@ -851,6 +857,14 @@ export function ModDetailPage() {
                 {requirements.map((req) => {
                   const { external, have, optional } =
                     classifyRequirement(req);
+                  // Desktop mod managers listed as "requirements" out of
+                  // community habit (Arsenal, HD2MM). The plugin does that
+                  // job here, and offering to install a Windows manager on
+                  // a Deck is worse than confusing. Named per game by the
+                  // same ids the hero band excludes.
+                  const managed =
+                    !external &&
+                    (game.heroExcludeModIds ?? []).includes(req.modId);
                   // The note is NOT crammed in here any more: the pill is
                   // nowrap with an ellipsis, so a real instruction ("Disable
                   // troop overhaul") was clipped into invisibility while the
@@ -859,6 +873,8 @@ export function ModDetailPage() {
                   // nothing to a name that already says it.
                   const label = external
                     ? req.modName || req.notes || req.url || "external"
+                    : managed
+                    ? `${req.modName} · not needed (this plugin does its job)`
                     : req.modName;
                   return (
                     <Focusable

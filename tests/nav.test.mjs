@@ -991,3 +991,36 @@ test("the mod page states the pre-update fact", () => {
     "the detail page never shows the PRE-UPDATE fact Michael asked for"
   );
 });
+
+test("the browse filter sits beside sort and refetches", () => {
+  const page = read("BrowsePage.tsx");
+  assert.ok(
+    /strDefaultLabel="Filter"/.test(page),
+    "no Filter dropdown on the browse page"
+  );
+  // Recency options lead; live-service games get "since game update".
+  assert.ok(
+    /Since game update/.test(page) && /d:-1/.test(page),
+    "the live-service recency option is missing"
+  );
+  // Changing the filter must refetch and leave the featured home.
+  assert.ok(
+    /\[game\.appId, sort, search, filter\]/.test(page),
+    "the fetch effect does not depend on the filter"
+  );
+  assert.ok(
+    /filter === ""/.test(page.slice(page.indexOf("const isHome"))),
+    "filtering from the featured home would show nothing"
+  );
+});
+
+test("desktop managers are never offered as missing requirements", () => {
+  const page = read("ModDetailPage.tsx");
+  const managed = page.match(/heroExcludeModIds \?\? \[\]\)\.includes\(/g);
+  assert.ok(
+    managed && managed.length >= 3,
+    "Arsenal-class requirements are still counted as missing or offered " +
+      "for install (need the chip label, the install-all filter, and the " +
+      "button visibility check)"
+  );
+});
