@@ -10289,6 +10289,13 @@ query Link($slug: String!, $domainName: String!) {
             for f in body.get("files", [])
             if f.get("category_id") in VISIBLE_FILE_CATEGORIES
         ]
+        if not files:
+            # The invisible first step of every update: an empty answer
+            # here surfaces to the user as "No downloadable file found"
+            # with nothing in the log to say which call produced it.
+            decky.logger.warning(
+                f"get_mod_files({game_domain!r}, {mod_id}): 0 visible files"
+            )
         return {"ok": True, "files": _sort_mod_files(files)}
 
     async def install_mod(

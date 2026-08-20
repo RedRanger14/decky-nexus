@@ -965,3 +965,29 @@ test("a fresh Helldivers update is announced on the panel", () => {
     "the note has no freshness cutoff, so it would show forever"
   );
 });
+
+test("update-all reports what actually happened", () => {
+  // The old toast said "Updates applied" unconditionally: Michael watched
+  // it claim success over an update still sitting in the list.
+  const page = read("UpdatesPage.tsx");
+  assert.ok(
+    !/title: "Updates applied"/.test(page),
+    "the unconditional success toast is back"
+  );
+  assert.ok(
+    /No updates applied/.test(page) && /applied, \$\{failed\} failed/.test(page),
+    "the summary does not distinguish success from failure"
+  );
+  assert.ok(
+    /rescan\(\)/.test(page.slice(page.indexOf("const updateAll"))),
+    "update-all trusts local bookkeeping instead of re-scanning"
+  );
+});
+
+test("the mod page states the pre-update fact", () => {
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /mod\.preGameUpdate && \(/.test(page),
+    "the detail page never shows the PRE-UPDATE fact Michael asked for"
+  );
+});

@@ -671,6 +671,23 @@ export function ModDetailPage() {
               {mod.downloads.toLocaleString()}
             </StatChip>
             <StatChip>v{mod.version}</StatChip>
+            {mod.preGameUpdate && (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "1px 8px",
+                  borderRadius: "3px",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  letterSpacing: "0.4px",
+                  background: "rgba(200, 130, 50, 0.92)",
+                  color: "#fff",
+                }}
+              >
+                PRE-UPDATE
+              </span>
+            )}
             {updatedDate && <StatChip>updated {updatedDate}</StatChip>}
             {endorseStatus !== undefined && endorseStatus !== "unknown" && (
               <EndorsePill

@@ -26,13 +26,21 @@ export function UpdatesPage() {
     rescan();
   }, []);
 
-  const updateOne = async (u: PendingUpdate) => {
+  const updateOne = async (u: PendingUpdate): Promise<boolean> => {
     const result = await installLatest(u.game, u.modId, u.name, u.current);
     if (result.ok) {
       setPending((prev) => prev?.filter((p) => p !== u));
-    } else {
-      toaster.toast({ title: `${u.name} update failed`, body: result.error ?? "" });
+      return true;
     }
+    // needs_choice has no .error - name the reason rather than toasting
+    // an empty body.
+    toaster.toast({
+      title: `${u.name} update failed`,
+      body: result.needs_choice
+        ? "This update offers versions - open the mod's page to pick one"
+        : result.error ?? "Unknown error - check the mod's page",
+    });
+    return false;
   };
 
   const skipOne = async (u: PendingUpdate) => {
@@ -50,13 +58,34 @@ export function UpdatesPage() {
     if (!pending) return;
     setBusy(true);
     try {
+      // Count what actually happened. The old toast said "Updates applied"
+      // unconditionally - Michael watched it claim success over an update
+      // that was still sitting in the list.
+      let ok = 0;
+      let failed = 0;
       for (const u of [...pending]) {
-        await updateOne(u);
+        (await updateOne(u)) ? ok++ : failed++;
       }
-      toaster.toast({
-        title: "Updates applied",
-        body: "Restart affected games to load them",
-      });
+      toaster.toast(
+        failed === 0 && ok > 0
+          ? {
+              title: `${ok} update${ok === 1 ? "" : "s"} applied`,
+              body: "Restart affected games to load them",
+            }
+          : {
+              title:
+                ok === 0
+                  ? "No updates applied"
+                  : `${ok} applied, ${failed} failed`,
+              body:
+                failed > 0
+                  ? "The failed ones say why in their own toasts"
+                  : "Nothing was pending",
+            }
+      );
+      // Re-scan rather than trusting local bookkeeping: if a row comes
+      // back, the update genuinely did not take, and the list says so.
+      rescan();
     } finally {
       setBusy(false);
     }
