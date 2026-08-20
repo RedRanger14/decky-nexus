@@ -1392,7 +1392,18 @@ export const resolveFileConflicts = callable<
 
 export const getModRequirements = callable<
   [game_domain: string, mod_id: number],
-  { ok: boolean; requirements?: ModRequirement[]; error?: string }
+  {
+    ok: boolean;
+    requirements?: ModRequirement[];
+    /** DLC the mod declares structurally (the new Nexus field). */
+    dlc?: { name: string; notes?: string }[];
+    /** The author's own sentence saying a DLC is needed, when they never
+     * filled in the structured field. Nexus only added dlcRequirements
+     * recently, so most published mods state it in prose or not at all -
+     * Eagle Rising's crash on a device without War Sails was exactly this. */
+    dlc_quote?: string;
+    error?: string;
+  }
 >("get_mod_requirements");
 
 export interface ModLoadState {

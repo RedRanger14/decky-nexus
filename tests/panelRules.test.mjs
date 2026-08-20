@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  requirementSetupNotes,
   fitReportBody,
   crashHuntVerdict,
   cancellableDownload,
@@ -1364,4 +1365,35 @@ test("the trim keeps the top of the report, not the bottom", () => {
   const out = fitReportBody(body);
   assert.match(out, /Plugin: 1\.2\.3/);
   assert.match(out, /Game: eldenring/);
+});
+
+test("requirement notes that carry instructions get their own line", () => {
+  // The real notes from Eagle Rising's requirement list. The instruction
+  // ("Disable troop overhaul") was rendered inside a nowrap pill and
+  // clipped, so the row looked complete while withholding the step.
+  const notes = requirementSetupNotes([
+    { modName: "Harmony", notes: "Required for scripts" },
+    {
+      modName: "Realistic Battle Mod",
+      notes:
+        "Required, check posts for config. Combat module is required as of 3.2.0. Disable troop overhaul",
+    },
+    {
+      modName: "Troops Prefer Spears",
+      notes: "Soft requirement. Makes troops use spears and pikes first. Use version 1.0.2 of this mod!",
+    },
+    { modName: "Better Pikes", notes: "Soft requirement for hellenics to use pikes properly" },
+  ]);
+  const named = notes.map((n) => n.modName);
+  assert.ok(named.includes("Realistic Battle Mod"), "the RBM instruction was dropped");
+  assert.ok(named.includes("Troops Prefer Spears"), "a pinned version is an instruction");
+  // Categories are not steps: putting every note in a block buries the real ones.
+  assert.ok(!named.includes("Harmony"), '"Required for scripts" is not an instruction');
+  assert.ok(!named.includes("Better Pikes"), "a description of effect is not an instruction");
+  assert.equal(notes.length, 2);
+});
+
+test("no requirement notes means no block", () => {
+  assert.deepEqual(requirementSetupNotes(undefined), []);
+  assert.deepEqual(requirementSetupNotes([{ modName: "X", notes: "" }]), []);
 });

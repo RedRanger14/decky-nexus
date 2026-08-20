@@ -7643,6 +7643,38 @@ class TestNoMangledRegexEscapes(unittest.TestCase):
                 f"regex escape mangled by a shell heredoc",
             )
 
+    def test_no_control_characters_in_the_frontend_either(self):
+        # The guard covered main.py only, so the same heredoc mangled a \b
+        # in panelRules.ts into 0x08 and the requirement-notes regex silently
+        # matched nothing. TypeScript compiles it, the editor renders it, and
+        # only a passing-looking test failing revealed it. Every source file
+        # this project edits through a shell now gets the same check.
+        # main.py sits AT the repo root, so one dirname, not two.
+        root = os.path.dirname(os.path.abspath(main.__file__))
+        src = os.path.join(root, "src")
+        if not os.path.isdir(src):
+            self.skipTest("no src/ here - partial checkout")
+        checked = 0
+        for folder, _dirs, names in os.walk(src):
+            for name in names:
+                if not name.endswith((".ts", ".tsx")):
+                    continue
+                path = os.path.join(folder, name)
+                with open(path, encoding="utf-8", newline="") as fh:
+                    raw = fh.read()
+                checked += 1
+                for ch, label in ((chr(8), "backspace"),
+                                  (chr(11), "vertical tab"),
+                                  (chr(12), "form feed")):
+                    self.assertNotIn(
+                        ch, raw,
+                        f"src/{name} contains a raw {label} - almost "
+                        "certainly a regex escape mangled by a shell heredoc",
+                    )
+        # Any src/ at all must yield files; the Linux run copies a subset,
+        # so this asserts "the walk worked", not a file count.
+        self.assertGreater(checked, 0, "found no frontend sources to check")
+
     def test_the_short_mod_manager_names_are_recognised(self):
         for name in ("MO2", "NMM", "Fluffy Mod Manager", "Vortex",
                      "Mod Organizer 2"):
@@ -12798,6 +12830,62 @@ class TestLooseFromSoftAssets(unittest.TestCase):
         self.assertEqual(main._sort_loose_me3_assets(self.dir), {})
         self.assertTrue(os.path.isfile(
             os.path.join(self.dir, "parts", "x.partsbnd.dcx")))
+
+
+class TestDlcRequirementInProse(unittest.TestCase):
+    """Nexus added a structured dlcRequirements field recently, so it is the
+    right answer and will fill in over time - but the backlog is enormous.
+    Eagle Rising declares nothing there while its description says "Warsails
+    is required for mod to work", and Michael's device has no War Sails: his
+    crash exactly, after the module's own DLLs had loaded fine."""
+
+    def test_the_sentence_that_caused_the_crash(self):
+        quote = main._dlc_requirement_quote(
+            "Rather a small patch, that brings mod on 1.3+. Warsails is "
+            "required for mod to work, purly becouse mod team don't have "
+            "much time to work on other version."
+        )
+        self.assertIn("Warsails is required", quote)
+
+    def test_ownership_phrasings(self):
+        for text in (
+            "Be sure that you own Warsails DLC before you start.",
+            "You must own the War Sails expansion for this to load.",
+            "This mod requires the Blood Feuds DLC to function properly.",
+        ):
+            self.assertTrue(main._dlc_requirement_quote(text), text)
+
+    def test_the_opposite_statement_is_not_a_requirement(self):
+        # "No DLC required" is as common as the real thing - the same trap
+        # the downgrade check hit, so the same negation guard.
+        for text in (
+            "No DLC required! Works with the base game.",
+            "You do not need any DLC to use this mod.",
+        ):
+            self.assertEqual(main._dlc_requirement_quote(text), "", text)
+
+    def test_a_mod_requirement_is_not_a_dlc_requirement(self):
+        self.assertEqual(main._dlc_requirement_quote(
+            "[font=Arial]RBM is required, including the combat module."), "")
+
+    def test_markup_does_not_hide_the_sentence(self):
+        quote = main._dlc_requirement_quote(
+            "<p>Read this.</p><br/>Warsails DLC is required for the map.")
+        self.assertIn("Warsails", quote)
+
+    def test_the_quote_is_bounded(self):
+        long = "x" * 400 + ". This mod requires the War Sails DLC to work. "
+        self.assertLessEqual(len(main._dlc_requirement_quote(long)), 220)
+
+    def test_the_structured_field_takes_priority(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def get_mod_requirements"):]
+        fn = fn[:fn.index("# ---- Collections")]
+        # Only consulted when the declared field is empty: a declared
+        # requirement is better data than a sentence about one.
+        self.assertIn('if not split.get("dlc"):', fn)
+        self.assertIn("description", fn)
 
 
 class TestMultiModuleBranchIsGated(unittest.TestCase):

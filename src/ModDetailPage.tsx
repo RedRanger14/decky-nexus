@@ -33,7 +33,7 @@ import {
   getShowAdult,
   getInstallBlock,
 } from "./api";
-import { knownBrokenNote } from "./panelRules";
+import { knownBrokenNote, requirementSetupNotes } from "./panelRules";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
 import { popOurPage, pushOurPage } from "./Tabs";
@@ -98,6 +98,8 @@ export function ModDetailPage() {
   const [sel, setSel] = useState<SelectedMod | undefined>(getSelectedMod());
   const [files, setFiles] = useState<FilesResult | undefined>();
   const [requirements, setRequirements] = useState<ModRequirement[] | undefined>();
+  /** DLC this mod needs: the structured field, or the author's own sentence. */
+  const [dlcNeed, setDlcNeed] = useState("");
   const [description, setDescription] = useState<string | undefined>();
   const [descExpanded, setDescExpanded] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
@@ -189,14 +191,23 @@ export function ModDetailPage() {
         else if (b.warning) setStale(b.warning);
       });
     });
-    getModRequirements(s.game.nexusDomain, s.mod.modId).then((r) =>
-      setRequirements(r.ok ? r.requirements ?? [] : [])
-    );
+    getModRequirements(s.game.nexusDomain, s.mod.modId).then((r) => {
+      setRequirements(r.ok ? r.requirements ?? [] : []);
+      // Structured DLC first (the real field), the author's sentence as the
+      // fallback for everything published before that field existed.
+      const dlcNames = (r.dlc ?? []).map((d) => d.name).filter(Boolean);
+      setDlcNeed(
+        dlcNames.length > 0
+          ? `Needs the ${dlcNames.join(" and ")} DLC.`
+          : r.dlc_quote ?? ""
+      );
+    });
     getModDetails(s.game.nexusDomain, s.mod.modId).then((r) => {
       setDescription(r.ok ? stripMarkup(r.mod?.description ?? "") : "");
       setUploader(r.ok ? (r.mod as NexusMod | undefined)?.uploader : undefined);
     });
     setEndorseStatus(undefined);
+    setDlcNeed("");
     setNeedsExternal(undefined);
     setKnownBroken("");
     // What we have watched this mod actually do on the game build installed
@@ -740,6 +751,36 @@ export function ModDetailPage() {
               🐧 <b>Linux note:</b> {compatHint}
             </div>
           )}
+          {dlcNeed !== "" && (
+            <div
+              style={{
+                marginTop: "10px",
+                padding: "8px 12px 10px",
+                background: "rgba(218, 142, 53, 0.10)",
+                borderLeft: `3px solid ${NEXUS_ORANGE}`,
+                borderRadius: "4px",
+                fontSize: "12px",
+                lineHeight: 1.45,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: "3px" }}>
+                Needs paid DLC
+              </div>
+              {/* The author's words, not ours: working out which DLC a Steam
+                  install includes is game-specific and fragile, and a wrong
+                  "you do not own this" is worse than the sentence itself.
+                  This is stated ABOVE the required-mods list because no
+                  amount of mod installing fixes a missing DLC - Michael's
+                  Eagle Rising crash was exactly this, after its own DLLs
+                  had loaded fine. */}
+              <div style={{ opacity: 0.9 }}>{dlcNeed}</div>
+              <div style={{ opacity: 0.6, marginTop: "3px" }}>
+                Check you own it before installing. Without it, the mod can
+                install cleanly and still crash the game.
+              </div>
+            </div>
+          )}
+
           {requirements && requirements.length > 0 && (
             <div
               style={{
@@ -792,9 +833,15 @@ export function ModDetailPage() {
                 {requirements.map((req) => {
                   const { external, have, optional } =
                     classifyRequirement(req);
+                  // The note is NOT crammed in here any more: the pill is
+                  // nowrap with an ellipsis, so a real instruction ("Disable
+                  // troop overhaul") was clipped into invisibility while the
+                  // row looked complete. Instructions get their own block
+                  // below; short category notes ("Required for scripts") add
+                  // nothing to a name that already says it.
                   const label = external
                     ? req.modName || req.notes || req.url || "external"
-                    : `${req.modName}${req.notes ? ` · ${req.notes}` : ""}`;
+                    : req.modName;
                   return (
                     <Focusable
                       key={`${req.modId}-${req.modName}-${req.url}`}
@@ -841,6 +888,28 @@ export function ModDetailPage() {
                   );
                 })}
               </Focusable>
+              {requirementSetupNotes(requirements).length > 0 && (
+                <div
+                  style={{
+                    marginTop: "8px",
+                    paddingTop: "7px",
+                    borderTop: "1px solid rgba(255,255,255,0.10)",
+                    fontSize: "12px",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: "3px" }}>
+                    Setup notes from the author
+                  </div>
+                  {requirementSetupNotes(requirements).map((n) => (
+                    <div key={n.modName} style={{ opacity: 0.9 }}>
+                      <span style={{ color: NEXUS_ORANGE }}>{n.modName}</span>
+                      {": "}
+                      {n.notes}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div style={{ fontSize: "11px", marginTop: "6px" }}>
                 <span style={{ color: "rgb(143, 212, 143)" }}>● Installed</span>
                 <span style={{ opacity: 0.5 }}> · </span>

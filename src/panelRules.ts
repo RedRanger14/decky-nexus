@@ -1043,3 +1043,33 @@ export function fitReportBody(body: string, budget = 1200): string {
   }
   return cut + note;
 }
+
+
+/** Requirement notes that carry an INSTRUCTION, for their own readable line.
+ *
+ * The notes were always fetched and always in the pill's label - and the pill
+ * is nowrap with an ellipsis, so "Realistic Battle Mod - Required, check
+ * posts for config. Combat module is required as of 3.2.0. Disable troop
+ * overhaul" rendered as roughly "Realistic Battle Mod - Required, check...".
+ * Michael read the instruction on the mod's Nexus page instead and asked why
+ * we had not: "one of them mentioned disabling troop overhaul and combat
+ * module being required". A truncated instruction is worse than none, because
+ * the row looks complete.
+ *
+ * Only instructions get a line. "Required for scripts" is a category, not a
+ * step, and putting every note in a block would bury the ones that matter.
+ */
+export function requirementSetupNotes(
+  reqs: { modName?: string; notes?: string }[] | undefined
+): { modName: string; notes: string }[] {
+  // Verbs and phrases that mean "do something", drawn from the real notes on
+  // Bannerlord's most-required mods rather than invented.
+  const INSTRUCTION =
+    /\b(disable|enable|turn off|turn on|do not|don'?t|use version|only use|must|make sure|check (the )?posts|configure|config|uncheck|tick|load (before|after)|required as of|not compatible|incompatible)\b/i;
+  return (reqs ?? [])
+    .filter((r) => (r.notes ?? "").trim() && INSTRUCTION.test(r.notes ?? ""))
+    .map((r) => ({
+      modName: (r.modName ?? "").trim() || "This mod",
+      notes: (r.notes ?? "").trim(),
+    }));
+}

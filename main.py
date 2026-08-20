@@ -2147,6 +2147,59 @@ def _script_extender_runtime(install_path: str) -> str:
     return ""
 
 
+# ---- DLC a mod needs, when the author only said it in prose ----------------
+# Nexus gained a structured dlcRequirements field recently, so that field is
+# the right answer and will fill in over time - but the backlog is enormous,
+# and the mod that taught us this declares nothing there. Eagle Rising's own
+# description says "Warsails is required for mod to work", and Michael's
+# device has no War Sails DLC: his crash exactly, after the module's own
+# DLLs had loaded fine.
+#
+# So: quote the author. No ownership claim - working out which DLC a Steam
+# install includes is game-specific and fragile, and a wrong "you do not own
+# this" is worse than showing the sentence. The structured field stays
+# primary; this is the fallback for everything published before it existed.
+_DLC_REQUIRED_RE = re.compile(
+    r"[^.!?]{0,120}\b(?:DLC|expansion|war ?sails)\b[^.!?]{0,70}?"
+    r"\b(?:is |are )?(?:required|needed)\b[^.!?]{0,90}[.!?]"
+    r"|[^.!?]{0,120}\b(?:requires?|needs?|must (?:own|have)|you (?:own|have))"
+    r"\b[^.!?]{0,70}?\b(?:DLC|expansion|war ?sails)\b[^.!?]{0,90}[.!?]",
+    re.I,
+)
+# "No DLC required" and "you do not need any DLC" are as common as the real
+# statement - the same trap the downgrade check hit - so a match is only
+# believed when nothing negates it BEFORE the keyword.
+_DLC_NOT_RE = re.compile(
+    r"\b(?:no|not|never|don'?t|without|isn'?t|aren'?t|any)\b", re.I
+)
+
+
+def _dlc_requirement_quote(description: str) -> str:
+    """The author's own sentence saying a DLC is needed, or "".
+
+    A QUOTE rather than a verdict, for the same reason the downgrade check
+    quotes: the sentence is evidence the reader can judge, and paraphrasing
+    would put words in the author's mouth.
+    """
+    text = description or ""
+    text = re.sub(r"\[[/?[a-z=#0-9]*\]", " ", text)      # bbcode
+    text = re.sub(r"<br\s*/?>", ". ", text, flags=re.I)     # keep sentences
+    text = re.sub(r"<[^>]+>", " ", text)                     # html
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    m = _DLC_REQUIRED_RE.search(text)
+    if not m:
+        return ""
+    quote = re.sub(r"\s+", " ", m.group(0)).strip()
+    keyword = re.search(r"\b(?:DLC|expansion|war ?sails|requires?|needs?)\b",
+                        quote, re.I)
+    if keyword and _DLC_NOT_RE.search(quote[:keyword.start()]):
+        return ""
+    return quote[:220]
+
+
 def _collection_downgrade_reason(description: str) -> str:
     """The phrase that says this collection needs an older game, or "".
 
@@ -8878,12 +8931,23 @@ class Plugin:
                 "modRequirements { nexusRequirements { nodes "
                 "{ modName modId notes url } } "
                 "dlcRequirements { notes gameExpansion { name } } "
-                "} } } }"
+                # description, for the prose DLC fallback below. Verified
+                # live: it is a field on legacyMods nodes, 14830 chars for
+                # Eagle Rising, and it carries the sentence we look for.
+                "} description } } }"
                 % (game_id, int(mod_id)),
                 api_key,
             )
             nodes = data["legacyMods"]["nodes"]
-            split = _split_requirements(nodes[0] if nodes else {})
+            node = nodes[0] if nodes else {}
+            split = _split_requirements(node)
+            # Prose fallback for the DLC the author never put in the (new)
+            # structured field. Only when the field is empty: a declared
+            # requirement is better data than a sentence about one.
+            if not split.get("dlc"):
+                quote = _dlc_requirement_quote(node.get("description") or "")
+                if quote:
+                    split["dlc_quote"] = quote
             return {"ok": True, **split}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}

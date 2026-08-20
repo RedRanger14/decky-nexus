@@ -15,6 +15,19 @@ import { backAction, popsToExitToQam } from "../.test-build/navRules.js";
 // Read as source rather than imported because these files pull in @decky/ui,
 // which does not exist outside the Steam client.
 const read = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8");
+
+/** Source with comments stripped, for "this must NOT appear" assertions.
+ *
+ * Three tests in one session failed because a COMMENT explaining why the
+ * code avoids something matched a regex looking for that something. A
+ * comment is documentation, not behaviour, so absence assertions read the
+ * code and leave the prose alone. (Assertions about what code DOES should
+ * still use read(), so a change to the real line is caught.) */
+const readCode = (f) =>
+  read(f)
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:'"\\])\/\/[^\n]*/gm, "$1");
+
 const TABS_SRC = read("Tabs.tsx");
 const INDEX_SRC = read("index.tsx");
 
@@ -894,5 +907,42 @@ test("an expanded collection row hands focus to its buttons", () => {
   assert.ok(
     titles && titles.length === 2,
     "open rows have no collapse control - the title line should activate"
+  );
+});
+
+test("a needed DLC is stated above the required mods", () => {
+  // No amount of installing mods fixes a missing DLC: Eagle Rising crashed
+  // Michael's device after its own DLLs loaded fine, because War Sails was
+  // not there. So the notice sits ABOVE the required-mods list.
+  const page = read("ModDetailPage.tsx");
+  const dlcAt = page.indexOf('dlcNeed !== ""');
+  const reqAt = page.indexOf("requirements && requirements.length > 0 && (");
+  assert.ok(dlcAt > 0, "the mod page never mentions a needed DLC");
+  assert.ok(
+    dlcAt < reqAt,
+    "the DLC notice renders below the required mods - it outranks them"
+  );
+  // The author's words, never a claim about what the user owns: working out
+  // which DLC a Steam install includes is game-specific and fragile.
+  // readCode, not read - the comment above the notice explains this very
+  // rule and would match the regex itself.
+  assert.ok(
+    !/you do not own|not owned|missing dlc/i.test(readCode("ModDetailPage.tsx")),
+    "the page claims to know which DLC the user owns, which it cannot"
+  );
+});
+
+test("requirement notes are not crammed into the nowrap pill", () => {
+  // The pill is whiteSpace:nowrap with an ellipsis, so an instruction put
+  // in its label is clipped while the row still looks complete. That is how
+  // "Disable troop overhaul" was invisible.
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    !/const label = external[\s\S]{0,200}req\.notes \? ` · \$\{req\.notes\}`/.test(page),
+    "requirement notes are back in the pill label, where they get clipped"
+  );
+  assert.ok(
+    /requirementSetupNotes\(requirements\)/.test(page),
+    "the mod page does not render the author's setup notes"
   );
 });
