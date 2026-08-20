@@ -13173,8 +13173,20 @@ class TestHelldivers2Patches(unittest.TestCase):
             "/x/9bc33b7058a2bd5a.patch_0.stream",
             "/x/readme.txt",
         ])
-        self.assertEqual(list(groups), [("9bc33b7058a2bd5a", 0)])
-        self.assertEqual(len(groups[("9bc33b7058a2bd5a", 0)]), 3)
+        key = ("/x", "9bc33b7058a2bd5a", 0)
+        self.assertEqual(list(groups), [key])
+        self.assertEqual(len(groups[key]), 3)
+
+    def test_a_weapons_pack_merge_keeps_every_gun(self):
+        # Five guns, five folders, every one <hash>.patch_0. Keyed without
+        # the folder these fold into ONE group and four guns vanish in the
+        # move loop. Michael: "I should be able to have all of them as
+        # they are different guns."
+        paths = []
+        for gun in ("Sickle", "Scythe", "Dagger", "Punisher", "Blitzer"):
+            paths.append("/x/%s/9ba626afa44a3aa3.patch_0" % gun)
+        groups = main._hd2_patch_groups(paths)
+        self.assertEqual(len(groups), 5)
 
     def test_screenshots_and_readmes_stay_behind(self):
         self.assertEqual(main._hd2_patch_groups(
@@ -13232,20 +13244,18 @@ class TestHelldivers2Patches(unittest.TestCase):
         self.assertEqual(main._hd2_variant_groups(
             ["/x/9bc33b7058a2bd5a.patch_0"]), {})
 
-    def test_merge_all_is_refused_with_an_explanation(self):
-        # "Install everything" exists for replacer packs whose folders
-        # combine. HD2 variants collide - all of them together is
-        # impossible by construction. Michael clicked merge and got "That
-        # option wasn't in the archive", which explained nothing.
+    def test_merge_all_installs_every_folder(self):
+        # The first version refused "*" as "impossible by construction",
+        # which was wrong: renumbering gives each folder its own patch
+        # slot, exactly as it does for two separate mods. A weapons pack
+        # is a SET, not alternatives.
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
         i = source.index('if payload_choice == "*":', source.index(
             "variants = _hd2_variant_groups(flat)"))
-        block = source[i:i + 900]
-        self.assertIn("only ONE can be installed", block)
-        # And the choice offer says merging is off the table.
-        j = source.index('"needs_choice": True', i)
-        self.assertIn('"merge_allowed": False', source[j:j + 400])
+        block = source[i:i + 500]
+        self.assertIn("pass", block)
+        self.assertNotIn('"error"', block.split("elif")[0])
 
     def test_the_installer_asks_rather_than_guessing(self):
         with open(main.__file__, encoding="utf-8") as fh:

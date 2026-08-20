@@ -9,7 +9,10 @@ import {
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 
+import { showModal } from "@decky/ui";
+
 import { dismissUpdate } from "./api";
+import { PayloadChoiceModal } from "./ChoiceModal";
 import { installLatest } from "./install";
 import { PendingUpdate, scanUpdates } from "./updates";
 import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
@@ -26,19 +29,44 @@ export function UpdatesPage() {
     rescan();
   }, []);
 
-  const updateOne = async (u: PendingUpdate): Promise<boolean> => {
-    const result = await installLatest(u.game, u.modId, u.name, u.current);
+  const updateOne = async (
+    u: PendingUpdate,
+    payloadChoice = ""
+  ): Promise<boolean> => {
+    const result = await installLatest(
+      u.game,
+      u.modId,
+      u.name,
+      u.current,
+      payloadChoice
+    );
     if (result.ok) {
       setPending((prev) => prev?.filter((p) => p !== u));
       return true;
     }
-    // needs_choice has no .error - name the reason rather than toasting
-    // an empty body.
+    if (result.needs_choice && result.options?.length) {
+      // Act, don't instruct. This used to toast "open the mod's page to
+      // pick one" - Michael: "the toasts are tiny and fast, relying on me
+      // to read them is ridiculous". The choice opens right here, and the
+      // pick resumes the same update.
+      return await new Promise<boolean>((resolve) => {
+        const modal = showModal(
+          <PayloadChoiceModal
+            modName={u.name}
+            options={result.options!}
+            allowMerge={result.merge_allowed !== false}
+            onPick={(opt) => resolve(updateOne(u, opt))}
+            closeModal={() => {
+              modal.Close();
+              setTimeout(() => resolve(false), 0);
+            }}
+          />
+        );
+      });
+    }
     toaster.toast({
       title: `${u.name} update failed`,
-      body: result.needs_choice
-        ? "This update offers versions - open the mod's page to pick one"
-        : result.error ?? "Unknown error - check the mod's page",
+      body: result.error ?? "Unknown error - check the mod's page",
     });
     return false;
   };

@@ -1169,10 +1169,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
         <PayloadChoiceModal
           modName={name}
           options={options}
-          // For HD2 every parked choice is a variant collision - the only
-          // needs_choice source in that install branch - and merging
-          // colliding variants is impossible by construction.
-          allowMerge={!game.hd2Layout}
+          // Merging is real everywhere: HD2 folders renumber into their
+          // own patch slots (a weapons pack is a SET, not alternatives).
+          allowMerge={true}
           onPick={(o) => resolve(o)}
           closeModal={() => {
             modal.Close();

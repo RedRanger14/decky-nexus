@@ -994,11 +994,10 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // device that cannot run either. Michael: "it appears in the hero mods
     // and obviously wont work well on steamos in big picture mode."
     heroExcludeModIds: [109, 4664],
-    // Michael, after the 08-19 repack broke the catalogue mid-testing:
-    // "Lets leave helldivers for now but dont black it off - just mark it
-    // as under construction or something at the top of the QAM."
-    underConstruction:
-      "Helldivers 2 support is under construction. Installs work, but the game breaks most mods at every update - prefer mods updated after the game's last patch (no PRE-UPDATE badge).",
+    // The under-construction banner lived here for one build. Michael:
+    // "Remove the under construction bit please as it takes up way too
+    // much space and I am hopeful this will work as more updated mods get
+    // added." The field stays available for future rough edges.
     moddedSaveWarning: false, // progression is server-side
     processName: "helldivers2.exe", // verified on device
     // The anti-cheat question, asked BEFORE this config existed. HD2 ships

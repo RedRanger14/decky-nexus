@@ -7,7 +7,7 @@ import {
   TextField,
 } from "@decky/ui";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { FaArrowDown, FaCheck, FaThumbsUp } from "react-icons/fa";
+import { FaArrowDown, FaCheck, FaFilter, FaSort, FaThumbsUp } from "react-icons/fa";
 
 import {
   CollectionSummary,
@@ -545,6 +545,9 @@ export function BrowsePage() {
   // ("d:-1" = since the game's own last update); anything else is one of
   // the game's category names, fetched once per game.
   const [filter, setFilter] = useState("");
+  // The Deck's screen is 1280 logical px; anything at or below that gets
+  // icon-width sort/filter buttons so the search box keeps its room.
+  const compactControls = (window.innerWidth || 1280) <= 1300;
   const [categories, setCategories] = useState<string[]>([]);
   const [search, setSearch] = useState(restored?.search ?? "");
 
@@ -982,15 +985,33 @@ export function BrowsePage() {
               }}
             />
           </div>
-          <div style={{ width: "200px", flexShrink: 0 }}>
+          {/* On the Deck's 1280px the search box plus two full-width
+              dropdowns leaves the sort flush against the screen edge
+              (Michael flagged the missing padding) and the search cramped.
+              Below the cutoff the two controls shrink to icon-width; the
+              dropdowns still open with their full labels. */}
+          <div
+            style={{
+              width: compactControls ? "56px" : "200px",
+              flexShrink: 0,
+            }}
+          >
             <Dropdown
               rgOptions={SORT_OPTIONS}
               selectedOption={sort}
               onChange={(opt) => setSort(opt.data)}
               strDefaultLabel="Sort"
+              renderButtonValue={compactControls ? () => <FaSort /> : undefined}
             />
           </div>
-          <div style={{ width: "190px", flexShrink: 0 }}>
+          <div
+            style={{
+              width: compactControls ? "56px" : "190px",
+              flexShrink: 0,
+              // The last control needs air against the screen edge.
+              marginRight: "8px",
+            }}
+          >
             <Dropdown
               rgOptions={[
                 { data: "", label: "All mods" },
@@ -1007,6 +1028,9 @@ export function BrowsePage() {
               selectedOption={filter}
               onChange={(opt) => setFilter(opt.data)}
               strDefaultLabel="Filter"
+              renderButtonValue={
+                compactControls ? () => <FaFilter /> : undefined
+              }
             />
           </div>
           </>

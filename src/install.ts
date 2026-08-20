@@ -142,7 +142,8 @@ export async function installLatest(
   game: SupportedGame,
   modId: number,
   modName: string,
-  pageVersion = ""
+  pageVersion = "",
+  payloadChoice = ""
 ): Promise<InstallResult> {
   const files = await getModFiles(game.nexusDomain, modId);
   const file = files.files?.[0];
@@ -158,6 +159,8 @@ export async function installLatest(
     modName,
     file.version || pageVersion,
     "",
-    pageVersion
+    pageVersion,
+    "",
+    payloadChoice
   );
 }

@@ -516,17 +516,23 @@ def _hd2_variant_groups(paths: list) -> dict:
 
 
 def _hd2_patch_groups(paths: list) -> dict:
-    """Group extracted files into (hash, number) -> [(suffix, path)].
+    """Group extracted files into (folder, hash, number) -> [(suffix, path)].
 
     Only files matching the patch shape are returned: readmes and
     screenshots in the archive are not game content and stay behind.
+
+    The FOLDER is part of the key deliberately: a weapons pack ships five
+    guns as five folders, every one holding <hash>.patch_0 - the same
+    (hash, number) five times over. Keyed without the folder, an
+    install-everything merge would fold all five into one group and the
+    move loop would overwrite four of them.
     """
     groups = {}
     for path in paths:
         m = _HD2_PATCH_RE.match(os.path.basename(path))
         if not m:
             continue
-        key = (m.group(1).lower(), int(m.group(2)))
+        key = (os.path.dirname(path), m.group(1).lower(), int(m.group(2)))
         groups.setdefault(key, []).append((m.group(3).lower(), path))
     return groups
 
@@ -11851,24 +11857,22 @@ query Link($slug: String!, $domainName: String!) {
             if hd2_layout:
                 variants = _hd2_variant_groups(flat)
                 if variants:
+                    # "Install everything" is mechanically fine here after
+                    # all: the renumbering below gives each folder's files
+                    # their own patch slots, exactly as it does for two
+                    # separate mods - the engine loads them all, and where
+                    # two touch the same resource the later number wins.
+                    # The first version of this refused the merge as
+                    # "impossible by construction", which was wrong, and
+                    # Michael's case proves why it matters: a weapons pack
+                    # ships each GUN as a folder - a set, not alternatives.
+                    # So "*" falls through and every folder installs.
                     if payload_choice == "*":
-                        # "Install everything" exists for replacer packs
-                        # whose folders COMBINE. These folders collide -
-                        # every one patches the same archive slot - so all
-                        # of them together is impossible by construction,
-                        # not merely unwise. Michael clicked merge and got
-                        # "That option wasn't in the archive", which
-                        # explained nothing.
-                        _force_rmtree(scratch)
-                        return {
-                            "ok": False,
-                            "error": (
-                                "These options replace the same game file, "
-                                "so only ONE can be installed - pick a "
-                                "single option instead of merging."
-                            ),
-                        }
-                    if payload_choice:
+                        # Install every folder: flat already holds all the
+                        # patch files, and the renumbering below assigns
+                        # each group its own slot.
+                        pass
+                    elif payload_choice:
                         pick = os.path.join(scratch, *payload_choice.split("/"))
                         chosen = variants.get(os.path.normpath(pick))
                         if not chosen:
@@ -11895,9 +11899,6 @@ query Link($slug: String!, $domainName: String!) {
                             "ok": False,
                             "needs_choice": True,
                             "options": options,
-                            # The modal must not offer "merge all" here:
-                            # these folders collide by definition.
-                            "merge_allowed": False,
                         }
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path
@@ -11918,7 +11919,7 @@ query Link($slug: String!, $domainName: String!) {
                               .get(_safe_name(mod_name), {})
                               .get("files") or [])
                 }
-                for (ahash, _num), members in sorted(
+                for (_folder, ahash, _num), members in sorted(
                     _hd2_patch_groups(flat).items()
                 ):
                     n = _hd2_next_free_number(mods_path, ahash, prior)
