@@ -17970,7 +17970,8 @@ query CollectionInstructions($slug: String!) {
     # exists yet, and (when the game needs a community mod loader like SMAPI)
     # whether that framework is present in the install dir.
     async def get_game_status(
-        self, install_dir: str, mods_subdir: str, framework_file: str = ""
+        self, install_dir: str, mods_subdir: str, framework_file: str = "",
+        app_id: int = 0,
     ) -> dict:
         install_path, mods_path, _ = _game_paths(install_dir, mods_subdir)
         installed = os.path.isdir(install_path)
@@ -17989,6 +17990,18 @@ query CollectionInstructions($slug: String!) {
                 status["framework_installed"] = installed and any(
                     name.startswith(framework_file)
                     for name in os.listdir(install_path)
+                )
+        # How fresh the game's own build is. Helldivers 2 repacked its data
+        # the day before testing and every visual mod on Nexus went inert
+        # until its author re-released - the mods installed correctly and
+        # did nothing, which reads as OUR bug. The panel uses this to say
+        # "the game just updated" while it is true, instead of the user
+        # burning boots on mods that cannot currently work.
+        if app_id:
+            updated = _game_updated_at(int(app_id))
+            if updated:
+                status["updated_days_ago"] = max(
+                    0, int((time.time() - updated) // 86400)
                 )
         # Bannerlord's launch template points at a script in the runtime
         # dir; writing it here makes it self-healing and gives the frontend

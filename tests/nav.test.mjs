@@ -946,3 +946,22 @@ test("requirement notes are not crammed into the nowrap pill", () => {
     "the mod page does not render the author's setup notes"
   );
 });
+
+test("a fresh Helldivers update is announced on the panel", () => {
+  // HD2 repacked its data the day before testing: every visual mod
+  // installed correctly and did nothing, which reads as a plugin bug.
+  // The panel says the true cause while it is fresh, and goes quiet
+  // after a week.
+  const page = read("index.tsx");
+  const i = page.indexOf("Game updated recently");
+  assert.ok(i > 0, "the panel never mentions a fresh game update");
+  const block = page.slice(Math.max(0, i - 800), i + 800);
+  assert.ok(
+    /hd2Layout/.test(block),
+    "the update note is not gated to live-service (hd2Layout) games"
+  );
+  assert.ok(
+    /updated_days_ago <= 7/.test(block),
+    "the note has no freshness cutoff, so it would show forever"
+  );
+});

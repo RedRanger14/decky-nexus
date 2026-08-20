@@ -180,6 +180,10 @@ export interface GameStatus {
   /** Bannerlord only: the launch script the backend maintains, substituted
    * into the framework's launch template as {blse_script}. */
   blse_script?: string;
+  /** Days since the game's own last Steam update, when app_id was passed.
+   * Live-service games break their mods with every update; a fresh number
+   * here means "mods may be inert until authors re-release". */
+  updated_days_ago?: number;
 }
 
 export const getMods = callable<
@@ -1783,6 +1787,11 @@ export const refreshContentGate = callable<
 export const setApiKey = callable<[api_key: string], AuthStatus>("set_api_key");
 export const getAuthStatus = callable<[], AuthStatus>("get_auth_status");
 export const getGameStatus = callable<
-  [install_dir: string, mods_subdir: string, framework_file: string],
+  [
+    install_dir: string,
+    mods_subdir: string,
+    framework_file: string,
+    app_id?: number
+  ],
   GameStatus
 >("get_game_status");

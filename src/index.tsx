@@ -573,7 +573,8 @@ function CurrentGameSection() {
       getGameStatus(
         game.installDirName,
         game.modsSubdir,
-        game.framework?.detectFile ?? ""
+        game.framework?.detectFile ?? "",
+        game.appId
       ).then(setStatus);
       // Multi-framework games (CP77): each extra gets its own row +
       // installed check via its detect file.
@@ -1058,6 +1059,27 @@ function CurrentGameSection() {
           <PanelSectionRow>
             <Field label="ℹ Before you mod">
               {game.firstRunNotice.message}
+            </Field>
+          </PanelSectionRow>
+        )}
+      {/* Live-service games break their mods with every update. HD2
+          repacked its data the day before testing and every visual mod on
+          Nexus went inert - correctly installed, doing nothing, which reads
+          as a plugin bug. Say so while it is true; quiet after a week,
+          by which time active authors have re-released. */}
+      {game.hd2Layout &&
+        status?.installed &&
+        status.updated_days_ago !== undefined &&
+        status.updated_days_ago <= 7 && (
+          <PanelSectionRow>
+            <Field label="ℹ Game updated recently">
+              {`${game.displayName} updated ${
+                status.updated_days_ago === 0
+                  ? "today"
+                  : status.updated_days_ago === 1
+                  ? "yesterday"
+                  : `${status.updated_days_ago} days ago`
+              }. Updates usually break mods until their authors release new versions - if a mod installs but does nothing, check its page for an update from the last few days.`}
             </Field>
           </PanelSectionRow>
         )}
