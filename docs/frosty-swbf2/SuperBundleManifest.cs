@@ -9,6 +9,9 @@ using Frosty.Sdk.DbObjectElements;
 using Frosty.Sdk.Interfaces;
 using Frosty.Sdk.IO;
 using Frosty.Sdk.Managers;
+using Frosty.Sdk.Managers;
+using Frosty.Sdk.Managers.CatResources;
+using Frosty.Sdk.Managers.Entries;
 using Frosty.Sdk.Managers.Infos;
 using Frosty.Sdk.Managers.Infos.FileInfos;
 using Frosty.Sdk.Managers.Infos.FileInfos.ResourceInfo;
@@ -37,6 +40,94 @@ public partial class FrostyModExecutor
     /// all cas archives are written (offsets must be resolvable via GetFileInfo), not in
     /// the per-SuperBundleInstallChunk loop.
     /// </summary>
+    // (installChunk, isPatch, casIndex) -> that cas file's resource entries,
+    // ordered by offset, read from the game's own cas.cat files.
+    //
+    // Needed because the manifest's per-bundle ranges are COALESCED: one entry
+    // can cover several physical cas resources. Frosty v1 expands them against
+    // the catalog, and parsing v1's output confirms the shape - a bundle whose
+    // original range holds 71 entries becomes 291, exactly one per asset plus
+    // the meta.
+    private readonly Dictionary<(uint, bool, int), List<(uint Offset, uint Size, Sha1 Sha1)>>
+        m_casEntryCache = new();
+
+    private List<(uint Offset, uint Size, Sha1 Sha1)> GetCasEntries(CasFileIdentifier inId)
+    {
+        (uint, bool, int) key = (inId.InstallChunkIndex, inId.IsPatch, inId.CasIndex);
+        if (m_casEntryCache.TryGetValue(key, out List<(uint, uint, Sha1)>? cached))
+        {
+            return cached;
+        }
+
+        List<(uint Offset, uint Size, Sha1 Sha1)> entries = new();
+        InstallChunkInfo ic = FileSystemManager.GetInstallChunkInfo(inId.InstallChunkIndex);
+        FileSystemSource source = inId.IsPatch ? FileSystemSource.Patch : FileSystemSource.Base;
+
+        if (source.TryResolvePath(Path.Combine(ic.InstallBundle, "cas.cat"),
+                out string? catPath))
+        {
+            using (CatStream stream = new(catPath))
+            {
+                for (int i = 0; i < stream.ResourceCount; i++)
+                {
+                    CatResourceEntry e = stream.ReadResourceEntry();
+                    if (e.ArchiveIndex == inId.CasIndex)
+                    {
+                        entries.Add((e.Offset, e.Size, e.Sha1));
+                    }
+                }
+
+                for (int i = 0; i < stream.EncryptedCount; i++)
+                {
+                    CatResourceEntry e = stream.ReadEncryptedEntry();
+                    if (e.ArchiveIndex == inId.CasIndex)
+                    {
+                        entries.Add((e.Offset, e.Size, e.Sha1));
+                    }
+                }
+            }
+        }
+
+        entries.Sort((a, b) => a.Offset.CompareTo(b.Offset));
+        m_casEntryCache.Add(key, entries);
+        return entries;
+    }
+
+    /// <summary>
+    /// One coalesced manifest entry -> the physical cas resources it covers.
+    /// When the catalog cannot account for the range exactly the original
+    /// entry is kept, so a partial failure stays local instead of writing a
+    /// wrong expansion.
+    /// </summary>
+    private List<(CasFileIdentifier Id, uint Offset, long Size, Sha1 Sha1)> ExpandEntry(
+        CasFileIdentifier inId, uint inOffset, long inSize)
+    {
+        List<(CasFileIdentifier, uint, long, Sha1)> result = new();
+        List<(uint Offset, uint Size, Sha1 Sha1)> entries = GetCasEntries(inId);
+
+        int start = entries.FindIndex(e => e.Offset == inOffset);
+        if (start < 0)
+        {
+            result.Add((inId, inOffset, inSize, Sha1.Zero));
+            return result;
+        }
+
+        long covered = 0;
+        for (int i = start; i < entries.Count && covered < inSize; i++)
+        {
+            result.Add((inId, entries[i].Offset, entries[i].Size, entries[i].Sha1));
+            covered += entries[i].Size;
+        }
+
+        if (covered != inSize)
+        {
+            result.Clear();
+            result.Add((inId, inOffset, inSize, Sha1.Zero));
+        }
+
+        return result;
+    }
+
     private void ModSuperBundleManifest(string inModPackPath)
     {
         DbObjectDict manifestDict = FileSystemManager.SuperBundleManifest!;
@@ -174,69 +265,7 @@ public partial class FrostyModExecutor
             SuperBundleInstallChunk sbIc = FileSystemManager.GetSuperBundleInstallChunk(superBundle);
             InstallChunkWriter writer = GetInstallChunkWriter(sbIc);
 
-            // PRESERVE, then PATCH. The manifest's per-bundle range is not one
-            // entry per asset - the same bundle reported callback index 74
-            // against a 71-entry range - so neither positional indexing nor a
-            // fresh per-asset rebuild is correct. A fresh rebuild also broke
-            // unmodified reads outright: forcing FrostyCli to re-parse our own
-            // output raised "ZStandard: destination buffer is too small" while
-            // indexing ebx, because an asset whose data spans several cas
-            // entries cannot be described by its single loader file info.
-            //
-            // So every original entry is copied verbatim, and only the entries
-            // belonging to MODIFIED assets are replaced - located by their
-            // original (cas file, offset), which the loader recorded when it
-            // indexed the base game. Untouched assets keep byte-identical
-            // locations, which is the property that matters.
-            Dictionary<(CasFileIdentifier, uint), (CasFileIdentifier, uint, long)>
-                replacements = new();
-
-            void Replace(Frosty.Sdk.Managers.Entries.AssetEntry? original,
-                Sha1 inNewSha1, uint inRangeStart, uint inRangeEnd, int inFirstMip)
-            {
-                CasResourceInfo? origInfo =
-                    (original?.GetFileInfo() as CasFileInfo)?.GetBase();
-                if (origInfo is null)
-                {
-                    // No recorded location: the asset was not in the base
-                    // manifest, so there is nothing to replace. Skipping is
-                    // right - inventing an entry is what corrupted the data.
-                    return;
-                }
-
-                (CasFileIdentifier File, uint Offset, uint Size) info =
-                    writer.GetFileInfo(inNewSha1);
-                if (inFirstMip > 0)
-                {
-                    info.Offset += inRangeStart;
-                    info.Size = inRangeEnd - inRangeStart;
-                }
-
-                replacements[(origInfo.GetIdentifier(), origInfo.GetFileOffset())] =
-                    (info.File, info.Offset, info.Size);
-            }
-
-            foreach (string name in modInfo.Modified.Ebx)
-            {
-                Replace(AssetManager.GetEbxAssetEntry(name),
-                    m_modifiedEbx[name].Sha1, 0, 0, -1);
-            }
-
-            foreach (string name in modInfo.Modified.Res)
-            {
-                Replace(AssetManager.GetResAssetEntry(name),
-                    m_modifiedRes[name].Sha1, 0, 0, -1);
-            }
-
-            foreach (Guid id in modInfo.Modified.Chunks)
-            {
-                ChunkModEntry chunkMod = m_modifiedChunks[id];
-                Replace(AssetManager.GetChunkAssetEntry(id), chunkMod.Sha1,
-                    chunkMod.RangeStart, chunkMod.RangeEnd, chunkMod.FirstMip);
-            }
-
-            // The bundle meta still has to be rebuilt (its sha1s and sizes
-            // change); Modify's callback is not used to build the range.
+            // The meta must still be rebuilt: its sha1s and sizes change.
             Block<byte> bundleMeta;
             using (BlockStream bundleStream = BlockStream.FromFile(
                        FileSystemManager.GetFilePath(meta.Id), meta.Offset, (int)meta.Size))
@@ -245,24 +274,170 @@ public partial class FrostyModExecutor
                     m_modifiedRes, m_modifiedChunks, (_, _, _, _, _) => { });
             }
 
-            List<(CasFileIdentifier, uint, long)> range = new(bundle.ResourceCount);
-
-            // [0] is the rebuilt meta, written into ModData's cas.
-            Sha1 metaSha1 = Sdk.Utils.Utils.GenerateSha1(bundleMeta.ToSpan());
-            (CasFileIdentifier File, uint Offset, uint Size) written =
-                writer.WriteData(metaSha1, bundleMeta);
-            bundleMeta.Dispose();
-            range.Add((written.File, written.Offset, written.Size));
-
+            // Build the range in META ORDER, one entry per asset.
+            //
+            // v1's output has exactly 1 + assetCount entries per bundle, and
+            // the game evidently relies on that alignment: entry i + 1
+            // describes the meta's asset i. Expanding the original range gives
+            // the right entries for assets that were already there, but a mod
+            // that ADDS assets shifts everything after them, so the list has
+            // to be assembled from the rebuilt meta rather than patched in
+            // place. Locations are looked up per asset:
+            //
+            //   1. data we wrote this run (modified, or added with new data)
+            //   2. the expanded original entry for that sha1 (unmodified)
+            //   3. the base catalog location
+            //   4. a zero placeholder, to keep the alignment honest
+            Dictionary<Sha1, (CasFileIdentifier, uint, long)> expanded = new();
+            int expandedCount = 0;
             for (int i = 1; i < bundle.ResourceCount; i++)
             {
                 (CasFileIdentifier Id, uint Offset, long Size) original =
                     files[bundle.StartIndex + i];
-                range.Add(replacements.TryGetValue((original.Id, original.Offset),
-                    out (CasFileIdentifier, uint, long) patched)
-                    ? patched
-                    : original);
+
+                foreach ((CasFileIdentifier Id, uint Offset, long Size, Sha1 Sha1) part
+                         in ExpandEntry(original.Id, original.Offset, original.Size))
+                {
+                    expandedCount++;
+                    if (part.Sha1 != Sha1.Zero)
+                    {
+                        expanded[part.Sha1] = (part.Id, part.Offset, part.Size);
+                    }
+                }
             }
+
+            List<(CasFileIdentifier, uint, long)> range = new(expandedCount + 64);
+
+            Sha1 metaSha1 = Sdk.Utils.Utils.GenerateSha1(bundleMeta.ToSpan());
+            (CasFileIdentifier File, uint Offset, uint Size) written =
+                writer.WriteData(metaSha1, bundleMeta);
+            range.Add((written.File, written.Offset, written.Size));
+
+            // The rebuilt meta IS the order the game will read.
+            Frosty.Sdk.IO.BinaryBundle rebuilt;
+            using (BlockStream metaStream = new(bundleMeta, false))
+            {
+                rebuilt = Frosty.Sdk.IO.BinaryBundle.Deserialize(metaStream);
+            }
+            bundleMeta.Dispose();
+
+            int fromWritten = 0, fromExpanded = 0, fromCatalog = 0, placeholders = 0;
+
+            // inChanged says whether the MOD actually changes this asset.
+            //
+            // It matters because the executor also writes copies of base-game
+            // data for assets a mod merely ADDS to a bundle, and that copy is
+            // not always faithful: assets stored as base+delta patch entries
+            // lose the merge and come out as a small blob that inflates into
+            // nonsense. Two hero VO assets failed exactly that way. So for an
+            // unchanged asset the ORIGINAL location wins, and our written copy
+            // is only used when the mod genuinely replaced the content.
+            void AddEntry(Sha1 inSha1, uint inRangeStart, uint inRangeEnd, int inFirstMip,
+                bool inChanged)
+            {
+                InstallChunkWriter? holder = null;
+                if (inChanged)
+                {
+                    if (writer.HasData(inSha1))
+                    {
+                        holder = writer;
+                    }
+                    else
+                    {
+                        // Data is written per SUPERBUNDLE, so an asset added to
+                        // a bundle in one install chunk may have been written
+                        // through another chunk's writer.
+                        foreach (InstallChunkWriter candidate in m_installChunkWriters.Values)
+                        {
+                            if (candidate.HasData(inSha1))
+                            {
+                                holder = candidate;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (holder is not null)
+                {
+                    (CasFileIdentifier File, uint Offset, uint Size) info =
+                        holder.GetFileInfo(inSha1);
+                    if (inFirstMip > 0)
+                    {
+                        info.Offset += inRangeStart;
+                        info.Size = inRangeEnd - inRangeStart;
+                    }
+                    range.Add((info.File, info.Offset, info.Size));
+                    fromWritten++;
+                    return;
+                }
+
+                if (expanded.TryGetValue(inSha1, out (CasFileIdentifier, uint, long) hit))
+                {
+                    range.Add(hit);
+                    fromExpanded++;
+                    return;
+                }
+
+                CasResourceInfo? baseInfo = ResourceManager.GetFileInfo(inSha1)?.GetBase();
+                if (baseInfo is not null)
+                {
+                    range.Add((baseInfo.GetIdentifier(), baseInfo.GetFileOffset(),
+                        baseInfo.GetSize()));
+                    fromCatalog++;
+                    return;
+                }
+
+                // Unchanged and unlocatable: fall back to whatever was written
+                // for it rather than a dead entry.
+                foreach (InstallChunkWriter candidate in m_installChunkWriters.Values)
+                {
+                    if (candidate.HasData(inSha1))
+                    {
+                        (CasFileIdentifier File, uint Offset, uint Size) info =
+                            candidate.GetFileInfo(inSha1);
+                        range.Add((info.File, info.Offset, info.Size));
+                        fromWritten++;
+                        return;
+                    }
+                }
+
+                range.Add((default, 0u, 0L));
+                placeholders++;
+            }
+
+            foreach (EbxAssetEntry e in rebuilt.EbxList)
+            {
+                AddEntry(e.Sha1, 0, 0, -1,
+                    modInfo.Modified.Ebx.Contains(e.Name) || modInfo.Added.Ebx.Contains(e.Name));
+            }
+
+            foreach (ResAssetEntry r in rebuilt.ResList)
+            {
+                AddEntry(r.Sha1, 0, 0, -1,
+                    modInfo.Modified.Res.Contains(r.Name) || modInfo.Added.Res.Contains(r.Name));
+            }
+
+            foreach (ChunkAssetEntry c in rebuilt.ChunkList)
+            {
+                uint rs = 0, re = 0;
+                int fm = -1;
+                if (m_modifiedChunks.TryGetValue(c.Id, out ChunkModEntry? cm))
+                {
+                    rs = cm.RangeStart;
+                    re = cm.RangeEnd;
+                    fm = cm.FirstMip;
+                }
+                AddEntry(c.Sha1, rs, re, fm,
+                    modInfo.Modified.Chunks.Contains(c.Id) || modInfo.Added.Chunks.Contains(c.Id));
+            }
+
+            Frosty.Sdk.FrostyLogger.Logger?.LogInfo(
+                $"RANGEBUILD bundle={bundle.NameHash:X8} orig={bundle.ResourceCount} " +
+                $"expanded={expandedCount} built={range.Count} " +
+                $"assets={rebuilt.EbxList.Length + rebuilt.ResList.Length + rebuilt.ChunkList.Length} " +
+                $"written={fromWritten} reused={fromExpanded} catalog={fromCatalog} " +
+                $"placeholder={placeholders}");
 
             newFiles.AddRange(range);
             newBundles.Add((bundle.NameHash, newStart, range.Count));
