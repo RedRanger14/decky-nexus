@@ -2024,6 +2024,43 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
+def _frosty_redirect_reg(app_id: int) -> str:
+    return os.path.normpath(_prefix_drive_c(app_id, "..", "..", "user.reg"))
+
+
+def _frosty_override_section() -> str:
+    """The Wine registry key for the game's DLL overrides.
+
+    Built from chr(92) rather than written literally: user.reg wants two
+    characters where a path wants one, and a hand-edited prefix on the test
+    device had every backslash eaten, leaving a key named
+    "SoftwareWineAppDefaults..." that Wine ignored completely.
+    """
+    b = chr(92) * 2
+    return (
+        "[Software" + b + "Wine" + b + "AppDefaults" + b
+        + "starwarsbattlefrontii.exe" + b + "DllOverrides]"
+    )
+
+
+def _frosty_redirect_ok(app_id: int) -> bool:
+    """Is the game actually pointed at our compiled data right now?"""
+    reg = _frosty_redirect_reg(app_id)
+    if not os.path.isfile(reg):
+        return False
+    try:
+        with open(reg, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return False
+    q = chr(34)
+    wine_path = "Z:" + _frosty_moddata_link().replace("/", chr(92) * 2)
+    return (
+        f"{q}GAME_DATA_DIR{q}={q}{wine_path}{q}" in text
+        and _frosty_override_section() in text
+    )
+
+
 def _frosty_prefix_setup(app_id: int, install_path: str) -> list:
     """Point the game at our compiled data, and let its DLL hook load.
 
@@ -2033,8 +2070,7 @@ def _frosty_prefix_setup(app_id: int, install_path: str) -> list:
     ignored entirely until GAME_DATA_DIR was set here.
     """
     done = []
-    reg = _prefix_drive_c(app_id, "..", "..", "user.reg")
-    reg = os.path.normpath(reg)
+    reg = _frosty_redirect_reg(app_id)
     if not os.path.isfile(reg):
         return done
 
@@ -2060,10 +2096,12 @@ def _frosty_prefix_setup(app_id: int, install_path: str) -> list:
             text = text[:j] + want_data + "\n" + text[j:]
             done.append("data path")
 
-    override_section = (
-        "[Software" + chr(92) * 2 + "Wine" + chr(92) * 2 + "AppDefaults"
-        + chr(92) * 2 + "starwarsbattlefrontii.exe" + chr(92) * 2
-        + "DllOverrides]"
+    override_section = _frosty_override_section()
+    # A key whose backslashes were lost is a key Wine never reads. One was on
+    # the test device from hand-editing, and it would sit there forever
+    # looking like the override was set.
+    text = re.sub(
+        r"\[SoftwareWineAppDefaults[^\]]*DllOverrides\][^\[]*", "", text
     )
     if override_section not in text:
         text += (
@@ -2080,6 +2118,30 @@ def _frosty_prefix_setup(app_id: int, install_path: str) -> list:
         except OSError as e:
             decky.logger.warning(f"frosty: could not write prefix registry: {e}")
             return []
+
+    cfg = os.path.join(install_path, "user.cfg")
+    if os.path.isfile(cfg):
+        try:
+            with open(cfg, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.read().splitlines()
+            keep = []
+            for line in lines:
+                m = re.match(r'\s*-?dataPath\s+(.+?)\s*$', line)
+                if m:
+                    raw = m.group(1).strip().strip(chr(34))
+                    unix = raw
+                    if len(unix) > 2 and unix[1] == ":":
+                        unix = unix[2:]
+                    unix = unix.replace(chr(92), "/")
+                    if not os.path.isdir(unix):
+                        done.append("cleared a dead data path")
+                        continue
+                keep.append(line)
+            if keep != lines:
+                with open(cfg, "w", encoding="utf-8", newline="\n") as f:
+                    f.write("\n".join(keep) + ("\n" if keep else ""))
+        except OSError:
+            pass
 
     # The hook itself, shipped in the toolkit.
     hook = os.path.join(_frosty_root(), "ThirdParty", "CryptBase.dll")
@@ -2192,9 +2254,22 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
     except OSError as e:
         return {"ok": False, "error": f"Could not point the game at the mods: {e}"}
 
-    _frosty_prefix_setup(app_id, install_path)
+    changed = _frosty_prefix_setup(app_id, install_path)
+    if not _frosty_redirect_ok(app_id):
+        # A pack the game never reads is not an install. Saying so beats a
+        # success message followed by a boot with no mods in it, which is the
+        # failure that cost days on device.
+        return {
+            "ok": False,
+            "error": (
+                "The mods compiled, but the game could not be pointed at "
+                "them. Close the game and the EA app completely, then try "
+                "again."
+            ),
+        }
     decky.logger.info(
-        f"frosty: compiled {len(enabled)} mod(s) into {pack}"
+        f"frosty: compiled {len(enabled)} mod(s) into {pack} (prefix: "
+        f"{changed or 'already set'})"
     )
     return {"ok": True, "mods": len(enabled)}
 
@@ -18682,11 +18757,28 @@ query CollectionInstructions($slug: String!) {
                 f[:-6] for f in os.listdir(mods_dir) if f.endswith(".fbmod")
             )
         compiled = os.path.isdir(_frosty_pack_dir(install_path))
+        # Wine flushes its in-memory registry over user.reg when the prefix
+        # shuts down, so a redirect written during an install can be reverted
+        # later by something entirely unrelated. Re-assert it here rather than
+        # letting the game quietly load vanilla data.
+        redirect = True
+        if compiled and app_id:
+            redirect = _frosty_redirect_ok(int(app_id))
+            if not redirect:
+                repaired = await asyncio.to_thread(
+                    _frosty_prefix_setup, int(app_id), install_path
+                )
+                redirect = _frosty_redirect_ok(int(app_id))
+                decky.logger.info(
+                    f"frosty: redirect was missing, repaired={repaired} "
+                    f"ok={redirect}"
+                )
         return {
             "ok": True,
             "toolkit_installed": _frosty_installed(),
             "compiled": compiled,
             "mods": enabled,
+            "redirect_ok": redirect,
         }
 
     async def install_frosty_toolkit(self) -> dict:

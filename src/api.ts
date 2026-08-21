@@ -1839,6 +1839,9 @@ export const getFrostyState = callable<
   {
     ok: boolean;
     toolkit_installed?: boolean;
+    /** False only when the launch redirect could not be written. Without it
+     * the game boots fine and ignores every mod, so it needs saying. */
+    redirect_ok?: boolean;
     compiled?: boolean;
     mods?: string[];
   }

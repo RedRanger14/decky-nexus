@@ -570,7 +570,13 @@ function CurrentGameSection() {
   }, [toolsBusy]);
 
   const [frostyState, setFrostyState] = useState<
-    { toolkit_installed?: boolean; compiled?: boolean; mods?: string[] } | undefined
+    | {
+        toolkit_installed?: boolean;
+        compiled?: boolean;
+        mods?: string[];
+        redirect_ok?: boolean;
+      }
+    | undefined
   >();
   const [frostyBusy, setFrostyBusy] = useState(false);
 
@@ -1178,6 +1184,20 @@ function CurrentGameSection() {
           )}
         </PanelSectionRow>
       )}
+      {/* The redirect is written for the user, so this is only ever a
+          "something outside the plugin undid it" message - but silence here
+          means a game that boots and ignores every mod. */}
+      {game.frostbite &&
+        status?.installed &&
+        frostyState?.compiled &&
+        frostyState.redirect_ok === false && (
+          <PanelSectionRow>
+            <Field label="Needs attention">
+              The game is not reading your mods yet. Open this menu again after
+              closing the game and it will fix itself.
+            </Field>
+          </PanelSectionRow>
+        )}
       {game.framework && !game.frostbite && status?.installed ? (
         <>
           {/* Steam is pointed at the framework's loader but the loader is

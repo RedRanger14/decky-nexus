@@ -13244,7 +13244,11 @@ class TestFrostbiteGames(unittest.TestCase):
         fn = source[source.index("def _frosty_prefix_setup"):]
         fn = fn[:fn.index("async def _frosty_compile")]
         self.assertIn("GAME_DATA_DIR", fn)
-        self.assertIn("user.reg", fn)
+        # The path to user.reg lives in its own helper now, because the
+        # self-repair check reads the same file.
+        self.assertIn("_frosty_redirect_reg(", fn)
+        reg = source[source.index("def _frosty_redirect_reg"):]
+        self.assertIn("user.reg", reg[:reg.index("def _frosty_override_section")])
         self.assertIn("cryptbase", fn)
         # bcrypt and CryptBase are alternative hooks; both present breaks Wine.
         self.assertIn("bcrypt.dll", fn)
@@ -13277,6 +13281,80 @@ class TestFrostbiteGames(unittest.TestCase):
         fn = source[source.index("async def install_frosty_mod"):]
         fn = fn[:fn.index("async def set_frosty_mod_enabled")]
         self.assertIn('"update-mod"', fn)
+
+
+    def test_a_compile_the_game_cannot_see_is_not_a_success(self):
+        # Wine holds the registry in memory and flushes it on shutdown, so a
+        # write made while the prefix is alive is reverted. Reporting success
+        # then would send the user to a boot with no mods in it.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _frosty_compile"):]
+        fn = fn[:fn.index("def _prefix_drive_c")]
+        self.assertIn("if not _frosty_redirect_ok(app_id):", fn)
+        after = fn[fn.index("if not _frosty_redirect_ok(app_id):"):]
+        self.assertIn('"ok": False', after[:600])
+
+    def test_the_redirect_is_checked_not_assumed(self):
+        # Without GAME_DATA_DIR the game boots perfectly and ignores every
+        # mod. That is the least diagnosable failure the plugin has, and it
+        # happened twice on device, so the state has to be readable.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _frosty_redirect_ok"):]
+        fn = fn[:fn.index("def _frosty_prefix_setup")]
+        self.assertIn("GAME_DATA_DIR", fn)
+        self.assertIn("_frosty_override_section()", fn)
+
+    def test_a_missing_redirect_repairs_itself(self):
+        # Wine flushes its in-memory registry over user.reg on shutdown, so a
+        # redirect written during an install can be reverted by something
+        # unrelated later. Opening the game's page must put it back.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def get_frosty_state"):]
+        fn = fn[:fn.index("async def install_frosty_toolkit")]
+        self.assertIn("_frosty_redirect_ok(", fn)
+        self.assertIn("_frosty_prefix_setup", fn)
+        self.assertIn('"redirect_ok"', fn)
+
+    def test_the_registry_key_keeps_its_backslashes(self):
+        # user.reg needs two characters where a path needs one. A hand-edited
+        # prefix on the test device had them all eaten, leaving a key called
+        # "SoftwareWineAppDefaultsstarwarsbattlefrontii.exeDllOverrides" that
+        # Wine ignored, so the override silently was not set.
+        section = main._frosty_override_section()
+        self.assertIn(chr(92) * 2 + "Wine" + chr(92) * 2, section)
+        self.assertTrue(section.startswith("[Software" + chr(92) * 2))
+        self.assertTrue(section.endswith("DllOverrides]"))
+
+    def test_a_mangled_key_is_removed_rather_than_joined(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _frosty_prefix_setup"):]
+        fn = fn[:fn.index("async def _frosty_compile")]
+        self.assertIn("SoftwareWineAppDefaults", fn)
+        self.assertIn("re.sub(", fn)
+
+    def test_a_dead_datapath_is_cleared(self):
+        # Every Frosty guide online tells the user to add one, and it is the
+        # first thing they paste in when a mod does not show up. Pointing the
+        # game at a directory that does not exist is not worth preserving.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _frosty_prefix_setup"):]
+        fn = fn[:fn.index("async def _frosty_compile")]
+        self.assertIn("dataPath", fn)
+        self.assertIn("os.path.isdir(unix)", fn)
+
+    def test_a_live_datapath_is_left_alone(self):
+        # The inverse matters just as much: the plugin must not delete a
+        # setting that is doing its job.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _frosty_prefix_setup"):]
+        fn = fn[:fn.index("async def _frosty_compile")]
+        self.assertIn("keep.append(line)", fn)
 
 
 class TestReshadeInstall(unittest.TestCase):
