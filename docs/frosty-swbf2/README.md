@@ -65,15 +65,55 @@ That asset is NOT in the mod. It is an unmodified sibling inside a bundle the
 mod does touch, so rewriting that bundle's meta is breaking entries it should
 have left alone.
 
+## SOLVED: what a correct patched manifest looks like
+
+Frosty v1 was run again on Windows with the mod actually applied
+(`mods.json` non-empty, ModData 265.7 MB - essentially the same size as our
+258 MB, so our output volume was never the problem). Parsing its manifest blob
+settles the algorithm:
+
+| | v1 no-mod | v1 mod applied |
+| --- | --- | --- |
+| resourceInfos | 1,097,786 | **2,489,514** |
+| bundles | 4,777 | 4,777 |
+| chunks | 180,913 | 180,913 |
+
+Bundle and chunk counts unchanged; the resource table more than DOUBLES. v1
+expands every bundle's range from the original's coalesced form into one entry
+per asset. Verified by arithmetic against our own METACHECK counts:
+
+| bundle | v1 resourceCount | our asset count (ebx+res+chunk) | 1 + assets |
+| --- | --- | --- | --- |
+| 2FCC648F | 291 | 81 + 30 + 179 = 290 | 291 |
+| 7CDC9960 | 16,181 | 11,764 + 1,902 + 2,514 = 16,180 | 16,181 |
+
+The original manifest gave 2FCC648F just 71 entries for those 290 assets, which
+is why positional indexing failed.
+
+So the layout is: `range[0]` = the bundle meta, then exactly one entry per
+asset in meta order (ebx, then res, then chunks), each holding that asset's
+COMPRESSED location - the same (file, offset, size) the catalog carries. v1
+derives these by walking the catalog (`casList`) per entry; the equivalent in
+v2 is `ResourceManager.GetFileInfo(sha1)`.
+
+That makes the "per-asset rebuild" dead end below the RIGHT SHAPE after all.
+The reason it still raised zstd errors is most likely chunk handling: a chunk
+with a logicalOffset / firstMip needs its sub-range described (offset +
+rangeStart, size = rangeEnd - rangeStart), and unmodified chunks were written
+with their whole-file location instead. v1 handles chunk ranges explicitly.
+
+Note also: the blob is written to a NEW cas each run (cas_61 for the no-mod
+run, cas_62 with the mod), and with a mod applied its SIZE changes - so the
+"size unchanged" observation from the no-mod run does not generalise.
+
 ## Two dead ends, so they are not repeated
 
 - **Positional indexing.** `BinaryBundle.Modify`'s callback index does not map
   to the manifest range: one bundle reported index 74 against a 71-entry range.
   The manifest does not hold one resourceInfo per asset.
-- **Rebuilding the range per asset** from each entry's loader file info. Reads
-  break outright: an asset whose data spans several cas entries cannot be
-  described by one info. v1 solves this with a catalog expansion pass
-  (`ManifestBundle.cs`, the `while (totalSize != size)` loop).
+- **Rebuilding the range per asset** from each entry's loader file info. This
+  turned out to be the right shape (see above) - it failed on chunk
+  sub-ranges, not on the concept. Keep it, fix the chunks.
 
 The current implementation preserves every original entry and patches only
 modified ones, located by their original (cas file, offset). That is closer,
