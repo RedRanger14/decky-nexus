@@ -24,10 +24,10 @@ import {
   getModDetails,
   getModFiles,
   getModRequirements,
+  installFrostyMod,
   getModSupport,
   installMod,
   setEndorsement,
-  uninstallMod,
 
   getKnownModVerdict,
   getShowAdult,
@@ -39,7 +39,7 @@ import { EndorsePill } from "./EndorseButton";
 import { popOurPage, pushOurPage } from "./Tabs";
 import { getCompatHint } from "./compat";
 import { frameworkModIds, modeParams, stalenessExemptModIds } from "./games";
-import { finishFomod, installLatest } from "./install";
+import { finishFomod, installLatest, removeMod } from "./install";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 
 // Steam's scroll panel: right-stick scrolling (untyped props upstream).
@@ -339,7 +339,22 @@ export function ModDetailPage() {
     nameDownload(mod.modId, mod.name, game.appId);
     try {
       setBlocked(undefined);
-      const result = await installMod(
+      const result = game.frostbite
+        ? // Frostbite games compile rather than copy - a different backend
+          // call, and a much longer wait, so the page shows its own progress.
+          await installFrostyMod(
+            game.nexusDomain,
+            mod.modId,
+            file.file_id,
+            file.file_name,
+            mod.name,
+            file.version || mod.version,
+            game.installDirName,
+            game.appId,
+            mod.version,
+            payloadChoice
+          )
+        : await installMod(
         game.nexusDomain,
         mod.modId,
         file.file_id,
@@ -472,8 +487,19 @@ export function ModDetailPage() {
         ? `Downloading… ${progress.percent}%`
         : progress.phase === "extracting"
         ? "Extracting…"
+        : progress.phase === "compiling"
+        ? `Compiling… ${progress.percent}%`
         : "Installing…"
       : "Installing…";
+
+  // What the install is actually doing, in words. Only shown while it runs.
+  // A compile is minutes of silence otherwise, and silence reads as broken.
+  const progressNote =
+    installingFileId !== undefined &&
+    progress?.mod_id === mod.modId &&
+    progress.message
+      ? progress.message
+      : "";
 
   const fileList = files?.files ?? [];
   // The site's single download button maps to the latest MAIN file; our sort
@@ -1036,6 +1062,21 @@ export function ModDetailPage() {
         >
           {primaryLabel}
         </DialogButton>
+        {/* What the install is doing, in words, directly under the button
+            that is doing it. Michael went to the Downloads page to find out
+            whether anything was happening at all - the answer belongs here. */}
+        {progressNote !== "" && (
+          <div
+            style={{
+              margin: "6px 2px 0",
+              fontSize: "12px",
+              opacity: 0.75,
+              lineHeight: 1.4,
+            }}
+          >
+            {progressNote}
+          </div>
+        )}
       <Focusable style={ACTION_ROW}>
         <DialogButton
           disabled={fileList.length === 0}
@@ -1056,13 +1097,9 @@ export function ModDetailPage() {
                   strOKButtonText="Uninstall"
                   bDestructiveWarning={true}
                   onOK={async () => {
-                    const result = await uninstallMod(
-                      game.nexusDomain,
-                      game.installDirName,
-                      game.modsSubdir,
-                      installedCopy.folder,
-                      ...modeParams(game)
-                    );
+                    // removeMod picks the mechanism: Frostbite games have
+                    // to recompile their pack rather than delete a folder.
+                    const result = await removeMod(game, installedCopy.folder);
                     toaster.toast(
                       result.ok
                         ? { title: "Mod uninstalled", body: mod.name }

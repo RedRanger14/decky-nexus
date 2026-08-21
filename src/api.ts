@@ -162,7 +162,16 @@ export interface InstalledResult {
 
 export interface InstallProgress {
   mod_id: number;
-  phase: "downloading" | "extracting" | "paused" | "cancelled" | "done" | "error";
+  phase:
+    | "downloading"
+    | "extracting"
+    /** Frostbite games: converting and compiling, which takes minutes. The
+     * message says which stage, because a silent wait reads as a hang. */
+    | "compiling"
+    | "paused"
+    | "cancelled"
+    | "done"
+    | "error";
   percent: number;
   message?: string;
   /** Exact transfer accounting (downloading phase only). */

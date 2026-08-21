@@ -2103,7 +2103,8 @@ def _frosty_prefix_setup(app_id: int, install_path: str) -> list:
     return done
 
 
-async def _frosty_compile(game_domain: str, install_path: str, app_id: int) -> dict:
+async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
+                          progress_mod_id: int = 0) -> dict:
     """Compile every enabled .fbmod into ModData and point the game at it.
 
     This is the whole install/enable/disable mechanism for these games: there
@@ -2130,6 +2131,12 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int) -> d
         decky.logger.info("frosty: no mods enabled, cleared the compiled data")
         return {"ok": True, "mods": 0}
 
+    if progress_mod_id:
+        await _emit_progress(
+            progress_mod_id, "compiling", 60,
+            f"Compiling {len(enabled)} mod"
+            f"{'' if len(enabled) == 1 else 's'} into the game's data",
+        )
     rc, tail = await _frosty_run(["mod", exe, mods_dir, pack])
     if rc != 0:
         _force_rmtree(pack)
@@ -2137,6 +2144,12 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int) -> d
             "ok": False,
             "error": f"Compiling the mods failed. {tail}"[:400],
         }
+
+    if progress_mod_id:
+        await _emit_progress(
+            progress_mod_id, "compiling", 85,
+            "Checking the game can read it",
+        )
 
     # A pack that does not read back is a pack that crashes the game, and this
     # is cheap next to a launch. Proven on device: every time the check failed,
@@ -18771,7 +18784,10 @@ query CollectionInstructions($slug: String!) {
         # Convert to the format the compiler reads. Community mods are v2 to
         # v5 and an unconverted mod is silently ignored - it compiles to a pack
         # with no changes in it, which looks exactly like a broken plugin.
-        await _emit_progress(mod_id, "installing", 40)
+        await _emit_progress(
+            mod_id, "compiling", 30,
+            "Reading the mod (Battlefront II mods have to be converted)",
+        )
         mods_dir = _frosty_mods_dir(game_domain)
         os.makedirs(mods_dir, exist_ok=True)
         target = os.path.join(mods_dir, _safe_name(mod_name) + ".fbmod")
@@ -18789,8 +18805,13 @@ query CollectionInstructions($slug: String!) {
                 "error": f"Could not read this mod. {tail}"[:300],
             }
 
-        await _emit_progress(mod_id, "installing", 60)
-        result = await _frosty_compile(game_domain, install_path, int(app_id))
+        await _emit_progress(
+            mod_id, "compiling", 55,
+            "Compiling all your mods into the game (a minute or two)",
+        )
+        result = await _frosty_compile(
+            game_domain, install_path, int(app_id), mod_id
+        )
         if not result.get("ok"):
             # Roll the mod back out: the set has to stay one that compiles.
             try:

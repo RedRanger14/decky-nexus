@@ -571,7 +571,10 @@ test("a refusal is on screen before the install button is pressed", () => {
     "nothing asks whether the install would be refused until it is tried"
   );
   const load = page.indexOf("getInstallBlock(");
-  const attempt = page.indexOf("const result = await installMod(");
+  // On the CALL, not on the whole statement: the assignment gained a
+  // Frostbite branch and this stopped matching, which reads as a
+  // regression in behaviour when it is only a change of spelling.
+  const attempt = page.indexOf("await installMod(");
   assert.ok(
     load < attempt,
     "the block check happens inside the install attempt, which is the " +
@@ -1058,5 +1061,38 @@ test("installs, toggles and removals route through one place each", () => {
   assert.ok(
     !/setModEnabled\(/.test(page),
     "the panel still calls setModEnabled directly, bypassing the compiler"
+  );
+});
+
+test("the mod page routes Frostbite installs and removals to the compiler", () => {
+  // The shared branch in installModWith was NOT enough: this page calls
+  // installMod and uninstallMod directly, so a Battlefront II install went
+  // through the folder installer and appeared to hang. The device log said
+  // "install_mod:" where it should have said "install_frosty_mod".
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /game\.frostbite[\s\S]{0,200}installFrostyMod\(/.test(page),
+    "the install button does not route Frostbite games to the compiler"
+  );
+  assert.ok(
+    /removeMod\(game, installedCopy\.folder\)/.test(page),
+    "uninstall bypasses removeMod, so a compiled game would not recompile"
+  );
+  assert.ok(
+    !/await uninstallMod\(/.test(page),
+    "the page still calls uninstallMod directly"
+  );
+});
+
+test("a long install says what it is doing", () => {
+  // A compile is minutes of silence, and silence reads as a hang.
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /progress\.phase === "compiling"/.test(page),
+    "the compiling phase has no label"
+  );
+  assert.ok(
+    /const progressNote =/.test(page) && /\{progressNote\}/.test(page),
+    "the install's message is never shown on the page"
   );
 });
