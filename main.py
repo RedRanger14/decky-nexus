@@ -100,6 +100,7 @@ MOD_FIELDS = """
       thumbnailBlurredUrl
       pictureUrl
       updatedAt
+      createdAt
       adultContent
 """
 

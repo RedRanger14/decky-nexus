@@ -20,6 +20,9 @@ export interface NexusMod {
   thumbnailBlurredUrl?: string;
   pictureUrl?: string;
   updatedAt: string;
+  /** When the mod was first published. With updatedAt, answers the question
+   * Michael asked for the page: how old is this thing, and is it alive? */
+  createdAt?: string;
   /** Live-service games only: this mod was last updated BEFORE the game's
    * own last update, which usually breaks mods. A fact, not a verdict -
    * sound mods sometimes survive - so tiles badge it and the page warns. */

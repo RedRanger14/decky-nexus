@@ -531,6 +531,7 @@ export function ModDetailPage() {
   const heroUrl = mod.pictureUrl ?? mod.thumbnailUrl;
   const compatHint = getCompatHint(game.nexusDomain, mod.modId);
   const updatedDate = mod.updatedAt ? new Date(mod.updatedAt).toLocaleDateString() : "";
+  const createdDate = mod.createdAt ? new Date(mod.createdAt).toLocaleDateString() : "";
   const descLong = (description?.length ?? 0) > DESC_COLLAPSE_LENGTH;
 
   const goBack = () => {
@@ -708,7 +709,14 @@ export function ModDetailPage() {
                 PRE-UPDATE
               </span>
             )}
-            {updatedDate && <StatChip>updated {updatedDate}</StatChip>}
+            {/* Both dates, plainly: upload age and update recency answer
+                different questions (is it established? is it maintained?),
+                and on live-service games the updated date is the whole
+                ballgame. */}
+            {createdDate && <StatChip>uploaded {createdDate}</StatChip>}
+            {updatedDate && updatedDate !== createdDate && (
+              <StatChip>updated {updatedDate}</StatChip>
+            )}
             {endorseStatus !== undefined && endorseStatus !== "unknown" && (
               <EndorsePill
                 endorsed={endorseStatus === "Endorsed"}
