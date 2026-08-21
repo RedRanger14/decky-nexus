@@ -23,7 +23,7 @@ care about.
 
 ## Supported games
 
-Eleven games, each one installed, modded and played on real hardware before
+Twelve games, each one installed, modded and played on real hardware before
 it shipped. That is what supported means here: not that the code has a config
 entry for it, but that someone finished a session with mods running.
 
@@ -36,8 +36,17 @@ entry for it, but that someone finished a session with mods running.
 7. Resident Evil 4
 8. Skyrim Special Edition
 9. Slay the Spire 2
-10. Stardew Valley
-11. The Witcher 3
+10. STAR WARS Battlefront II (2017) (**)
+11. Stardew Valley
+12. The Witcher 3
+
+(**) Battlefront II mods are not files the game reads - they are compiled
+into a data pack, which is why no Deck plugin has supported a Frostbite game
+before. Step 1 in the panel downloads the compiler (40 MB, once). After that
+installing works like any other game, except that every install or toggle
+recompiles the pack, which takes a minute or two. The compiler is our own
+build: the format Battlefront II uses was unimplemented upstream and had four
+data-corruption bugs, all fixed and documented in docs/frosty-swbf2/.
 
 (*) Helldivers 2 is a live-service game that changes its data files with
 every update, which breaks most mods until their authors release new
