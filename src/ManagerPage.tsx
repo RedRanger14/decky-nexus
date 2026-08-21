@@ -10,12 +10,13 @@ import {
   ScrollPanelGroup,
   showModal,
 } from "@decky/ui";
-import { toaster } from "@decky/api";
+import { addEventListener, removeEventListener, toaster } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 import { FaEye } from "react-icons/fa";
 
 import {
   AttentionItem,
+  InstallProgress,
   InstalledCollectionInfo,
   InstalledMod,
   getInstalledMods,
@@ -146,6 +147,7 @@ function ModRow({
   thumb,
   blur,
   busy,
+  busyNote,
   onToggle,
   onRemove,
 }: {
@@ -154,6 +156,10 @@ function ModRow({
   thumb?: string;
   blur?: boolean;
   busy: boolean;
+  /** What the backend is doing to this mod right now, if it says. Frostbite
+   * games rebuild their whole pack for a toggle, which takes as long as an
+   * install; a greyed row with no words is indistinguishable from a freeze. */
+  busyNote?: string;
   onToggle: (game: SupportedGame, mod: InstalledMod) => void;
   onRemove: (game: SupportedGame, mod: InstalledMod) => void;
 }) {
@@ -209,6 +215,18 @@ function ModRow({
             {mod.disabled_reason}
           </div>
         )}
+        {busy && busyNote ? (
+          <div
+            style={{
+              marginTop: "2px",
+              fontSize: "11px",
+              color: NEXUS_ORANGE,
+              opacity: 0.9,
+            }}
+          >
+            {busyNote}
+          </div>
+        ) : null}
       </div>
       {mod.mod_id !== undefined && mod.mod_id > 0 && (
         <DialogButton
@@ -265,6 +283,7 @@ export function ManagerPage() {
   const [showAllGames, setShowAllGames] = useState(false);
   const [groups, setGroups] = useState<GameMods[] | undefined>();
   const [busyKey, setBusyKey] = useState<string | undefined>();
+  const [busyNote, setBusyNote] = useState<string>("");
   // Which installed mods are adult, and whether this account blurs them.
   // A ref because it is filled by the same fetch that fills thumbs and
   // read in the same render pass.
@@ -274,6 +293,21 @@ export function ManagerPage() {
   const [openCollections, setOpenCollections] = useState<Set<string>>(
     new Set()
   );
+
+  // Toggling or removing a mod on a compiled game is a rebuild, and the
+  // backend narrates it on the same channel an install uses.
+  useEffect(() => {
+    const listener = addEventListener<[p: InstallProgress]>(
+      "install_progress",
+      (p) =>
+        setBusyNote(
+          p.phase === "compiling" && p.message
+            ? `${p.message} (${p.percent}%)`
+            : ""
+        )
+    );
+    return () => removeEventListener("install_progress", listener);
+  }, []);
 
   const refresh = async () => {
     const found: GameMods[] = [];
@@ -680,6 +714,7 @@ export function ManagerPage() {
                             adultRef.current.has(mod.mod_id ?? -1)
                           }
                           busy={busyKey === `${game.appId}:${mod.folder}`}
+                          busyNote={busyNote}
                           onToggle={toggle}
                           onRemove={remove}
                         />

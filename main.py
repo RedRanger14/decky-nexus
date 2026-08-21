@@ -2332,7 +2332,7 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
         noun = f"{len(enabled)} mod{'' if len(enabled) == 1 else 's'}"
         await _emit_progress(
             progress_mod_id, "compiling", 55,
-            f"Compiling {noun} into the game's data",
+            f"Rebuilding the game's data with your {noun}",
         )
 
         async def _emit(pct, message):
@@ -11875,48 +11875,6 @@ query Link($slug: String!, $domainName: String!) {
         # runs BEFORE the UE4SS gate below - that gate fires on a stray
         # enabled.txt anywhere in the archive, which would refuse a
         # perfectly installable FromSoft mod over an unrelated loader.
-        if install_mode == "frosty":
-            # Frostbite games have no mod FOLDERS to scan: the compiled pack
-            # is one opaque tree. The records say what is installed, and which
-            # directory each .fbmod sits in says whether it is enabled - disk
-            # stays the source of truth for state, records for identity.
-            settings = _load_settings()
-            mods_dir = _frosty_mods_dir(game_domain)
-            off_dir = os.path.join(mods_dir, "disabled")
-            results = []
-            for key, rec in (
-                settings.get("installed", {}).get(game_domain, {}) or {}
-            ).items():
-                if rec.get("mode") != "frosty":
-                    continue
-                name = _safe_name(key) + ".fbmod"
-                on_disk = os.path.isfile(os.path.join(mods_dir, name))
-                parked = os.path.isfile(os.path.join(off_dir, name))
-                if not on_disk and not parked:
-                    continue
-                results.append({
-                    "folder": key,
-                    "enabled": on_disk,
-                    "tracked": True,
-                    "name": rec.get("name") or key,
-                    "version": rec.get("version") or "",
-                    "mod_id": rec.get("mod_id"),
-                    "togglable": True,
-                    "source": rec.get("source") or "",
-                    "collection_slug": rec.get("collection_slug") or "",
-                })
-            results.sort(key=lambda m: (m["name"] or "").lower())
-            return {
-                "ok": True,
-                "mods": results,
-                "collections": settings.get("collections", {}).get(
-                    game_domain, {}
-                ),
-                "attention": settings.get("collection_attention", {}).get(
-                    game_domain, {}
-                ),
-            }
-
         if install_mode == "me3":
             root, assets_subpath, dlls, route_err = _route_me3_payload(
                 scratch, mod_name
@@ -18117,6 +18075,48 @@ query CollectionInstructions($slug: String!) {
         plugins_style: str = "starred",
         hidden_folders: list = None,
     ) -> dict:
+        if install_mode == "frosty":
+            # Frostbite games have no mod FOLDERS to scan: the compiled pack
+            # is one opaque tree. The records say what is installed, and which
+            # directory each .fbmod sits in says whether it is enabled - disk
+            # stays the source of truth for state, records for identity.
+            settings = _load_settings()
+            mods_dir = _frosty_mods_dir(game_domain)
+            off_dir = os.path.join(mods_dir, "disabled")
+            results = []
+            for key, rec in (
+                settings.get("installed", {}).get(game_domain, {}) or {}
+            ).items():
+                if rec.get("mode") != "frosty":
+                    continue
+                name = _safe_name(key) + ".fbmod"
+                on_disk = os.path.isfile(os.path.join(mods_dir, name))
+                parked = os.path.isfile(os.path.join(off_dir, name))
+                if not on_disk and not parked:
+                    continue
+                results.append({
+                    "folder": key,
+                    "enabled": on_disk,
+                    "tracked": True,
+                    "name": rec.get("name") or key,
+                    "version": rec.get("version") or "",
+                    "mod_id": rec.get("mod_id"),
+                    "togglable": True,
+                    "source": rec.get("source") or "",
+                    "collection_slug": rec.get("collection_slug") or "",
+                })
+            results.sort(key=lambda m: (m["name"] or "").lower())
+            return {
+                "ok": True,
+                "mods": results,
+                "collections": settings.get("collections", {}).get(
+                    game_domain, {}
+                ),
+                "attention": settings.get("collection_attention", {}).get(
+                    game_domain, {}
+                ),
+            }
+
         if install_mode == "me3":
             settings = _load_settings()
             results = [
@@ -19104,11 +19104,21 @@ query CollectionInstructions($slug: String!) {
         except OSError as e:
             return {"ok": False, "error": str(e)}
 
-        result = await _frosty_compile(game_domain, install_path, int(app_id))
+        # The record's mod id is the progress channel the UI listens on.
+        rec0 = (_load_settings().get("installed", {}).get(game_domain, {})
+                .get(_safe_name(folder)) or {})
+        pid = int(rec0.get("mod_id") or 0)
+        result = await _frosty_compile(
+            game_domain, install_path, int(app_id), pid
+        )
         if not result.get("ok"):
             os.replace(dst, src)
             await _frosty_compile(game_domain, install_path, int(app_id))
+            if pid:
+                await _emit_progress(pid, "error", 0, "not applied")
             return result
+        if pid:
+            await _emit_progress(pid, "done", 100)
 
         settings = _load_settings()
         rec = settings.get("installed", {}).get(game_domain, {}).get(
@@ -19137,7 +19147,18 @@ query CollectionInstructions($slug: String!) {
         if not removed:
             return {"ok": False, "error": "That mod is not installed"}
 
-        result = await _frosty_compile(game_domain, install_path, int(app_id))
+        # Read the id BEFORE the record goes, for the same reason as above.
+        rec0 = (_load_settings().get("installed", {}).get(game_domain, {})
+                .get(_safe_name(folder)) or {})
+        pid = int(rec0.get("mod_id") or 0)
+        result = await _frosty_compile(
+            game_domain, install_path, int(app_id), pid
+        )
+        if pid:
+            await _emit_progress(
+                pid, "done" if result.get("ok") else "error",
+                100 if result.get("ok") else 0,
+            )
         settings = _load_settings()
         recs = settings.get("installed", {}).get(game_domain, {})
         if _safe_name(folder) in recs:

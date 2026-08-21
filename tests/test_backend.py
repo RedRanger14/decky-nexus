@@ -13296,6 +13296,93 @@ class TestFrostbiteGames(unittest.TestCase):
         after = fn[fn.index("if not _frosty_redirect_ok(app_id):"):]
         self.assertIn('"ok": False', after[:600])
 
+    def test_installed_frostbite_mods_are_listed(self):
+        # This is END TO END through the real endpoint on purpose. The listing
+        # branch was originally patched in by matching 'install_mode == "me3"',
+        # which appears eight times in main.py, so it landed in
+        # _install_mod_inner - a function install_mode "frosty" never reaches.
+        # The mod installed and applied in game and My Mods stayed empty. A
+        # source-text test would have passed happily.
+        home = tempfile.mkdtemp(prefix="frosty-list-")
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        old_runtime = main.decky.DECKY_PLUGIN_RUNTIME_DIR
+        main.decky.DECKY_PLUGIN_RUNTIME_DIR = home
+        self.addCleanup(
+            setattr, main.decky, "DECKY_PLUGIN_RUNTIME_DIR", old_runtime
+        )
+
+        mods_dir = main._frosty_mods_dir("starwarsbattlefront22017")
+        os.makedirs(os.path.join(mods_dir, "disabled"), exist_ok=True)
+        with open(os.path.join(mods_dir, "Shadow Lord Maul.fbmod"), "wb") as fh:
+            fh.write(b"x")
+        with open(os.path.join(mods_dir, "disabled", "Old Skin.fbmod"), "wb") as fh:
+            fh.write(b"x")
+
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["starwarsbattlefront22017"] = {
+            "Shadow Lord Maul": {
+                "mod_id": 13974, "name": "Shadow Lord Maul", "version": "1.0",
+                "mode": "frosty",
+            },
+            "Old Skin": {
+                "mod_id": 1, "name": "Old Skin", "version": "2.0",
+                "mode": "frosty",
+            },
+            "Not Frostbite": {
+                "mod_id": 2, "name": "Not Frostbite", "mode": "folder",
+            },
+        }
+        main._save_settings(settings)
+        self.addCleanup(main._save_settings, {})
+
+        loop = asyncio.new_event_loop()
+        try:
+            r = loop.run_until_complete(main.Plugin().get_installed_mods(
+                "starwarsbattlefront22017", "STAR WARS Battlefront II", "Data",
+                "frosty", 1237950,
+            ))
+        finally:
+            loop.close()
+
+        self.assertTrue(r.get("ok"))
+        by_name = dict((m["name"], m) for m in r.get("mods", []))
+        self.assertIn("Shadow Lord Maul", by_name)
+        self.assertTrue(by_name["Shadow Lord Maul"]["enabled"])
+        # A parked mod is still installed, just switched off.
+        self.assertIn("Old Skin", by_name)
+        self.assertFalse(by_name["Old Skin"]["enabled"])
+        # A record from another game's install mode is not ours to show.
+        self.assertNotIn("Not Frostbite", by_name)
+
+    def test_a_record_with_no_file_is_not_listed(self):
+        # Disk decides. A record left behind by a failed install must not
+        # appear as something the user can toggle.
+        home = tempfile.mkdtemp(prefix="frosty-ghost-")
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        old_runtime = main.decky.DECKY_PLUGIN_RUNTIME_DIR
+        main.decky.DECKY_PLUGIN_RUNTIME_DIR = home
+        self.addCleanup(
+            setattr, main.decky, "DECKY_PLUGIN_RUNTIME_DIR", old_runtime
+        )
+        os.makedirs(main._frosty_mods_dir("starwarsbattlefront22017"),
+                    exist_ok=True)
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["starwarsbattlefront22017"] = {
+            "Ghost": {"mod_id": 9, "name": "Ghost", "mode": "frosty"},
+        }
+        main._save_settings(settings)
+        self.addCleanup(main._save_settings, {})
+
+        loop = asyncio.new_event_loop()
+        try:
+            r = loop.run_until_complete(main.Plugin().get_installed_mods(
+                "starwarsbattlefront22017", "STAR WARS Battlefront II", "Data",
+                "frosty", 1237950,
+            ))
+        finally:
+            loop.close()
+        self.assertEqual(r.get("mods"), [])
+
     def test_the_registry_path_lands_inside_the_prefix(self):
         # THE bug. drive_c/../.. is compatdata/<id>, not pfx, so the redirect
         # was written to a path that does not exist - which the setup function
