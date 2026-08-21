@@ -1,4 +1,9 @@
-# Battlefront II (2017): the Frostbite pipeline, and where it stands
+# Battlefront II (2017): the Frostbite pipeline
+
+> **SOLVED, 21 August 2026.** Mods work on the Deck. The recipe, the four
+> upstream bugs, and the verification method are in **WORKING.md** - read that
+> first. This file and SESSION-2.md are the investigation trail, kept because
+> the dead ends are worth not repeating.
 
 Working notes from 21 August 2026, kept because the next session should not
 have to rediscover any of it. `frostycli-swbf2.patch` is the full diff against
