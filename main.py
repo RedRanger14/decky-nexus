@@ -1799,6 +1799,87 @@ def _ensure_blse_launch_script() -> str:
     return path
 
 
+# ---- Skyrim: the 2026-08 ContentCatalog format change ----------------------
+# Bethesda's update rewrote %localappdata%/Skyrim Special Edition/
+# ContentCatalog.txt: Creation entries went from "CSV2_5658"-style keys to
+# "CSV2_<guid>" with an AchievementSafe field. A DOWNGRADED exe (the modding
+# community lives on older builds; collections ship downgrade patchers)
+# cannot parse the new keys and dies at boot with std::invalid_argument on
+# the guid string - a crash with no visible cause. The community-verified
+# fix is simply removing the file: the game regenerates it at launch, each
+# exe in its own format.
+#
+# The plugin quarantines (renames) rather than deletes, and only when BOTH
+# facts hold: the catalog is new-format AND the exe is old. The exe's age
+# comes from its PE header timestamp - a downgrade replaces the exe behind
+# Steam's back, so the manifest's buildid lies, but the PE link timestamp
+# is baked into the binary itself.
+_SKYRIM_CATALOG_GUID_RE = re.compile(
+    r'"CSV2_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"'
+)
+# 2026-08-01: safely between the newest downgrade-target exe builds and the
+# update that changed the format (new-format entry timestamps observed from
+# 2026-08-19).
+_SKYRIM_UPDATE_EPOCH = 1785542400
+
+
+def _pe_timestamp(path: str) -> int:
+    """The PE header's TimeDateStamp: when the exe was linked. 0 if unreadable."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(0x40)
+            if len(head) < 0x40 or head[:2] != b"MZ":
+                return 0
+            pe_off = int.from_bytes(head[0x3C:0x40], "little")
+            f.seek(pe_off)
+            pe = f.read(12)
+            if len(pe) < 12 or pe[:4] != b"PE\x00\x00":
+                return 0
+            return int.from_bytes(pe[8:12], "little")
+    except OSError:
+        return 0
+
+
+def _skyrim_cc_catalog_fix(app_id: int, install_path: str) -> str:
+    """Quarantine a new-format ContentCatalog on a downgraded exe.
+
+    Returns the quarantined file's new name, or "" when nothing was done.
+    """
+    exe = os.path.join(install_path, "SkyrimSE.exe")
+    stamp = _pe_timestamp(exe)
+    if not stamp or stamp >= _SKYRIM_UPDATE_EPOCH:
+        # Current exe (or unreadable): the new format is fine for it, and
+        # deleting would churn - the game regenerates the file each launch.
+        return ""
+    catalog = _prefix_drive_c(
+        app_id, "users", "steamuser", "AppData", "Local",
+        "Skyrim Special Edition", "ContentCatalog.txt",
+    )
+    if not os.path.isfile(catalog):
+        return ""
+    try:
+        with open(catalog, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    if not _SKYRIM_CATALOG_GUID_RE.search(text):
+        return ""
+    backup = catalog + ".pre-update-backup"
+    try:
+        if os.path.exists(backup):
+            os.remove(backup)
+        os.rename(catalog, backup)
+    except OSError as e:
+        decky.logger.warning(f"could not quarantine ContentCatalog: {e}")
+        return ""
+    decky.logger.info(
+        "skyrim: quarantined a new-format ContentCatalog.txt on a "
+        f"downgraded exe (PE stamp {stamp}) - the game regenerates it"
+    )
+    return os.path.basename(backup)
+
+
 def _prefix_drive_c(app_id: int, *parts: str) -> str:
     """A path inside the Proton prefix's C: drive, outside the user profile.
 
@@ -16127,6 +16208,14 @@ query CollectionInstructions($slug: String!) {
             if game_domain == "mountandblade2bannerlord" and app_id
             else []
         )
+        # Skyrim's 2026-08 update: a new-format ContentCatalog crashes
+        # downgraded exes at boot with no visible cause. Quarantined here
+        # when both facts hold; the game regenerates the file.
+        cc_catalog_fixed = (
+            _skyrim_cc_catalog_fix(app_id, install_path)
+            if game_domain == "skyrimspecialedition" and app_id
+            else ""
+        )
         script = _redscript_report(install_path, records)
         # The Bethesda half of the same question. Same authority - the game
         # itself - and the same translation job: the extender names DLLs,
@@ -16456,6 +16545,7 @@ query CollectionInstructions($slug: String!) {
             "shader_caches_fixed": shader_caches_fixed,
             "load_order_moved": load_order_moved,
             "era_quarantined": era_quarantined,
+            "cc_catalog_fixed": cc_catalog_fixed,
             # What the game itself reported, and the only part of this
             # report that is evidence rather than inference.
             "script_log": {

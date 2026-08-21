@@ -13098,6 +13098,90 @@ class TestBrowseFilters(unittest.TestCase):
         self.assertIn("_game_updated_at(int(app_id))", fn)
 
 
+class TestSkyrimCatalogQuarantine(unittest.TestCase):
+    """Bethesda's 2026-08 update rewrote ContentCatalog.txt: entry keys went
+    from "CSV2_5658" to "CSV2_<guid>" plus an AchievementSafe field, and a
+    DOWNGRADED exe dies at boot parsing the guid (std::invalid_argument) -
+    a crash with no visible cause. Community-verified fix: remove the file,
+    the game regenerates it. Quarantined only when BOTH facts hold: new
+    format AND old exe (by PE link timestamp, because a downgrade replaces
+    the exe behind Steam's back and the manifest buildid lies)."""
+
+    OLD_ENTRY = '"CSV2_5658" : { "Files" : [ "cc.bsa" ], "Title" : "X" }'
+    NEW_ENTRY = ('"CSV2_9bbcdace-4556-4e87-b821-0c9b6f2958d0" : '
+                 '{ "AchievementSafe" : false, "Title" : "X" }')
+
+    def _pe(self, path, stamp):
+        # A minimal valid PE: MZ header, e_lfanew at 0x3C pointing at the
+        # PE signature, then machine+sections, then TimeDateStamp. Built
+        # with bytes([...]) throughout - escape sequences in this file have
+        # been mangled by shell heredocs twice already.
+        head = bytearray(0x40)
+        head[0:2] = b"MZ"
+        head[0x3C:0x40] = (0x40).to_bytes(4, "little")
+        pe = (bytes([0x50, 0x45, 0, 0])          # "PE", two zero bytes
+              + bytes([0x64, 0x86, 0x01, 0x00])  # machine, section count
+              + stamp.to_bytes(4, "little"))
+        with open(path, "wb") as f:
+            f.write(bytes(head) + pe)
+
+    def test_pe_timestamp_reads_the_link_time(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        exe = os.path.join(d, "SkyrimSE.exe")
+        self._pe(exe, 1700000000)
+        self.assertEqual(main._pe_timestamp(exe), 1700000000)
+
+    def test_pe_timestamp_rejects_non_pe(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        p = os.path.join(d, "x.exe")
+        with open(p, "wb") as f:
+            f.write(b"not an exe at all, just bytes" * 4)
+        self.assertEqual(main._pe_timestamp(p), 0)
+
+    def test_the_new_format_is_recognised_and_the_old_is_not(self):
+        self.assertTrue(main._SKYRIM_CATALOG_GUID_RE.search(self.NEW_ENTRY))
+        self.assertFalse(main._SKYRIM_CATALOG_GUID_RE.search(self.OLD_ENTRY))
+
+    def test_quarantine_needs_both_facts(self):
+        # New-format catalog + OLD exe -> quarantined. Same catalog with a
+        # CURRENT exe -> untouched, because the new exe reads it fine and
+        # deleting would churn (the game regenerates it every launch).
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        exe = os.path.join(d, "SkyrimSE.exe")
+        catalog_dir = os.path.join(
+            d, "pfx", "drive_c", "users", "steamuser", "AppData", "Local",
+            "Skyrim Special Edition")
+        os.makedirs(catalog_dir)
+        catalog = os.path.join(catalog_dir, "ContentCatalog.txt")
+
+        import unittest.mock as mock
+        with mock.patch.object(main, "_prefix_drive_c",
+                               side_effect=lambda app_id, *p:
+                               os.path.join(d, "pfx", "drive_c", *p)):
+            # current exe: no action
+            self._pe(exe, main._SKYRIM_UPDATE_EPOCH + 1000)
+            with open(catalog, "w") as f:
+                f.write(self.NEW_ENTRY)
+            self.assertEqual(main._skyrim_cc_catalog_fix(489830, d), "")
+            self.assertTrue(os.path.isfile(catalog))
+            # old exe + old-format catalog: no action
+            self._pe(exe, 1650000000)
+            with open(catalog, "w") as f:
+                f.write(self.OLD_ENTRY)
+            self.assertEqual(main._skyrim_cc_catalog_fix(489830, d), "")
+            self.assertTrue(os.path.isfile(catalog))
+            # old exe + new-format catalog: quarantined
+            with open(catalog, "w") as f:
+                f.write(self.NEW_ENTRY)
+            moved = main._skyrim_cc_catalog_fix(489830, d)
+            self.assertEqual(moved, "ContentCatalog.txt.pre-update-backup")
+            self.assertFalse(os.path.isfile(catalog))
+            self.assertTrue(os.path.isfile(catalog + ".pre-update-backup"))
+
+
 class TestReshadeInstall(unittest.TestCase):
     """Michael: "Build the reshade but lets just put a warning on related
     mods that it might trigger the anti cheat because its injected." A

@@ -1235,6 +1235,9 @@ export const getHealthCheck = callable<
     /** Bannerlord: era-locked code mods from a version-pinned collection,
      * switched off in the launcher rather than left to crash the boot. */
     era_quarantined?: string[];
+    /** Skyrim: a new-format ContentCatalog.txt quarantined on a downgraded
+     * exe - the 2026-08 update's format change crashes old exes at boot. */
+    cc_catalog_fixed?: string;
     needs_mods?: {
       name: string;
       mod_id?: number;

@@ -228,6 +228,7 @@ export default function HealthCheckPage() {
     shader_caches_fixed: string[];
     load_order_moved: number;
     era_quarantined: string[];
+    cc_catalog_fixed: string;
     known_bad: { name: string; for: string; why: string; mod_id?: number }[];
     se_parked: string[];
     address_library?: { runtime: string; have: string[]; matches: boolean };
@@ -287,6 +288,7 @@ export default function HealthCheckPage() {
                 shader_caches_fixed: r.shader_caches_fixed ?? [],
                 load_order_moved: r.load_order_moved ?? 0,
                 era_quarantined: r.era_quarantined ?? [],
+                cc_catalog_fixed: r.cc_catalog_fixed ?? "",
                 known_bad: r.known_bad ?? [],
                 script_extender: r.script_extender ?? [],
                 se_parked: r.se_parked ?? [],
@@ -821,6 +823,26 @@ export default function HealthCheckPage() {
             Report a problem
           </ButtonItem>
         </Focusable>
+
+        {(report?.cc_catalog_fixed ?? "") !== "" && (
+          <>
+            <SectionHeading title="Fixed for you" />
+            <FindingCard
+              key="cc-catalog"
+              tone="150, 160, 220"
+              icon={<FaPuzzlePiece size={16} />}
+              title="Removed a game file that crashes downgraded Skyrim"
+              detail={
+                "Skyrim's 2026 update changed the format of " +
+                "ContentCatalog.txt (the Creation Club catalog), and the " +
+                "older game version your mods need cannot read it - the " +
+                "game crashes at launch with no message. The file was set " +
+                "aside; the game rebuilds it next launch. Your Creations " +
+                "and mods are untouched."
+              }
+            />
+          </>
+        )}
 
         {(report?.era_quarantined?.length ?? 0) > 0 && (
           <>
