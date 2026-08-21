@@ -1,0 +1,567 @@
+diff --git a/FrostyModSupport/FrostyModExecutor.cs b/FrostyModSupport/FrostyModExecutor.cs
+index c64b86b..8d07c1b 100644
+--- a/FrostyModSupport/FrostyModExecutor.cs
++++ b/FrostyModSupport/FrostyModExecutor.cs
+@@ -161,7 +161,9 @@ public partial class FrostyModExecutor
+                     ModManifest2019(sbIc, sb.Value, installChunkWriter);
+                     break;
+                 case BundleFormat.SuperBundleManifest:
+-                    throw new NotImplementedException();
++                    // The manifest is GLOBAL, not per-SuperBundle: the whole rebuild
++                    // happens once, after every cas archive is written (offsets must
++                    // resolve), in the block below.
+                     break;
+                 case BundleFormat.Kelvin:
+                     throw new NotImplementedException();
+@@ -181,6 +183,22 @@ public partial class FrostyModExecutor
+                 WriteCasArchives(sb.Value, installChunkWriter);
+             }
+ 
++            if (FileSystemManager.BundleFormat == BundleFormat.SuperBundleManifest)
++            {
++                // One global pass: rebuild bundle metas, the manifest blob, and
++                // layout.toc. Runs after the cas writes above so GetFileInfo
++                // resolves, and before WriteCatalog below so the manifest blob's
++                // own cas entry lands in the catalog.
++                // Diagnostic switch: with FROSTY_SKIP_MANIFEST=1 the mod's cas
++                // data is still written but the manifest is left alone, which
++                // separates "our manifest rebuild corrupts data" from "the
++                // applied mod data itself is bad".
++                if (Environment.GetEnvironmentVariable("FROSTY_SKIP_MANIFEST") != "1")
++                {
++                    ModSuperBundleManifest(inModPackPath);
++                }
++            }
++
+             foreach (InstallChunkWriter writer in m_installChunkWriters.Values)
+             {
+                 writer.WriteCatalog();
+@@ -267,9 +285,31 @@ public partial class FrostyModExecutor
+                 if (source.Path != m_patchPath)
+                 {
+                     string destPath = Path.Combine(inModPackPath, source.Path);
+-                    Directory.CreateDirectory(Directory.GetParent(destPath)!.FullName);
+-                    Directory.CreateSymbolicLink(destPath,
+-                        Path.Combine(FileSystemManager.BasePath, source.Path));
++                    if (Directory.Exists(destPath))
++                    {
++                        // Something (the SuperBundleManifest layout.toc, e.g.)
++                        // already wrote into this source's mirror: symlink the
++                        // remaining files individually rather than shadowing
++                        // ours with a whole-directory link.
++                        string srcRoot = Path.Combine(FileSystemManager.BasePath, source.Path);
++                        foreach (string file in Directory.EnumerateFiles(srcRoot, string.Empty,
++                                     SearchOption.AllDirectories))
++                        {
++                            string rel = Path.GetRelativePath(srcRoot, file);
++                            string dst = Path.Combine(destPath, rel);
++                            if (!File.Exists(dst))
++                            {
++                                Directory.CreateDirectory(Directory.GetParent(dst)!.FullName);
++                                File.CreateSymbolicLink(dst, file);
++                            }
++                        }
++                    }
++                    else
++                    {
++                        Directory.CreateDirectory(Directory.GetParent(destPath)!.FullName);
++                        Directory.CreateSymbolicLink(destPath,
++                            Path.Combine(FileSystemManager.BasePath, source.Path));
++                    }
+                 }
+ 
+                 if (source.Path != FileSystemSource.Base.Path && source.Path.Contains("Data"))
+diff --git a/FrostyModSupport/SuperBundleActions/SuperBundleManifest.cs b/FrostyModSupport/SuperBundleActions/SuperBundleManifest.cs
+index 65cbaea..bcf696f 100644
+--- a/FrostyModSupport/SuperBundleActions/SuperBundleManifest.cs
++++ b/FrostyModSupport/SuperBundleActions/SuperBundleManifest.cs
+@@ -1,23 +1,414 @@
+ using System;
++using System.Collections.Generic;
++using System.IO;
+ using Frosty.ModSupport.Archive;
++using Frosty.ModSupport.ModEntries;
+ using Frosty.ModSupport.ModInfos;
++using Frosty.Sdk;
++using Frosty.Sdk.DbObjectElements;
++using Frosty.Sdk.Interfaces;
++using Frosty.Sdk.IO;
++using Frosty.Sdk.Managers;
+ using Frosty.Sdk.Managers.Infos;
++using Frosty.Sdk.Managers.Infos.FileInfos;
++using Frosty.Sdk.Managers.Infos.FileInfos.ResourceInfo;
++using Frosty.Sdk.Utils;
+ 
+ namespace Frosty.ModSupport;
+ 
+-internal class SuperBundleManifest : IDisposable
+-{
+-    public void Dispose()
+-    {
+-        // TODO release managed resources here
+-    }
+-}
+-
+ public partial class FrostyModExecutor
+ {
+-    private void ModSuperBundleManifest(SuperBundleInstallChunk inSbIc, SuperBundleModInfo inModInfo,
+-        InstallChunkWriter inInstallChunkWriter)
++    /// <summary>
++    /// SuperBundleManifest (Star Wars Battlefront II 2017, Battlefield V pre-2019 layouts):
++    /// the game has no per-SuperBundle toc/sb files. Instead layout.toc's "manifest" entry
++    /// points at one global blob inside a cas file:
++    ///
++    ///   u32 resourceInfoCount, u32 bundleCount, u32 chunkCount
++    ///   resourceInfos[]: { u32 manifestFileIdentifier, u32 offset, i64 size }
++    ///   bundles[]:       { i32 nameHash, i32 startIndex, i32 resourceCount, u64 zero }
++    ///   chunks[]:        { guid id, i32 resourceInfoIndex }
++    ///
++    /// A bundle's resourceInfo range is [startIndex, startIndex+resourceCount): the first
++    /// entry is the BinaryBundle meta, the rest are its assets in bundle order (the same
++    /// order BinaryBundle.Modify walks, which is why its callback index maps to
++    /// range[i + 1] - identical to Manifest2019's non-inline branch).
++    ///
++    /// Because the manifest is global rather than per-SuperBundle, this runs ONCE after
++    /// all cas archives are written (offsets must be resolvable via GetFileInfo), not in
++    /// the per-SuperBundleInstallChunk loop.
++    /// </summary>
++    private void ModSuperBundleManifest(string inModPackPath)
+     {
++        DbObjectDict manifestDict = FileSystemManager.SuperBundleManifest!;
++
++        CasFileIdentifier manifestFile =
++            CasFileIdentifier.FromManifestFileIdentifier(manifestDict.AsUInt("file"));
++
++        // 1. Parse the original manifest, exactly as ManifestAssetLoader reads it.
++        List<(CasFileIdentifier Id, uint Offset, long Size)> files = new();
++        List<(int NameHash, int StartIndex, int ResourceCount)> bundles = new();
++        List<(Guid Id, int Index)> chunks = new();
++
++        using (BlockStream stream = BlockStream.FromFile(FileSystemManager.GetFilePath(manifestFile),
++                   manifestDict.AsUInt("offset"), manifestDict.AsInt("size")))
++        {
++            uint resourceInfoCount = stream.ReadUInt32();
++            uint bundleCount = stream.ReadUInt32();
++            uint chunkCount = stream.ReadUInt32();
++
++            for (int i = 0; i < resourceInfoCount; i++)
++            {
++                files.Add((CasFileIdentifier.FromManifestFileIdentifier(stream.ReadUInt32()),
++                    stream.ReadUInt32(), stream.ReadInt64()));
++            }
++
++            for (int i = 0; i < bundleCount; i++)
++            {
++                int nameHash = stream.ReadInt32();
++                int startIndex = stream.ReadInt32();
++                int resourceCount = stream.ReadInt32();
++                stream.Position += sizeof(ulong);
++                bundles.Add((nameHash, startIndex, resourceCount));
++            }
++
++            for (int i = 0; i < chunkCount; i++)
++            {
++                chunks.Add((stream.ReadGuid(), stream.ReadInt32()));
++            }
++        }
++
++        // 2. Merge every SuperBundle's mod info: the manifest is global, so per-sbIc
++        // splits collapse back into one view. Bundle keys are AssetManager bundle ids
++        // (HashString(Name + Parent.Name)); the manifest speaks nameHash
++        // (HashString(Name)) - map via the BundleInfo, with the loader's hex fallback
++        // for bundles whose real name never resolved.
++        Dictionary<int, BundleModInfo> modifiedByNameHash = new();
++        Dictionary<Guid, ChunkModEntry> chunkMods = new();
++        HashSet<Guid> removedChunks = new();
++        List<(Guid Id, SuperBundleInstallChunk SbIc)> addedChunks = new();
++
++        foreach (KeyValuePair<int, SuperBundleModInfo> sb in m_superBundleModInfos)
++        {
++            SuperBundleInstallChunk sbIc = FileSystemManager.GetSuperBundleInstallChunk(sb.Key);
++
++            if (sb.Value.Added.Bundles.Count > 0)
++            {
++                // Adding whole new bundles to the manifest is possible (v1 did it) but
++                // not needed by asset-replacement mods; failing loudly beats writing a
++                // manifest that silently lacks them.
++                throw new NotImplementedException(
++                    "SuperBundleManifest: adding new bundles is not supported yet");
++            }
++
++            foreach (KeyValuePair<int, BundleModInfo> bundle in sb.Value.Modified.Bundles)
++            {
++                BundleInfo? info = AssetManager.GetBundleInfo(bundle.Key);
++                if (info is null)
++                {
++                    throw new Exception(
++                        $"SuperBundleManifest: unknown modified bundle {bundle.Key:X8}");
++                }
++
++                int nameHash;
++                if (info.Name.Length == 8
++                    && int.TryParse(info.Name, System.Globalization.NumberStyles.HexNumber,
++                        null, out int parsed))
++                {
++                    // The loader names unresolved bundles by their hash ("X8").
++                    nameHash = parsed;
++                }
++                else
++                {
++                    nameHash = Sdk.Utils.Utils.HashString(info.Name, true);
++                }
++
++                modifiedByNameHash[nameHash] = bundle.Value;
++            }
++
++            foreach (Guid id in sb.Value.Modified.Chunks)
++            {
++                chunkMods[id] = m_modifiedChunks[id];
++            }
++
++            foreach (Guid id in sb.Value.Removed.Chunks)
++            {
++                removedChunks.Add(id);
++            }
++
++            foreach (Guid id in sb.Value.Added.Chunks)
++            {
++                chunkMods[id] = m_modifiedChunks[id];
++                addedChunks.Add((id, sbIc));
++            }
++        }
++
++        // 3. Rebuild the tables. Ranges shift as modified bundles gain entries, so the
++        // files table is rebuilt from scratch in original bundle order.
++        List<(CasFileIdentifier Id, uint Offset, long Size)> newFiles = new(files.Count);
++        List<(int NameHash, int StartIndex, int ResourceCount)> newBundles = new(bundles.Count);
++
++        foreach ((int NameHash, int StartIndex, int ResourceCount) bundle in bundles)
++        {
++            int newStart = newFiles.Count;
++
++            if (!modifiedByNameHash.TryGetValue(bundle.NameHash, out BundleModInfo? modInfo))
++            {
++                for (int i = 0; i < bundle.ResourceCount; i++)
++                {
++                    newFiles.Add(files[bundle.StartIndex + i]);
++                }
++                newBundles.Add((bundle.NameHash, newStart, bundle.ResourceCount));
++                continue;
++            }
++
++            // The writer for this bundle's install chunk: same resolution the loader
++            // uses (first superbundle of the meta's install chunk).
++            (CasFileIdentifier Id, uint Offset, long Size) meta = files[bundle.StartIndex];
++            InstallChunkInfo ic = FileSystemManager.GetInstallChunkInfo(meta.Id.InstallChunkIndex);
++            string superBundle = string.Empty;
++            foreach (string sbName in ic.SuperBundles)
++            {
++                superBundle = sbName;
++                break;
++            }
++            SuperBundleInstallChunk sbIc = FileSystemManager.GetSuperBundleInstallChunk(superBundle);
++            InstallChunkWriter writer = GetInstallChunkWriter(sbIc);
++
++            // PRESERVE, then PATCH. The manifest's per-bundle range is not one
++            // entry per asset - the same bundle reported callback index 74
++            // against a 71-entry range - so neither positional indexing nor a
++            // fresh per-asset rebuild is correct. A fresh rebuild also broke
++            // unmodified reads outright: forcing FrostyCli to re-parse our own
++            // output raised "ZStandard: destination buffer is too small" while
++            // indexing ebx, because an asset whose data spans several cas
++            // entries cannot be described by its single loader file info.
++            //
++            // So every original entry is copied verbatim, and only the entries
++            // belonging to MODIFIED assets are replaced - located by their
++            // original (cas file, offset), which the loader recorded when it
++            // indexed the base game. Untouched assets keep byte-identical
++            // locations, which is the property that matters.
++            Dictionary<(CasFileIdentifier, uint), (CasFileIdentifier, uint, long)>
++                replacements = new();
++
++            void Replace(Frosty.Sdk.Managers.Entries.AssetEntry? original,
++                Sha1 inNewSha1, uint inRangeStart, uint inRangeEnd, int inFirstMip)
++            {
++                CasResourceInfo? origInfo =
++                    (original?.GetFileInfo() as CasFileInfo)?.GetBase();
++                if (origInfo is null)
++                {
++                    // No recorded location: the asset was not in the base
++                    // manifest, so there is nothing to replace. Skipping is
++                    // right - inventing an entry is what corrupted the data.
++                    return;
++                }
+ 
++                (CasFileIdentifier File, uint Offset, uint Size) info =
++                    writer.GetFileInfo(inNewSha1);
++                if (inFirstMip > 0)
++                {
++                    info.Offset += inRangeStart;
++                    info.Size = inRangeEnd - inRangeStart;
++                }
++
++                replacements[(origInfo.GetIdentifier(), origInfo.GetFileOffset())] =
++                    (info.File, info.Offset, info.Size);
++            }
++
++            foreach (string name in modInfo.Modified.Ebx)
++            {
++                Replace(AssetManager.GetEbxAssetEntry(name),
++                    m_modifiedEbx[name].Sha1, 0, 0, -1);
++            }
++
++            foreach (string name in modInfo.Modified.Res)
++            {
++                Replace(AssetManager.GetResAssetEntry(name),
++                    m_modifiedRes[name].Sha1, 0, 0, -1);
++            }
++
++            foreach (Guid id in modInfo.Modified.Chunks)
++            {
++                ChunkModEntry chunkMod = m_modifiedChunks[id];
++                Replace(AssetManager.GetChunkAssetEntry(id), chunkMod.Sha1,
++                    chunkMod.RangeStart, chunkMod.RangeEnd, chunkMod.FirstMip);
++            }
++
++            // The bundle meta still has to be rebuilt (its sha1s and sizes
++            // change); Modify's callback is not used to build the range.
++            Block<byte> bundleMeta;
++            using (BlockStream bundleStream = BlockStream.FromFile(
++                       FileSystemManager.GetFilePath(meta.Id), meta.Offset, (int)meta.Size))
++            {
++                bundleMeta = BinaryBundle.Modify(bundleStream, modInfo, m_modifiedEbx,
++                    m_modifiedRes, m_modifiedChunks, (_, _, _, _, _) => { });
++            }
++
++            List<(CasFileIdentifier, uint, long)> range = new(bundle.ResourceCount);
++
++            // [0] is the rebuilt meta, written into ModData's cas.
++            Sha1 metaSha1 = Sdk.Utils.Utils.GenerateSha1(bundleMeta.ToSpan());
++            (CasFileIdentifier File, uint Offset, uint Size) written =
++                writer.WriteData(metaSha1, bundleMeta);
++            bundleMeta.Dispose();
++            range.Add((written.File, written.Offset, written.Size));
++
++            for (int i = 1; i < bundle.ResourceCount; i++)
++            {
++                (CasFileIdentifier Id, uint Offset, long Size) original =
++                    files[bundle.StartIndex + i];
++                range.Add(replacements.TryGetValue((original.Id, original.Offset),
++                    out (CasFileIdentifier, uint, long) patched)
++                    ? patched
++                    : original);
++            }
++
++            newFiles.AddRange(range);
++            newBundles.Add((bundle.NameHash, newStart, range.Count));
++        }
++
++        // Chunks: same rebuild, indices re-point at the new files table.
++        List<(Guid Id, int Index)> newChunks = new(chunks.Count);
++        foreach ((Guid Id, int Index) chunk in chunks)
++        {
++            if (removedChunks.Contains(chunk.Id))
++            {
++                continue;
++            }
++
++            if (chunkMods.TryGetValue(chunk.Id, out ChunkModEntry? mod))
++            {
++                (CasFileIdentifier Id, uint Offset, long Size) orig = files[chunk.Index];
++                InstallChunkInfo ic = FileSystemManager.GetInstallChunkInfo(orig.Id.InstallChunkIndex);
++                string superBundle = string.Empty;
++                foreach (string sbName in ic.SuperBundles)
++                {
++                    superBundle = sbName;
++                    break;
++                }
++                InstallChunkWriter writer =
++                    GetInstallChunkWriter(FileSystemManager.GetSuperBundleInstallChunk(superBundle));
++
++                (CasFileIdentifier File, uint Offset, uint Size) info = writer.GetFileInfo(mod.Sha1);
++                if (mod.FirstMip > 0)
++                {
++                    info.Offset += mod.RangeStart;
++                    info.Size = mod.RangeEnd - mod.RangeStart;
++                }
++
++                newChunks.Add((chunk.Id, newFiles.Count));
++                newFiles.Add((info.File, info.Offset, info.Size));
++            }
++            else
++            {
++                newChunks.Add((chunk.Id, newFiles.Count));
++                newFiles.Add(files[chunk.Index]);
++            }
++        }
++
++        foreach ((Guid Id, SuperBundleInstallChunk SbIc) added in addedChunks)
++        {
++            ChunkModEntry mod = chunkMods[added.Id];
++            InstallChunkWriter writer = GetInstallChunkWriter(added.SbIc);
++
++            (CasFileIdentifier File, uint Offset, uint Size) info = writer.GetFileInfo(mod.Sha1);
++            if (mod.FirstMip > 0)
++            {
++                info.Offset += mod.RangeStart;
++                info.Size = mod.RangeEnd - mod.RangeStart;
++            }
++
++            newChunks.Add((added.Id, newFiles.Count));
++            newFiles.Add((info.File, info.Offset, info.Size));
++        }
++
++        // 4. Serialize the new manifest blob (little endian, like the loader reads it).
++        Block<byte> blob = new(0);
++        using (BlockStream ws = new(blob, true))
++        {
++            ws.WriteUInt32((uint)newFiles.Count);
++            ws.WriteUInt32((uint)newBundles.Count);
++            ws.WriteUInt32((uint)newChunks.Count);
++
++            foreach ((CasFileIdentifier Id, uint Offset, long Size) file in newFiles)
++            {
++                ws.WriteUInt32(CasFileIdentifier.ToManifestFileIdentifier(file.Id));
++                ws.WriteUInt32(file.Offset);
++                ws.WriteInt64(file.Size);
++            }
++
++            foreach ((int NameHash, int StartIndex, int ResourceCount) bundle in newBundles)
++            {
++                ws.WriteInt32(bundle.NameHash);
++                ws.WriteInt32(bundle.StartIndex);
++                ws.WriteInt32(bundle.ResourceCount);
++                ws.WriteUInt64(0);
++            }
++
++            foreach ((Guid Id, int Index) chunk in newChunks)
++            {
++                ws.WriteGuid(chunk.Id);
++                ws.WriteInt32(chunk.Index);
++            }
++        }
++
++        // 5. The blob itself lives in a cas: write it through the manifest's own
++        // install chunk so the catalog covers it (v1 parity).
++        InstallChunkInfo manifestIc = FileSystemManager.GetInstallChunkInfo(manifestFile.InstallChunkIndex);
++        string manifestSb = string.Empty;
++        foreach (string sbName in manifestIc.SuperBundles)
++        {
++            manifestSb = sbName;
++            break;
++        }
++        InstallChunkWriter manifestWriter =
++            GetInstallChunkWriter(FileSystemManager.GetSuperBundleInstallChunk(manifestSb));
++
++        Sha1 blobSha1 = Sdk.Utils.Utils.GenerateSha1(blob.ToSpan());
++        (CasFileIdentifier File, uint Offset, uint Size) manifestWritten =
++            manifestWriter.WriteData(blobSha1, blob);
++        blob.Dispose();
++
++        // 6. layout.toc: point the manifest entry at the rebuilt blob. Everything else
++        // in the layout is preserved; the untouched-file symlink pass skips this file
++        // because it now exists in ModData.
++        // SWBF2 keeps layout.toc in Data/, not Patch/ - resolve it rather than
++        // assume, and mirror it at the same relative location under ModData so
++        // the game (launched with -dataPath) finds ours first. The source
++        // symlink pass must then link Data's remaining files individually
++        // instead of symlinking the whole directory over ours.
++        // ResolvePath builds the path without checking the disk, and SWBF2 has
++        // no Patch/layout.toc - the real one lives in the base source (Data/).
++        string layoutPath = FileSystemManager.ResolvePath(true, "layout.toc");
++        if (!File.Exists(layoutPath))
++        {
++            layoutPath = FileSystemManager.ResolvePath(false, "layout.toc");
++        }
++        if (!File.Exists(layoutPath))
++        {
++            throw new Exception("SuperBundleManifest: no layout.toc found");
++        }
++        string relative = Path.GetRelativePath(FileSystemManager.BasePath, layoutPath);
++
++        DbObjectDict layout = DbObject.Deserialize(layoutPath)!.AsDict();
++        DbObjectDict layoutManifest = layout.AsDict("manifest");
++        layoutManifest.Set("file", CasFileIdentifier.ToManifestFileIdentifier(manifestWritten.File));
++        layoutManifest.Set("offset", manifestWritten.Offset);
++        layoutManifest.Set("size", (int)manifestWritten.Size);
++        layoutManifest.Set("sha1", blobSha1);
++
++        // The PACK ROOT, not m_modDataPath: that is ModData/<pack>/<patchPath>,
++        // so writing "Data/layout.toc" under it produced Patch/Data/layout.toc
++        // while the real Data/layout.toc stayed a symlink to the original -
++        // the engine then read original manifest offsets against our rebuilt
++        // cas files and crashed. v1 wrote to the pack root for this game too.
++        string outPath = Path.Combine(inModPackPath, relative);
++        Directory.CreateDirectory(Directory.GetParent(outPath)!.FullName);
++        using (DataStream stream = new(File.Create(outPath)))
++        {
++            ObfuscationHeader.Write(stream);
++            DbObject.Serialize(stream, layout);
++        }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/FrostySdk/Managers/AssetManager.cs b/FrostySdk/Managers/AssetManager.cs
+index e9dadec..c39d525 100644
+--- a/FrostySdk/Managers/AssetManager.cs
++++ b/FrostySdk/Managers/AssetManager.cs
+@@ -521,7 +521,23 @@ public static class AssetManager
+                 continue;
+             }
+ 
+-            using (BlockStream stream = new(GetAsset(entry)))
++            // Diagnostic: name the asset whose data will not decompress. The
++            // bare "ZStandard: destination buffer is too small" says nothing
++            // about which asset or which size disagreed.
++            Block<byte> assetData;
++            try
++            {
++                assetData = GetAsset(entry);
++            }
++            catch (Exception e)
++            {
++                FrostyLogger.Logger?.LogError(
++                    $"ASSETFAIL name=\"{entry.Name}\" sha1={entry.Sha1} " +
++                    $"originalSize={entry.OriginalSize}: {e.Message}");
++                throw;
++            }
++
++            using (BlockStream stream = new(assetData))
+             {
+                 BaseEbxReader reader = BaseEbxReader.CreateReader(stream);
+                 entry.Type = reader.GetRootType();
+diff --git a/FrostySdk/Managers/Entries/AssetEntry.cs b/FrostySdk/Managers/Entries/AssetEntry.cs
+index 3e7648a..c983953 100644
+--- a/FrostySdk/Managers/Entries/AssetEntry.cs
++++ b/FrostySdk/Managers/Entries/AssetEntry.cs
+@@ -64,6 +64,11 @@ public abstract class AssetEntry
+ 
+     internal IFileInfo? FileInfo => m_fileInfo;
+ 
++    // Public for the SuperBundleManifest mod writer: rebuilding per-bundle
++    // resource ranges needs each unmodified entry's location, and not every
++    // sha1 resolves through the ResourceManager's catalog index.
++    public IFileInfo? GetFileInfo() => m_fileInfo;
++
+     private IFileInfo? m_fileInfo;
+ 
+     protected AssetEntry(Sha1 inSha1, long inOriginalSize)
+diff --git a/FrostySdk/Managers/Infos/FileInfos/ResourceInfo/CasResourceInfo.cs b/FrostySdk/Managers/Infos/FileInfos/ResourceInfo/CasResourceInfo.cs
+index a28160f..d2eb9c4 100644
+--- a/FrostySdk/Managers/Infos/FileInfos/ResourceInfo/CasResourceInfo.cs
++++ b/FrostySdk/Managers/Infos/FileInfos/ResourceInfo/CasResourceInfo.cs
+@@ -36,6 +36,13 @@ public class CasResourceInfo
+ 
+     public bool IsComplete() => m_logicalOffset == 0;
+ 
++    // Public accessors for the SuperBundleManifest mod writer: rebuilding the
++    // manifest's per-bundle resource ranges needs each unmodified entry's
++    // location, which this class previously kept to itself.
++    public CasFileIdentifier GetIdentifier() => m_casFileIdentifier;
++
++    public uint GetFileOffset() => m_offset;
++
+     public bool FileExists() => m_fileExists;
+ 
+     protected uint GetOffset() => m_offset;

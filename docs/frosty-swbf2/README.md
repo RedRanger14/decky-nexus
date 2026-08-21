@@ -1,0 +1,110 @@
+# Battlefront II (2017): the Frostbite pipeline, and where it stands
+
+Working notes from 21 August 2026, kept because the next session should not
+have to rediscover any of it. `frostycli-swbf2.patch` is the full diff against
+[FrostyToolsuite](https://github.com/FrostyToolsuite/FrostyToolsuite) master
+(commit ee2a587), and `SuperBundleManifest.cs` is the implementation on its own.
+
+## Why this exists
+
+Battlefront II mods are `.fbmod` files applied by Frosty, a Windows .NET app.
+The plugin cannot drive a desktop GUI, so the question was whether the pipeline
+can be run headlessly on the device. It can, except for one step.
+
+FrostyCli (the v2 rewrite) targets .NET 8 and runs natively on SteamOS. It
+supports two bundle formats and leaves the third - `SuperBundleManifest`, which
+is exactly the one Battlefront II uses - as `throw new NotImplementedException()`
+in a switch case, beside a 22-line stub file. Upstream has been quiet since
+August 2025.
+
+## What is proven on hardware
+
+Everything except the last step, all on the Legion:
+
+- FrostyCli built from source for linux-x64, self-contained, runs natively.
+- Its SWBF2 profile is recognised and the game's data indexes fine.
+- The SDK generates from the RUNNING game via `/proc/<pid>/mem`: 23,221 types.
+  Needs `ptrace_scope=0` for the dump only, and the real pid is the one with a
+  multi-GB RSS - `pgrep -f` also matches EA's proxy, which yields "No offset
+  found for TypeInfo".
+- A 2021-era mod converts v3 to v6 with `update-mod`.
+- `mod` generates a complete ModData tree (258 MB) with exit 0.
+- The engine reads that tree: the crash moved from "vanilla boot" to a crash
+  DURING data load, which is how we knew the redirect worked.
+
+Runtime plumbing that works, for the record: `user.cfg` beside the exe holding
+`-dataPath Z:\...`, plus `CryptBase.dll` (v1's hook; v1 explicitly deletes
+bcrypt.dll) and a per-exe DllOverride in the prefix registry. Env vars survive
+dlo but not reliably EA's relauncher, which is why `user.cfg` is the channel.
+
+## The one remaining defect
+
+Generated data fails a read-back. Forcing FrostyCli to re-parse its own output
+(clear `Caches/starwarsii.cache`, then `load` against the ModData with the exe
+copied in) raises:
+
+    Indexing Ebx -> ZStandard: "Destination buffer is too small"
+
+Isolated by three controls, which is the useful part:
+
+| Run | Read-back |
+| --- | --- |
+| ModData with NO mods | passes |
+| ModData with the mod, manifest pass skipped (`FROSTY_SKIP_MANIFEST=1`) | passes |
+| ModData with the mod, manifest pass active | fails |
+
+So the generation machinery and the read-back oracle are both sound, and the
+defect is in the manifest rebuild. Instrumenting the indexing loop names the
+casualty:
+
+    ASSETFAIL name="sound/characters/heroes/darthvader/
+    sw02_characters_heroes_darthvader_breathing_lowhealth_var_01"
+    sha1=09824daf... originalSize=3600
+
+That asset is NOT in the mod. It is an unmodified sibling inside a bundle the
+mod does touch, so rewriting that bundle's meta is breaking entries it should
+have left alone.
+
+## Two dead ends, so they are not repeated
+
+- **Positional indexing.** `BinaryBundle.Modify`'s callback index does not map
+  to the manifest range: one bundle reported index 74 against a 71-entry range.
+  The manifest does not hold one resourceInfo per asset.
+- **Rebuilding the range per asset** from each entry's loader file info. Reads
+  break outright: an asset whose data spans several cas entries cannot be
+  described by one info. v1 solves this with a catalog expansion pass
+  (`ManifestBundle.cs`, the `while (totalSize != size)` loop).
+
+The current implementation preserves every original entry and patches only
+modified ones, located by their original (cas file, offset). That is closer,
+but something in the meta rewrite still mis-pairs an unmodified entry.
+
+## The next step, and why
+
+Frosty v1 on Windows applying the SAME mod to the SAME game, then diff its
+ModData against ours: the manifest blob, the rewritten bundle meta, and the
+catalog. v1 is known-good here, so the diff turns a reverse-engineering problem
+into a comparison. Michael was downloading Battlefront II on the PC for exactly
+this.
+
+Specific things to compare:
+
+1. Does v1 rewrite the bundle meta at all for a manifest-format game, or patch
+   the manifest range only?
+2. What does v1's manifest range look like for the touched bundle - same entry
+   count as the original, or expanded?
+3. Where does v1 place the rebuilt meta, and at what size?
+
+## Things worth knowing
+
+- `m_modDataPath` is `ModData/<pack>/<patchPath>`, NOT the pack root. Writing
+  `Data/layout.toc` under it produces `Patch/Data/layout.toc` while the real
+  `Data/layout.toc` stays a symlink to the original - the engine then reads
+  original manifest offsets against rebuilt cas files and crashes. That crash
+  named `/Data/layout.toc` in its minidump; `cmp -l` returning zero
+  differences between "our" layout and the original was the tell.
+- Never run the game headless with a different Proton than Steam uses. Doing so
+  downgraded the prefix ("Removing newer prefix") and left EA's app demanding a
+  reinstall (INST-14-1627). Steam uses Proton - Experimental for this title.
+- SWBF2 keeps `layout.toc` in `Data/`, not `Patch/`. `ResolvePath` builds paths
+  without checking the disk, so existence has to be tested.
