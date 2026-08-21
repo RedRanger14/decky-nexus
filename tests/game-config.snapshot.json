@@ -239,6 +239,28 @@
     ]
   },
   {
+    "appId": "1237950",
+    "displayName": "STAR WARS Battlefront II",
+    "nexusDomain": "starwarsbattlefront22017",
+    "installDirName": "STAR WARS Battlefront II",
+    "modsSubdir": "Data",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "Mod compiler",
+    "launchOptionsTemplate": null,
+    "prefixTools": [
+      "0"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "1245620",
     "displayName": "Elden Ring",
     "nexusDomain": "eldenring",

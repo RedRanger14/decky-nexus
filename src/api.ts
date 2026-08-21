@@ -1817,3 +1817,59 @@ export const getGameStatus = callable<
   ],
   GameStatus
 >("get_game_status");
+
+// ---- Frostbite games (Battlefront II) --------------------------------------
+// Mods are compiled, not copied: every change recompiles the enabled set, so
+// these calls replace the normal install/toggle/uninstall path.
+
+export const getFrostyState = callable<
+  [game_domain: string, install_dir: string, app_id?: number],
+  {
+    ok: boolean;
+    toolkit_installed?: boolean;
+    compiled?: boolean;
+    mods?: string[];
+  }
+>("get_frosty_state");
+
+export const installFrostyToolkit = callable<
+  [],
+  { ok: boolean; already?: boolean; error?: string }
+>("install_frosty_toolkit");
+
+export const installFrostyMod = callable<
+  [
+    game_domain: string,
+    mod_id: number,
+    file_id: number,
+    file_name: string,
+    mod_name: string,
+    mod_version: string,
+    install_dir: string,
+    app_id: number,
+    page_version?: string,
+    payload_choice?: string
+  ],
+  InstallResult & { compiled?: number }
+>("install_frosty_mod");
+
+export const setFrostyModEnabled = callable<
+  [
+    game_domain: string,
+    folder: string,
+    enabled: boolean,
+    install_dir: string,
+    app_id: number
+  ],
+  { ok: boolean; error?: string; compiled?: number }
+>("set_frosty_mod_enabled");
+
+export const uninstallFrostyMod = callable<
+  [game_domain: string, folder: string, install_dir: string, app_id: number],
+  { ok: boolean; error?: string; compiled?: number }
+>("uninstall_frosty_mod");
+
+export const resetFrosty = callable<
+  [game_domain: string, install_dir: string, app_id: number],
+  { ok: boolean; error?: string }
+>("reset_frosty");

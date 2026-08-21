@@ -13182,6 +13182,103 @@ class TestSkyrimCatalogQuarantine(unittest.TestCase):
             self.assertTrue(os.path.isfile(catalog + ".pre-update-backup"))
 
 
+class TestFrostbiteGames(unittest.TestCase):
+    """Battlefront II mods are COMPILED, not copied: an .fbmod is converted and
+    the whole enabled set is rebuilt into a ModData tree, then the game is
+    redirected at it. Everything here exists because that differs from every
+    other supported game (see docs/frosty-swbf2/WORKING.md)."""
+
+    def test_the_toolkit_download_is_pinned(self):
+        # A truncated 40 MB download would otherwise fail much later, inside
+        # the compiler, with an incomprehensible error.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("FROSTY_TOOLKIT_SHA256", source)
+        fn = source[source.index("async def _frosty_install_toolkit"):]
+        fn = fn[:fn.index("def _frosty_game_exe")]
+        self.assertIn("hashlib.sha256()", fn)
+        self.assertIn("digest.hexdigest() != FROSTY_TOOLKIT_SHA256", fn)
+
+    def test_the_compiler_gets_a_clean_environment(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _frosty_run"):]
+        fn = fn[:fn.index("def _strip_ansi")]
+        self.assertIn("env=_host_env()", fn)
+
+    def test_a_pack_is_verified_before_it_is_offered(self):
+        # The read-back check is what turns "the game crashed" into "this mod
+        # was not applied". It never disagreed with the game on device.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _frosty_compile"):]
+        fn = fn[:fn.index("def _prefix_drive_c")]
+        self.assertIn('_frosty_run(["load", check_exe])', fn)
+        self.assertIn("the game cannot read", fn)
+        # A failed verification must leave nothing behind.
+        self.assertIn("_force_rmtree(pack)", fn)
+
+    def test_a_failed_install_rolls_the_mod_back_out(self):
+        # The enabled set must always be one that compiles, or the game is
+        # left broken by a mod the user cannot see to remove.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def install_frosty_mod"):]
+        fn = fn[:fn.index("async def set_frosty_mod_enabled")]
+        self.assertIn("os.remove(target)", fn)
+        self.assertIn("await _frosty_compile", fn)
+
+    def test_a_failed_toggle_is_put_back(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def set_frosty_mod_enabled"):]
+        fn = fn[:fn.index("async def uninstall_frosty_mod")]
+        self.assertIn("os.replace(dst, src)", fn)
+
+    def test_the_redirect_goes_in_the_prefix_registry(self):
+        # Not launch options: EA's launcher respawns the game and strips them.
+        # Proven on device with a deliberately corrupted pack, which the game
+        # ignored entirely until GAME_DATA_DIR was set here.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("def _frosty_prefix_setup"):]
+        fn = fn[:fn.index("async def _frosty_compile")]
+        self.assertIn("GAME_DATA_DIR", fn)
+        self.assertIn("user.reg", fn)
+        self.assertIn("cryptbase", fn)
+        # bcrypt and CryptBase are alternative hooks; both present breaks Wine.
+        self.assertIn("bcrypt.dll", fn)
+
+    def test_reset_undoes_everything_it_did(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def reset_frosty"):]
+        fn = fn[:fn.index("async def get_game_status")]
+        for undo in ("_frosty_pack_dir", "_frosty_mods_dir", "CryptBase.dll",
+                     "GAME_DATA_DIR"):
+            self.assertIn(undo, fn, f"reset leaves {undo} behind")
+
+    def test_multi_mod_archives_ask_rather_than_guess(self):
+        # Frostbite archives routinely hold several .fbmod files - alternative
+        # looks the author expects a choice between. Same contract as
+        # Helldivers 2 variants.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def install_frosty_mod"):]
+        fn = fn[:fn.index("async def set_frosty_mod_enabled")]
+        self.assertIn('"needs_choice": True', fn)
+        self.assertIn("payload_choice", fn)
+
+    def test_conversion_is_not_optional(self):
+        # An unconverted mod is silently ignored by the compiler: it produces a
+        # pack with no changes, which looks exactly like a broken plugin.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def install_frosty_mod"):]
+        fn = fn[:fn.index("async def set_frosty_mod_enabled")]
+        self.assertIn('"update-mod"', fn)
+
+
 class TestReshadeInstall(unittest.TestCase):
     """Michael: "Build the reshade but lets just put a warning on related
     mods that it might trigger the anti cheat because its injected." A

@@ -1024,3 +1024,39 @@ test("desktop managers are never offered as missing requirements", () => {
       "button visibility check)"
   );
 });
+
+test("Frostbite games get their own Step 1 and never the framework row", () => {
+  // Battlefront II mods are compiled, not copied: Step 1 installs our build
+  // of the compiler (a 40 MB download, not a Nexus mod), and the normal
+  // framework checklist must not also appear.
+  const page = read("index.tsx");
+  assert.ok(
+    /game\.frostbite && status\?\.installed && \(/.test(page),
+    "no Frostbite Step 1 in the panel"
+  );
+  assert.ok(
+    /game\.framework && !game\.frostbite && status\?\.installed \?/.test(page),
+    "the framework row is not excluded for Frostbite games, so both show"
+  );
+});
+
+test("installs, toggles and removals route through one place each", () => {
+  // Frostbite has no per-mod operation - everything recompiles the set - so
+  // the branch lives at the single choke point every path already uses,
+  // rather than in each caller.
+  const install = read("install.ts");
+  assert.ok(
+    /if \(game\.frostbite\) \{[\s\S]{0,400}installFrostyMod\(/.test(install),
+    "installs do not route to the compiler"
+  );
+  assert.ok(
+    /export async function toggleMod/.test(install) &&
+      /export async function removeMod/.test(install),
+    "no shared toggle/remove helpers, so callers must know the mechanism"
+  );
+  const page = read("index.tsx");
+  assert.ok(
+    !/setModEnabled\(/.test(page),
+    "the panel still calls setModEnabled directly, bypassing the compiler"
+  );
+});

@@ -232,6 +232,12 @@ export interface SupportedGame {
    * and should not showcase. The install-time tool refusal still catches
    * them if someone finds them by search. */
   heroExcludeModIds?: number[];
+  /** Frostbite games (Battlefront II): mods are .fbmod archives that must be
+   * COMPILED into a ModData tree, and the game is redirected at it. There is
+   * no per-mod install - any change recompiles the whole enabled set - so
+   * these games route through the frosty* backend calls rather than the
+   * normal installer. See docs/frosty-swbf2/WORKING.md. */
+  frostbite?: boolean;
   /** Shown as a banner at the top of the QAM panel: support for this game
    * is real but rough. Honest signposting beats silent rough edges. */
   underConstruction?: string;
@@ -1019,6 +1025,29 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // FromSoft never-online rule cannot apply to a game with no offline
     // mode, so the honest posture is: cosmetic swaps only, said plainly.
     // ROADMAP until installed, booted and played on hardware.
+  },
+  1237950: {
+    appId: 1237950,
+    displayName: "STAR WARS Battlefront II",
+    nexusDomain: "starwarsbattlefront22017", // verified: ~9.7k mods
+    installDirName: "STAR WARS Battlefront II", // verified on device
+    // Nothing is installed INTO the game's data folder: mods are compiled
+    // into ModData and the game is pointed at that. modsSubdir is only here
+    // because the shared status call wants a path that exists.
+    modsSubdir: "Data",
+    frostbite: true,
+    moddedSaveWarning: false, // progression is server-side
+    processName: "starwarsbattlefrontii.exe", // verified on device
+    // Not a Nexus mod: our own build of FrostyCli, because the upstream tool
+    // could not do this at all until we implemented the bundle format and
+    // fixed four data-corruption bugs in it.
+    framework: {
+      name: "Mod compiler",
+      detectFile: "",
+      url: "github.com/RedRanger14/decky-nexus",
+      nexusModId: 0,
+      installKind: "copyRoot",
+    },
   },
 };
 

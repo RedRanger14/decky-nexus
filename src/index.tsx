@@ -89,6 +89,8 @@ import {
   skipPrefixTools,
   runPrefixTool,
   seedGameIni,
+  getFrostyState,
+  installFrostyToolkit,
   markLaunchOptionsSet,
   resetGameModding,
   setFrameworkLaunchOptions,
@@ -96,7 +98,6 @@ import {
   setAllModsEnabled,
   setFrameworkEnabled,
   setApiKey,
-  setModEnabled,
   buildReport,
 } from "./api";
 import {
@@ -225,7 +226,7 @@ import { ModDetailPage } from "./ModDetailPage";
 import { ManagerPage } from "./ManagerPage";
 import { SettingsPage } from "./SettingsPage";
 import { UpdatesPage } from "./UpdatesPage";
-import { installLatest } from "./install";
+import { installLatest, toggleMod } from "./install";
 import HealthCheckPage, { setHealthGame } from "./HealthCheckPage";
 import { scanUpdates } from "./updates";
 
@@ -568,6 +569,11 @@ function CurrentGameSection() {
     return () => clearInterval(timer);
   }, [toolsBusy]);
 
+  const [frostyState, setFrostyState] = useState<
+    { toolkit_installed?: boolean; compiled?: boolean; mods?: string[] } | undefined
+  >();
+  const [frostyBusy, setFrostyBusy] = useState(false);
+
   const refreshStatus = () => {
     if (game) {
       getGameStatus(
@@ -610,6 +616,11 @@ function CurrentGameSection() {
             Boolean(r.launch_options_set) &&
               r.launch_options_current !== false
           )
+        );
+      }
+      if (game.frostbite) {
+        getFrostyState(game.nexusDomain, game.installDirName, game.appId).then(
+          (r) => setFrostyState(r.ok ? r : undefined)
         );
       }
       if (game.prefixTools) {
@@ -1119,7 +1130,55 @@ function CurrentGameSection() {
           </ButtonItem>
         </PanelSectionRow>
       )}
-      {game.framework && status?.installed ? (
+      {/* Frostbite games get their own Step 1: our build of the mod compiler,
+          which is a 40 MB download rather than a Nexus mod. Everything after
+          that is automatic - the launch redirect is written by the backend
+          when a compile succeeds, because it is prefix-registry surgery no
+          user should be asked to do. */}
+      {game.frostbite && status?.installed && (
+        <PanelSectionRow>
+          {frostyState?.toolkit_installed ? (
+            <Field label="Step 1">
+              Mod compiler installed ✓
+              {(frostyState.mods?.length ?? 0) > 0
+                ? ` · ${frostyState.mods!.length} mod${
+                    frostyState.mods!.length === 1 ? "" : "s"
+                  } compiled`
+                : ""}
+            </Field>
+          ) : (
+            <ButtonItem
+              label="Step 1"
+              layout="below"
+              disabled={frostyBusy}
+              description="Battlefront II mods have to be compiled before the game can read them. This downloads the compiler (40 MB), once."
+              onClick={async () => {
+                setFrostyBusy(true);
+                try {
+                  const r = await installFrostyToolkit();
+                  toaster.toast(
+                    r.ok
+                      ? {
+                          title: "Mod compiler ready",
+                          body: "You can install mods now",
+                        }
+                      : {
+                          title: "Could not install the compiler",
+                          body: r.error ?? "",
+                        }
+                  );
+                } finally {
+                  setFrostyBusy(false);
+                  refreshStatus();
+                }
+              }}
+            >
+              {frostyBusy ? "Installing…" : "Install mod compiler"}
+            </ButtonItem>
+          )}
+        </PanelSectionRow>
+      )}
+      {game.framework && !game.frostbite && status?.installed ? (
         <>
           {/* Steam is pointed at the framework's loader but the loader is
               gone (uninstalled/removed): the game silently won't start.
@@ -1985,17 +2044,9 @@ function AllInstalledModsSection() {
   ) => {
     setBusyFolder(mod.folder);
     try {
-      const result = await setModEnabled(
-        game.installDirName,
-        game.modsSubdir,
-        mod.folder,
-        enabled,
-        game.installMode ?? "folder",
-        game.nexusDomain,
-        game.appId,
-        game.pluginsTxtSubpath ?? "",
-        game.pluginsTxtStyle ?? "starred"
-      );
+      // toggleMod, not setModEnabled: Frostbite games have no per-mod
+      // switch and have to recompile their whole enabled set instead.
+      const result = await toggleMod(game, mod.folder, enabled);
       if (!result.ok) {
         toaster.toast({ title: "Could not toggle mod", body: result.error ?? "" });
       }
@@ -2260,17 +2311,9 @@ function InstalledModsSection() {
   const onToggle = async (mod: InstalledMod, enabled: boolean) => {
     setBusyFolder(mod.folder);
     try {
-      const result = await setModEnabled(
-        game.installDirName,
-        game.modsSubdir,
-        mod.folder,
-        enabled,
-        game.installMode ?? "folder",
-        game.nexusDomain,
-        game.appId,
-        game.pluginsTxtSubpath ?? "",
-        game.pluginsTxtStyle ?? "starred"
-      );
+      // toggleMod, not setModEnabled: Frostbite games have no per-mod
+      // switch and have to recompile their whole enabled set instead.
+      const result = await toggleMod(game, mod.folder, enabled);
       if (!result.ok) {
         toaster.toast({ title: "Could not toggle mod", body: result.error ?? "" });
       }

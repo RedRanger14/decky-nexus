@@ -1880,6 +1880,312 @@ def _skyrim_cc_catalog_fix(app_id: int, install_path: str) -> str:
     return os.path.basename(backup)
 
 
+# ---- Frostbite games (Star Wars Battlefront II) -----------------------------
+# These games do not read loose files. Mods are .fbmod archives that have to be
+# COMPILED into a "ModData" tree, and the game is then pointed at that tree.
+# Doing that on Linux needed FrostyCli built for linux-x64 plus a patch of ours
+# (see docs/frosty-swbf2/WORKING.md): the bundle format Battlefront II uses was
+# unimplemented upstream, and four data-corruption bugs had to be fixed.
+#
+# Consequences for this plugin, all of them different from every other game:
+#
+#   - There is no per-mod install. Installing, enabling or disabling ANYTHING
+#     means recompiling ModData from the whole enabled set.
+#   - The game is redirected with GAME_DATA_DIR in the Wine prefix registry.
+#     Not launch options: EA's launcher respawns the game and strips them.
+#   - Compiling takes a couple of minutes and hundreds of MB, so it is worth
+#     saying so rather than looking hung.
+FROSTY_TOOLKIT_URL = (
+    "https://github.com/RedRanger14/decky-nexus/releases/download/"
+    "frosty-toolkit-1/frosty-toolkit-linux-x64.tar.gz"
+)
+FROSTY_TOOLKIT_SHA256 = (
+    "4d9c3df9f74d33d1a1ca8776ae133b16730d30566159b0c986c3d2fd4cd3b490"
+)
+FROSTY_PACK = "DeckyNexus"
+
+
+def _frosty_root() -> str:
+    """Where the toolkit lives. Outside the plugin dir so updates keep it."""
+    return os.path.join(decky.DECKY_PLUGIN_RUNTIME_DIR, "frosty")
+
+
+def _frosty_cli() -> str:
+    return os.path.join(_frosty_root(), "FrostyCli")
+
+
+def _frosty_installed() -> bool:
+    return os.path.isfile(_frosty_cli()) and os.path.isdir(
+        os.path.join(_frosty_root(), "Profiles")
+    )
+
+
+def _frosty_mods_dir(game_domain: str) -> str:
+    """The .fbmod files currently enabled, per game."""
+    return os.path.join(_frosty_root(), "mods", game_domain)
+
+
+def _frosty_moddata_link() -> str:
+    """A no-space path the launch config can point at.
+
+    The game folder has spaces in it and Wine paths are fiddly enough without,
+    so the registry points here and this points at the real pack.
+    """
+    return os.path.join(_frosty_root(), "moddata")
+
+
+def _frosty_pack_dir(install_path: str) -> str:
+    return os.path.join(install_path, "ModData", FROSTY_PACK)
+
+
+async def _frosty_install_toolkit() -> dict:
+    """Download and unpack FrostyCli. Verified against a pinned hash."""
+    root = _frosty_root()
+    os.makedirs(root, exist_ok=True)
+    archive = os.path.join(root, "toolkit.tar.gz")
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=900)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(FROSTY_TOOLKIT_URL, ssl=SSL_CONTEXT) as resp:
+                if resp.status != 200:
+                    return {
+                        "ok": False,
+                        "error": f"Could not download the mod compiler "
+                        f"(HTTP {resp.status})",
+                    }
+                digest = hashlib.sha256()
+                with open(archive, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(1 << 16):
+                        f.write(chunk)
+                        digest.update(chunk)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        return {"ok": False, "error": f"Download failed: {type(e).__name__}"}
+
+    if digest.hexdigest() != FROSTY_TOOLKIT_SHA256:
+        # A truncated download is the common case and it would fail later in a
+        # much more confusing way.
+        try:
+            os.remove(archive)
+        except OSError:
+            pass
+        return {
+            "ok": False,
+            "error": "The download was incomplete or corrupted. Try again.",
+        }
+
+    err = await _extract_archive(archive, root)
+    try:
+        os.remove(archive)
+    except OSError:
+        pass
+    if err:
+        return {"ok": False, "error": f"Could not unpack the compiler: {err}"}
+
+    try:
+        os.chmod(_frosty_cli(), 0o755)
+    except OSError as e:
+        return {"ok": False, "error": f"Could not make the compiler runnable: {e}"}
+
+    decky.logger.info(f"frosty: toolkit installed into {root}")
+    return {"ok": True}
+
+
+def _frosty_game_exe(install_path: str) -> str:
+    return os.path.join(install_path, "starwarsbattlefrontii.exe")
+
+
+async def _frosty_run(args: list, timeout: int = 1800) -> tuple:
+    """Run FrostyCli. Returns (rc, tail of output)."""
+    proc = await asyncio.create_subprocess_exec(
+        _frosty_cli(), *args,
+        cwd=_frosty_root(),
+        # env= is mandatory: Decky's own environment poisons child processes
+        # (see _host_env), and a .NET binary is no more immune than any other.
+        env=_host_env(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return 1, "the mod compiler took too long and was stopped"
+    text = (out or b"").decode("utf-8", "replace")
+    lines = [
+        _strip_ansi(line)
+        for line in text.splitlines()
+        if "ERROR" in line or "Exception" in line
+    ]
+    return proc.returncode or 0, "\n".join(lines[-4:]) or text[-400:]
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def _frosty_prefix_setup(app_id: int, install_path: str) -> list:
+    """Point the game at our compiled data, and let its DLL hook load.
+
+    Returns a list of what changed, for the health report. Both entries live in
+    the prefix registry because that is the only channel EA's launcher does not
+    strip - proven on device by a deliberately corrupted pack, which the game
+    ignored entirely until GAME_DATA_DIR was set here.
+    """
+    done = []
+    reg = _prefix_drive_c(app_id, "..", "..", "user.reg")
+    reg = os.path.normpath(reg)
+    if not os.path.isfile(reg):
+        return done
+
+    link = _frosty_moddata_link()
+    wine_path = "Z:" + link.replace("/", chr(92) * 2)
+
+    try:
+        with open(reg, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return done
+
+    q = chr(34)
+    want_data = f"{q}GAME_DATA_DIR{q}={q}{wine_path}{q}"
+    if want_data not in text:
+        text = re.sub(
+            r'"GAME_DATA_DIR"="[^"]*"\n', "", text
+        )
+        marker = "[Environment] "
+        if marker in text:
+            i = text.index(marker)
+            j = text.index("\n", text.index("#time=", i)) + 1
+            text = text[:j] + want_data + "\n" + text[j:]
+            done.append("data path")
+
+    override_section = (
+        "[Software" + chr(92) * 2 + "Wine" + chr(92) * 2 + "AppDefaults"
+        + chr(92) * 2 + "starwarsbattlefrontii.exe" + chr(92) * 2
+        + "DllOverrides]"
+    )
+    if override_section not in text:
+        text += (
+            "\n" + override_section + " " + str(int(time.time())) + "\n"
+            "#time=1dd2ef9e5272400\n"
+            + q + "cryptbase" + q + "=" + q + "native,builtin" + q + "\n"
+        )
+        done.append("dll override")
+
+    if done:
+        try:
+            with open(reg, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+        except OSError as e:
+            decky.logger.warning(f"frosty: could not write prefix registry: {e}")
+            return []
+
+    # The hook itself, shipped in the toolkit.
+    hook = os.path.join(_frosty_root(), "ThirdParty", "CryptBase.dll")
+    dest = os.path.join(install_path, "CryptBase.dll")
+    if os.path.isfile(hook) and not os.path.isfile(dest):
+        try:
+            shutil.copy2(hook, dest)
+            done.append("dll hook")
+        except OSError as e:
+            decky.logger.warning(f"frosty: could not place CryptBase.dll: {e}")
+
+    # bcrypt.dll and CryptBase.dll are alternative hooks and Frosty deletes the
+    # former deliberately; leaving both breaks the game under Wine.
+    stale = os.path.join(install_path, "bcrypt.dll")
+    if os.path.isfile(stale):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+
+    return done
+
+
+async def _frosty_compile(game_domain: str, install_path: str, app_id: int) -> dict:
+    """Compile every enabled .fbmod into ModData and point the game at it.
+
+    This is the whole install/enable/disable mechanism for these games: there
+    is no per-mod operation, so callers change the mods directory and then call
+    this.
+    """
+    if not _frosty_installed():
+        return {"ok": False, "error": "The mod compiler is not installed yet"}
+
+    exe = _frosty_game_exe(install_path)
+    if not os.path.isfile(exe):
+        return {"ok": False, "error": "Game not found"}
+
+    mods_dir = _frosty_mods_dir(game_domain)
+    os.makedirs(mods_dir, exist_ok=True)
+    enabled = [f for f in sorted(os.listdir(mods_dir)) if f.endswith(".fbmod")]
+
+    pack = _frosty_pack_dir(install_path)
+    _force_rmtree(pack)
+
+    if not enabled:
+        # Nothing enabled: leave the game pointing at a pack that does not
+        # exist, which it treats as vanilla.
+        decky.logger.info("frosty: no mods enabled, cleared the compiled data")
+        return {"ok": True, "mods": 0}
+
+    rc, tail = await _frosty_run(["mod", exe, mods_dir, pack])
+    if rc != 0:
+        _force_rmtree(pack)
+        return {
+            "ok": False,
+            "error": f"Compiling the mods failed. {tail}"[:400],
+        }
+
+    # A pack that does not read back is a pack that crashes the game, and this
+    # is cheap next to a launch. Proven on device: every time the check failed,
+    # the game failed too.
+    check_exe = os.path.join(pack, "starwarsbattlefrontii.exe")
+    try:
+        if not os.path.exists(check_exe):
+            shutil.copy2(exe, check_exe)
+        cache = os.path.join(_frosty_root(), "Caches")
+        stash = os.path.join(_frosty_root(), "Caches.verify")
+        if os.path.isdir(cache):
+            _force_rmtree(stash)
+            os.rename(cache, stash)
+        rc, tail = await _frosty_run(["load", check_exe])
+        if os.path.isdir(stash):
+            _force_rmtree(cache)
+            os.rename(stash, cache)
+    finally:
+        try:
+            os.remove(check_exe)
+        except OSError:
+            pass
+
+    if rc != 0:
+        _force_rmtree(pack)
+        return {
+            "ok": False,
+            "error": (
+                "One of these mods produces data the game cannot read, so it "
+                "was not applied. Remove the most recently added mod and try "
+                f"again. {tail}"
+            )[:400],
+        }
+
+    link = _frosty_moddata_link()
+    try:
+        if os.path.islink(link) or os.path.exists(link):
+            os.remove(link)
+        os.symlink(pack, link)
+    except OSError as e:
+        return {"ok": False, "error": f"Could not point the game at the mods: {e}"}
+
+    _frosty_prefix_setup(app_id, install_path)
+    decky.logger.info(
+        f"frosty: compiled {len(enabled)} mod(s) into {pack}"
+    )
+    return {"ok": True, "mods": len(enabled)}
+
+
 def _prefix_drive_c(app_id: int, *parts: str) -> str:
     """A path inside the Proton prefix's C: drive, outside the user profile.
 
@@ -18310,6 +18616,268 @@ query CollectionInstructions($slug: String!) {
     # Reports whether a supported game is installed, whether its mods folder
     # exists yet, and (when the game needs a community mod loader like SMAPI)
     # whether that framework is present in the install dir.
+    async def get_frosty_state(self, game_domain: str, install_dir: str,
+                              app_id: int = 0) -> dict:
+        """Setup state for a Frostbite game, for the QAM checklist."""
+        install_path, _mods, _dis = _game_paths(install_dir, "Data")
+        mods_dir = _frosty_mods_dir(game_domain)
+        enabled = []
+        if os.path.isdir(mods_dir):
+            enabled = sorted(
+                f[:-6] for f in os.listdir(mods_dir) if f.endswith(".fbmod")
+            )
+        compiled = os.path.isdir(_frosty_pack_dir(install_path))
+        return {
+            "ok": True,
+            "toolkit_installed": _frosty_installed(),
+            "compiled": compiled,
+            "mods": enabled,
+        }
+
+    async def install_frosty_toolkit(self) -> dict:
+        """Step 1 for Frostbite games: fetch the mod compiler."""
+        if _frosty_installed():
+            return {"ok": True, "already": True}
+        return await _frosty_install_toolkit()
+
+    async def install_frosty_mod(
+        self,
+        game_domain: str,
+        mod_id: int,
+        file_id: int,
+        file_name: str,
+        mod_name: str,
+        mod_version: str,
+        install_dir: str,
+        app_id: int,
+        page_version: str = "",
+        payload_choice: str = "",
+    ) -> dict:
+        """Download a mod, convert it, and recompile the whole enabled set.
+
+        Frostbite mods ship as archives of .fbmod files, and a single archive
+        often holds SEVERAL - alternative looks the author expects you to pick
+        between. That is the same shape as Helldivers 2's variant folders, so
+        the same needs_choice contract is used: the caller picks one, we
+        install that one.
+        """
+        if not _frosty_installed():
+            return {"ok": False, "error": "Install the mod compiler first"}
+
+        install_path, _m, _d = _game_paths(install_dir, "Data")
+        exe = _frosty_game_exe(install_path)
+        if not os.path.isfile(exe):
+            return {"ok": False, "error": "Game not found"}
+
+        api_key = _load_settings().get("api_key")
+        if not api_key:
+            return {"ok": False, "error": "Not signed in"}
+
+        await _emit_progress(mod_id, "downloading", 0)
+        err, archive_path = await _download_archive(
+            game_domain, mod_id, file_id, file_name, api_key
+        )
+        if err:
+            return {"ok": False, "error": err}
+
+        scratch = os.path.join(DOWNLOADS_DIR, f"frosty-scratch-{mod_id}")
+        _force_rmtree(scratch)
+        os.makedirs(scratch, exist_ok=True)
+        err = await _extract_archive(archive_path, scratch)
+        if err:
+            _force_rmtree(scratch)
+            return {"ok": False, "error": f"Extraction failed: {err}"}
+
+        found = []
+        for root, _dirs, names in os.walk(scratch):
+            for n in names:
+                if n.lower().endswith((".fbmod", ".fbpack")):
+                    found.append(os.path.join(root, n))
+        found.sort()
+
+        if not found:
+            _force_rmtree(scratch)
+            return {
+                "ok": False,
+                "error": (
+                    "No mod files in this archive. Frostbite mods are .fbmod "
+                    "files; this may be a tool or a manual-install pack."
+                ),
+            }
+
+        if len(found) > 1 and not payload_choice:
+            options = [
+                os.path.relpath(p, scratch).replace(os.sep, "/") for p in found
+            ]
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            await _emit_progress(mod_id, "error", 0, "choose a version")
+            return {"ok": False, "needs_choice": True, "options": options,
+                    "merge_allowed": False}
+
+        chosen = found[0]
+        if payload_choice:
+            pick = os.path.normpath(os.path.join(scratch, *payload_choice.split("/")))
+            if pick not in [os.path.normpath(p) for p in found]:
+                _force_rmtree(scratch)
+                return {"ok": False, "error": "That option wasn't in the archive"}
+            chosen = pick
+
+        # Convert to the format the compiler reads. Community mods are v2 to
+        # v5 and an unconverted mod is silently ignored - it compiles to a pack
+        # with no changes in it, which looks exactly like a broken plugin.
+        await _emit_progress(mod_id, "installing", 40)
+        mods_dir = _frosty_mods_dir(game_domain)
+        os.makedirs(mods_dir, exist_ok=True)
+        target = os.path.join(mods_dir, _safe_name(mod_name) + ".fbmod")
+        rc, tail = await _frosty_run(
+            ["update-mod", exe, chosen, "--output", target], timeout=900
+        )
+        _force_rmtree(scratch)
+        try:
+            os.remove(archive_path)
+        except OSError:
+            pass
+        if rc != 0 or not os.path.isfile(target):
+            return {
+                "ok": False,
+                "error": f"Could not read this mod. {tail}"[:300],
+            }
+
+        await _emit_progress(mod_id, "installing", 60)
+        result = await _frosty_compile(game_domain, install_path, int(app_id))
+        if not result.get("ok"):
+            # Roll the mod back out: the set has to stay one that compiles.
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+            await _frosty_compile(game_domain, install_path, int(app_id))
+            await _emit_progress(mod_id, "error", 0, "not applied")
+            return result
+
+        settings = _load_settings()
+        installed = settings.setdefault("installed", {}).setdefault(game_domain, {})
+        key = _safe_name(mod_name)
+        installed[key] = _merge_install_record(installed.get(key) or {}, {
+            "mod_id": mod_id, "file_id": file_id, "name": mod_name,
+            "version": mod_version, "file_name": file_name,
+            "installed_at": int(time.time()), "page_version": page_version,
+            "source": "", "collection_slug": "",
+            "mode": "frosty", "target": "", "files": [key + ".fbmod"],
+        })
+        _save_settings(settings)
+
+        await _emit_progress(mod_id, "done", 100)
+        return {"ok": True, "folder": key, "compiled": result.get("mods", 0)}
+
+    async def set_frosty_mod_enabled(
+        self, game_domain: str, folder: str, enabled: bool,
+        install_dir: str, app_id: int
+    ) -> dict:
+        """Enable or disable one mod by recompiling the set without it."""
+        install_path, _m, _d = _game_paths(install_dir, "Data")
+        mods_dir = _frosty_mods_dir(game_domain)
+        off_dir = os.path.join(mods_dir, "disabled")
+        os.makedirs(off_dir, exist_ok=True)
+
+        name = _safe_name(folder) + ".fbmod"
+        live = os.path.join(mods_dir, name)
+        parked = os.path.join(off_dir, name)
+        src, dst = (parked, live) if enabled else (live, parked)
+        if not os.path.isfile(src):
+            return {"ok": False, "error": "That mod is not installed"}
+        try:
+            os.replace(src, dst)
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+
+        result = await _frosty_compile(game_domain, install_path, int(app_id))
+        if not result.get("ok"):
+            os.replace(dst, src)
+            await _frosty_compile(game_domain, install_path, int(app_id))
+            return result
+
+        settings = _load_settings()
+        rec = settings.get("installed", {}).get(game_domain, {}).get(
+            _safe_name(folder)
+        )
+        if rec is not None:
+            rec["enabled"] = bool(enabled)
+            _save_settings(settings)
+        return {"ok": True, "compiled": result.get("mods", 0)}
+
+    async def uninstall_frosty_mod(
+        self, game_domain: str, folder: str, install_dir: str, app_id: int
+    ) -> dict:
+        install_path, _m, _d = _game_paths(install_dir, "Data")
+        mods_dir = _frosty_mods_dir(game_domain)
+        name = _safe_name(folder) + ".fbmod"
+        removed = False
+        for path in (os.path.join(mods_dir, name),
+                     os.path.join(mods_dir, "disabled", name)):
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                    removed = True
+                except OSError as e:
+                    return {"ok": False, "error": str(e)}
+        if not removed:
+            return {"ok": False, "error": "That mod is not installed"}
+
+        result = await _frosty_compile(game_domain, install_path, int(app_id))
+        settings = _load_settings()
+        recs = settings.get("installed", {}).get(game_domain, {})
+        if _safe_name(folder) in recs:
+            del recs[_safe_name(folder)]
+            _save_settings(settings)
+        return {"ok": result.get("ok", False), "error": result.get("error", ""),
+                "compiled": result.get("mods", 0)}
+
+    async def reset_frosty(self, game_domain: str, install_dir: str,
+                          app_id: int) -> dict:
+        """Back to vanilla: no compiled data, no mods, no launch changes."""
+        install_path, _m, _d = _game_paths(install_dir, "Data")
+        _force_rmtree(_frosty_pack_dir(install_path))
+        _force_rmtree(_frosty_mods_dir(game_domain))
+        link = _frosty_moddata_link()
+        try:
+            if os.path.islink(link) or os.path.exists(link):
+                os.remove(link)
+        except OSError:
+            pass
+
+        for name in ("CryptBase.dll", "bcrypt.dll", "user.cfg"):
+            path = os.path.join(install_path, name)
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+        reg = os.path.normpath(_prefix_drive_c(int(app_id), "..", "..", "user.reg"))
+        if os.path.isfile(reg):
+            try:
+                with open(reg, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+                cleaned = re.sub(r'"GAME_DATA_DIR"="[^"]*"\n', "", text)
+                if cleaned != text:
+                    with open(reg, "w", encoding="utf-8", newline="") as f:
+                        f.write(cleaned)
+            except OSError:
+                pass
+
+        settings = _load_settings()
+        if game_domain in settings.get("installed", {}):
+            settings["installed"][game_domain] = {}
+            _save_settings(settings)
+
+        decky.logger.info(f"frosty: reset {game_domain} to vanilla")
+        return {"ok": True}
+
     async def get_game_status(
         self, install_dir: str, mods_subdir: str, framework_file: str = "",
         app_id: int = 0,

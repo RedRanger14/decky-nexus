@@ -2,6 +2,11 @@
 // batch installer, and the Updates section - so every entry point routes
 // a mod through the identical per-game pipeline.
 import {
+  installFrostyMod,
+  setFrostyModEnabled,
+  setModEnabled,
+  uninstallFrostyMod,
+  uninstallMod,
   InstallResult,
   getModFiles,
   installFomod,
@@ -103,6 +108,25 @@ function installModWith(
   payloadChoice = "",
   repairOnly = false
 ): Promise<InstallResult> {
+  if (game.frostbite) {
+    // Frostbite games compile rather than copy: one call that converts the
+    // mod and recompiles the enabled set. Routed here, at the single point
+    // every install path already passes through, so the mod page, the
+    // collection flow and Update all all get it without their own branch.
+    return installFrostyMod(
+      game.nexusDomain,
+      modId,
+      fileId,
+      fileName,
+      modName,
+      version,
+      game.installDirName,
+      game.appId,
+      pageVersion,
+      payloadChoice
+    );
+  }
+
   return installMod(
     game.nexusDomain,
     modId,
@@ -163,5 +187,65 @@ export async function installLatest(
     pageVersion,
     "",
     payloadChoice
+  );
+}
+
+/** Toggle a mod, whichever mechanism the game uses.
+ *
+ * Frostbite games have no per-mod switch: enabling or disabling anything
+ * recompiles the whole enabled set, which takes a minute or two. Everything
+ * else moves a folder. Callers should not have to know which.
+ */
+export async function toggleMod(
+  game: SupportedGame,
+  folder: string,
+  enabled: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  if (game.frostbite) {
+    return setFrostyModEnabled(
+      game.nexusDomain,
+      folder,
+      enabled,
+      game.installDirName,
+      game.appId
+    );
+  }
+
+  return setModEnabled(
+    game.installDirName,
+    game.modsSubdir,
+    folder,
+    enabled,
+    game.installMode ?? "folder",
+    game.nexusDomain,
+    game.appId,
+    game.pluginsTxtSubpath ?? "",
+    game.pluginsTxtStyle ?? "starred"
+  );
+}
+
+/** Remove a mod, whichever mechanism the game uses. */
+export async function removeMod(
+  game: SupportedGame,
+  folder: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (game.frostbite) {
+    return uninstallFrostyMod(
+      game.nexusDomain,
+      folder,
+      game.installDirName,
+      game.appId
+    );
+  }
+
+  return uninstallMod(
+    game.nexusDomain,
+    game.installDirName,
+    game.modsSubdir,
+    folder,
+    game.installMode ?? "folder",
+    game.appId,
+    game.pluginsTxtSubpath ?? "",
+    game.pluginsTxtStyle ?? "starred"
   );
 }
