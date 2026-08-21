@@ -79,6 +79,30 @@ The current implementation preserves every original entry and patches only
 modified ones, located by their original (cas file, offset). That is closer,
 but something in the meta rewrite still mis-pairs an unmodified entry.
 
+## Correction: the first PC reference was a no-mod run
+
+The first ModData generated on the Windows PC had `mods.json` = `[]`. Frosty
+had the mod AVAILABLE but never APPLIED it: Vortex deploys the .fbmod into
+Frosty's mods folder, while Frosty only compiles what is in its own Applied
+Mods list, and the Vortex integration did not add it.
+
+So the byte-diff of that run's layout.toc against the original shows only how
+Frosty RELOCATES the manifest, not how it patches entries for a real mod:
+
+- sha1, cas index (60 -> 61) and offset (-> 0) change; size does not
+- the blob is written raw at offset 0 of a brand-new cas file
+- `Data/Win32` is symlinked; `chunkmanifest`, `initfs_Win32` and `layout.toc`
+  are real copies
+
+Useful mechanics, but NOT evidence about entry patching. An earlier version of
+this document overstated it as a "hard invariant" - it is not, until a run with
+a mod actually applied is compared.
+
+Also worth knowing: Steam copies need Dyvinia's DatapathFixPlugin.dll in
+Frosty's Plugins folder or Frosty launches the game against the ORIGINAL data
+(a silent vanilla boot). Vortex cannot install it - it tries to extract a bare
+.dll as an archive and reports the download as corrupt.
+
 ## The next step, and why
 
 Frosty v1 on Windows applying the SAME mod to the SAME game, then diff its
