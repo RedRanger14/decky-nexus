@@ -13213,7 +13213,8 @@ class TestFrostbiteGames(unittest.TestCase):
             source = fh.read()
         fn = source[source.index("async def _frosty_compile"):]
         fn = fn[:fn.index("def _prefix_drive_c")]
-        self.assertIn('_frosty_run(["load", check_exe])', fn)
+        # The call gained a progress argument; the point is that "load" runs.
+        self.assertIn('_frosty_run(["load", check_exe]', fn)
         self.assertIn("the game cannot read", fn)
         # A failed verification must leave nothing behind.
         self.assertIn("_force_rmtree(pack)", fn)
@@ -13294,6 +13295,120 @@ class TestFrostbiteGames(unittest.TestCase):
         self.assertIn("if not _frosty_redirect_ok(app_id):", fn)
         after = fn[fn.index("if not _frosty_redirect_ok(app_id):"):]
         self.assertIn('"ok": False', after[:600])
+
+    def test_the_registry_path_lands_inside_the_prefix(self):
+        # THE bug. drive_c/../.. is compatdata/<id>, not pfx, so the redirect
+        # was written to a path that does not exist - which the setup function
+        # reads as "no prefix here" and returns from silently. It had never
+        # once written the registry, so the game always loaded vanilla data
+        # while the install reported success.
+        reg = main._frosty_redirect_reg(1237950)
+        parts = os.path.normpath(reg).split(os.sep)
+        self.assertEqual(parts[-1], "user.reg")
+        self.assertEqual(parts[-2], "pfx", f"resolved outside the prefix: {reg}")
+        self.assertEqual(parts[-3], "1237950")
+        self.assertNotIn("drive_c", parts)
+
+    def test_progress_never_leaves_its_window(self):
+        # Each stage owns a slice of the bar. Overshooting one would make the
+        # bar jump backwards when the next stage starts.
+        sent = []
+
+        async def emit(pct, message):
+            sent.append(pct)
+
+        bar = main._FrostyProgress(55, 30, emit)
+        for line in (
+            "INFO - Loading profile STAR WARS",
+            "INFO - Loading ebx from cache",
+            "INFO - Finished initializing",
+        ):
+            bar.line(line)
+        for _ in range(600):
+            bar.tick(1.0)
+        self.assertGreaterEqual(bar.percent(), 55)
+        self.assertLessEqual(bar.percent(), 85)
+
+    def test_the_bar_moves_while_the_compiler_says_nothing(self):
+        # Measured on device: a cold cache spends 35 seconds inside "Indexing
+        # Ebx" printing NOTHING. A parked bar there is what Michael sat
+        # through and read as a failure.
+        async def emit(pct, message):
+            pass
+
+        bar = main._FrostyProgress(0, 100, emit)
+        bar.line("INFO - Indexing Ebx")
+        start = bar.percent()
+        for _ in range(15):
+            bar.tick(1.0)
+        self.assertGreater(bar.percent(), start, "the bar sat still")
+
+    def test_the_creep_stops_short_of_real_progress(self):
+        # Guessing is allowed; claiming a milestone that has not happened is
+        # not. If indexing takes three times as long as usual the bar must
+        # stall just below the next real step rather than reach it.
+        async def emit(pct, message):
+            pass
+
+        bar = main._FrostyProgress(0, 100, emit)
+        bar.line("INFO - Indexing Ebx")
+        nxt = dict((n, p) for n, p, _m, _s in main._FrostyProgress.STEPS)
+        for _ in range(400):
+            bar.tick(1.0)
+        self.assertLess(bar.percent(), nxt["Indexed ebx"])
+
+    def test_progress_is_only_sent_when_it_changes(self):
+        # The frontend redraws on every event; a tick a second that repeats
+        # the same number is pure noise.
+        sent = []
+
+        async def emit(pct, message):
+            sent.append(pct)
+
+        bar = main._FrostyProgress(0, 100, emit)
+        bar.line("INFO - Loading profile STAR WARS")
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(bar.send())
+            loop.run_until_complete(bar.send())
+        finally:
+            loop.close()
+        self.assertEqual(len(sent), 1)
+
+    def test_a_warm_cache_run_still_reports_progress(self):
+        # Warm, the whole job is six seconds and takes an entirely different
+        # set of log lines. Both paths have to drive the bar.
+        async def emit(pct, message):
+            pass
+
+        bar = main._FrostyProgress(0, 100, emit)
+        for line in ("INFO - Loading ebx from cache",
+                     "INFO - Loading res from cache",
+                     "INFO - Loading chunks from cache"):
+            bar.line(line)
+        self.assertGreaterEqual(bar.percent(), 40)
+
+    def test_bundle_lines_advance_the_compile(self):
+        async def emit(pct, message):
+            pass
+
+        bar = main._FrostyProgress(0, 100, emit)
+        bar.line("INFO - Finished initializing")
+        before = bar.percent()
+        for _ in range(30):
+            bar.line("INFO - RANGEBUILD bundle=8B3AE028 orig=184 built=270")
+        self.assertGreater(bar.percent(), before)
+        self.assertLessEqual(bar.percent(), 100)
+
+    def test_a_failed_compiler_run_is_always_logged(self):
+        # This whole class of bug is invisible without it: the device log
+        # recorded a rolled-back install with no reason attached.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _frosty_run"):]
+        fn = fn[:fn.index("def _strip_ansi")]
+        self.assertIn("decky.logger.error if rc != 0", fn)
+        self.assertIn("readline()", fn)
 
     def test_the_redirect_is_checked_not_assumed(self):
         # Without GAME_DATA_DIR the game boots perfectly and ignores every

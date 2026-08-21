@@ -14,6 +14,9 @@ export const ACCENT_DANGER = "#ff6b6b";
 // Injected once per page that uses the primary button. Hover covers desktop
 // pointers; gpfocus is Steam's gamepad-focus class - the Gaming Mode "hover".
 export const PRIMARY_BUTTON_CLASS = "nexus-mods-primary-btn";
+/** Applied while an install is running: an indeterminate sweep, so a stage
+ * that reports no progress still looks like work rather than a freeze. */
+export const BUSY_BUTTON_CLASS = "nexus-mods-busy-btn";
 /** Endorse pill - needs its own focus ring so a column of them can be navigated. */
 export const ENDORSE_PILL_CLASS = "nexus-endorse-pill";
 /** Health-check finding chip - opens the mod's page, or an off-Nexus link. */
@@ -38,6 +41,34 @@ export const PRIMARY_BUTTON_CSS = `
 }
 .${PRIMARY_BUTTON_CLASS}:active {
   background: ${NEXUS_ORANGE_PRESSED} !important;
+}
+/* A working install has to LOOK like one even when it has nothing to report.
+   Compiling a Frostbite game spends about half a minute indexing the game's
+   assets without printing a thing, and a parked bar in that gap reads as a
+   crash - it did, on device. The stripe moves regardless of the percentage,
+   so "slow" and "dead" stop looking the same. */
+.${BUSY_BUTTON_CLASS} {
+  position: relative;
+  overflow: hidden;
+}
+.${BUSY_BUTTON_CLASS}::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0) 20%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0) 80%
+  );
+  transform: translateX(-100%);
+  animation: nexus-busy-sweep 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes nexus-busy-sweep {
+  to {
+    transform: translateX(100%);
+  }
 }
 .${WHITE_BUTTON_CLASS_NAME} {
   background: rgba(255, 255, 255, 0.6) !important;

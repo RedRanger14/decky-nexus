@@ -64,6 +64,7 @@ import {
   NEXUS_ORANGE,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
+  BUSY_BUTTON_CLASS,
 } from "./theme";
 import { PageBackdrop, SectionHeading, StatChip, WarningBox } from "./chrome";
 import { DownloadsButton } from "./DownloadsButton";
@@ -1047,7 +1048,7 @@ export function ModDetailPage() {
         <DialogButton
           disabled={primaryDisabled}
           onClick={() => primaryFile && onInstall(primaryFile)}
-          className={primaryBusy ? undefined : PRIMARY_BUTTON_CLASS}
+          className={primaryBusy ? BUSY_BUTTON_CLASS : PRIMARY_BUTTON_CLASS}
           style={{
             ...ACTION_HERO,
             ...(primaryBusy

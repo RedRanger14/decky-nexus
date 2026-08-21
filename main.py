@@ -1995,8 +1995,99 @@ def _frosty_game_exe(install_path: str) -> str:
     return os.path.join(install_path, "starwarsbattlefrontii.exe")
 
 
-async def _frosty_run(args: list, timeout: int = 1800) -> tuple:
-    """Run FrostyCli. Returns (rc, tail of output)."""
+class _FrostyProgress:
+    """Turns FrostyCli's log lines into a bar that keeps moving.
+
+    Every number here was MEASURED on the test device rather than guessed,
+    because the shape of this job is not obvious. With a warm cache the whole
+    compile is about six seconds. With a cold one - which is every user's
+    first install - it spends 35 seconds inside "Indexing Ebx" printing
+    nothing whatsoever, and that silence is what reads as a hang.
+
+    So: log lines move the bar to a known point, and between points it creeps
+    at the measured rate. The creep never passes the next real milestone, so
+    it cannot claim progress that has not happened.
+    """
+
+    # (matched text, percent of this stage, what to tell the user, seconds
+    #  the NEXT step usually takes)
+    STEPS = [
+        ("Loading profile", 4, "Opening the game's files", 1),
+        # Cold cache: the long way round.
+        ("Loading FileInfos from catalogs", 8, "Reading the game's catalogs", 3),
+        ("Loading Assets from SuperBundles", 16,
+         "Reading the game's asset list", 6),
+        ("Indexing Ebx", 26,
+         "Indexing the game's assets - about a minute, and only the first "
+         "time", 36),
+        ("Indexed ebx", 68, "Nearly there", 2),
+        # Warm cache: the same ground in a couple of seconds.
+        ("Loading ebx from cache", 20, "Reading the game's assets", 1),
+        ("Loading res from cache", 30, "Reading the game's assets", 1),
+        ("Loading chunks from cache", 40, "Reading the game's assets", 1),
+        ("Finished initializing", 72, "Working on your mods", 3),
+        ("Converting fbmod", 80, "Converting the mod", 2),
+        ("Successfully updated mod", 96, "Converted", 1),
+    ]
+
+    def __init__(self, base: int, span: int, emit):
+        self.base = base
+        self.span = span
+        self.emit = emit          # async callable (percent, message)
+        self.stage = 0.0          # percent WITHIN this stage, 0-100
+        self.target = 0.0
+        self.rate = 0.0           # stage-percent per second
+        self.message = ""
+        self.last_sent = -1
+        self.bundles = 0
+
+    def _advance(self, pct: float, message: str, next_pct: float, secs: float):
+        self.stage = max(self.stage, pct)
+        self.target = next_pct
+        self.rate = (next_pct - pct) / secs if secs > 0 else 0.0
+        if message:
+            self.message = message
+
+    def line(self, text: str) -> None:
+        if "RANGEBUILD" in text:
+            # One per superbundle, about thirty of them, a few seconds total.
+            self.bundles += 1
+            self._advance(
+                min(96.0, 72.0 + self.bundles * 0.8),
+                "Building the game's data", 97.0, 1,
+            )
+            return
+        for i, (needle, pct, message, secs) in enumerate(self.STEPS):
+            if needle in text:
+                nxt = self.STEPS[i + 1][1] if i + 1 < len(self.STEPS) else 100
+                self._advance(pct, message, max(float(pct), float(nxt)), secs)
+                return
+
+    def tick(self, seconds: float) -> None:
+        if self.rate > 0:
+            # Stop just short of the next milestone: arriving there is the
+            # milestone's job, not the clock's.
+            self.stage = min(self.stage + self.rate * seconds, self.target - 1)
+
+    def percent(self) -> int:
+        return int(self.base + self.span * max(0.0, self.stage) / 100.0)
+
+    async def send(self) -> None:
+        pct = self.percent()
+        if pct != self.last_sent:
+            self.last_sent = pct
+            await self.emit(pct, self.message)
+
+
+async def _frosty_run(args: list, timeout: int = 1800,
+                      progress: "_FrostyProgress" = None) -> tuple:
+    """Run FrostyCli. Returns (rc, tail of output).
+
+    Reads the output line by line rather than in one lump, so a progress bar
+    can follow real work, and so a failure says what failed. Losing that
+    output cost a whole test round trip: the log recorded a rolled-back
+    install with no reason attached to it.
+    """
     proc = await asyncio.create_subprocess_exec(
         _frosty_cli(), *args,
         cwd=_frosty_root(),
@@ -2006,18 +2097,53 @@ async def _frosty_run(args: list, timeout: int = 1800) -> tuple:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
+
+    kept = []
+    interesting = []
+
+    async def read_output():
+        while True:
+            raw = await proc.stdout.readline()
+            if not raw:
+                break
+            line = _strip_ansi(raw.decode("utf-8", "replace")).rstrip()
+            if not line:
+                continue
+            kept.append(line)
+            if len(kept) > 60:
+                del kept[0]
+            if "ERROR" in line or "Exception" in line:
+                interesting.append(line)
+            if progress is not None:
+                progress.line(line)
+
+    async def ticker():
+        # A second is slow enough not to spam the frontend and fast enough
+        # that the bar never looks parked.
+        while True:
+            await asyncio.sleep(1.0)
+            if progress is not None:
+                progress.tick(1.0)
+                await progress.send()
+
+    tick = asyncio.ensure_future(ticker()) if progress is not None else None
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        await asyncio.wait_for(read_output(), timeout=timeout)
+        await asyncio.wait_for(proc.wait(), timeout=60)
     except asyncio.TimeoutError:
         proc.kill()
+        decky.logger.error(f"frosty: {args[0]} timed out after {timeout}s")
         return 1, "the mod compiler took too long and was stopped"
-    text = (out or b"").decode("utf-8", "replace")
-    lines = [
-        _strip_ansi(line)
-        for line in text.splitlines()
-        if "ERROR" in line or "Exception" in line
-    ]
-    return proc.returncode or 0, "\n".join(lines[-4:]) or text[-400:]
+    finally:
+        if tick is not None:
+            tick.cancel()
+
+    rc = proc.returncode or 0
+    tail = "\n".join(interesting[-4:]) or "\n".join(kept[-6:])
+    # ALWAYS logged. A silent non-zero exit is unfixable from the outside.
+    log = decky.logger.error if rc != 0 else decky.logger.info
+    log(f"frosty: {args[0]} rc={rc}" + (f"\n{tail}" if rc != 0 else ""))
+    return rc, tail[-400:]
 
 
 def _strip_ansi(text: str) -> str:
@@ -2025,7 +2151,15 @@ def _strip_ansi(text: str) -> str:
 
 
 def _frosty_redirect_reg(app_id: int) -> str:
-    return os.path.normpath(_prefix_drive_c(app_id, "..", "..", "user.reg"))
+    """The prefix's user.reg.
+
+    ONE level up from drive_c, not two: pfx/drive_c/.. is pfx. With two it
+    resolved to compatdata/<id>/user.reg, a path that does not exist, so the
+    setup function decided there was no prefix and returned without writing
+    anything. The install then reported success and the game loaded vanilla
+    data, every time, which is exactly how this looked on device.
+    """
+    return os.path.normpath(_prefix_drive_c(app_id, "..", "user.reg"))
 
 
 def _frosty_override_section() -> str:
@@ -2193,13 +2327,19 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
         decky.logger.info("frosty: no mods enabled, cleared the compiled data")
         return {"ok": True, "mods": 0}
 
+    bar = None
     if progress_mod_id:
+        noun = f"{len(enabled)} mod{'' if len(enabled) == 1 else 's'}"
         await _emit_progress(
-            progress_mod_id, "compiling", 60,
-            f"Compiling {len(enabled)} mod"
-            f"{'' if len(enabled) == 1 else 's'} into the game's data",
+            progress_mod_id, "compiling", 55,
+            f"Compiling {noun} into the game's data",
         )
-    rc, tail = await _frosty_run(["mod", exe, mods_dir, pack])
+
+        async def _emit(pct, message):
+            await _emit_progress(progress_mod_id, "compiling", pct, message)
+
+        bar = _FrostyProgress(55, 30, _emit)
+    rc, tail = await _frosty_run(["mod", exe, mods_dir, pack], progress=bar)
     if rc != 0:
         _force_rmtree(pack)
         return {
@@ -2207,11 +2347,20 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
             "error": f"Compiling the mods failed. {tail}"[:400],
         }
 
+    verify_bar = None
     if progress_mod_id:
         await _emit_progress(
             progress_mod_id, "compiling", 85,
             "Checking the game can read it",
         )
+
+        async def _emit_verify(pct, message):
+            await _emit_progress(
+                progress_mod_id, "compiling", pct,
+                "Checking the game can read it",
+            )
+
+        verify_bar = _FrostyProgress(85, 12, _emit_verify)
 
     # A pack that does not read back is a pack that crashes the game, and this
     # is cheap next to a launch. Proven on device: every time the check failed,
@@ -2225,7 +2374,7 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
         if os.path.isdir(cache):
             _force_rmtree(stash)
             os.rename(cache, stash)
-        rc, tail = await _frosty_run(["load", check_exe])
+        rc, tail = await _frosty_run(["load", check_exe], progress=verify_bar)
         if os.path.isdir(stash):
             _force_rmtree(cache)
             os.rename(stash, cache)
@@ -18877,14 +19026,19 @@ query CollectionInstructions($slug: String!) {
         # v5 and an unconverted mod is silently ignored - it compiles to a pack
         # with no changes in it, which looks exactly like a broken plugin.
         await _emit_progress(
-            mod_id, "compiling", 30,
+            mod_id, "compiling", 10,
             "Reading the mod (Battlefront II mods have to be converted)",
         )
         mods_dir = _frosty_mods_dir(game_domain)
         os.makedirs(mods_dir, exist_ok=True)
         target = os.path.join(mods_dir, _safe_name(mod_name) + ".fbmod")
+
+        async def _emit_convert(pct, message):
+            await _emit_progress(mod_id, "compiling", pct, message)
+
         rc, tail = await _frosty_run(
-            ["update-mod", exe, chosen, "--output", target], timeout=900
+            ["update-mod", exe, chosen, "--output", target], timeout=900,
+            progress=_FrostyProgress(10, 45, _emit_convert),
         )
         _force_rmtree(scratch)
         try:
