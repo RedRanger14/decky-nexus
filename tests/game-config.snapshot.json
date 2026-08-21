@@ -246,7 +246,7 @@
     "modsSubdir": "Data",
     "pluginsTxtSubpath": null,
     "pluginsTxtStyle": null,
-    "installMode": null,
+    "installMode": "frosty",
     "frameworkName": "Mod compiler",
     "launchOptionsTemplate": null,
     "prefixTools": [

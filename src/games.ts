@@ -1036,6 +1036,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // because the shared status call wants a path that exists.
     modsSubdir: "Data",
     frostbite: true,
+    installMode: "frosty",
     moddedSaveWarning: false, // progression is server-side
     processName: "starwarsbattlefrontii.exe", // verified on device
     // Not a Nexus mod: our own build of FrostyCli, because the upstream tool

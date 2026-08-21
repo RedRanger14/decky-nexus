@@ -4,7 +4,10 @@ import { callable } from "@decky/api";
 /** How a game's mods are stored and activated. "folder" per-mod dirs,
  * "dataDir" merged into Data/ with plugins.txt, "me3" outside the game
  * folder entirely with a generated .me3 profile (FromSoft games). */
-export type InstallMode = "folder" | "dataDir" | "me3";
+// "frosty": Frostbite games compile mods into a ModData tree, so there
+// are no mod folders to scan and no per-mod toggle - every change
+// recompiles the enabled set. See docs/frosty-swbf2/WORKING.md.
+export type InstallMode = "folder" | "dataDir" | "me3" | "frosty";
 
 export interface NexusMod {
   modId: number;

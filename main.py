@@ -11638,6 +11638,48 @@ query Link($slug: String!, $domainName: String!) {
         # runs BEFORE the UE4SS gate below - that gate fires on a stray
         # enabled.txt anywhere in the archive, which would refuse a
         # perfectly installable FromSoft mod over an unrelated loader.
+        if install_mode == "frosty":
+            # Frostbite games have no mod FOLDERS to scan: the compiled pack
+            # is one opaque tree. The records say what is installed, and which
+            # directory each .fbmod sits in says whether it is enabled - disk
+            # stays the source of truth for state, records for identity.
+            settings = _load_settings()
+            mods_dir = _frosty_mods_dir(game_domain)
+            off_dir = os.path.join(mods_dir, "disabled")
+            results = []
+            for key, rec in (
+                settings.get("installed", {}).get(game_domain, {}) or {}
+            ).items():
+                if rec.get("mode") != "frosty":
+                    continue
+                name = _safe_name(key) + ".fbmod"
+                on_disk = os.path.isfile(os.path.join(mods_dir, name))
+                parked = os.path.isfile(os.path.join(off_dir, name))
+                if not on_disk and not parked:
+                    continue
+                results.append({
+                    "folder": key,
+                    "enabled": on_disk,
+                    "tracked": True,
+                    "name": rec.get("name") or key,
+                    "version": rec.get("version") or "",
+                    "mod_id": rec.get("mod_id"),
+                    "togglable": True,
+                    "source": rec.get("source") or "",
+                    "collection_slug": rec.get("collection_slug") or "",
+                })
+            results.sort(key=lambda m: (m["name"] or "").lower())
+            return {
+                "ok": True,
+                "mods": results,
+                "collections": settings.get("collections", {}).get(
+                    game_domain, {}
+                ),
+                "attention": settings.get("collection_attention", {}).get(
+                    game_domain, {}
+                ),
+            }
+
         if install_mode == "me3":
             root, assets_subpath, dlls, route_err = _route_me3_payload(
                 scratch, mod_name
