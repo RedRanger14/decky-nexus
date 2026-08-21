@@ -2355,9 +2355,15 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
         )
 
         async def _emit_verify(pct, message):
+            # The check reads the new pack with a COLD cache on purpose - a
+            # warm one would skip the very data it is meant to read - so it
+            # pays the full indexing cost every time, about 45 seconds. Say
+            # which part of it is running, or the same sentence sits there for
+            # most of a minute and reads as stuck.
             await _emit_progress(
                 progress_mod_id, "compiling", pct,
-                "Checking the game can read it",
+                f"Checking the game can read it: {message.lower()}"
+                if message else "Checking the game can read it",
             )
 
         verify_bar = _FrostyProgress(85, 12, _emit_verify)

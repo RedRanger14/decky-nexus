@@ -95,7 +95,12 @@ export async function installPinned(
   );
 }
 
-function installModWith(
+/** The ONE place that decides how a mod gets installed for a given game.
+ *
+ * Exported so pages call this instead of the api underneath it. The mod page
+ * once duplicated this branch and My Mods skipped it entirely, and both times
+ * Battlefront II quietly took the folder path. */
+export function installModWith(
   game: SupportedGame,
   modId: number,
   fileId: number,

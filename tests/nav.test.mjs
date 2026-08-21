@@ -2,7 +2,7 @@
 // (compiles src/navRules.ts standalone, then executes this file)
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 import { backAction, popsToExitToQam } from "../.test-build/navRules.js";
 
@@ -27,6 +27,14 @@ const readCode = (f) =>
   read(f)
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/(^|[^:'"\\])\/\/[^\n]*/gm, "$1");
+
+/** Every source file, for invariants that must hold across the whole tree
+ * rather than in one page. A rule enforced on the files you remembered to
+ * list is a rule the next file breaks. */
+const sources = () =>
+  readdirSync(new URL("../src/", import.meta.url)).filter((f) =>
+    /\.tsx?$/.test(f)
+  );
 
 const TABS_SRC = read("Tabs.tsx");
 const INDEX_SRC = read("index.tsx");
@@ -571,10 +579,10 @@ test("a refusal is on screen before the install button is pressed", () => {
     "nothing asks whether the install would be refused until it is tried"
   );
   const load = page.indexOf("getInstallBlock(");
-  // On the CALL, not on the whole statement: the assignment gained a
-  // Frostbite branch and this stopped matching, which reads as a
-  // regression in behaviour when it is only a change of spelling.
-  const attempt = page.indexOf("await installMod(");
+  // On whatever the page calls to install, wherever the mechanism lives.
+  // This anchor has broken twice on pure renames, which reads as a
+  // behaviour regression when nothing behavioural changed.
+  const attempt = page.indexOf("await installModWith(");
   assert.ok(
     load < attempt,
     "the block check happens inside the install attempt, which is the " +
@@ -691,8 +699,11 @@ test("a dll loader is exempt from the older-patch rule", () => {
     /frameworkModIds\(game\)/.test(helper) && /loaderModIds/.test(helper),
     "the exemption list must cover BOTH the framework and dll loaders"
   );
-  // Both install call sites, or one path skips what the other exempts.
-  for (const f of ["install.ts", "ModDetailPage.tsx"]) {
+  // There is only ONE install call site now: install.ts owns the choice of
+  // mechanism and every page goes through it, so the exemption cannot be
+  // passed on one path and forgotten on another. That is enforced by "no
+  // page installs, toggles or removes a mod by calling the api directly".
+  for (const f of ["install.ts"]) {
     assert.ok(
       read(f).includes("stalenessExemptModIds(game)"),
       `${f} passes the framework list only, so its installs still skip loaders`
@@ -1070,9 +1081,16 @@ test("the mod page routes Frostbite installs and removals to the compiler", () =
   // through the folder installer and appeared to hang. The device log said
   // "install_mod:" where it should have said "install_frosty_mod".
   const page = read("ModDetailPage.tsx");
+  // The page asks install.ts; install.ts picks the mechanism. Asserting the
+  // branch in the page was asserting a duplicate of this, which is exactly
+  // how the two drifted apart in the first place.
   assert.ok(
-    /game\.frostbite[\s\S]{0,200}installFrostyMod\(/.test(page),
-    "the install button does not route Frostbite games to the compiler"
+    /await installModWith\(/.test(page),
+    "the install button does not go through install.ts"
+  );
+  assert.ok(
+    /game\.frostbite[\s\S]{0,400}installFrostyMod\(/.test(read("install.ts")),
+    "install.ts does not route Frostbite games to the compiler"
   );
   assert.ok(
     /removeMod\(game, installedCopy\.folder\)/.test(page),
@@ -1094,5 +1112,31 @@ test("a long install says what it is doing", () => {
   assert.ok(
     /const progressNote =/.test(page) && /\{progressNote\}/.test(page),
     "the install's message is never shown on the page"
+  );
+});
+
+test("no page installs, toggles or removes a mod by calling the api directly", () => {
+  // This exact mistake has now shipped FOUR times: the mod page's install and
+  // uninstall, and My Mods' toggle and remove. Each time the game-specific
+  // branch lived in install.ts and the page called the api underneath it, so
+  // Battlefront II silently took the folder path - an install that appeared
+  // to hang, a toggle that errored with nothing in the backend log.
+  //
+  // install.ts owns the choice of mechanism. Pages call it and nothing else.
+  const owners = new Set(["install.ts"]);
+  const calls = ["installMod(", "setModEnabled(", "uninstallMod("];
+  const offenders = [];
+  for (const file of sources()) {
+    if (owners.has(file)) continue;
+    const code = readCode(file);
+    for (const call of calls) {
+      if (code.includes(call)) offenders.push(`${file} calls ${call}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "these must go through install.ts (installModWith / toggleMod / removeMod):\n" +
+      offenders.join("\n")
   );
 });

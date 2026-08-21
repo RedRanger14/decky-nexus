@@ -22,12 +22,11 @@ import {
   getInstalledMods,
   getModDetails,
   getModsByIds,
-  setModEnabled,
   uninstallCollection,
-  uninstallMod,
   getShowAdult,
 } from "./api";
 import { ALL_GAMES, SupportedGame, getActiveGame, modeParams } from "./games";
+import { removeMod, toggleMod } from "./install";
 import {
   getBrowseGame,
   setDetailOrigin,
@@ -378,17 +377,10 @@ export function ManagerPage() {
     const key = `${game.appId}:${mod.folder}`;
     setBusyKey(key);
     try {
-      const result = await setModEnabled(
-        game.installDirName,
-        game.modsSubdir,
-        mod.folder,
-        !mod.enabled,
-        game.installMode ?? "folder",
-        game.nexusDomain,
-        game.appId,
-        game.pluginsTxtSubpath ?? "",
-        game.pluginsTxtStyle ?? "starred"
-      );
+      // toggleMod, not setModEnabled: Frostbite games have no folder to
+      // rename, they recompile. Calling the api directly here is what made a
+      // Battlefront II toggle fail with the backend never even logging it.
+      const result = await toggleMod(game, mod.folder, !mod.enabled);
       if (!result.ok) {
         toaster.toast({ title: "Could not toggle", body: result.error ?? "" });
       }
@@ -410,17 +402,7 @@ export function ManagerPage() {
     try {
       for (const mod of members) {
         if (mod.togglable === false || mod.enabled === enable) continue;
-        await setModEnabled(
-          game.installDirName,
-          game.modsSubdir,
-          mod.folder,
-          enable,
-          game.installMode ?? "folder",
-          game.nexusDomain,
-          game.appId,
-          game.pluginsTxtSubpath ?? "",
-          game.pluginsTxtStyle ?? "starred"
-        );
+        await toggleMod(game, mod.folder, enable);
       }
       toaster.toast({
         title: enable ? "Collection enabled" : "Collection disabled",
@@ -502,13 +484,7 @@ export function ManagerPage() {
         strOKButtonText="Uninstall"
         bDestructiveWarning={true}
         onOK={async () => {
-          const result = await uninstallMod(
-            game.nexusDomain,
-            game.installDirName,
-            game.modsSubdir,
-            mod.folder,
-            ...modeParams(game)
-          );
+          const result = await removeMod(game, mod.folder);
           toaster.toast(
             result.ok
               ? { title: "Uninstalled", body: mod.name ?? mod.folder }

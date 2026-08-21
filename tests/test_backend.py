@@ -13296,6 +13296,17 @@ class TestFrostbiteGames(unittest.TestCase):
         after = fn[fn.index("if not _frosty_redirect_ok(app_id):"):]
         self.assertIn('"ok": False', after[:600])
 
+    def test_the_verification_says_what_it_is_doing(self):
+        # It runs with a cold cache deliberately - a warm one would skip the
+        # data it exists to read - so it costs about 45 seconds every time.
+        # One unchanging sentence for that long reads as a freeze.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _frosty_compile"):]
+        fn = fn[:fn.index("def _prefix_drive_c")]
+        block = fn[fn.index("async def _emit_verify"):]
+        self.assertIn("message.lower()", block[:600])
+
     def test_installed_frostbite_mods_are_listed(self):
         # This is END TO END through the real endpoint on purpose. The listing
         # branch was originally patched in by matching 'install_mode == "me3"',

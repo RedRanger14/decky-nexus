@@ -24,9 +24,7 @@ import {
   getModDetails,
   getModFiles,
   getModRequirements,
-  installFrostyMod,
   getModSupport,
-  installMod,
   setEndorsement,
 
   getKnownModVerdict,
@@ -38,8 +36,13 @@ import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
 import { popOurPage, pushOurPage } from "./Tabs";
 import { getCompatHint } from "./compat";
-import { frameworkModIds, modeParams, stalenessExemptModIds } from "./games";
-import { finishFomod, installLatest, removeMod } from "./install";
+import { frameworkModIds, modeParams } from "./games";
+import {
+  finishFomod,
+  installLatest,
+  installModWith,
+  removeMod,
+} from "./install";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 
 // Steam's scroll panel: right-stick scrolling (untyped props upstream).
@@ -340,50 +343,17 @@ export function ModDetailPage() {
     nameDownload(mod.modId, mod.name, game.appId);
     try {
       setBlocked(undefined);
-      const result = game.frostbite
-        ? // Frostbite games compile rather than copy - a different backend
-          // call, and a much longer wait, so the page shows its own progress.
-          await installFrostyMod(
-            game.nexusDomain,
-            mod.modId,
-            file.file_id,
-            file.file_name,
-            mod.name,
-            file.version || mod.version,
-            game.installDirName,
-            game.appId,
-            mod.version,
-            payloadChoice
-          )
-        : await installMod(
-        game.nexusDomain,
+      const result = await installModWith(
+        game,
         mod.modId,
         file.file_id,
         file.file_name,
         mod.name,
         file.version || mod.version,
-        game.installDirName,
-        game.modsSubdir,
         "",
-        "",
-        ...modeParams(game),
-        payloadChoice,
-        game.ue4ss?.modsSubdir ?? "",
-        game.ue4ss?.logicModsSubdir ?? "",
-        game.launcherXmlSubpath ?? "",
-        game.flatModExtensions ?? [],
         mod.version,
         "",
-        game.witcherLayout ?? false,
-        "",
-        game.cp77Layout ?? false,
-        game.pakPatchLayout ?? false,
-        false,
-        // A loader is exempt from the older-patch rule - it loads dlls
-        // rather than patching game code.
-        stalenessExemptModIds(game),
-        game.hd2Layout ?? false,
-        game.reshade?.subdir ?? ""
+        payloadChoice
       );
       if (result.needs_fomod && result.fomod_token && result.wizard) {
         // FOMOD archive: run the wizard, then finish with the choices.
