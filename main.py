@@ -1995,6 +1995,17 @@ def _frosty_game_exe(install_path: str) -> str:
     return os.path.join(install_path, "starwarsbattlefrontii.exe")
 
 
+def _frosty_record_files(rec: dict, folder: str) -> list:
+    """Every .fbmod belonging to one installed mod.
+
+    A mod can be several parts - The Mandalorian ships Base, Text and Weapon -
+    so the record's file list is the truth. Records written before multi-part
+    installs existed have no list, hence the fallback to the derived name.
+    """
+    files = [f for f in (rec.get("files") or []) if str(f).endswith(".fbmod")]
+    return files or [_safe_name(folder) + ".fbmod"]
+
+
 def _payload_choice_labels(options: list) -> list:
     """Human labels for a set of payload paths, in the same order.
 
@@ -18217,9 +18228,13 @@ query CollectionInstructions($slug: String!) {
             ).items():
                 if rec.get("mode") != "frosty":
                     continue
-                name = _safe_name(key) + ".fbmod"
-                on_disk = os.path.isfile(os.path.join(mods_dir, name))
-                parked = os.path.isfile(os.path.join(off_dir, name))
+                names = _frosty_record_files(rec, key)
+                on_disk = any(
+                    os.path.isfile(os.path.join(mods_dir, n)) for n in names
+                )
+                parked = any(
+                    os.path.isfile(os.path.join(off_dir, n)) for n in names
+                )
                 if not on_disk and not parked:
                     continue
                 results.append({
@@ -19121,16 +19136,50 @@ query CollectionInstructions($slug: String!) {
         found.sort()
 
         if not found:
+            dlls = [
+                n for _r, _d, names in os.walk(scratch) for n in names
+                if n.lower().endswith((".dll", ".exe"))
+            ]
             _force_rmtree(scratch)
+            if dlls:
+                return {
+                    "ok": False,
+                    "unsupported_tool": True,
+                    "error": (
+                        "This is a plugin for the desktop Frosty Mod Manager, "
+                        "not a mod for the game. It adds features to that "
+                        "program's own interface, so there is nothing here to "
+                        "install into Battlefront II and no version of it can "
+                        "work on a Steam Deck."
+                    ),
+                }
             return {
                 "ok": False,
+                "unsupported_layout": True,
                 "error": (
                     "No mod files in this archive. Frostbite mods are .fbmod "
                     "files; this may be a tool or a manual-install pack."
                 ),
             }
 
-        if len(found) > 1 and not payload_choice:
+        # A .fbcollection is the author saying, in Frosty's own format,
+        # "these parts go together". Nothing to ask about.
+        declared_set = any(
+            n.lower().endswith((".fbcollection", ".fbproject"))
+            for _r, _d, names in os.walk(scratch) for n in names
+        )
+
+        if payload_choice == "*":
+            chosen = list(found)
+        elif payload_choice:
+            pick = os.path.normpath(os.path.join(scratch, *payload_choice.split("/")))
+            if pick not in [os.path.normpath(p) for p in found]:
+                _force_rmtree(scratch)
+                return {"ok": False, "error": "That option wasn't in the archive"}
+            chosen = [pick]
+        elif len(found) == 1 or declared_set:
+            chosen = list(found)
+        else:
             options = [
                 os.path.relpath(p, scratch).replace(os.sep, "/") for p in found
             ]
@@ -19142,19 +19191,11 @@ query CollectionInstructions($slug: String!) {
             await _emit_progress(mod_id, "error", 0, "choose a version")
             return {"ok": False, "needs_choice": True, "options": options,
                     "option_labels": _payload_choice_labels(options),
-                    # Alternatives, not parts: these all replace the same
-                    # character, so merging them is never what the author
-                    # meant. A Frostbite mod that ships complementary pieces
-                    # would need a different answer, and none has turned up.
-                    "merge_allowed": False}
-
-        chosen = found[0]
-        if payload_choice:
-            pick = os.path.normpath(os.path.join(scratch, *payload_choice.split("/")))
-            if pick not in [os.path.normpath(p) for p in found]:
-                _force_rmtree(scratch)
-                return {"ok": False, "error": "That option wasn't in the archive"}
-            chosen = pick
+                    # Merging is real here: the compiler takes a DIRECTORY of
+                    # .fbmod files, so several parts of one mod is its normal
+                    # case. Ahsoka Tano ships a main mod, icon variants and a
+                    # saber add-on; one of those alone is not the mod.
+                    "merge_allowed": True}
 
         # Convert to the format the compiler reads. Community mods are v2 to
         # v5 and an unconverted mod is silently ignored - it compiles to a pack
@@ -19165,24 +19206,48 @@ query CollectionInstructions($slug: String!) {
         )
         mods_dir = _frosty_mods_dir(game_domain)
         os.makedirs(mods_dir, exist_ok=True)
-        target = os.path.join(mods_dir, _safe_name(mod_name) + ".fbmod")
 
         async def _emit_convert(pct, message):
             await _emit_progress(mod_id, "compiling", pct, message)
 
-        rc, tail = await _frosty_run(
-            ["update-mod", exe, chosen, "--output", target], timeout=900,
-            progress=_FrostyProgress(10, 45, _emit_convert),
-        )
+        key = _safe_name(mod_name)
+        span = 45.0 / len(chosen)
+        written = []
+        fail = ""
+        for i, src in enumerate(chosen):
+            # One part keeps the mod's own name, so existing installs and
+            # their records are unchanged. Several get the part's name after
+            # it, which is what the author called them.
+            part = os.path.splitext(os.path.basename(src))[0]
+            name = key if len(chosen) == 1 else _safe_name(f"{key} - {part}")
+            target = os.path.join(mods_dir, name + ".fbmod")
+            rc, tail = await _frosty_run(
+                ["update-mod", exe, src, "--output", target], timeout=900,
+                progress=_FrostyProgress(
+                    int(10 + i * span), int(span), _emit_convert
+                ),
+            )
+            if rc != 0 or not os.path.isfile(target):
+                fail = tail
+                break
+            written.append(name + ".fbmod")
+
         _force_rmtree(scratch)
         try:
             os.remove(archive_path)
         except OSError:
             pass
-        if rc != 0 or not os.path.isfile(target):
+        if fail or not written:
+            # Leave nothing half-installed: a partial set compiles into a
+            # pack that is not what anybody asked for.
+            for name in written:
+                try:
+                    os.remove(os.path.join(mods_dir, name))
+                except OSError:
+                    pass
             return {
                 "ok": False,
-                "error": f"Could not read this mod. {tail}"[:300],
+                "error": f"Could not read this mod. {fail}"[:300],
             }
 
         await _emit_progress(
@@ -19194,23 +19259,23 @@ query CollectionInstructions($slug: String!) {
         )
         if not result.get("ok"):
             # Roll the mod back out: the set has to stay one that compiles.
-            try:
-                os.remove(target)
-            except OSError:
-                pass
+            for name in written:
+                try:
+                    os.remove(os.path.join(mods_dir, name))
+                except OSError:
+                    pass
             await _frosty_compile(game_domain, install_path, int(app_id))
             await _emit_progress(mod_id, "error", 0, "not applied")
             return result
 
         settings = _load_settings()
         installed = settings.setdefault("installed", {}).setdefault(game_domain, {})
-        key = _safe_name(mod_name)
         installed[key] = _merge_install_record(installed.get(key) or {}, {
             "mod_id": mod_id, "file_id": file_id, "name": mod_name,
             "version": mod_version, "file_name": file_name,
             "installed_at": int(time.time()), "page_version": page_version,
             "source": "", "collection_slug": "",
-            "mode": "frosty", "target": "", "files": [key + ".fbmod"],
+            "mode": "frosty", "target": "", "files": written,
             "warning": result.get("warning") or "",
         })
         _save_settings(settings)
@@ -19229,26 +19294,34 @@ query CollectionInstructions($slug: String!) {
         off_dir = os.path.join(mods_dir, "disabled")
         os.makedirs(off_dir, exist_ok=True)
 
-        name = _safe_name(folder) + ".fbmod"
-        live = os.path.join(mods_dir, name)
-        parked = os.path.join(off_dir, name)
-        src, dst = (parked, live) if enabled else (live, parked)
-        if not os.path.isfile(src):
-            return {"ok": False, "error": "That mod is not installed"}
-        try:
-            os.replace(src, dst)
-        except OSError as e:
-            return {"ok": False, "error": str(e)}
-
-        # The record's mod id is the progress channel the UI listens on.
         rec0 = (_load_settings().get("installed", {}).get(game_domain, {})
                 .get(_safe_name(folder)) or {})
+        names = _frosty_record_files(rec0, folder)
+        moved = []
+        for name in names:
+            live = os.path.join(mods_dir, name)
+            parked = os.path.join(off_dir, name)
+            src, dst = (parked, live) if enabled else (live, parked)
+            if not os.path.isfile(src):
+                continue
+            try:
+                os.replace(src, dst)
+            except OSError as e:
+                for back_src, back_dst in moved:
+                    os.replace(back_dst, back_src)
+                return {"ok": False, "error": str(e)}
+            moved.append((src, dst))
+        if not moved:
+            return {"ok": False, "error": "That mod is not installed"}
+
+        # The record's mod id is the progress channel the UI listens on.
         pid = int(rec0.get("mod_id") or 0)
         result = await _frosty_compile(
             game_domain, install_path, int(app_id), pid
         )
         if not result.get("ok"):
-            os.replace(dst, src)
+            for back_src, back_dst in moved:
+                os.replace(back_dst, back_src)
             await _frosty_compile(game_domain, install_path, int(app_id))
             if pid:
                 await _emit_progress(pid, "error", 0, "not applied")
@@ -19270,10 +19343,14 @@ query CollectionInstructions($slug: String!) {
     ) -> dict:
         install_path, _m, _d = _game_paths(install_dir, "Data")
         mods_dir = _frosty_mods_dir(game_domain)
-        name = _safe_name(folder) + ".fbmod"
+        rec0 = (_load_settings().get("installed", {}).get(game_domain, {})
+                .get(_safe_name(folder)) or {})
         removed = False
-        for path in (os.path.join(mods_dir, name),
-                     os.path.join(mods_dir, "disabled", name)):
+        paths = []
+        for name in _frosty_record_files(rec0, folder):
+            paths.append(os.path.join(mods_dir, name))
+            paths.append(os.path.join(mods_dir, "disabled", name))
+        for path in paths:
             if os.path.isfile(path):
                 try:
                     os.remove(path)
@@ -19283,9 +19360,6 @@ query CollectionInstructions($slug: String!) {
         if not removed:
             return {"ok": False, "error": "That mod is not installed"}
 
-        # Read the id BEFORE the record goes, for the same reason as above.
-        rec0 = (_load_settings().get("installed", {}).get(game_domain, {})
-                .get(_safe_name(folder)) or {})
         pid = int(rec0.get("mod_id") or 0)
         result = await _frosty_compile(
             game_domain, install_path, int(app_id), pid

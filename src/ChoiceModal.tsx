@@ -28,19 +28,20 @@ export function PayloadChoiceModal({
     <ModalRoot closeModal={closeModal}>
       <h3 style={{ marginTop: 0 }}>{modName}: choose a version</h3>
       <div style={{ fontSize: "13px", opacity: 0.9, marginBottom: "8px" }}>
-        This mod's archive offers alternative folders — pick the one to
-        install. (Check the mod's description if you're unsure.)
+        This mod's archive has several parts. Some mods offer alternatives
+        to pick between; others are a set that belongs together. (Check the
+        mod's description if you're unsure.)
       </div>
       {options.length > 1 && allowMerge !== false && (
         <ButtonItem
           layout="below"
-          description="Replacer packs usually want all folders combined"
+          description="Multi-part mods want all of them: The Mandalorian ships a base, text and weapon part"
           onClick={() => {
             closeModal?.();
             onPick("*");
           }}
         >
-          Install everything (merge all {options.length} folders)
+          Install all {options.length} parts
         </ButtonItem>
       )}
       {options.map((opt, i) => (

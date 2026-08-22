@@ -1184,3 +1184,40 @@ test("a successful install still shows its warning", () => {
     "My Mods never shows a mod's warning"
   );
 });
+
+test("an installed mod's warning is shown when its page is opened", () => {
+  // The previous test here asserted that setStale(result.warning) appeared in
+  // one branch of the install handler. It passed, and the warning was still
+  // invisible: it lived only in the install RESULT, so reopening the page -
+  // which is precisely when someone comes looking, because the mod looked
+  // wrong in game - showed nothing at all.
+  //
+  // The durable path is the installed record, so that is what to assert.
+  const page = readCode("ModDetailPage.tsx");
+  const load = page.indexOf("setInstalledCopy(");
+  assert.ok(load > 0, "the installed-record load moved");
+  assert.ok(
+    /\.warning\)\s*setStale\(|warning\)\s*setStale/.test(
+      page.slice(load, load + 400)
+    ),
+    "opening the page never reads the stored warning, so a mod installed " +
+      "in an earlier session shows no warning at all"
+  );
+});
+
+test("mods we cannot install are kept out of the hero rails", () => {
+  // BetterSabers (mod 16) is the most endorsed mod for Battlefront II and
+  // its archive holds one file: BetterSabersPlugin.dll, a plugin for the
+  // desktop Frosty Mod Manager. Showcasing it at the top of the store and
+  // then refusing it is the worst of both. Search still finds it, and the
+  // install-time refusal names what it is.
+  //
+  // Not covered by the config snapshot, which does not capture this field.
+  const games = read("games.ts");
+  const bf2 = games.slice(games.indexOf("appId: 1237950"));
+  const entry = bf2.slice(0, bf2.indexOf("appId:", 10));
+  assert.ok(
+    /heroExcludeModIds: \[[^\]]*\b16\b/.test(entry),
+    "BetterSabers is not excluded from Battlefront II's hero rails"
+  );
+});

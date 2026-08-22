@@ -1037,6 +1037,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     modsSubdir: "Data",
     frostbite: true,
     installMode: "frosty",
+    // BetterSabers is the most endorsed mod for this game, and its archive
+    // holds one file: BetterSabersPlugin.dll. It extends the desktop Frosty
+    // Mod Manager's own interface, so there is nothing in it for the game and
+    // no version of it can run in Gaming Mode. Keeping it out of the hero
+    // rails stops us showcasing something we then refuse; search still finds
+    // it, and the install-time refusal names what it actually is.
+    heroExcludeModIds: [16],
     moddedSaveWarning: false, // progression is server-side
     processName: "starwarsbattlefrontii.exe", // verified on device
     // Not a Nexus mod: our own build of FrostyCli, because the upstream tool

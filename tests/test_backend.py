@@ -13219,22 +13219,30 @@ class TestFrostbiteGames(unittest.TestCase):
         # A failed verification must leave nothing behind.
         self.assertIn("_force_rmtree(pack)", fn)
 
-    def test_a_failed_install_rolls_the_mod_back_out(self):
+    def test_a_failed_install_rolls_every_part_back_out(self):
         # The enabled set must always be one that compiles, or the game is
-        # left broken by a mod the user cannot see to remove.
+        # left broken by a mod the user cannot see to remove. A mod can be
+        # several parts now (The Mandalorian ships Base, Text and Weapon), so
+        # a half-installed set is its own kind of broken.
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
         fn = source[source.index("async def install_frosty_mod"):]
         fn = fn[:fn.index("async def set_frosty_mod_enabled")]
-        self.assertIn("os.remove(target)", fn)
+        self.assertIn("for name in written:", fn)
+        self.assertIn("os.remove(os.path.join(mods_dir, name))", fn)
         self.assertIn("await _frosty_compile", fn)
 
-    def test_a_failed_toggle_is_put_back(self):
+    def test_a_failed_toggle_puts_every_part_back(self):
+        # Toggling a multi-part mod moves several files. Failing halfway and
+        # leaving some moved would compile a set the user never chose.
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
         fn = source[source.index("async def set_frosty_mod_enabled"):]
         fn = fn[:fn.index("async def uninstall_frosty_mod")]
-        self.assertIn("os.replace(dst, src)", fn)
+        self.assertIn("for back_src, back_dst in moved:", fn)
+        self.assertIn("os.replace(back_dst, back_src)", fn)
+        # Twice: once if a move itself fails, once if the compile does.
+        self.assertEqual(fn.count("os.replace(back_dst, back_src)"), 2)
 
     def test_the_redirect_goes_in_the_prefix_registry(self):
         # Not launch options: EA's launcher respawns the game and strips them.
@@ -13297,6 +13305,76 @@ class TestFrostbiteGames(unittest.TestCase):
         self.assertIn("if not _frosty_redirect_ok(app_id):", fn)
         after = fn[fn.index("if not _frosty_redirect_ok(app_id):"):]
         self.assertIn('"ok": False', after[:600])
+
+    def test_a_stored_warning_comes_back_out_of_the_listing(self):
+        # Behavioural, through the real endpoint. The previous test for this
+        # checked that a setter existed in one branch of the install handler,
+        # which passed while the warning was invisible everywhere it
+        # mattered. Michael, fairly: "surely there is a simple test you could
+        # have written to check this."
+        home = tempfile.mkdtemp(prefix="frosty-warn-")
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        old_runtime = main.decky.DECKY_PLUGIN_RUNTIME_DIR
+        main.decky.DECKY_PLUGIN_RUNTIME_DIR = home
+        self.addCleanup(
+            setattr, main.decky, "DECKY_PLUGIN_RUNTIME_DIR", old_runtime
+        )
+        mods_dir = main._frosty_mods_dir("starwarsbattlefront22017")
+        os.makedirs(mods_dir, exist_ok=True)
+        with open(os.path.join(mods_dir, "Aged Mod.fbmod"), "wb") as fh:
+            fh.write(b"x")
+
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["starwarsbattlefront22017"] = {
+            "Aged Mod": {
+                "mod_id": 2042, "name": "Aged Mod", "mode": "frosty",
+                "warning": "built for a different build",
+            },
+        }
+        main._save_settings(settings)
+        self.addCleanup(main._save_settings, {})
+
+        loop = asyncio.new_event_loop()
+        try:
+            r = loop.run_until_complete(main.Plugin().get_installed_mods(
+                "starwarsbattlefront22017", "STAR WARS Battlefront II", "Data",
+                "frosty", 1237950,
+            ))
+        finally:
+            loop.close()
+        mods = r.get("mods") or []
+        self.assertEqual(len(mods), 1)
+        self.assertEqual(mods[0].get("warning"), "built for a different build")
+
+    def test_a_mod_with_no_warning_reports_an_empty_one(self):
+        # An absent key and a present-but-empty one render differently in the
+        # UI, and most mods are fine.
+        home = tempfile.mkdtemp(prefix="frosty-nowarn-")
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        old_runtime = main.decky.DECKY_PLUGIN_RUNTIME_DIR
+        main.decky.DECKY_PLUGIN_RUNTIME_DIR = home
+        self.addCleanup(
+            setattr, main.decky, "DECKY_PLUGIN_RUNTIME_DIR", old_runtime
+        )
+        mods_dir = main._frosty_mods_dir("starwarsbattlefront22017")
+        os.makedirs(mods_dir, exist_ok=True)
+        with open(os.path.join(mods_dir, "Fine Mod.fbmod"), "wb") as fh:
+            fh.write(b"x")
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["starwarsbattlefront22017"] = {
+            "Fine Mod": {"mod_id": 1, "name": "Fine Mod", "mode": "frosty"},
+        }
+        main._save_settings(settings)
+        self.addCleanup(main._save_settings, {})
+        loop = asyncio.new_event_loop()
+        try:
+            r = loop.run_until_complete(main.Plugin().get_installed_mods(
+                "starwarsbattlefront22017", "STAR WARS Battlefront II", "Data",
+                "frosty", 1237950,
+            ))
+        finally:
+            loop.close()
+        self.assertEqual((r.get("mods") or [{}])[0].get("warning"), "")
 
     def test_the_compilers_version_warning_is_not_thrown_away(self):
         # FrostyCli said, in as many words, "Mod Battle Damaged Vader
@@ -13382,16 +13460,61 @@ class TestFrostbiteGames(unittest.TestCase):
             for label in main._payload_choice_labels(opts):
                 self.assertTrue(label.strip(), f"empty label from {opts}")
 
-    def test_a_frostbite_archive_of_variants_asks_rather_than_merges(self):
-        # Three alternative Vader looks all replace the same character, so
-        # "install everything" is never what the author meant. Distinct from
-        # the Helldivers 2 weapons case, where the folders ARE a set.
+    def test_a_multi_part_archive_can_install_all_of_it(self):
+        # This started out refusing to merge, on the assumption that several
+        # .fbmod files are always alternatives. Checking real mods killed
+        # that: The Mandalorian ships Base, Text and Weapon parts plus a
+        # .fbcollection listing them, and Ahsoka Tano ships a main mod, icon
+        # variants and a Green Saber add-on. One part alone is not the mod.
+        # The compiler takes a DIRECTORY of .fbmod files, so this was only
+        # ever the installer's assumption.
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
         fn = source[source.index("async def install_frosty_mod"):]
         fn = fn[:fn.index("async def set_frosty_mod_enabled")]
-        self.assertIn('"merge_allowed": False', fn)
+        self.assertIn('"merge_allowed": True', fn)
         self.assertIn("_payload_choice_labels(options)", fn)
+        self.assertIn('payload_choice == "*"', fn)
+
+    def test_an_author_declared_set_is_not_put_to_the_user(self):
+        # A .fbcollection is the author saying, in Frosty's own format, that
+        # these parts go together. There is nothing to ask.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def install_frosty_mod"):]
+        fn = fn[:fn.index("async def set_frosty_mod_enabled")]
+        self.assertIn(".fbcollection", fn)
+        self.assertIn("declared_set", fn)
+
+    def test_a_frosty_manager_plugin_is_named_for_what_it_is(self):
+        # BetterSabers is the most endorsed mod for this game and its archive
+        # holds one file: BetterSabersPlugin.dll. It extends the desktop Frosty
+        # Mod Manager's interface. "No mod files in this archive" is true and
+        # sounds like a fault in us.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def install_frosty_mod"):]
+        fn = fn[:fn.index("async def set_frosty_mod_enabled")]
+        self.assertIn('"unsupported_tool": True', fn)
+        self.assertIn("desktop Frosty Mod Manager", fn)
+
+    def test_every_part_of_a_mod_is_found_from_its_record(self):
+        # Disk names are derived from the mod name for a single part and from
+        # the part name for several, so the record's list is the only reliable
+        # answer to "what belongs to this mod".
+        rec = {"files": ["A - Base.fbmod", "A - Weapon.fbmod", "notes.txt"]}
+        self.assertEqual(
+            main._frosty_record_files(rec, "A"),
+            ["A - Base.fbmod", "A - Weapon.fbmod"],
+        )
+
+    def test_an_old_record_with_no_file_list_still_works(self):
+        # Records written before multi-part installs existed have no list.
+        # Falling back to the derived name is what keeps them togglable.
+        self.assertEqual(
+            main._frosty_record_files({}, "Shadow Lord Maul"),
+            ["Shadow Lord Maul.fbmod"],
+        )
 
     def test_disabling_the_last_mod_restores_vanilla(self):
         # Deleting the pack is not enough: GAME_DATA_DIR kept pointing at a

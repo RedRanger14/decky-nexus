@@ -152,7 +152,13 @@ export function ModDetailPage() {
       s.game.protectedModFolders ?? []
     ).then((r) => {
       setInstalledMods(r.mods ?? []);
-      setInstalledCopy(r.mods?.find((m) => m.mod_id === s.mod.modId));
+      const mine = r.mods?.find((m) => m.mod_id === s.mod.modId);
+      setInstalledCopy(mine);
+      // A warning that lives only in an install RESULT is invisible the
+      // moment the page is reopened, which is exactly when the user comes
+      // looking for it - the character looked wrong, so they went back to
+      // the mod. Read it from the record instead.
+      if (mine?.warning) setStale(mine.warning);
     });
     // Frameworks (SMAPI/SKSE/BepInEx) don't create mod records - a
     // requirement pointing at one must still show green when installed.
