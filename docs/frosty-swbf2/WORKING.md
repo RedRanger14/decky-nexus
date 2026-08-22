@@ -206,3 +206,47 @@ So the plugin surfaces that warning rather than discarding it. `_frosty_run`
 kept only ERROR lines, which is why the one useful sentence never reached
 the user. It is now stored with the mod, so My Mods shows it too - the moment
 it matters is weeks after the install toast has gone.
+
+## Replaced meshes rendered as shards: three compiler bugs, none of them the mod
+
+The "built for a different version of the game" theory above did not survive
+contact with The Mandalorian (2022, no version warning, same shards). What
+actually separated working mods from broken ones was replaced TEXTURES work,
+replaced MESHES shatter. Diffing our pack against one built by real Frosty v1
+for the same mod (the PC still had v1's ModData for Battle Damaged Vader)
+found three independent causes:
+
+1. **Streaming-table sub-ranging (ours).** The manifest's chunks table is the
+   streaming view and always covers the whole chunk; the firstMip sub-range
+   belongs only to bundle entries. We applied the sub-range in both places,
+   so every replaced mesh streamed a fragment of itself. Vanilla and v1 agree
+   on the full-blob semantics.
+
+2. **No ShaderBlockDepot handler (upstream gap).** A mesh mod ships shader
+   block DELTAS (handler hash 0x89EF2205) that must be merged into the
+   game's depot at apply time. The new toolsuite's executor skips handler
+   resources when no handler is registered, and none shipped, so the game
+   kept its original shader blocks for a mesh that was no longer there.
+   Ported v1's merge handler (ShaderBlockDepotHandler.cs in this folder),
+   which also required finishing the executor's handler plumbing: joining
+   the game entry's bundles for handler resources, making ResModEntry's
+   OriginalSize and ResMeta settable, and exempting handler output from the
+   SuperBundleManifest base-copy skip (our own earlier fix was silently
+   discarding the merge results).
+
+3. **ZSTD_compress binding missing its level argument (upstream bug #6).**
+   The real function takes five arguments; the binding passed four, so the
+   compression level was register garbage and output was stored raw.
+
+Proof of equivalence: a `dump` command was added to FrostyCli that emits
+every asset's identity, sizes, res meta and cas location as JSON, plus a
+sha1 of the DECOMPRESSED payload. For Battle Damaged Vader (Cracked), all
+27 res in the touched bundles - including both merged shader depots - and
+all 8138 chunks now match real Frosty v1's pack: content byte-identical,
+res meta byte-identical, originalSize equal. FROSTY_VALIDATE_ALL stays
+green: res ok=84130 bad=0, chunks ok=211705 bad=0.
+
+Shipped as toolkit build 2 (release tag frosty-toolkit-2). The plugin
+upgrades an installed toolkit silently at the next install or toggle, and
+clears the SDK cache on upgrade so a fixed compiler cannot keep reading
+yesterday's cache.

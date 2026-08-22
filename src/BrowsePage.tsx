@@ -452,6 +452,27 @@ function ModTile({
             PRE-UPDATE
           </div>
         )}
+        {/* Curated: a mod this plugin can NEVER install (a desktop tool with
+            a big endorsement count). Saying so on the tile beats letting the
+            install fail and look like our bug - BetterSabers is the most
+            endorsed mod for Battlefront II. */}
+        {game.incompatibleMods?.[mod.modId] !== undefined && (
+          <div
+            style={{
+              display: "inline-flex",
+              marginTop: "4px",
+              padding: "1px 7px",
+              borderRadius: "3px",
+              fontSize: "9.5px",
+              fontWeight: 700,
+              letterSpacing: "0.4px",
+              background: "rgba(170, 60, 60, 0.92)",
+              color: "#fff",
+            }}
+          >
+            DESKTOP APP ONLY
+          </div>
+        )}
       </div>
     </Focusable>
   );

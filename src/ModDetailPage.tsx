@@ -513,8 +513,12 @@ export function ModDetailPage() {
       ? `⬆ Update to v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`
       : `⟳ Reinstall v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`
     : `Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`;
+  // Curated incompatibility: nothing in this mod can run here, so the
+  // button is off and the page says why - BEFORE a download, not after.
+  const incompatible = game.incompatibleMods?.[mod.modId];
   const primaryDisabled =
-    installingFileId !== undefined || !primaryFile || upToDate;
+    installingFileId !== undefined || !primaryFile || upToDate ||
+    incompatible !== undefined;
   // While the main file installs, the button IS the progress bar - the
   // same fill language as the collection rows and the QAM tool button.
   // All files + (Uninstall) + Go to downloads. The hero above them takes
@@ -1101,6 +1105,12 @@ export function ModDetailPage() {
         <DownloadsButton />
       </Focusable>
       </Focusable>
+      {incompatible && (
+        <WarningBox
+          title="Not installable on this device"
+          body={incompatible}
+        />
+      )}
       {blocked && (
         <WarningBox
           title="This mod cannot install yet"

@@ -1221,3 +1221,35 @@ test("mods we cannot install are kept out of the hero rails", () => {
     "BetterSabers is not excluded from Battlefront II's hero rails"
   );
 });
+
+test("a curated-incompatible mod is badged and its install is off", () => {
+  // Michael: "shall we mark this one as incompatible?" then, when nothing
+  // showed: "I would like an incompatible badge on both the mod thumbnail
+  // and the mod page." BetterSabers is the most endorsed mod for
+  // Battlefront II and is a desktop Frosty Mod Manager plugin - failing at
+  // install time reads as our bug, so the tile and the page must say it
+  // BEFORE a download.
+  const games = read("games.ts");
+  assert.ok(
+    /incompatibleMods:\s*\{\s*16:/.test(games),
+    "BetterSabers (mod 16) is not in Battlefront II's incompatible list"
+  );
+  const browse = read("BrowsePage.tsx");
+  assert.ok(
+    /game\.incompatibleMods\?\.\[mod\.modId\]/.test(browse),
+    "tiles never look at the incompatible list"
+  );
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /const incompatible = game\.incompatibleMods\?\.\[mod\.modId\]/.test(page),
+    "the mod page never looks at the incompatible list"
+  );
+  assert.ok(
+    /incompatible !== undefined;/.test(page),
+    "the install button stays enabled for an incompatible mod"
+  );
+  assert.ok(
+    /\{incompatible && \(/.test(page),
+    "the mod page shows no box for an incompatible mod"
+  );
+});

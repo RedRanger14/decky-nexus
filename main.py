@@ -1897,11 +1897,18 @@ def _skyrim_cc_catalog_fix(app_id: int, install_path: str) -> str:
 #     saying so rather than looking hung.
 FROSTY_TOOLKIT_URL = (
     "https://github.com/RedRanger14/decky-nexus/releases/download/"
-    "frosty-toolkit-1/frosty-toolkit-linux-x64.tar.gz"
+    "frosty-toolkit-2/frosty-toolkit-linux-x64.tar.gz"
 )
 FROSTY_TOOLKIT_SHA256 = (
-    "4d9c3df9f74d33d1a1ca8776ae133b16730d30566159b0c986c3d2fd4cd3b490"
+    "2170c8a9606a30ec5041977b92322240afc56bbb11d2e8834eef73f83d62e484"
 )
+# Bumped whenever the compiler itself is fixed. Build 2: streaming-table
+# entries cover whole chunks, the ShaderBlockDepot merge handler exists, and
+# zstd actually compresses - together these are why replaced character models
+# stopped rendering as shards. An installed toolkit older than this is
+# silently replaced at the next install or toggle, because a user cannot be
+# asked to know their compiler is stale.
+FROSTY_TOOLKIT_VERSION = 2
 FROSTY_PACK = "DeckyNexus"
 
 
@@ -1912,6 +1919,32 @@ def _frosty_root() -> str:
 
 def _frosty_cli() -> str:
     return os.path.join(_frosty_root(), "FrostyCli")
+
+
+def _frosty_toolkit_marker() -> str:
+    return os.path.join(_frosty_root(), "toolkit-version")
+
+
+def _frosty_toolkit_current() -> bool:
+    try:
+        with open(_frosty_toolkit_marker(), encoding="utf-8") as f:
+            return int(f.read().strip()) >= FROSTY_TOOLKIT_VERSION
+    except (OSError, ValueError):
+        # Build 1 predates the marker, so no marker means build 1.
+        return False
+
+
+async def _frosty_ensure_toolkit() -> dict:
+    """The toolkit, at the current build, downloading an upgrade if needed."""
+    if _frosty_installed() and _frosty_toolkit_current():
+        return {"ok": True}
+    if not _frosty_installed():
+        # First install is the QAM's explicit Step 1, not a side effect.
+        return {"ok": False, "error": "Install the mod compiler first"}
+    decky.logger.info(
+        f"frosty: toolkit older than build {FROSTY_TOOLKIT_VERSION}, upgrading"
+    )
+    return await _frosty_install_toolkit()
 
 
 def _frosty_installed() -> bool:
@@ -1987,7 +2020,19 @@ async def _frosty_install_toolkit() -> dict:
     except OSError as e:
         return {"ok": False, "error": f"Could not make the compiler runnable: {e}"}
 
-    decky.logger.info(f"frosty: toolkit installed into {root}")
+    try:
+        with open(_frosty_toolkit_marker(), "w", encoding="utf-8") as f:
+            f.write(str(FROSTY_TOOLKIT_VERSION))
+    except OSError as e:
+        decky.logger.warning(f"frosty: could not write the version marker: {e}")
+
+    # The cache was produced by the previous build; a stale one is exactly
+    # how a fixed compiler keeps producing yesterday's bugs.
+    _force_rmtree(os.path.join(root, "Caches"))
+
+    decky.logger.info(
+        f"frosty: toolkit build {FROSTY_TOOLKIT_VERSION} installed into {root}"
+    )
     return {"ok": True}
 
 
@@ -19101,8 +19146,9 @@ query CollectionInstructions($slug: String!) {
         the same needs_choice contract is used: the caller picks one, we
         install that one.
         """
-        if not _frosty_installed():
-            return {"ok": False, "error": "Install the mod compiler first"}
+        ensured = await _frosty_ensure_toolkit()
+        if not ensured.get("ok"):
+            return ensured
 
         install_path, _m, _d = _game_paths(install_dir, "Data")
         exe = _frosty_game_exe(install_path)
@@ -19289,6 +19335,9 @@ query CollectionInstructions($slug: String!) {
         install_dir: str, app_id: int
     ) -> dict:
         """Enable or disable one mod by recompiling the set without it."""
+        ensured = await _frosty_ensure_toolkit()
+        if not ensured.get("ok"):
+            return ensured
         install_path, _m, _d = _game_paths(install_dir, "Data")
         mods_dir = _frosty_mods_dir(game_domain)
         off_dir = os.path.join(mods_dir, "disabled")

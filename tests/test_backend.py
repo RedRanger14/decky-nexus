@@ -13188,6 +13188,64 @@ class TestFrostbiteGames(unittest.TestCase):
     redirected at it. Everything here exists because that differs from every
     other supported game (see docs/frosty-swbf2/WORKING.md)."""
 
+    def test_the_toolkit_upgrade_is_versioned_and_silent(self):
+        # Build 2 of the compiler fixed replaced meshes rendering as shards.
+        # A user cannot be asked to know their compiler is stale, so an
+        # installed toolkit older than the current build is replaced at the
+        # next install or toggle, invisibly.
+        self.assertGreaterEqual(main.FROSTY_TOOLKIT_VERSION, 2)
+        self.assertIn(f"frosty-toolkit-{main.FROSTY_TOOLKIT_VERSION}",
+                      main.FROSTY_TOOLKIT_URL)
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        for fn_name in ("async def install_frosty_mod",
+                        "async def set_frosty_mod_enabled"):
+            fn = source[source.index(fn_name):]
+            fn = fn[:3000]
+            self.assertIn("_frosty_ensure_toolkit()", fn,
+                          f"{fn_name} can run a stale compiler")
+
+    def test_a_missing_marker_reads_as_the_old_build(self):
+        # Build 1 predates the marker, so its absence must mean "stale", or
+        # every existing install would never upgrade.
+        home = tempfile.mkdtemp(prefix="frosty-marker-")
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        old_runtime = main.decky.DECKY_PLUGIN_RUNTIME_DIR
+        main.decky.DECKY_PLUGIN_RUNTIME_DIR = home
+        self.addCleanup(
+            setattr, main.decky, "DECKY_PLUGIN_RUNTIME_DIR", old_runtime
+        )
+        os.makedirs(main._frosty_root(), exist_ok=True)
+        self.assertFalse(main._frosty_toolkit_current())
+        with open(main._frosty_toolkit_marker(), "w", encoding="utf-8") as fh:
+            fh.write(str(main.FROSTY_TOOLKIT_VERSION))
+        self.assertTrue(main._frosty_toolkit_current())
+        # A future build must also count as current, or a downgrade loop
+        # starts the moment two plugin versions coexist.
+        with open(main._frosty_toolkit_marker(), "w", encoding="utf-8") as fh:
+            fh.write(str(main.FROSTY_TOOLKIT_VERSION + 1))
+        self.assertTrue(main._frosty_toolkit_current())
+
+    def test_installing_the_toolkit_stamps_and_clears_the_cache(self):
+        # The SDK cache was produced by the previous build. Keeping it is how
+        # a fixed compiler goes on producing yesterday's bugs.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _frosty_install_toolkit"):]
+        fn = fn[:fn.index("def _frosty_game_exe")]
+        self.assertIn("_frosty_toolkit_marker()", fn)
+        self.assertIn('_force_rmtree(os.path.join(root, "Caches"))', fn)
+
+    def test_a_first_install_is_still_the_users_step(self):
+        # The silent path is for UPGRADES. The first 40 MB download stays the
+        # QAM's explicit Step 1 - a brand new user should see what is being
+        # set up, not have it happen mid-install.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _frosty_ensure_toolkit"):]
+        fn = fn[:fn.index("def _frosty_installed")]
+        self.assertIn("Install the mod compiler first", fn)
+
     def test_the_toolkit_download_is_pinned(self):
         # A truncated 40 MB download would otherwise fail much later, inside
         # the compiler, with an incomprehensible error.

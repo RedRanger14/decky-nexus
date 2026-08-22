@@ -100,3 +100,35 @@ It never disagreed with the game: every time the check failed the game failed,
 and when it passed the game ran. That might be worth having upstream as a test
 command in its own right - it turns "a user says the game crashes" into a
 named asset and a size.
+
+## 5. Handler plumbing is unreachable-unfinished
+
+`FrostyModExecutor`'s handler path (resources with a HandlerHash) has three
+gaps that only show once a handler exists and a game reaches the code:
+
+- The res handler branch never joins the game entry's bundles, so a merged
+  resource is produced and then referenced by no bundle - a silent no-op.
+- `ResModEntry` is immutable, but a merge handler must publish the merged
+  result's OriginalSize and ResMeta (v1's handler contract does exactly
+  that); the game trusts those fields from the bundle meta.
+- No built-in handlers ship and nothing registers handlers from the own
+  assembly, so every fbmod carrying v1 handler resources (most mesh mods)
+  is silently skipped.
+
+We ported v1's ShaderBlockDepot handler (0x89EF2205) as a proof; it produces
+byte-identical merged output to Frosty v1 for the same mod.
+
+## 6. ZSTD_compress P/Invoke binding is missing the level argument
+
+`CompressionZStd.cs`:
+
+```csharp
+[LibraryImport(NativeLibName)] internal static partial nuint ZSTD_compress(
+    nuint dst, nuint dstCapacity, nuint src, nuint srcSize);
+```
+
+The real signature has a fifth parameter, `int compressionLevel`. As bound,
+the level is whatever happens to be in the register, and in practice output
+came out stored (raw plus zstd framing) rather than compressed: 3618 bytes
+for a 3608-byte shader depot that Frosty v1 compresses to 1256. Affects
+every game and every compression call site.

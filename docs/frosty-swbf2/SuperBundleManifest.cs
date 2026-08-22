@@ -328,10 +328,26 @@ public partial class FrostyModExecutor
 
             // inOriginalIndex is the asset's index into expandedList, or -1
             // when the mod added it (nothing original to point at).
+            string? watchAsset = Environment.GetEnvironmentVariable("FROSTY_WATCH_ASSET");
+
             void AddEntry(Sha1 inSha1, int inOriginalIndex, bool inChanged,
                 uint inRangeStart, uint inRangeEnd, int inFirstMip,
                 Frosty.Sdk.Managers.Entries.AssetEntry? inAsset)
             {
+                if (watchAsset is not null && inAsset?.Name.Contains(watchAsset,
+                        StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    bool w = writer.HasData(inSha1);
+                    bool any = false;
+                    foreach (InstallChunkWriter c in m_installChunkWriters.Values)
+                    {
+                        if (c.HasData(inSha1)) { any = true; break; }
+                    }
+                    Frosty.Sdk.FrostyLogger.Logger?.LogInfo(
+                        $"WATCHENTRY name={inAsset.Name} sha1={inSha1} changed={inChanged} " +
+                        $"origIdx={inOriginalIndex} expanded={expandedList.Count} " +
+                        $"thisWriter={w} anyWriter={any}");
+                }
                 if (inChanged)
                 {
                     InstallChunkWriter? holder = writer.HasData(inSha1) ? writer : null;
@@ -477,12 +493,16 @@ public partial class FrostyModExecutor
                 InstallChunkWriter writer =
                     GetInstallChunkWriter(FileSystemManager.GetSuperBundleInstallChunk(superBundle));
 
+                // The FULL written blob, never the firstMip sub-range. The
+                // chunks table is the STREAMING view and always covers the
+                // whole chunk - the mip sub-range belongs only to the bundle
+                // entries. Proven by diffing against real Frosty v1 output
+                // and the vanilla game, both of which store the full size
+                // here: sub-ranging this entry made every replaced character
+                // mesh stream a fragment of itself, and Vader rendered as a
+                // mass of shards while the read-back check stayed green (the
+                // fragment still decompresses - it is just not the chunk).
                 (CasFileIdentifier File, uint Offset, uint Size) info = writer.GetFileInfo(mod.Sha1);
-                if (mod.FirstMip > 0)
-                {
-                    info.Offset += mod.RangeStart;
-                    info.Size = mod.RangeEnd - mod.RangeStart;
-                }
 
                 newChunks.Add((chunk.Id, newFiles.Count));
                 newFiles.Add((info.File, info.Offset, info.Size));
@@ -499,12 +519,8 @@ public partial class FrostyModExecutor
             ChunkModEntry mod = chunkMods[added.Id];
             InstallChunkWriter writer = GetInstallChunkWriter(added.SbIc);
 
+            // Full blob here too - see the modified-chunk loop above.
             (CasFileIdentifier File, uint Offset, uint Size) info = writer.GetFileInfo(mod.Sha1);
-            if (mod.FirstMip > 0)
-            {
-                info.Offset += mod.RangeStart;
-                info.Size = mod.RangeEnd - mod.RangeStart;
-            }
 
             newChunks.Add((added.Id, newFiles.Count));
             newFiles.Add((info.File, info.Offset, info.Size));

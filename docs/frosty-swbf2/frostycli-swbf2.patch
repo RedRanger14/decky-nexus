@@ -1,8 +1,64 @@
+diff --git a/FrostyCli/Program.Commands.cs b/FrostyCli/Program.Commands.cs
+index 73c0a21..d10fc6a 100644
+--- a/FrostyCli/Program.Commands.cs
++++ b/FrostyCli/Program.Commands.cs
+@@ -41,6 +41,36 @@ internal static partial class Program
+             pidOption, key1Option, key2Option, key3Option);
+     }
+ 
++    private static void AddDumpCommand(RootCommand rootCommand)
++    {
++        // Diagnostic: the game's-eye view of every asset matching a name
++        // filter, as JSON. Run against a vanilla game, a real Frosty v1
++        // ModData and ours, the diff is exactly the semantic difference
++        // between the packs - which no byte-level validation can see.
++        Argument<string> filterArg = new(
++            name: "filter",
++            description: "Case-insensitive substring of asset names to dump.");
++        Argument<FileInfo> outArg = new(
++            name: "output",
++            description: "Path of the JSON file to write.");
++
++        Command dumpCommand = new("dump", "Dump matching assets' metadata as JSON.")
++        {
++            gameArg,
++            filterArg,
++            outArg,
++            pidOption,
++            key1Option,
++            key2Option,
++            key3Option
++        };
++        rootCommand.AddCommand(dumpCommand);
++
++        dumpCommand.SetHandler((game, filter, output, pid, key1, key2, key3) =>
++            DumpAssets(game, filter, output, pid, key1, key2, key3),
++            gameArg, filterArg, outArg, pidOption, key1Option, key2Option, key3Option);
++    }
++
+     private static void AddModCommand(RootCommand rootCommand)
+     {
+         Argument<DirectoryInfo?> modsArg = new(
 diff --git a/FrostyCli/Program.cs b/FrostyCli/Program.cs
-index 522761d..d69026d 100644
+index 522761d..0b10d88 100644
 --- a/FrostyCli/Program.cs
 +++ b/FrostyCli/Program.cs
-@@ -242,6 +242,8 @@ internal static partial class Program
+@@ -1,4 +1,5 @@
+ ﻿using System;
++using System.Collections.Generic;
+ using System.CommandLine;
+ using System.Diagnostics;
+ using System.IO;
+@@ -28,6 +29,8 @@ internal static partial class Program
+ 
+         AddModCommand(rootCommand);
+ 
++        AddDumpCommand(rootCommand);
++
+         AddUpdateModCommand(rootCommand);
+ 
+         AddCreateModCommand(rootCommand);
+@@ -242,6 +245,8 @@ internal static partial class Program
              return false;
          }
  
@@ -11,7 +67,7 @@ index 522761d..d69026d 100644
          // init resource manager, this parses the cas.cat files if they exist for easy asset lookup
          if (!ResourceManager.Initialize())
          {
-@@ -249,6 +251,13 @@ internal static partial class Program
+@@ -249,6 +254,13 @@ internal static partial class Program
          }
  
          // init asset manager, this parses the SuperBundles and loads all the assets
@@ -25,6 +81,112 @@ index 522761d..d69026d 100644
          if (!AssetManager.Initialize())
          {
              return false;
+@@ -258,6 +270,105 @@ internal static partial class Program
+         return true;
+     }
+ 
++    private static void DumpAssets(FileInfo? inGameFileInfo, string inFilter,
++        FileInfo? inOutput, int? inPid, FileInfo? inKey1, FileInfo? inKey2, FileInfo? inKey3)
++    {
++        if (inGameFileInfo is null || inOutput is null)
++        {
++            Logger.LogErrorInternal("game and output are required.");
++            return;
++        }
++        if (!LoadGame(inGameFileInfo, inPid, inKey1, inKey2, inKey3))
++        {
++            return;
++        }
++
++        static object? Location(Frosty.Sdk.Managers.Entries.AssetEntry entry)
++        {
++            if (entry.GetFileInfo() is not Frosty.Sdk.Managers.Infos.FileInfos.CasFileInfo cas)
++            {
++                return entry.GetFileInfo()?.GetType().Name;
++            }
++            Frosty.Sdk.Managers.Infos.FileInfos.ResourceInfo.CasResourceInfo? b = cas.GetBase();
++            if (b is null)
++            {
++                return null;
++            }
++            return new
++            {
++                file = b.GetIdentifier().ToString(),
++                offset = b.GetFileOffset(),
++                size = b.GetSize(),
++            };
++        }
++
++        List<object> ebx = new(), res = new(), chunks = new();
++        HashSet<int> bundleIds = new();
++
++        foreach (Frosty.Sdk.Managers.Entries.EbxAssetEntry e in AssetManager.EnumerateEbxAssetEntries())
++        {
++            if (!e.Name.Contains(inFilter, StringComparison.OrdinalIgnoreCase))
++            {
++                continue;
++            }
++            foreach (int b in e.EnumerateBundles()) { bundleIds.Add(b); }
++            ebx.Add(new { name = e.Name, sha1 = e.Sha1.ToString(),
++                originalSize = e.OriginalSize, location = Location(e) });
++        }
++
++        foreach (Frosty.Sdk.Managers.Entries.ResAssetEntry e in AssetManager.EnumerateResAssetEntries())
++        {
++            if (!e.Name.Contains(inFilter, StringComparison.OrdinalIgnoreCase))
++            {
++                continue;
++            }
++            foreach (int b in e.EnumerateBundles()) { bundleIds.Add(b); }
++            // The hash of the DECOMPRESSED payload: the only thing that can
++            // prove two packs put the same actual bytes in front of the game,
++            // regardless of codec or level.
++            string rawSha1;
++            try
++            {
++                using Block<byte> raw = AssetManager.GetAsset(e);
++                rawSha1 = Frosty.Sdk.Utils.Utils.GenerateSha1(raw).ToString();
++            }
++            catch (Exception ex)
++            {
++                rawSha1 = $"unreadable: {ex.Message}";
++            }
++            res.Add(new { name = e.Name, sha1 = e.Sha1.ToString(),
++                originalSize = e.OriginalSize, resType = e.Type,
++                resRid = e.ResRid, resMeta = Convert.ToHexString(e.ResMeta),
++                rawSha1,
++                location = Location(e) });
++        }
++
++        // Chunks carry no names: take every chunk that shares a bundle with a
++        // matched asset - for a character that is its meshes and textures.
++        foreach (Frosty.Sdk.Managers.Entries.ChunkAssetEntry e in AssetManager.EnumerateChunkAssetEntries())
++        {
++            bool inMatchedBundle = false;
++            foreach (int b in e.EnumerateBundles())
++            {
++                if (bundleIds.Contains(b)) { inMatchedBundle = true; break; }
++            }
++            if (!inMatchedBundle)
++            {
++                continue;
++            }
++            chunks.Add(new { id = e.Id.ToString(), sha1 = e.Sha1.ToString(),
++                logicalOffset = e.LogicalOffset, logicalSize = e.LogicalSize,
++                location = Location(e) });
++        }
++
++        string json = System.Text.Json.JsonSerializer.Serialize(
++            new { ebx, res, chunks },
++            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
++        File.WriteAllText(inOutput.FullName, json);
++        Logger.LogInfoInternal(
++            $"dumped ebx={ebx.Count} res={res.Count} chunks={chunks.Count} to {inOutput.FullName}");
++    }
++
+     private static void ListEbx()
+     {
+         foreach (EbxAssetEntry entry in AssetManager.EnumerateEbxAssetEntries())
 diff --git a/FrostyModSupport/Archive/InstallChunkWriter.cs b/FrostyModSupport/Archive/InstallChunkWriter.cs
 index 3c21afa..e02f489 100644
 --- a/FrostyModSupport/Archive/InstallChunkWriter.cs
@@ -93,10 +255,31 @@ index 775b561..a58a4de 100644
  
                  if (modEntry.FirstMip != -1)
 diff --git a/FrostyModSupport/FrostyModExecutor.cs b/FrostyModSupport/FrostyModExecutor.cs
-index c64b86b..c1753ce 100644
+index c64b86b..81c02af 100644
 --- a/FrostyModSupport/FrostyModExecutor.cs
 +++ b/FrostyModSupport/FrostyModExecutor.cs
-@@ -161,7 +161,9 @@ public partial class FrostyModExecutor
+@@ -28,6 +28,7 @@ public partial class FrostyModExecutor
+     private readonly Dictionary<Guid, ChunkModEntry> m_modifiedChunks = new();
+ 
+     private readonly List<IModEntry> m_handlerAssets = new();
++    private readonly HashSet<Sha1> m_handlerData = new();
+ 
+     private readonly Dictionary<Sha1, ResourceData> m_data = new();
+     private readonly Dictionary<Sha1, Block<byte>> m_memoryData = new();
+@@ -128,6 +129,12 @@ public partial class FrostyModExecutor
+             // entry.Handler will never be null, since the assets added to m_handlerAssets always have a handler set
+             entry.Handler!.Modify(entry, out Block<byte> data);
+             m_memoryData.TryAdd(entry.Sha1, data);
++            // Handler output is NEW data that must reach the cas. It lives in
++            // m_memoryData next to base-game copies, and the
++            // SuperBundleManifest skip below would drop it with them - which
++            // made the whole ShaderBlockDepot merge a silent no-op: the
++            // loader then found "no FileInfo" for the res and dropped it.
++            m_handlerData.Add(entry.Sha1);
+         }
+ 
+         // clear old generated mod data
+@@ -161,7 +168,9 @@ public partial class FrostyModExecutor
                      ModManifest2019(sbIc, sb.Value, installChunkWriter);
                      break;
                  case BundleFormat.SuperBundleManifest:
@@ -107,7 +290,7 @@ index c64b86b..c1753ce 100644
                      break;
                  case BundleFormat.Kelvin:
                      throw new NotImplementedException();
-@@ -181,6 +183,22 @@ public partial class FrostyModExecutor
+@@ -181,6 +190,22 @@ public partial class FrostyModExecutor
                  WriteCasArchives(sb.Value, installChunkWriter);
              }
  
@@ -130,7 +313,7 @@ index c64b86b..c1753ce 100644
              foreach (InstallChunkWriter writer in m_installChunkWriters.Values)
              {
                  writer.WriteCatalog();
-@@ -267,9 +285,31 @@ public partial class FrostyModExecutor
+@@ -267,9 +292,31 @@ public partial class FrostyModExecutor
                  if (source.Path != m_patchPath)
                  {
                      string destPath = Path.Combine(inModPackPath, source.Path);
@@ -165,7 +348,7 @@ index c64b86b..c1753ce 100644
                  }
  
                  if (source.Path != FileSystemSource.Base.Path && source.Path.Contains("Data"))
-@@ -300,7 +340,48 @@ public partial class FrostyModExecutor
+@@ -300,7 +347,48 @@ public partial class FrostyModExecutor
      {
          foreach (Sha1 sha1 in inModInfo.Data)
          {
@@ -179,7 +362,7 @@ index c64b86b..c1753ce 100644
 +            // every bundle in the game. Two hero VO assets broke exactly
 +            // that way. If the game already has the data, leave it alone.
 +            if (FileSystemManager.BundleFormat == BundleFormat.SuperBundleManifest
-+                && !m_data.ContainsKey(sha1))
++                && !m_data.ContainsKey(sha1) && !m_handlerData.Contains(sha1))
 +            {
 +                // A base-game copy, not the mod's own data (m_data holds
 +                // that). This format keeps base data reachable, so the copy
@@ -214,7 +397,30 @@ index c64b86b..c1753ce 100644
              inInstallChunkWriter.WriteData(sha1, data.Block);
              if (data.NeedsToDispose)
              {
-@@ -334,8 +415,19 @@ public partial class FrostyModExecutor
+@@ -311,6 +399,22 @@ public partial class FrostyModExecutor
+ 
+     private void LoadHandlers()
+     {
++        // Built-in handlers first: the SWBF2 ShaderBlockDepot merge lives in
++        // this assembly, because an empty Handlers directory silently
++        // skipping mesh mods' shader deltas is how every replaced character
++        // came out as shards.
++        foreach (Type type in typeof(FrostyModExecutor).Assembly.GetTypes())
++        {
++            if (typeof(IHandler).IsAssignableFrom(type) && !type.IsInterface && !type.IsAbstract)
++            {
++                HandlerAttribute? attribute = type.GetCustomAttribute<HandlerAttribute>();
++                if (attribute is not null)
++                {
++                    m_handlers.TryAdd(attribute.Hash, type);
++                }
++            }
++        }
++
+         string handlersDir = Path.Combine(Frosty.Sdk.Utils.Utils.BaseDirectory, "Handlers");
+         Directory.CreateDirectory(handlersDir);
+ 
+@@ -334,8 +438,19 @@ public partial class FrostyModExecutor
  
      private void ProcessModResources(IResourceContainer container)
      {
@@ -234,7 +440,7 @@ index c64b86b..c1753ce 100644
              Sha1 sha1 = resource.Sha1;
              HashSet<int> modifiedBundles = new();
              switch (resource)
-@@ -403,8 +495,16 @@ public partial class FrostyModExecutor
+@@ -403,8 +518,16 @@ public partial class FrostyModExecutor
                          // only add asset to bundles, use base games data
                          Block<byte> data = AssetManager.GetRawAsset(entry);
                          m_memoryData.TryAdd(entry.Sha1, data);
@@ -252,7 +458,26 @@ index c64b86b..c1753ce 100644
                      }
                      else
                      {
-@@ -479,8 +579,16 @@ public partial class FrostyModExecutor
+@@ -462,6 +585,18 @@ public partial class FrostyModExecutor
+                         }
+ 
+                         modEntry.Handler.Load(container.GetData(resource.ResourceIndex).GetData());
++
++                        // The merged result modifies the res wherever the
++                        // game has it: without this the merge happens and no
++                        // bundle ever references it, which is a silent no-op.
++                        ResAssetEntry? handlerEntry = AssetManager.GetResAssetEntry(resource.Name);
++                        if (handlerEntry is not null)
++                        {
++                            foreach (int bundle in handlerEntry.Bundles)
++                            {
++                                modifiedBundles.Add(bundle);
++                            }
++                        }
+                         break;
+                     }
+ 
+@@ -479,8 +614,16 @@ public partial class FrostyModExecutor
                          // only add asset to bundles, use base games data
                          Block<byte> data = AssetManager.GetRawAsset(entry);
                          m_memoryData.TryAdd(entry.Sha1, data);
@@ -270,7 +495,7 @@ index c64b86b..c1753ce 100644
                      }
                      else
                      {
-@@ -556,8 +664,16 @@ public partial class FrostyModExecutor
+@@ -556,8 +699,16 @@ public partial class FrostyModExecutor
                          // only add asset to bundles, use base games data
                          Block<byte> data = AssetManager.GetRawAsset(entry);
                          m_memoryData.TryAdd(entry.Sha1, data);
@@ -304,11 +529,31 @@ index e683f42..31e86fc 100644
  
      /// <summary>
      /// The hash of the handler if this <see cref="BaseModResource"/> has one, else its 0.
+diff --git a/FrostyModSupport/ModEntries/ResModEntry.cs b/FrostyModSupport/ModEntries/ResModEntry.cs
+index 08faa88..90253b6 100644
+--- a/FrostyModSupport/ModEntries/ResModEntry.cs
++++ b/FrostyModSupport/ModEntries/ResModEntry.cs
+@@ -8,10 +8,13 @@ public class ResModEntry : IModEntry
+ {
+     public string Name { get; }
+     public Sha1 Sha1 { get; }
+-    public long OriginalSize { get; }
++    // Settable: a merge handler's entry starts with the DELTA's dimensions
++    // and meta, and the game trusts these fields from the bundle meta - a
++    // wrong OriginalSize is a wrong allocation at load time.
++    public long OriginalSize { get; set; }
+     public ulong ResRid { get; }
+     public uint ResType { get; }
+-    public byte[] ResMeta { get; }
++    public byte[] ResMeta { get; set; }
+     public long Size { get; }
+     public IHandler? Handler { get; set; }
+ 
 diff --git a/FrostyModSupport/SuperBundleActions/SuperBundleManifest.cs b/FrostyModSupport/SuperBundleActions/SuperBundleManifest.cs
-index 65cbaea..d64baed 100644
+index 65cbaea..4cc7d47 100644
 --- a/FrostyModSupport/SuperBundleActions/SuperBundleManifest.cs
 +++ b/FrostyModSupport/SuperBundleActions/SuperBundleManifest.cs
-@@ -1,23 +1,601 @@
+@@ -1,23 +1,617 @@
  using System;
 +using System.Collections.Generic;
 +using System.IO;
@@ -430,7 +675,7 @@ index 65cbaea..d64baed 100644
 +            result.Add((inId, inOffset, inSize, Sha1.Zero));
 +            return result;
 +        }
- 
++
 +        long covered = 0;
 +        for (int i = start; i < entries.Count && covered < inSize; i++)
 +        {
@@ -445,9 +690,7 @@ index 65cbaea..d64baed 100644
 +        }
 +
 +        return result;
-     }
--}
-\ No newline at end of file
++    }
 +
 +    private static int s_mismatchLogged;
 +
@@ -611,7 +854,7 @@ index 65cbaea..d64baed 100644
 +            {
 +                (CasFileIdentifier Id, uint Offset, long Size) original =
 +                    files[bundle.StartIndex + i];
-+
+ 
 +                foreach ((CasFileIdentifier Id, uint Offset, long Size, Sha1 Sha1) part
 +                         in ExpandEntry(original.Id, original.Offset, original.Size))
 +                {
@@ -649,10 +892,26 @@ index 65cbaea..d64baed 100644
 +
 +            // inOriginalIndex is the asset's index into expandedList, or -1
 +            // when the mod added it (nothing original to point at).
++            string? watchAsset = Environment.GetEnvironmentVariable("FROSTY_WATCH_ASSET");
++
 +            void AddEntry(Sha1 inSha1, int inOriginalIndex, bool inChanged,
 +                uint inRangeStart, uint inRangeEnd, int inFirstMip,
 +                Frosty.Sdk.Managers.Entries.AssetEntry? inAsset)
 +            {
++                if (watchAsset is not null && inAsset?.Name.Contains(watchAsset,
++                        StringComparison.OrdinalIgnoreCase) == true)
++                {
++                    bool w = writer.HasData(inSha1);
++                    bool any = false;
++                    foreach (InstallChunkWriter c in m_installChunkWriters.Values)
++                    {
++                        if (c.HasData(inSha1)) { any = true; break; }
++                    }
++                    Frosty.Sdk.FrostyLogger.Logger?.LogInfo(
++                        $"WATCHENTRY name={inAsset.Name} sha1={inSha1} changed={inChanged} " +
++                        $"origIdx={inOriginalIndex} expanded={expandedList.Count} " +
++                        $"thisWriter={w} anyWriter={any}");
++                }
 +                if (inChanged)
 +                {
 +                    InstallChunkWriter? holder = writer.HasData(inSha1) ? writer : null;
@@ -798,12 +1057,16 @@ index 65cbaea..d64baed 100644
 +                InstallChunkWriter writer =
 +                    GetInstallChunkWriter(FileSystemManager.GetSuperBundleInstallChunk(superBundle));
 +
++                // The FULL written blob, never the firstMip sub-range. The
++                // chunks table is the STREAMING view and always covers the
++                // whole chunk - the mip sub-range belongs only to the bundle
++                // entries. Proven by diffing against real Frosty v1 output
++                // and the vanilla game, both of which store the full size
++                // here: sub-ranging this entry made every replaced character
++                // mesh stream a fragment of itself, and Vader rendered as a
++                // mass of shards while the read-back check stayed green (the
++                // fragment still decompresses - it is just not the chunk).
 +                (CasFileIdentifier File, uint Offset, uint Size) info = writer.GetFileInfo(mod.Sha1);
-+                if (mod.FirstMip > 0)
-+                {
-+                    info.Offset += mod.RangeStart;
-+                    info.Size = mod.RangeEnd - mod.RangeStart;
-+                }
 +
 +                newChunks.Add((chunk.Id, newFiles.Count));
 +                newFiles.Add((info.File, info.Offset, info.Size));
@@ -820,12 +1083,8 @@ index 65cbaea..d64baed 100644
 +            ChunkModEntry mod = chunkMods[added.Id];
 +            InstallChunkWriter writer = GetInstallChunkWriter(added.SbIc);
 +
++            // Full blob here too - see the modified-chunk loop above.
 +            (CasFileIdentifier File, uint Offset, uint Size) info = writer.GetFileInfo(mod.Sha1);
-+            if (mod.FirstMip > 0)
-+            {
-+                info.Offset += mod.RangeStart;
-+                info.Size = mod.RangeEnd - mod.RangeStart;
-+            }
 +
 +            newChunks.Add((added.Id, newFiles.Count));
 +            newFiles.Add((info.File, info.Offset, info.Size));
@@ -918,8 +1177,37 @@ index 65cbaea..d64baed 100644
 +            ObfuscationHeader.Write(stream);
 +            DbObject.Serialize(stream, layout);
 +        }
-+    }
+     }
+-}
+\ No newline at end of file
 +}
+diff --git a/FrostySdk/IO/Compression/CompressionZStd.cs b/FrostySdk/IO/Compression/CompressionZStd.cs
+index e2a99cf..31143ed 100644
+--- a/FrostySdk/IO/Compression/CompressionZStd.cs
++++ b/FrostySdk/IO/Compression/CompressionZStd.cs
+@@ -20,7 +20,11 @@ public partial class CompressionZStd : ICompressionFormat
+     [LibraryImport(NativeLibName)] internal static partial nuint ZSTD_freeDCtx(nuint dctx);
+     [LibraryImport(NativeLibName)] internal static partial nuint ZSTD_decompress(nuint dst, nuint dstCapacity, nuint src, nuint compressedSize);
+     [LibraryImport(NativeLibName)] internal static partial nuint ZSTD_decompress_usingDDict(nuint dctx, nuint dst, nuint dstCapacity, nuint src, nuint srcSize, nuint dict);
+-    [LibraryImport(NativeLibName)] internal static partial nuint ZSTD_compress(nuint dst, nuint dstCapacity, nuint src, nuint srcSize);
++    // ZSTD_compress takes FIVE arguments - the last is the compression
++    // level. The binding was missing it, so the level was whatever happened
++    // to be in the register: merged shader depots came out at raw size plus
++    // zstd framing while real Frosty v1 got 3x compression on the same data.
++    [LibraryImport(NativeLibName)] internal static partial nuint ZSTD_compress(nuint dst, nuint dstCapacity, nuint src, nuint srcSize, int compressionLevel);
+ 
+     [LibraryImport(NativeLibName)] internal static partial nuint ZSTD_compressBound(nuint srcSize);
+ 
+@@ -64,7 +68,8 @@ public partial class CompressionZStd : ICompressionFormat
+     /// <inheritdoc/>
+     public unsafe int Compress<T>(Block<T> inData, ref Block<T> outData, CompressionFlags inFlags = CompressionFlags.None) where T : unmanaged
+     {
+-        nuint code = ZSTD_compress((nuint)outData.Ptr, (nuint)outData.Size, (nuint)inData.Ptr, (nuint)inData.Size);
++        nuint code = ZSTD_compress((nuint)outData.Ptr, (nuint)outData.Size, (nuint)inData.Ptr, (nuint)inData.Size,
++            ProfilesLibrary.ZStdCompressionLevel);
+         GetError(code);
+         return (int)code;
+     }
 diff --git a/FrostySdk/Managers/AssetManager.cs b/FrostySdk/Managers/AssetManager.cs
 index e9dadec..921e4be 100644
 --- a/FrostySdk/Managers/AssetManager.cs
