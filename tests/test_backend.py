@@ -13298,6 +13298,46 @@ class TestFrostbiteGames(unittest.TestCase):
         after = fn[fn.index("if not _frosty_redirect_ok(app_id):"):]
         self.assertIn('"ok": False', after[:600])
 
+    def test_the_compilers_version_warning_is_not_thrown_away(self):
+        # FrostyCli said, in as many words, "Mod Battle Damaged Vader
+        # (Cracked) was made for a different version of the game, it might or
+        # might not work". Only ERROR lines were kept, so that went in the bin
+        # and the mod installed reporting success and rendered as shards.
+        # Shadow Lord Maul replaces meshes too and produces no such warning,
+        # which is the whole difference between the two.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("FROSTY_VERSION_WARN", source)
+        fn = source[source.index("async def _frosty_run"):]
+        fn = fn[:fn.index("def _strip_ansi")]
+        self.assertIn("FROSTY_VERSION_WARN in line", fn)
+
+    def test_the_warning_reaches_the_caller_and_the_record(self):
+        # A warning read once at install time is forgotten by the time the
+        # character looks wrong, so it is stored with the mod.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        comp = source[source.index("async def _frosty_compile"):]
+        comp = comp[:comp.index("def _prefix_drive_c")]
+        self.assertIn('result["warning"]', comp)
+
+        inst = source[source.index("async def install_frosty_mod"):]
+        inst = inst[:inst.index("async def set_frosty_mod_enabled")]
+        self.assertIn('"warning": result.get("warning")', inst)
+
+        listing = source[source.index('if install_mode == "frosty":'):]
+        listing = listing[:listing.index('if install_mode == "me3":')]
+        self.assertIn('"warning": rec.get("warning")', listing)
+
+    def test_a_clean_compile_carries_no_warning(self):
+        # The inverse matters: warning text on every install would train the
+        # user to ignore it, and most Battlefront II mods are fine.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        comp = source[source.index("async def _frosty_compile"):]
+        comp = comp[:comp.index("def _prefix_drive_c")]
+        self.assertIn("if warns:", comp)
+
     def test_variant_labels_keep_only_what_differs(self):
         # Battle Damaged Darth Vader (mod 2042) ships three .fbmod files whose
         # names differ in one word, at the END. Three buttons of near-identical

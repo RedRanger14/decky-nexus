@@ -166,3 +166,43 @@ Every step is scriptable and headless, which is what the plugin needs:
 
 Test from the Collection screen - it renders every character, so there is no
 need to start a match.
+
+## Mods built for a different game build
+
+Battle Damaged Darth Vader (mod 2042, main file dated January 2021) installs
+cleanly, passes the read-back check, and renders Vader as a mass of shards
+with a magenta wash. The pack is not corrupt: with the cache cleared,
+`FROSTY_VALIDATE_ALL=1 FrostyCli load` reports
+`res ok=84130 bad=0 | chunks ok=211705 bad=0`.
+
+What separates it from a mod that works is one line of FrostyCli output:
+
+```
+WARN - Mod Battle Damaged Vader (Cracked) was made for a different version
+       of the game, it might or might not work
+```
+
+Shadow Lord Maul, compiled against the same game (`head.txt` is 489592 for
+both packs), produces no such line and looks correct.
+
+Things that turned out NOT to be the difference, each checked rather than
+assumed:
+
+- Meshes. Both mods replace meshes. Maul contains
+  `maulshadow_body_mesh` and its `_mesh_mesh/blocks` chunks.
+- `ModifiedShaderBlockDepot`. Both contain it, so a missing handler is not
+  the explanation. The Handlers directory is empty in our toolkit build and
+  that has not stopped a mesh mod working.
+- Per-bundle entry accounting. For all 196 bundles the mod touches,
+  `written + original + catalog == assets` and `built == assets + 1`, so
+  there is no off-by-one shifting assets onto each other's data.
+
+The real difference is what each mod does to the game's own assets. Maul ADDS
+a character under new paths (`a0_maulshadow/...`). Vader REPLACES vanilla
+paths (`characters/hero/darthvader/darthvader_01/darthvader_01_mesh`), and it
+was built against a build of the game where those assets differed.
+
+So the plugin surfaces that warning rather than discarding it. `_frosty_run`
+kept only ERROR lines, which is why the one useful sentence never reached
+the user. It is now stored with the mod, so My Mods shows it too - the moment
+it matters is weeks after the install toast has gone.

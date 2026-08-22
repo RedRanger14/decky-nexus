@@ -2128,8 +2128,15 @@ class _FrostyProgress:
             await self.emit(pct, self.message)
 
 
+# What FrostyCli says when a mod targets a different build of the game. The
+# mod replaces vanilla assets that have changed since it was made, so it can
+# apply cleanly and still look wrong.
+FROSTY_VERSION_WARN = "was made for a different version of the game"
+
+
 async def _frosty_run(args: list, timeout: int = 1800,
-                      progress: "_FrostyProgress" = None) -> tuple:
+                      progress: "_FrostyProgress" = None,
+                      warnings: list = None) -> tuple:
     """Run FrostyCli. Returns (rc, tail of output).
 
     Reads the output line by line rather than in one lump, so a progress bar
@@ -2163,6 +2170,8 @@ async def _frosty_run(args: list, timeout: int = 1800,
                 del kept[0]
             if "ERROR" in line or "Exception" in line:
                 interesting.append(line)
+            elif warnings is not None and FROSTY_VERSION_WARN in line:
+                warnings.append(line)
             if progress is not None:
                 progress.line(line)
 
@@ -2429,7 +2438,10 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
             await _emit_progress(progress_mod_id, "compiling", pct, message)
 
         bar = _FrostyProgress(55, 30, _emit)
-    rc, tail = await _frosty_run(["mod", exe, mods_dir, pack], progress=bar)
+    warns = []
+    rc, tail = await _frosty_run(
+        ["mod", exe, mods_dir, pack], progress=bar, warnings=warns
+    )
     if rc != 0:
         _force_rmtree(pack)
         return {
@@ -2516,7 +2528,17 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
         f"frosty: compiled {len(enabled)} mod(s) into {pack} (prefix: "
         f"{changed or 'already set'})"
     )
-    return {"ok": True, "mods": len(enabled)}
+    result = {"ok": True, "mods": len(enabled)}
+    if warns:
+        for line in warns:
+            decky.logger.warning(f"frosty: {line}")
+        result["warning"] = (
+            "The author built this for a different build of Battlefront II, so "
+            "it can install correctly and still look wrong in game - a "
+            "character made of shards, or the wrong colours. Nothing else is "
+            "affected, and removing it puts the game back exactly as it was."
+        )
+    return result
 
 
 def _prefix_drive_c(app_id: int, *parts: str) -> str:
@@ -18203,6 +18225,7 @@ query CollectionInstructions($slug: String!) {
                 results.append({
                     "folder": key,
                     "enabled": on_disk,
+                    "warning": rec.get("warning") or "",
                     "tracked": True,
                     "name": rec.get("name") or key,
                     "version": rec.get("version") or "",
@@ -19188,11 +19211,13 @@ query CollectionInstructions($slug: String!) {
             "installed_at": int(time.time()), "page_version": page_version,
             "source": "", "collection_slug": "",
             "mode": "frosty", "target": "", "files": [key + ".fbmod"],
+            "warning": result.get("warning") or "",
         })
         _save_settings(settings)
 
         await _emit_progress(mod_id, "done", 100)
-        return {"ok": True, "folder": key, "compiled": result.get("mods", 0)}
+        return {"ok": True, "folder": key, "compiled": result.get("mods", 0),
+                "warning": result.get("warning") or ""}
 
     async def set_frosty_mod_enabled(
         self, game_domain: str, folder: str, enabled: bool,

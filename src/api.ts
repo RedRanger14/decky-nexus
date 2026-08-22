@@ -133,6 +133,10 @@ export interface InstalledMod {
   mod_id?: number;
   /** dataDir mode: false when the mod has no plugin file to toggle */
   togglable?: boolean;
+  /** Installed and working as far as we can tell, but the author built it
+   * for a different build of the game, so it may look wrong. Kept with the
+   * mod because the moment it matters is weeks after the install toast. */
+  warning?: string;
   /** Why it is switched off, when we switched it off for a reason. A mod
    * off deliberately and one the user turned off look identical without
    * this, so "why is this disabled?" gets answered by turning it back on -

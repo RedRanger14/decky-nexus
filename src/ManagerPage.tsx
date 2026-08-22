@@ -214,6 +214,18 @@ function ModRow({
             {mod.disabled_reason}
           </div>
         )}
+        {mod.warning && (
+          <div
+            style={{
+              fontSize: "11px",
+              marginTop: "2px",
+              color: NEXUS_ORANGE,
+              opacity: 0.85,
+            }}
+          >
+            {mod.warning}
+          </div>
+        )}
         {busy && busyNote ? (
           <div
             style={{

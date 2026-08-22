@@ -419,6 +419,11 @@ export function ModDetailPage() {
       } else if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
         refreshInstalled(sel);
+        // A successful install can still carry a warning: a Frostbite mod
+        // built against a different game build applies cleanly and renders
+        // wrong. This branch used to drop it, so the one place the compiler
+        // told us went unread.
+        setStale(result.warning);
         // onClick ONLY while the game is running. It used to be attached
         // unconditionally, so brushing a toast launched the game - and
         // during a 183-mod collection there are a lot of toasts to brush.
@@ -1105,7 +1110,10 @@ export function ModDetailPage() {
         />
       )}
       {!blocked && stale && (
-        <WarningBox title="Built for an older version of the game" body={stale} />
+        <WarningBox
+          title="Built for a different version of the game"
+          body={stale}
+        />
       )}
       {files && !files.ok && (
         <div style={{ opacity: 0.8, fontSize: "13px" }}>

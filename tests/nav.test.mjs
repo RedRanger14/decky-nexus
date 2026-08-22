@@ -1164,3 +1164,23 @@ test("the choice dialog shows labels but hands back the option", () => {
     );
   }
 });
+
+test("a successful install still shows its warning", () => {
+  // A Frostbite mod built against a different game build installs cleanly
+  // and renders wrong. The plain ok branch used to drop result.warning, so
+  // the one place the compiler told us went unread and the user saw a
+  // character made of shards with no explanation anywhere.
+  const page = read("ModDetailPage.tsx");
+  const ok = page.indexOf("} else if (result.ok) {");
+  assert.ok(ok > 0, "the plain success branch moved");
+  const branch = page.slice(ok, ok + 900);
+  assert.ok(
+    /setStale\(result\.warning\)/.test(branch),
+    "a successful install drops its warning"
+  );
+  // And it must persist where the mod lives, not only where it was installed.
+  assert.ok(
+    /mod\.warning/.test(read("ManagerPage.tsx")),
+    "My Mods never shows a mod's warning"
+  );
+});
