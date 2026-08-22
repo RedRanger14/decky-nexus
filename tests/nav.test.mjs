@@ -1140,3 +1140,27 @@ test("no page installs, toggles or removes a mod by calling the api directly", (
       offenders.join("\n")
   );
 });
+
+test("the choice dialog shows labels but hands back the option", () => {
+  // Frostbite variants are named in the FILE name, so the raw options are
+  // three near-identical paths. The label is cosmetic on purpose: sending
+  // it back instead of the path would install nothing, since the backend
+  // validates the pick against the paths it found in the archive.
+  const modal = read("ChoiceModal.tsx");
+  assert.ok(
+    /\{labels\?\.\[i\] \|\| opt\}/.test(modal),
+    "the dialog does not prefer a label over the raw option"
+  );
+  assert.ok(
+    /onPick\(opt\)/.test(modal),
+    "the dialog must hand back the option, not its label"
+  );
+  // Every page that shows the dialog has to pass them through, or the one
+  // that forgets silently shows paths again.
+  for (const f of ["ModDetailPage.tsx", "UpdatesPage.tsx", "CollectionPage.tsx"]) {
+    assert.ok(
+      /labels=\{/.test(read(f)),
+      `${f} shows the choice dialog without passing labels`
+    );
+  }
+});

@@ -6,12 +6,18 @@ import { ButtonItem, ModalRoot } from "@decky/ui";
 export function PayloadChoiceModal({
   modName,
   options,
+  labels,
   onPick,
   closeModal,
   allowMerge,
 }: {
   modName: string;
   options: string[];
+  /** What to SHOW for each option. Frostbite archives name their variants in
+   * the file name, so the raw options are three near-identical paths whose
+   * one differing word is at the end - unreadable on a TV. The value handed
+   * back is still the option itself. */
+  labels?: string[];
   onPick: (option: string) => void;
   closeModal?: () => void;
   /** Offer "install everything"? Replacer packs want it; HD2 variant
@@ -37,7 +43,7 @@ export function PayloadChoiceModal({
           Install everything (merge all {options.length} folders)
         </ButtonItem>
       )}
-      {options.map((opt) => (
+      {options.map((opt, i) => (
         <ButtonItem
           key={opt}
           layout="below"
@@ -46,7 +52,7 @@ export function PayloadChoiceModal({
             onPick(opt);
           }}
         >
-          {opt}
+          {labels?.[i] || opt}
         </ButtonItem>
       ))}
     </ModalRoot>

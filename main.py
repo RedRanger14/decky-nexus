@@ -1995,6 +1995,55 @@ def _frosty_game_exe(install_path: str) -> str:
     return os.path.join(install_path, "starwarsbattlefrontii.exe")
 
 
+def _payload_choice_labels(options: list) -> list:
+    """Human labels for a set of payload paths, in the same order.
+
+    The value sent back is still the path - only the label changes - so the
+    round trip and its validation are untouched.
+    """
+    if not options:
+        return []
+    names = []
+    for opt in options:
+        name = opt.rsplit("/", 1)[-1]
+        for ext in (".fbmod", ".fbpack", ".zip", ".7z", ".rar"):
+            if name.lower().endswith(ext):
+                name = name[: -len(ext)]
+                break
+        names.append(name.strip())
+
+    # Strip whatever every option repeats, from the front and the back. With
+    # one option there is nothing to compare, so it keeps its full name.
+    if len(names) > 1:
+        head = os.path.commonprefix(names)
+        # Cut back to a word boundary so "Vader 1.8 (Cra" is impossible.
+        while head and head[-1] not in " -_([":
+            head = head[:-1]
+        tail_src = [n[::-1] for n in names]
+        tail = os.path.commonprefix(tail_src)[::-1]
+        while tail and tail[0] not in " -_)]":
+            tail = tail[1:]
+        trimmed = []
+        for n in names:
+            t = n[len(head):] if head else n
+            if tail and len(t) > len(tail):
+                t = t[: -len(tail)]
+            t = t.strip(" -_()[]")
+            trimmed.append(t or n)
+        # Only take the trim if it left every option distinct and non-empty.
+        if len(set(trimmed)) == len(trimmed) and all(trimmed):
+            names = trimmed
+
+    # Two files with the same name in different folders would give two
+    # identical buttons, which is worse than a long one. Fall back to the
+    # path, which is what actually distinguishes them.
+    if len(set(names)) != len(names):
+        names = [o.rsplit(".", 1)[0] if "." in o.rsplit("/", 1)[-1] else o
+                 for o in options]
+
+    return names
+
+
 class _FrostyProgress:
     """Turns FrostyCli's log lines into a bar that keeps moving.
 
@@ -11723,6 +11772,7 @@ query Link($slug: String!, $domainName: String!) {
                         "ok": False,
                         "needs_choice": True,
                         "options": options,
+                        "option_labels": _payload_choice_labels(options),
                     }
             payload_dirs = [p for p in payload_dirs if p]
             if not payload_dirs:
@@ -12354,7 +12404,9 @@ query Link($slug: String!, $domainName: String!) {
                     except OSError:
                         pass
                     await _emit_progress(mod_id, "error", 0, "choose a pak")
-                    return {"ok": False, "needs_choice": True, "options": options}
+                    return {"ok": False, "needs_choice": True,
+                            "options": options,
+                            "option_labels": _payload_choice_labels(options)}
             existing = []
             for name in os.listdir(install_path):
                 m = RE4_PAK_RE.match(name)
@@ -12650,6 +12702,7 @@ query Link($slug: String!, $domainName: String!) {
                             "ok": False,
                             "needs_choice": True,
                             "options": options,
+                            "option_labels": _payload_choice_labels(options),
                         }
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path
@@ -15393,6 +15446,12 @@ query Link($slug: String!, $domainName: String!) {
                     "version": str(item.get("version") or ""),
                     "reason": str(item.get("reason") or "choices"),
                     "options": [str(o) for o in (item.get("options") or [])],
+                    # Stored with the item: a deferred choice is shown days
+                    # later, and recomputing labels in the frontend would be
+                    # a second implementation of this that could drift.
+                    "option_labels": _payload_choice_labels(
+                        [str(o) for o in (item.get("options") or [])]
+                    ),
                 }
             )
         if clean:
@@ -19059,6 +19118,11 @@ query CollectionInstructions($slug: String!) {
                 pass
             await _emit_progress(mod_id, "error", 0, "choose a version")
             return {"ok": False, "needs_choice": True, "options": options,
+                    "option_labels": _payload_choice_labels(options),
+                    # Alternatives, not parts: these all replace the same
+                    # character, so merging them is never what the author
+                    # meant. A Frostbite mod that ships complementary pieces
+                    # would need a different answer, and none has turned up.
                     "merge_allowed": False}
 
         chosen = found[0]

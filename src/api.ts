@@ -107,6 +107,9 @@ export interface InstallResult {
    * exe. The caller applies the game's reshade launch options. */
   reshade?: boolean;
   options?: string[];
+  /** Display names for `options`, same order. The value handed back is still
+   * the option itself, so only what the user reads changes. */
+  option_labels?: string[];
   /** FOMOD archive: show the wizard, then call installFomod with the
    * token and selected plugin ids. */
   needs_fomod?: boolean;
@@ -435,6 +438,9 @@ export interface AttentionItem {
   version: string;
   reason: string;
   options: string[];
+  /** Display names for `options`, stored alongside them because a deferred
+   * choice is shown long after the archive has gone. */
+  option_labels?: string[];
   /** Free text explaining a skip the user cannot act on. */
   detail?: string;
 }

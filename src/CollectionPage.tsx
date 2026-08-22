@@ -1163,12 +1163,13 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
   /** Modal helpers that resolve as promises so Finish setup can walk
    * every pending mod sequentially. closeModal resolves undefined a tick
    * later than onPick - the pick wins when both fire. */
-  const pickChoice = (name: string, options: string[]) =>
+  const pickChoice = (name: string, options: string[], labels?: string[]) =>
     new Promise<string | undefined>((resolve) => {
       const modal = showModal(
         <PayloadChoiceModal
           modName={name}
           options={options}
+          labels={labels}
           // Merging is real everywhere: HD2 folders renumber into their
           // own patch slots (a weapons pack is a SET, not alternatives).
           allowMerge={true}
@@ -1205,7 +1206,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
     try {
       let choice = "";
       if (item.reason === "choices" && item.options.length > 0) {
-        const picked = await pickChoice(item.mod_name, item.options);
+        const picked = await pickChoice(
+          item.mod_name, item.options, item.option_labels
+        );
         if (picked === undefined) return "backout";
         choice = picked;
       }
@@ -1227,7 +1230,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
         }
         result = await finishFomod(result.fomod_token, ids);
       } else if (result.needs_choice && result.options?.length) {
-        const picked = await pickChoice(item.mod_name, result.options);
+        const picked = await pickChoice(
+          item.mod_name, result.options, result.option_labels
+        );
         if (picked === undefined) {
           dropDownload(item.mod_id);
           return "backout";

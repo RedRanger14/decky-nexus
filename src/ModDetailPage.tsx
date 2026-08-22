@@ -384,6 +384,7 @@ export function ModDetailPage() {
           <PayloadChoiceModal
             modName={mod.name}
             options={result.options}
+            labels={result.option_labels}
             allowMerge={result.merge_allowed !== false}
             onPick={(opt) => onInstall(file, opt)}
           />

@@ -54,6 +54,7 @@ export function UpdatesPage() {
           <PayloadChoiceModal
             modName={u.name}
             options={result.options!}
+            labels={result.option_labels}
             allowMerge={result.merge_allowed !== false}
             onPick={(opt) => resolve(updateOne(u, opt))}
             closeModal={() => {

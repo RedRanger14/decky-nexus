@@ -13298,6 +13298,61 @@ class TestFrostbiteGames(unittest.TestCase):
         after = fn[fn.index("if not _frosty_redirect_ok(app_id):"):]
         self.assertIn('"ok": False', after[:600])
 
+    def test_variant_labels_keep_only_what_differs(self):
+        # Battle Damaged Darth Vader (mod 2042) ships three .fbmod files whose
+        # names differ in one word, at the END. Three buttons of near-identical
+        # text is unreadable on a TV; the author's actual options are Cracked,
+        # Full Helm and NOHelmet.
+        got = main._payload_choice_labels([
+            "Battle Damaged Vader v1.8/Battle Damaged Vader 1.8 (Cracked).fbmod",
+            "Battle Damaged Vader v1.8/Battle Damaged Vader 1.8 (Full Helm).fbmod",
+            "Battle Damaged Vader v1.8/Battle Damaged Vader 1.8 (NOHelmet).fbmod",
+        ])
+        self.assertEqual(got, ["Cracked", "Full Helm", "NOHelmet"])
+
+    def test_a_single_option_keeps_its_whole_name(self):
+        # With nothing to compare against there is no shared text to strip,
+        # and a bare extension-less name is all the user has to go on.
+        self.assertEqual(
+            main._payload_choice_labels(["Shadow Lord Maul (Maul).fbmod"]),
+            ["Shadow Lord Maul (Maul)"],
+        )
+
+    def test_labels_never_collapse_into_duplicates(self):
+        # Same file name in different folders: trimming to the file name would
+        # produce two identical buttons, which is worse than two long ones.
+        got = main._payload_choice_labels(["A/Same Name.fbmod",
+                                           "B/Same Name.fbmod"])
+        self.assertEqual(len(set(got)), 2, got)
+
+    def test_labels_line_up_with_their_options(self):
+        # The VALUE sent back is still the path - only the label changes - so
+        # a mismatch in length or order would install the wrong variant.
+        opts = ["x/Red.fbmod", "x/Green.fbmod", "x/Blue.fbmod"]
+        got = main._payload_choice_labels(opts)
+        self.assertEqual(len(got), len(opts))
+        self.assertEqual(got, ["Red", "Green", "Blue"])
+
+    def test_labels_are_never_empty(self):
+        # An empty button cannot be chosen, and trimming shared text is
+        # exactly how one would become empty.
+        for opts in (["Mod.fbmod", "Mod .fbmod"],
+                     ["pack/A.fbmod", "pack/AB.fbmod"],
+                     ["(1).fbmod", "(2).fbmod"]):
+            for label in main._payload_choice_labels(opts):
+                self.assertTrue(label.strip(), f"empty label from {opts}")
+
+    def test_a_frostbite_archive_of_variants_asks_rather_than_merges(self):
+        # Three alternative Vader looks all replace the same character, so
+        # "install everything" is never what the author meant. Distinct from
+        # the Helldivers 2 weapons case, where the folders ARE a set.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def install_frosty_mod"):]
+        fn = fn[:fn.index("async def set_frosty_mod_enabled")]
+        self.assertIn('"merge_allowed": False', fn)
+        self.assertIn("_payload_choice_labels(options)", fn)
+
     def test_disabling_the_last_mod_restores_vanilla(self):
         # Deleting the pack is not enough: GAME_DATA_DIR kept pointing at a
         # symlink whose target had gone, and the game refused to boot at all.
