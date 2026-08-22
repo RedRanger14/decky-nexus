@@ -64,6 +64,16 @@ plugin; treat anything you do with them as untested.
 - Hollow Knight: Silksong
 - Palworld
 
+### Requested, not started
+
+Asked for and on the list. No code exists for these yet, so they will not
+appear in the plugin until they do.
+
+- Final Fantasy XII: The Zodiac Age
+- Mass Effect Legendary Edition
+- Nier: Automata
+- Skyrim VR
+
 Want one moved up, or a new one added? Open a [game request][issues] and say
 which. Adding a game means installing it, modding it and playing it on
 hardware, so the list grows slowly and on purpose.

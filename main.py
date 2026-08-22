@@ -2177,6 +2177,35 @@ def _frosty_override_section() -> str:
     )
 
 
+def _frosty_redirect_clear(app_id: int) -> bool:
+    """Point the game back at its own data.
+
+    Deleting the pack is NOT enough. GAME_DATA_DIR kept pointing at a symlink
+    whose target had gone, and the game does not read that as "no mods, load
+    normally" - it refuses to boot. The comment in _frosty_compile claimed
+    otherwise and was simply wrong: on device, disabling the last mod left an
+    unbootable game.
+    """
+    reg = _frosty_redirect_reg(app_id)
+    if not os.path.isfile(reg):
+        return False
+    try:
+        with open(reg, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        # chr(10) rather than an escape: writing this line through a patch
+        # script turned the escape into a real newline, which is the fourth
+        # time this session that an escape has not survived the trip.
+        pattern = '"GAME_DATA_DIR"="[^"]*"' + chr(10)
+        stripped = re.sub(pattern, "", text)
+        if stripped != text:
+            with open(reg, "w", encoding="utf-8", newline="") as f:
+                f.write(stripped)
+            return True
+    except OSError as e:
+        decky.logger.warning(f"frosty: could not clear the redirect: {e}")
+    return False
+
+
 def _frosty_redirect_ok(app_id: int) -> bool:
     """Is the game actually pointed at our compiled data right now?"""
     reg = _frosty_redirect_reg(app_id)
@@ -2322,9 +2351,21 @@ async def _frosty_compile(game_domain: str, install_path: str, app_id: int,
     _force_rmtree(pack)
 
     if not enabled:
-        # Nothing enabled: leave the game pointing at a pack that does not
-        # exist, which it treats as vanilla.
-        decky.logger.info("frosty: no mods enabled, cleared the compiled data")
+        # Nothing enabled: put the game back exactly as it was. Removing the
+        # pack alone leaves a dangling symlink that GAME_DATA_DIR still points
+        # at, and the game will not boot at all in that state - it did not, on
+        # device, and the comment that used to sit here said it would.
+        link = _frosty_moddata_link()
+        try:
+            if os.path.islink(link) or os.path.exists(link):
+                os.remove(link)
+        except OSError as e:
+            decky.logger.warning(f"frosty: could not remove the link: {e}")
+        cleared = _frosty_redirect_clear(app_id)
+        decky.logger.info(
+            "frosty: no mods enabled, restored the game's own data "
+            f"(redirect cleared: {cleared})"
+        )
         return {"ok": True, "mods": 0}
 
     bar = None
@@ -19194,17 +19235,10 @@ query CollectionInstructions($slug: String!) {
                 except OSError:
                     pass
 
-        reg = os.path.normpath(_prefix_drive_c(int(app_id), "..", "..", "user.reg"))
-        if os.path.isfile(reg):
-            try:
-                with open(reg, "r", encoding="utf-8", errors="replace") as f:
-                    text = f.read()
-                cleaned = re.sub(r'"GAME_DATA_DIR"="[^"]*"\n', "", text)
-                if cleaned != text:
-                    with open(reg, "w", encoding="utf-8", newline="") as f:
-                        f.write(cleaned)
-            except OSError:
-                pass
+        # Through the helper, not a second copy of it. This block had its own
+        # version of the registry path with the same dot-dot too many, so
+        # reset had never cleared the redirect either.
+        _frosty_redirect_clear(int(app_id))
 
         settings = _load_settings()
         if game_domain in settings.get("installed", {}):

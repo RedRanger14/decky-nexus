@@ -13259,8 +13259,10 @@ class TestFrostbiteGames(unittest.TestCase):
             source = fh.read()
         fn = source[source.index("async def reset_frosty"):]
         fn = fn[:fn.index("async def get_game_status")]
+        # The redirect is cleared through _frosty_redirect_clear now, which
+        # is the only place that knows the registry path.
         for undo in ("_frosty_pack_dir", "_frosty_mods_dir", "CryptBase.dll",
-                     "GAME_DATA_DIR"):
+                     "_frosty_redirect_clear"):
             self.assertIn(undo, fn, f"reset leaves {undo} behind")
 
     def test_multi_mod_archives_ask_rather_than_guess(self):
@@ -13295,6 +13297,65 @@ class TestFrostbiteGames(unittest.TestCase):
         self.assertIn("if not _frosty_redirect_ok(app_id):", fn)
         after = fn[fn.index("if not _frosty_redirect_ok(app_id):"):]
         self.assertIn('"ok": False', after[:600])
+
+    def test_disabling_the_last_mod_restores_vanilla(self):
+        # Deleting the pack is not enough: GAME_DATA_DIR kept pointing at a
+        # symlink whose target had gone, and the game refused to boot at all.
+        # The comment that used to sit in _frosty_compile said the game would
+        # treat a missing pack as vanilla. It does not.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _frosty_compile"):]
+        fn = fn[:fn.index("def _prefix_drive_c")]
+        block = fn[fn.index("if not enabled:"):]
+        block = block[:block.index("return {")]
+        self.assertIn("os.remove(link)", block, "the dangling symlink is left")
+        self.assertIn("_frosty_redirect_clear(", block,
+                      "the game is still pointed at a pack that is gone")
+
+    def test_the_redirect_is_cleared_through_one_helper(self):
+        # reset_frosty had its own copy of the registry path, with the same
+        # dot-dot too many, so it had never cleared the redirect either. Two
+        # copies of a path is two chances to get it wrong.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def reset_frosty"):]
+        fn = fn[:fn.index("async def get_game_status")]
+        self.assertIn("_frosty_redirect_clear(", fn)
+        self.assertNotIn('"..", "..", "user.reg"', fn)
+        # And nowhere else in the file either.
+        self.assertNotIn('_prefix_drive_c(app_id, "..", "..", "user.reg")',
+                         source)
+
+    def test_clearing_the_redirect_removes_only_that_line(self):
+        # It edits a live Wine registry. Taking anything else out with it
+        # would break the prefix for every game in it.
+        reg = os.path.join(tempfile.mkdtemp(), "user.reg")
+        self.addCleanup(shutil.rmtree, os.path.dirname(reg), ignore_errors=True)
+        body = (
+            "WINE REGISTRY Version 2" + chr(10) + chr(10)
+            + "[Environment] 1785139150" + chr(10)
+            + "#time=1dd1d9dce72e6fc" + chr(10)
+            + '"GAME_DATA_DIR"="Z:' + chr(92) + chr(92) + 'somewhere"' + chr(10)
+            + '"TEMP"="C:' + chr(92) + chr(92) + 'temp"' + chr(10) + chr(10)
+            + "[Other] 1" + chr(10)
+        )
+        with open(reg, "w", encoding="utf-8", newline="") as fh:
+            fh.write(body)
+
+        real = main._frosty_redirect_reg
+        main._frosty_redirect_reg = lambda app_id: reg
+        self.addCleanup(setattr, main, "_frosty_redirect_reg", real)
+        self.assertTrue(main._frosty_redirect_clear(1237950))
+
+        with open(reg, encoding="utf-8") as fh:
+            after = fh.read()
+        self.assertNotIn("GAME_DATA_DIR", after)
+        self.assertIn('"TEMP"', after)
+        self.assertIn("[Environment]", after)
+        self.assertIn("[Other]", after)
+        # Idempotent: a second pass has nothing to do.
+        self.assertFalse(main._frosty_redirect_clear(1237950))
 
     def test_the_verification_says_what_it_is_doing(self):
         # It runs with a cold cache deliberately - a warm one would skip the
