@@ -89,18 +89,6 @@ The patch is in this folder (`frostycli-swbf2.patch`, against ee2a587). Happy
 to split it into per-bug commits if that is easier to review, and to drop our
 diagnostics (all env-gated) if you would rather not carry them.
 
-## How these were found
-
-A read-back oracle: generate a ModData pack, then make FrostyCli re-parse its
-own output with the cache cleared. `FROSTY_VALIDATE_ALL=1` also decompresses
-every res and chunk. On a working pack it reports
-`res ok=84164 bad=0 | chunks ok=211743 bad=0`.
-
-It never disagreed with the game: every time the check failed the game failed,
-and when it passed the game ran. That might be worth having upstream as a test
-command in its own right - it turns "a user says the game crashes" into a
-named asset and a size.
-
 ## 5. Handler plumbing is unreachable-unfinished
 
 `FrostyModExecutor`'s handler path (resources with a HandlerHash) has three
@@ -132,3 +120,15 @@ the level is whatever happens to be in the register, and in practice output
 came out stored (raw plus zstd framing) rather than compressed: 3618 bytes
 for a 3608-byte shader depot that Frosty v1 compresses to 1256. Affects
 every game and every compression call site.
+
+## How these were found
+
+A read-back oracle: generate a ModData pack, then make FrostyCli re-parse its
+own output with the cache cleared. `FROSTY_VALIDATE_ALL=1` also decompresses
+every res and chunk. On a working pack it reports
+`res ok=84164 bad=0 | chunks ok=211743 bad=0`.
+
+It never disagreed with the game: every time the check failed the game failed,
+and when it passed the game ran. That might be worth having upstream as a test
+command in its own right - it turns "a user says the game crashes" into a
+named asset and a size.

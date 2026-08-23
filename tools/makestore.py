@@ -53,13 +53,34 @@ def main(zip_path: str) -> int:
     }
 
     os.makedirs("store", exist_ok=True)
-    # No file extension: Decky appends "?sort_by=..." to whatever URL it is
-    # given, so the path it fetches has to be exactly this file.
-    out = os.path.join("store", "plugins")
-    io.open(out, "w", encoding="utf-8", newline="\n").write(
-        json.dumps([entry], indent=2) + "\n"
-    )
-    print(f"{out}: {plug['name']} v{version}")
+
+    # Keep older releases listed. The schema takes a list, and a version
+    # somebody already installed should not vanish out from under them.
+    versions = [entry["versions"][0]]
+    try:
+        previous = json.load(
+            io.open(os.path.join("store", "plugins"), encoding="utf-8")
+        )
+        for old in previous[0].get("versions", []):
+            if old.get("name") != version:
+                versions.append(old)
+    except (OSError, ValueError, IndexError, KeyError):
+        pass
+    entry["versions"] = versions
+
+    # BOTH files, every time. "plugins" carries no extension because Decky
+    # appends "?sort_by=..." to whatever URL it is given, so an index served
+    # directly has to live at exactly that path; "plugins.json" is what the
+    # Cloudflare worker fetches from raw.githubusercontent. They drifted
+    # once - plugins.json sat two releases behind, and it is the one the
+    # worker would have served - so writing one without the other is not an
+    # option this script offers.
+    for name in ("plugins", "plugins.json"):
+        out = os.path.join("store", name)
+        io.open(out, "w", encoding="utf-8", newline="\n").write(
+            json.dumps([entry], indent=2) + "\n"
+        )
+    print(f"store/plugins + store/plugins.json: {plug['name']} v{version}")
     print(f"  sha256   {digest}")
     print(f"  artifact {entry['versions'][0]['artifact']}")
     return 0

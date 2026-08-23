@@ -15,7 +15,7 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 > third-party client. Bugs are ours, so please report them here rather than
 > to Nexus Mods support.
 
-**Status:** 1.0 beta. Supports the games listed below; Slay the Spire 2 was
+**Status:** 1.2 beta. Supports the games listed below; Slay the Spire 2 was
 the proving ground and is no longer the limit. Beta means the supported games
 have each been installed, modded and played on real hardware, which is not
 the same as everything working. Expect rough edges, and back up saves you
@@ -44,9 +44,22 @@ entry for it, but that someone finished a session with mods running.
 into a data pack, which is why no Deck plugin has supported a Frostbite game
 before. Step 1 in the panel downloads the compiler (40 MB, once). After that
 installing works like any other game, except that every install or toggle
-recompiles the pack, which takes a minute or two. The compiler is our own
-build: the format Battlefront II uses was unimplemented upstream and had four
-data-corruption bugs, all fixed and documented in docs/frosty-swbf2/.
+recompiles the pack, which takes a minute or two. Retextures, replacement
+character models and multi-part mods all work: a mod that ships as a set
+(base, text and weapon parts) installs whole, and one that offers
+alternatives asks which you want by the author's own names for them.
+
+The compiler is our own build. The format Battlefront II uses was
+unimplemented upstream, and getting mods to render correctly took six fixes
+between the format and the mod pipeline, all documented in
+docs/frosty-swbf2/. Correctness is checked rather than hoped for: the
+compiler's output was compared asset by asset against the desktop Frosty
+Mod Manager's for the same mod, decompressed content included, and every
+pack is read back before the plugin offers it.
+
+Plugins for the desktop Frosty Mod Manager itself - BetterSabers is the most
+popular - are not game mods and cannot work in Gaming Mode. They are labelled
+in the store rather than left to fail on install.
 
 (*) Helldivers 2 is a live-service game that changes its data files with
 every update, which breaks most mods until their authors release new
@@ -83,7 +96,8 @@ hardware, so the list grows slowly and on purpose.
 ## What it does
 
 - **Finds the game you are playing** and shows its Nexus mods, with search,
-  sort and curated rails, on a controller.
+  sort and curated rails, on a controller. Games on an SD card or a second
+  drive are found the same as internal ones, with nothing to configure.
 - **Downloads and installs** into the right place for that game, whether that
   is a mods folder, the game's data directory, a Proton prefix, or a mod
   loader profile. Which one is per game and handled for you.
@@ -108,6 +122,15 @@ hardware, so the list grows slowly and on purpose.
   ordinary mods. The warning is on the mod page before you download.
 - **Endorsements and author support links**, so the people who made the mods
   still get credit.
+- **When a mod was uploaded and last updated**, on its page, because "is this
+  thing still alive?" is usually the first question.
+- **Long installs say what they are doing**, with a named stage and a live
+  percentage rather than a still bar, so a slow step cannot be mistaken for a
+  hung one.
+- **Mods that cannot work here are labelled before you download them**:
+  desktop-only tools carry a badge on the tile and an explanation on the mod
+  page, and a mod built for a different build of the game says so on its page
+  and in My Mods.
 
 Not supported yet: manual load order editing, Vortex profile import, and
 mods that need a Windows tool to install.
