@@ -1253,3 +1253,38 @@ test("a curated-incompatible mod is badged and its install is off", () => {
     "the mod page shows no box for an incompatible mod"
   );
 });
+
+test("rails measure their own width and keep View all visible", () => {
+  // Michael, with screenshots from both screens: the fixed five-plus-one row
+  // hid the View-all card off the Deck's edge AND left a hole on the TV.
+  // Steam's logical resolution is no guide to the panel, so the row watches
+  // its own width.
+  const browse = read("BrowsePage.tsx");
+  assert.ok(
+    /new ResizeObserver\(compute\)/.test(browse),
+    "the rail no longer measures itself"
+  );
+  assert.ok(
+    /const shown = onViewAll \? cols - 1 : cols;/.test(browse),
+    "the View-all card is not reserved a column"
+  );
+  assert.ok(
+    !/TILE_WIDTH/.test(readCode("BrowsePage.tsx")),
+    "a fixed tile width crept back in"
+  );
+  // The fetch must outrun the widest screen, or a big TV shows a short row.
+  const rowSize = browse.match(/const ROW_SIZE = (\d+)/);
+  assert.ok(rowSize && parseInt(rowSize[1], 10) >= 8, "rails fetch too few");
+});
+
+test("only a real download creates a downloads row", () => {
+  // Disabling a Frostbite mod recompiles the pack and narrates progress
+  // under that mod's id. The store auto-created a phantom row from it, so
+  // the Downloads button sat at 83% on a mod page whose install button had
+  // never been pressed.
+  const state = read("state.ts");
+  assert.ok(
+    /if \(!existing && phase !== "downloading"\) \{\s*return;/.test(state),
+    "background rebuild progress can still create phantom download rows"
+  );
+});

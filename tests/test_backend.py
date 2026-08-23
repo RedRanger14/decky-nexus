@@ -13182,6 +13182,117 @@ class TestSkyrimCatalogQuarantine(unittest.TestCase):
             self.assertTrue(os.path.isfile(catalog + ".pre-update-backup"))
 
 
+class TestSteamLibraries(unittest.TestCase):
+    """Games on an SD card or a second drive live in another Steam library,
+    listed in libraryfolders.vdf. The first bug report from a real user was
+    Witcher 3 on a microSD showing "game not found": only the main library
+    was ever searched. Everything here runs against fake libraries on disk,
+    because the parsing and the fallbacks are exactly where this breaks."""
+
+    def _make_world(self):
+        world = tempfile.mkdtemp(prefix="steam-libs-")
+        self.addCleanup(shutil.rmtree, world, ignore_errors=True)
+        main_apps = os.path.join(world, "main", "steamapps")
+        sd_apps = os.path.join(world, "sdcard", "steamapps")
+        os.makedirs(os.path.join(main_apps, "common"), exist_ok=True)
+        os.makedirs(os.path.join(sd_apps, "common"), exist_ok=True)
+        vdf = (
+            '"libraryfolders"' + chr(10) + "{" + chr(10)
+            + '  "0"' + chr(10) + "  {" + chr(10)
+            + '    "path"    "' + os.path.join(world, "main").replace(os.sep, "/") + '"' + chr(10)
+            + "  }" + chr(10)
+            + '  "1"' + chr(10) + "  {" + chr(10)
+            + '    "path"    "' + os.path.join(world, "sdcard").replace(os.sep, "/") + '"' + chr(10)
+            + "  }" + chr(10) + "}" + chr(10)
+        )
+        with open(os.path.join(main_apps, "libraryfolders.vdf"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(vdf)
+        old = main.STEAM_COMMON
+        main.STEAM_COMMON = os.path.join(main_apps, "common")
+        self.addCleanup(setattr, main, "STEAM_COMMON", old)
+        return main_apps, sd_apps
+
+    def test_a_game_on_the_sd_card_is_found(self):
+        main_apps, sd_apps = self._make_world()
+        game = os.path.join(sd_apps, "common", "The Witcher 3")
+        os.makedirs(os.path.join(game, "mods"))
+        install_path, mods_path, _dis = main._game_paths("The Witcher 3", "mods")
+        self.assertEqual(os.path.realpath(install_path), os.path.realpath(game))
+        self.assertTrue(os.path.isdir(mods_path))
+
+    def test_the_main_library_wins_when_both_have_the_game(self):
+        # Steam does not install one game twice, but a leftover folder on a
+        # removed-and-restored card could look like one. The main library is
+        # searched first, deterministically.
+        main_apps, sd_apps = self._make_world()
+        for apps in (main_apps, sd_apps):
+            os.makedirs(os.path.join(apps, "common", "Skyrim"), exist_ok=True)
+        install_path, _m, _d = main._game_paths("Skyrim", "Data")
+        self.assertTrue(
+            os.path.realpath(install_path).startswith(
+                os.path.realpath(main_apps)
+            )
+        )
+
+    def test_a_missing_game_still_names_the_conventional_path(self):
+        # "Not installed" messaging shows this path; it must stay the main
+        # library's, not become empty.
+        self._make_world()
+        install_path, _m, _d = main._game_paths("Not A Game", "mods")
+        self.assertIn("Not A Game", install_path)
+        self.assertTrue(install_path.startswith(main.STEAM_COMMON))
+
+    def test_the_prefix_follows_the_game_onto_the_card(self):
+        # compatdata sits in the library that holds the game. The Frosty
+        # redirect writes into this prefix, so pointing at the main library
+        # for an SD-card game would edit a registry the game never reads.
+        main_apps, sd_apps = self._make_world()
+        pfx = os.path.join(sd_apps, "compatdata", "292030", "pfx", "drive_c")
+        os.makedirs(pfx)
+        got = main._prefix_drive_c(292030)
+        self.assertEqual(os.path.realpath(got), os.path.realpath(pfx))
+
+    def test_a_game_with_no_prefix_anywhere_falls_back_to_main(self):
+        main_apps, _sd = self._make_world()
+        got = main._prefix_drive_c(111)
+        self.assertTrue(
+            os.path.realpath(got).startswith(os.path.realpath(main_apps))
+        )
+
+    def test_the_appmanifest_is_found_in_the_owning_library(self):
+        main_apps, sd_apps = self._make_world()
+        acf = os.path.join(sd_apps, "appmanifest_292030.acf")
+        with open(acf, "w", encoding="utf-8") as fh:
+            fh.write('"AppState" { "buildid" "424242" }')
+        self.assertEqual(main._steam_build_id(292030), "424242")
+
+    def test_no_vdf_means_the_main_library_only(self):
+        main_apps, _sd = self._make_world()
+        os.remove(os.path.join(main_apps, "libraryfolders.vdf"))
+        libs = main._steam_libraries()
+        self.assertEqual(
+            [os.path.realpath(p) for p in libs],
+            [os.path.realpath(main_apps)],
+        )
+
+    def test_the_main_library_is_not_listed_twice(self):
+        # libraryfolders.vdf lists the main library too. Duplicates would
+        # make every lookup stat the same directories twice.
+        main_apps, sd_apps = self._make_world()
+        libs = [os.path.realpath(p) for p in main._steam_libraries()]
+        self.assertEqual(len(libs), len(set(libs)))
+        self.assertEqual(libs[0], os.path.realpath(main_apps))
+
+    def test_an_unplugged_library_is_skipped(self):
+        # The vdf remembers a card that is not inserted; its path must not
+        # produce phantom lookups.
+        main_apps, sd_apps = self._make_world()
+        shutil.rmtree(os.path.dirname(sd_apps))
+        libs = [os.path.realpath(p) for p in main._steam_libraries()]
+        self.assertEqual(libs, [os.path.realpath(main_apps)])
+
+
 class TestFrostbiteGames(unittest.TestCase):
     """Battlefront II mods are COMPILED, not copied: an .fbmod is converted and
     the whole enabled set is rebuilt into a ModData tree, then the game is

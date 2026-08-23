@@ -216,6 +216,15 @@ export function updateDownload(
   message?: string
 ): void {
   const existing = downloads.get(modId);
+  // Background rebuilds narrate on this channel too: disabling a Frostbite
+  // mod recompiles the whole pack and reports percentages under that mod's
+  // id. Only a real download may CREATE a row - Michael opened a mod he had
+  // not installed and the Downloads button sat at 83% for a phantom entry
+  // named "Mod 2549". Anything the user actually started registers itself
+  // (nameDownload) or begins with a downloading phase.
+  if (!existing && phase !== "downloading") {
+    return;
+  }
   if (phase === "done" || phase === "error" || phase === "cancelled") {
     // Move terminal states to the completed list (Downloads page shows
     // them until cleared).

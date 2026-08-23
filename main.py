@@ -14,8 +14,6 @@ import aiohttp
 
 import decky
 
-# v1: main Steam library only. TODO: parse libraryfolders.vdf for SD-card /
-# secondary library installs before adding games likely to live there.
 STEAM_COMMON = os.path.join(
     decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "common"
 )
@@ -561,8 +559,46 @@ def _hd2_next_free_number(data_dir: str, archive_hash: str,
     return n
 
 
+def _steam_libraries() -> list:
+    """Every Steam library's steamapps dir, the main one first.
+
+    Games on an SD card or a second drive live in another library, listed in
+    libraryfolders.vdf. The first bug report from a real user was Witcher 3
+    on a microSD showing "game not found", because only the main library was
+    ever searched. Read fresh each time: SD cards come and go between calls.
+    """
+    main = os.path.dirname(STEAM_COMMON)
+    libs = [main]
+    seen = {os.path.realpath(main)}
+    try:
+        with open(os.path.join(main, "libraryfolders.vdf"),
+                  encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        for m in re.finditer(r'"path"\s+"([^"]+)"', text):
+            steamapps = os.path.join(m.group(1), "steamapps")
+            real = os.path.realpath(steamapps)
+            if real in seen or not os.path.isdir(steamapps):
+                continue
+            seen.add(real)
+            libs.append(steamapps)
+    except OSError:
+        pass
+    return libs
+
+
+def _find_in_libraries(*parts: str) -> str:
+    """The first library where steamapps/<parts> exists, or empty."""
+    for lib in _steam_libraries():
+        path = os.path.join(lib, *parts)
+        if os.path.exists(path):
+            return path
+    return ""
+
+
 def _game_paths(install_dir: str, mods_subdir: str):
-    install_path = os.path.join(STEAM_COMMON, install_dir)
+    install_path = _find_in_libraries("common", install_dir) or os.path.join(
+        STEAM_COMMON, install_dir
+    )
     mods_path = os.path.join(install_path, mods_subdir)
     disabled_path = os.path.join(install_path, f"{mods_subdir}-disabled")
     return install_path, mods_path, disabled_path
@@ -705,9 +741,7 @@ def _steam_build_id(app_id: int) -> str:
     """
     if not app_id:
         return ""
-    path = os.path.join(
-        os.path.dirname(STEAM_COMMON), f"appmanifest_{int(app_id)}.acf"
-    )
+    path = _find_in_libraries(f"appmanifest_{int(app_id)}.acf")
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -727,9 +761,7 @@ def _game_updated_at(app_id: int) -> int:
     """
     if not app_id:
         return 0
-    path = os.path.join(
-        os.path.dirname(STEAM_COMMON), f"appmanifest_{int(app_id)}.acf"
-    )
+    path = _find_in_libraries(f"appmanifest_{int(app_id)}.acf")
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -2603,10 +2635,13 @@ def _prefix_drive_c(app_id: int, *parts: str) -> str:
     Bannerlord writes its engine logs to ProgramData, not Documents, which is
     where the one line that explains an unbootable game lives.
     """
-    return os.path.join(
-        decky.DECKY_USER_HOME, ".steam", "steam", "steamapps", "compatdata",
-        str(int(app_id)), "pfx", "drive_c", *parts,
+    # compatdata sits in whichever library holds the game, so an SD-card
+    # game's prefix is on the SD card - the main library is only the
+    # fallback for a game not found anywhere.
+    base = _find_in_libraries("compatdata", str(int(app_id))) or os.path.join(
+        os.path.dirname(STEAM_COMMON), "compatdata", str(int(app_id))
     )
+    return os.path.join(base, "pfx", "drive_c", *parts)
 
 
 # ---- Bannerlord: a module's stale shader cache stops the game booting ------
@@ -2773,10 +2808,12 @@ def _newest_proton_crt_dir():
     """(dir, version) of whichever installed Proton bundles the newest
     msvcp140.dll in its files/lib/wine/x86_64-windows payload."""
     best, best_ver = None, None
-    pattern = os.path.join(
-        STEAM_COMMON, "Proton*", "files", "lib", "wine", "x86_64-windows"
-    )
-    for cand in glob.glob(pattern):
+    patterns = [
+        os.path.join(lib, "common", "Proton*", "files", "lib", "wine",
+                     "x86_64-windows")
+        for lib in _steam_libraries()
+    ]
+    for cand in (c for p in patterns for c in glob.glob(p)):
         ver = _pe_file_version(os.path.join(cand, "msvcp140.dll"))
         if ver and (best_ver is None or ver > best_ver):
             best, best_ver = cand, ver
@@ -2853,11 +2890,12 @@ def _proton_binary_for(app_id: int):
     if m:
         candidates.append(f"Proton {m.group(1)}.0")
     for name in candidates:
-        p = os.path.join(STEAM_COMMON, name, "proton")
-        if os.path.isfile(p):
+        p = _find_in_libraries("common", name, "proton")
+        if p and os.path.isfile(p):
             return p, compat, steam_root, ""
-    for p in sorted(glob.glob(os.path.join(STEAM_COMMON, "Proton*", "proton"))):
-        return p, compat, steam_root, ""
+    for lib in _steam_libraries():
+        for p in sorted(glob.glob(os.path.join(lib, "common", "Proton*", "proton"))):
+            return p, compat, steam_root, ""
     return "", compat, steam_root, "No Proton installation found on this device"
 
 
@@ -10448,7 +10486,7 @@ query Link($slug: String!, $domainName: String!) {
                 _force_rmtree(scratch)
         if not wanted:
             return {"ok": True, "installed": 0, "names": [], "errors": []}
-        install_path = os.path.join(STEAM_COMMON, install_dir)
+        install_path, _m, _d = _game_paths(install_dir, "")
         if not os.path.isdir(install_path):
             return {"ok": False, "error": "Game install folder not found"}
         done, errors, skipped = [], [], []
@@ -12170,7 +12208,7 @@ query Link($slug: String!, $domainName: String!) {
                     "isn't supported for this game yet. Pak-based mods "
                     "work.",
                 }
-            install_path = os.path.join(STEAM_COMMON, install_dir)
+            install_path, _m2, _d2 = _game_paths(install_dir, "")
             route = _route_ue4ss_payload(
                 scratch, install_path, ue4ss_subdir,
                 logicmods_subdir or ue4ss_subdir, mod_name,
@@ -12211,7 +12249,7 @@ query Link($slug: String!, $domainName: String!) {
         # gate on script conflicts, and register menu XMLs in both
         # filelists (next-gen requirement).
         if witcher_layout:
-            install_path = os.path.join(STEAM_COMMON, install_dir)
+            install_path, _m2, _d2 = _game_paths(install_dir, "")
             mod_dirs, dlc_dirs, menu_xmls, w3_err = _route_witcher_payload(
                 scratch, install_path, mods_path, mod_name
             )

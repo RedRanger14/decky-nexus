@@ -54,12 +54,15 @@ const SORT_OPTIONS = [
 ];
 
 const PAGE_SIZE = 24;
-// Rail length + tile width are a pair: 5 tiles and the View-all card
-// must all fit across a 1280px screen (minus the 24px page gutters)
-// WITHOUT scrolling - a rail that hides its own exit invites nobody in.
-// 6 × 195px + 5 × 10px gaps = 1220px ≤ 1232px available.
-const ROW_SIZE = 5;
-const TILE_WIDTH = 195;
+// How many mods a rail FETCHES - the ceiling, not the row length. The row
+// measures its own width and shows exactly as many as fit beside the
+// View-all card, so a rail never hides its own exit off-screen (it did on
+// the Deck) and never leaves a hole on a TV (it did there too - the fixed
+// five-plus-one was sized for a 1280px guess that matched neither screen).
+const ROW_SIZE = 8;
+// The narrowest a tile may go before the row drops a column.
+const TILE_MIN = 180;
+const TILE_GAP = 10;
 
 /** The badge, and the rule behind it.
  *
@@ -487,14 +490,12 @@ function ViewAllCard({
   onActivate: () => void;
   label?: string;
 }) {
-  // No fixed height: the flex row's default stretch matches it to the
-  // tiles beside it, whatever their text rows add up to.
+  // No fixed size: the grid gives it the same column as the tiles beside
+  // it, and the row's stretch matches its height to theirs.
   return (
     <Focusable
       onActivate={onActivate}
       style={{
-        width: `${TILE_WIDTH}px`,
-        flexShrink: 0,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -524,28 +525,61 @@ function ModCarousel({
   onViewAll?: () => void;
   blur?: boolean;
 }) {
+  // Measured, not guessed: Steam's logical resolution is no guide to the
+  // panel this actually renders on (the fixed-width row was cut off on the
+  // Deck AND underfilled a TV at the same time). The row watches its own
+  // width and picks the column count from it.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [cols, setCols] = useState(lastRailCols);
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const compute = () => {
+      const width = el.clientWidth;
+      if (width <= 0) return;
+      const fit = Math.floor((width + TILE_GAP) / (TILE_MIN + TILE_GAP));
+      const next = Math.max(2, Math.min(fit, ROW_SIZE + 1));
+      lastRailCols = next;
+      setCols(next);
+    };
+    compute();
+    const watcher = new ResizeObserver(compute);
+    watcher.observe(el);
+    return () => watcher.disconnect();
+  }, []);
+
   if (mods.length === 0) return null;
+  // The View-all card is always the LAST column; mods get the rest. A rail
+  // with fewer mods than columns just renders shorter.
+  const shown = onViewAll ? cols - 1 : cols;
   return (
     <>
       <SectionHeading title={title} />
+      {/* The ref lives on a plain div: Focusable is Steam's component and
+          whether it forwards refs is not ours to rely on - a null ref here
+          would freeze the measurement at the default, silently. */}
+      <div ref={rowRef}>
       <Focusable
         style={{
-          display: "flex",
-          gap: "10px",
-          overflowX: "auto",
+          display: "grid",
+          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+          gap: `${TILE_GAP}px`,
           paddingBottom: "6px",
         }}
       >
-        {mods.slice(0, ROW_SIZE).map((mod) => (
-          <div key={mod.modId} style={{ width: `${TILE_WIDTH}px`, flexShrink: 0 }}>
-            <ModTile mod={mod} game={game} blur={blur} />
-          </div>
+        {mods.slice(0, shown).map((mod) => (
+          <ModTile key={mod.modId} mod={mod} game={game} blur={blur} />
         ))}
         {onViewAll && <ViewAllCard onActivate={onViewAll} />}
       </Focusable>
+      </div>
     </>
   );
 }
+
+// The last measured column count, so the next rail (and the next visit)
+// first paints at the right width instead of flashing a guess.
+let lastRailCols = 5;
 
 export function BrowsePage() {
   // Explicit scope from the QAM beats ambient resolution (which could
