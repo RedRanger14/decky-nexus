@@ -1139,15 +1139,33 @@ def _collection_sort_field(sort: str) -> str:
     }.get(sort, "endorsements")
 
 
+# Countries whose law requires platform age verification for adult content.
+# Mirrors the API's own list (Rails.configuration.x.kid.countries_enabled -
+# read from the nexus-api source, not guessed), and confirmed by Nexus staff:
+# the verification flow only exists in the UK. A user in the Netherlands can
+# never verify because the website never offers it - requiring verification
+# from them blocked adult mods the website itself was happily showing them.
+AGE_VERIFICATION_COUNTRIES = {"GB"}
+
+
 def _show_adult() -> bool:
-    """Adult content follows the Nexus Mods ACCOUNT, never a local toggle:
-    UK OSA-class laws require age verification, and that happens on the
-    platform. The gate opens only when the account's site preference says
-    adult AND the account is age-verified (both read live via GraphQL by
-    refresh_content_gate and cached here). No plugin-side opt-in exists,
-    so an unverified user can never enable it from the device."""
+    """Adult content follows the Nexus Mods ACCOUNT, never a local toggle.
+
+    The gate opens when the account's site preference says adult AND the
+    account meets its jurisdiction's requirement: in countries whose law
+    requires platform age verification (the UK's OSA) that means verified;
+    everywhere else the preference alone is what the website itself honours,
+    so it is what we honour. No plugin-side opt-in exists in any country.
+
+    A cached gate from before the region field existed has no
+    verification_required key; it reads as required (the old, stricter rule)
+    until the next refresh fills it in - fail closed, never open."""
     gate = _load_settings().get("content_gate") or {}
-    return bool(gate.get("adult_pref")) and bool(gate.get("age_verified"))
+    if not gate.get("adult_pref"):
+        return False
+    if gate.get("age_verified"):
+        return True
+    return gate.get("verification_required") is False
 
 
 # Live-service games that invalidate their mod library at every update.
@@ -1205,6 +1223,33 @@ def _gate_adult_nodes(nodes, key: str = "adultContent") -> list:
     return [m for m in nodes if not m.get(key)]
 
 
+async def _nexus_country() -> str:
+    """The two-letter country Nexus's edge sees us from, or empty.
+
+    Cloudflare fronts nexusmods.com and /cdn-cgi/trace echoes the geo it
+    derives from the connecting IP - the SAME source that becomes the
+    CF-IPCountry header the API's age-verification queries read, so this is
+    the jurisdiction Nexus itself would judge this device by."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                "https://www.nexusmods.com/cdn-cgi/trace", ssl=SSL_CONTEXT
+            ) as resp:
+                if resp.status != 200:
+                    return ""
+                text = await resp.text()
+        for line in text.splitlines():
+            if line.startswith("loc="):
+                return line[4:].strip().upper()
+    except Exception:
+        # Deliberately broad: this helper only informs a boolean, and no
+        # failure of a geo lookup may ever break the gate refresh itself.
+        # Unknown country reads as verification-required - fail closed.
+        pass
+    return ""
+
+
 async def _refresh_content_gate(api_key: str) -> dict:
     """Read the account's adult preference and age-verification status from
     the v2 GraphQL API (both fields resolve the apikey's user) and cache
@@ -1215,9 +1260,16 @@ async def _refresh_content_gate(api_key: str) -> dict:
     )
     prefs = data.get("preferences") or {}
     verification = data.get("ageVerificationInfo") or {}
+    country = await _nexus_country()
     gate = {
         "adult_pref": bool(prefs.get("adult")),
         "age_verified": bool(verification.get("verified")),
+        # Unknown country reads as required: fail closed, and a UK user on a
+        # flaky connection stays gated exactly as the website would gate them.
+        "verification_required": (
+            country in AGE_VERIFICATION_COUNTRIES if country else True
+        ),
+        "country": country,
         "blur_images": bool(prefs.get("adultBlurImages")),
         "checked_at": int(time.time()),
     }
@@ -1225,8 +1277,10 @@ async def _refresh_content_gate(api_key: str) -> dict:
     settings["content_gate"] = gate
     _save_settings(settings)
     decky.logger.info(
-        "Content gate refreshed: adult_pref=%s age_verified=%s"
-        % (gate["adult_pref"], gate["age_verified"])
+        "Content gate refreshed: adult_pref=%s age_verified=%s country=%s "
+        "verification_required=%s"
+        % (gate["adult_pref"], gate["age_verified"], gate["country"] or "?",
+           gate["verification_required"])
     )
     return gate
 
@@ -1405,6 +1459,55 @@ def _sort_mod_files(files: list) -> list:
         )
     )
     return files
+
+
+def _framework_file_for_game_version(file_list: list, avoid_keywords: list,
+                                     exe_path: str):
+    """(file, game_version) - the framework build for the INSTALLED binary.
+
+    Script extenders are compiled against one game build and publish one file
+    per build, stating the game version in the description ("Compatible with
+    Skyrim Special Edition 1.6.1170 from Steam", "Game version 1.11.240
+    required."). The build for a downgraded game sits in OLD_VERSION, so
+    newest-MAIN is exactly wrong for the people who downgraded on purpose -
+    which is most of the modding community after a breaking patch. Reported
+    by multiple users in the first week.
+
+    Returns (None, version) when the exe's version matches no file, and
+    (None, "") when the exe has no readable version - both fall back to the
+    old newest-MAIN behaviour."""
+    ver = _pe_file_version(exe_path) if exe_path else None
+    if not ver:
+        return None, ""
+    parts = [str(p) for p in ver]
+    # 1.6.1170.0 -> "1.6.1170": the file lists never write the trailing zero.
+    while len(parts) > 3 and parts[-1] == "0":
+        parts.pop()
+    needle = ".".join(parts)
+    # Bounded so 1.6.117 cannot match inside 1.6.1170 and vice versa.
+    pattern = re.compile(r"(?<![\d.])" + re.escape(needle) + r"(?!\d)")
+    avoid = [k.lower() for k in (avoid_keywords or []) if k]
+    matches = []
+    for f in file_list:
+        if f.get("category_name") not in ("MAIN", "OPTIONAL", "OLD_VERSION"):
+            continue
+        if avoid and any(
+            k in (f.get("name") or "").lower()
+            or k in (f.get("file_name") or "").lower()
+            for k in avoid
+        ):
+            continue
+        text = " ".join((
+            f.get("name") or "", f.get("description") or "",
+            str(f.get("version") or ""),
+        ))
+        if pattern.search(text):
+            matches.append(f)
+    if not matches:
+        return None, needle
+    # Two files can claim the same game version (SKSE 2.2.6 and 2.2.8 both
+    # target 1.6.1170); the newer upload is the maintained one.
+    return max(matches, key=lambda f: f["file_id"]), needle
 
 
 def _pick_main_file(file_list: list, avoid_keywords: list = ()):
@@ -13315,6 +13418,7 @@ query Link($slug: String!, $domainName: String!) {
         mods_subdir: str = "",
         app_id: int = 0,
         launcher_xml_subpath: str = "",
+        process_name: str = "",
     ) -> dict:
         """Download a mod-loader framework (e.g. SMAPI) from Nexus - so the
         author gets the download credit - and run its unattended installer
@@ -13340,6 +13444,7 @@ query Link($slug: String!, $domainName: String!) {
             detect_file,
             avoid_file_keywords,
             install_subdir,
+            process_name,
         )
         # A framework that IS a game module has to be switched on like any
         # other module, and our framework installs never did it: Harmony
@@ -14106,6 +14211,7 @@ query Link($slug: String!, $domainName: String!) {
         detect_file: str,
         avoid_file_keywords: list,
         install_subdir: str,
+        process_name: str = "",
     ) -> dict:
         try:
             api_key = _load_settings().get("api_key")
@@ -14119,7 +14225,29 @@ query Link($slug: String!, $domainName: String!) {
             if not files.get("ok"):
                 return files
             file_list = files.get("files") or []
-            main = _pick_main_file(file_list, avoid_file_keywords or [])
+            main = None
+            matched_version = ""
+            if process_name:
+                exe = os.path.join(install_path, process_name)
+                match, game_ver = _framework_file_for_game_version(
+                    file_list, avoid_file_keywords or [], exe
+                )
+                if match is not None:
+                    main = match
+                    matched_version = game_ver
+                    decky.logger.info(
+                        f"framework matched to game binary {game_ver}: "
+                        f"{match.get('file_name')!r} (file {match.get('file_id')})"
+                    )
+                elif game_ver:
+                    # A brand-new game patch may predate any matching file;
+                    # newest MAIN is then the best guess there is.
+                    decky.logger.info(
+                        f"framework: no file mentions game version {game_ver}, "
+                        f"falling back to the newest MAIN"
+                    )
+            if main is None:
+                main = _pick_main_file(file_list, avoid_file_keywords or [])
             if not main:
                 return {"ok": False, "error": "No downloadable file found"}
             decky.logger.info(
@@ -14181,6 +14309,10 @@ query Link($slug: String!, $domainName: String!) {
                 _force_rmtree(scratch)
                 return {"ok": False, "error": f"Extraction failed: {err}"}
 
+            matched_note = (
+                {"matched_game_version": matched_version} if matched_version
+                else {}
+            )
             if install_kind == "copyRoot":
                 # SKSE-style: the archive is the game-dir payload, usually
                 # inside one versioned wrapper folder - flatten and merge.
@@ -14242,7 +14374,7 @@ query Link($slug: String!, $domainName: String!) {
                         "error": "Framework files not found after extraction",
                     }
                 decky.logger.info(f"framework (copyRoot) installed into {dest_root}")
-                return {"ok": True, "install_path": dest_root}
+                return {"ok": True, "install_path": dest_root, **matched_note}
 
             # SMAPI's bundled installer is interactive-only (its unattended
             # flags don't exist, and 'install on Linux.sh' doesn't forward
@@ -14290,7 +14422,7 @@ query Link($slug: String!, $domainName: String!) {
                     "error": "Framework files not found after extraction",
                 }
             decky.logger.info(f"framework installed into {install_path}")
-            return {"ok": True, "install_path": install_path}
+            return {"ok": True, "install_path": install_path, **matched_note}
         except Exception as e:  # noqa: BLE001 - surfaced to UI + logged
             decky.logger.exception("install_framework crashed")
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
@@ -14526,6 +14658,7 @@ query Link($slug: String!, $domainName: String!) {
             "show_adult": _show_adult(),
             "adult_pref": bool(gate.get("adult_pref")),
             "age_verified": bool(gate.get("age_verified")),
+            "verification_required": bool(gate.get("verification_required", True)),
             "blur_adult": bool(gate.get("blur_images")),
         }
 
@@ -14556,9 +14689,12 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": str(e)}
         return {
             "ok": True,
-            "show_adult": bool(gate["adult_pref"]) and bool(gate["age_verified"]),
+            # THE rule lives in _show_adult; restating it here is how the two
+            # would drift apart.
+            "show_adult": _show_adult(),
             "adult_pref": gate["adult_pref"],
             "age_verified": gate["age_verified"],
+            "verification_required": bool(gate.get("verification_required", True)),
         }
 
     async def dismiss_update(

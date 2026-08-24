@@ -13182,6 +13182,140 @@ class TestSkyrimCatalogQuarantine(unittest.TestCase):
             self.assertTrue(os.path.isfile(catalog + ".pre-update-backup"))
 
 
+class TestFrameworkGameVersionMatch(unittest.TestCase):
+    """Script extenders are compiled against ONE game binary and publish one
+    file per build, with the game version in the description. Installing the
+    newest against a deliberately downgraded game was our first
+    multiple-report bug: "I have specifically downgraded because I knew how
+    much shit Skyrim 1.7.99 would break." The file list here is the REAL
+    SKSE page, captured 2026-08-24."""
+
+    SKSE = [
+        {"file_id": 792372, "category_name": "MAIN",
+         "name": "Skyrim Script Extender (SKSE64) Steam", "version": "2.3.0",
+         "description": "Compatible with Skyrim Special Edition 1.7.99 from Steam"},
+        {"file_id": 470991, "category_name": "MAIN",
+         "name": "Skyrim Script Extender (SKSE64) GOG", "version": "2.2.6",
+         "description": "Compatible with Skyrim Special Edition 1.6.1179 from GOG.com"},
+        {"file_id": 462377, "category_name": "OLD_VERSION",
+         "name": "Skyrim Script Extender (SKSE64)  Steam", "version": "2.2.6",
+         "description": "Compatible with Skyrim Special Edition 1.6.1170 from Steam"},
+        {"file_id": 792256, "category_name": "OLD_VERSION",
+         "name": "Skyrim Script Extender (SKSE64) Steam", "version": "2.2.8",
+         "description": "Compatible with Skyrim Special Edition 1.6.1170 from Steam"},
+        {"file_id": 255897, "category_name": "OLD_VERSION",
+         "name": "Skyrim Script Extender (SKSE64)", "version": "2.1.2",
+         "description": "Compatible with Skyrim Special Edition 1.6.318 from Steam"},
+    ]
+
+    def _with_exe_version(self, version_tuple):
+        real = main._pe_file_version
+        main._pe_file_version = lambda path: version_tuple
+        self.addCleanup(setattr, main, "_pe_file_version", real)
+
+    def test_a_downgraded_game_gets_its_own_build(self):
+        self._with_exe_version((1, 6, 1170, 0))
+        f, ver = main._framework_file_for_game_version(self.SKSE, ["GOG"], "x")
+        self.assertEqual(ver, "1.6.1170")
+        # TWO files claim 1.6.1170 (2.2.6 and 2.2.8): the newer upload wins.
+        self.assertEqual(f["file_id"], 792256)
+
+    def test_the_latest_game_still_gets_the_latest(self):
+        self._with_exe_version((1, 7, 99, 0))
+        f, ver = main._framework_file_for_game_version(self.SKSE, ["GOG"], "x")
+        self.assertEqual(f["file_id"], 792372)
+
+    def test_avoided_stores_stay_avoided(self):
+        # 1.6.1179 exists ONLY as the GOG build; matching it would install a
+        # binary that refuses to run against the Steam game.
+        self._with_exe_version((1, 6, 1179, 0))
+        f, ver = main._framework_file_for_game_version(self.SKSE, ["GOG"], "x")
+        self.assertIsNone(f)
+        self.assertEqual(ver, "1.6.1179")
+
+    def test_versions_do_not_match_inside_longer_ones(self):
+        # 1.6.117 must not match inside "1.6.1170", nor 1.6.11 inside either.
+        self._with_exe_version((1, 6, 117, 0))
+        f, _ = main._framework_file_for_game_version(self.SKSE, [], "x")
+        self.assertIsNone(f)
+
+    def test_an_unreadable_exe_changes_nothing(self):
+        # No version, no opinion: the caller falls back to newest-MAIN,
+        # which is yesterday's behaviour, not an error.
+        self._with_exe_version(None)
+        f, ver = main._framework_file_for_game_version(self.SKSE, [], "x")
+        self.assertIsNone(f)
+        self.assertEqual(ver, "")
+
+    def test_the_installer_actually_asks_for_the_match(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _install_framework_inner"):]
+        fn = fn[:fn.index("if install_kind ==")]
+        self.assertIn("_framework_file_for_game_version(", fn)
+        self.assertIn("process_name", fn)
+
+
+class TestAdultGateRegions(unittest.TestCase):
+    """Age verification exists only where the law demands it (the UK's OSA).
+    Requiring it from everyone meant a Dutch user - whose website happily
+    shows adult content on the preference alone - could never open the gate
+    from the plugin, because the verification flow does not exist in their
+    country. The plugin now mirrors the platform: preference everywhere,
+    plus verification only where required. Confirmed against the API's own
+    source: the country list is Rails config, the jurisdiction is
+    Cloudflare's CF-IPCountry."""
+
+    def _gate(self, **kw):
+        settings = main._load_settings()
+        settings["content_gate"] = kw
+        main._save_settings(settings)
+        self.addCleanup(main._save_settings, {})
+
+    def test_preference_alone_opens_the_gate_where_law_allows(self):
+        self._gate(adult_pref=True, age_verified=False,
+                   verification_required=False, country="NL")
+        self.assertTrue(main._show_adult())
+
+    def test_the_uk_still_requires_verification(self):
+        self._gate(adult_pref=True, age_verified=False,
+                   verification_required=True, country="GB")
+        self.assertFalse(main._show_adult())
+
+    def test_a_verified_uk_account_is_open(self):
+        self._gate(adult_pref=True, age_verified=True,
+                   verification_required=True, country="GB")
+        self.assertTrue(main._show_adult())
+
+    def test_the_preference_is_never_optional(self):
+        self._gate(adult_pref=False, age_verified=True,
+                   verification_required=False, country="NL")
+        self.assertFalse(main._show_adult())
+
+    def test_a_gate_cached_before_the_region_field_stays_closed(self):
+        # Old caches have no verification_required key. They must read as
+        # required - the stricter old rule - until the next refresh, never
+        # as open.
+        self._gate(adult_pref=True, age_verified=False)
+        self.assertFalse(main._show_adult())
+
+    def test_an_unknown_country_fails_closed(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def _refresh_content_gate"):]
+        fn = fn[:fn.index("async def _gql_query_vars")]
+        self.assertIn("if country else True", fn)
+
+    def test_the_endpoints_report_one_rule(self):
+        # show_adult restated in an endpoint is how two rules drift apart.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def refresh_content_gate"):]
+        fn = fn[:fn.index("async def dismiss_update")]
+        self.assertIn('"show_adult": _show_adult()', fn)
+        self.assertNotIn('gate["adult_pref"]) and bool(gate["age_verified"]', fn)
+
+
 class TestSteamLibraries(unittest.TestCase):
     """Games on an SD card or a second drive live in another Steam library,
     listed in libraryfolders.vdf. The first bug report from a real user was

@@ -542,11 +542,18 @@ export const installFramework = callable<
     /** So a framework that IS a game module gets switched on in the game's
      * launcher, and placed first when its manifest says the game's own
      * modules load after it. Harmony arrived disabled without this. */
-    launcher_xml_subpath: string
+    launcher_xml_subpath: string,
+    /** The game's exe (e.g. SkyrimSE.exe): script extenders publish one
+     * build per game binary, and the right one for a deliberately
+     * downgraded game sits in OLD_VERSION. Empty skips the matching. */
+    process_name: string
   ],
   {
     ok: boolean;
     install_path?: string;
+    /** Set when the build was chosen to MATCH the installed game binary
+     * rather than being the newest. */
+    matched_game_version?: string;
     error?: string;
     /** The module id we activated, when the framework is a module. */
     activated?: string;
@@ -1807,6 +1814,9 @@ export const getShowAdult = callable<
     show_adult?: boolean;
     adult_pref?: boolean;
     age_verified?: boolean;
+    /** False when this account's jurisdiction has no age-verification law:
+     * the preference alone then opens the gate, matching the website. */
+    verification_required?: boolean;
     blur_adult?: boolean;
   }
 >("get_show_adult");
@@ -1824,6 +1834,9 @@ export const refreshContentGate = callable<
     show_adult?: boolean;
     adult_pref?: boolean;
     age_verified?: boolean;
+    /** False when this account's jurisdiction has no age-verification law:
+     * the preference alone then opens the gate, matching the website. */
+    verification_required?: boolean;
     error?: string;
   }
 >("refresh_content_gate");

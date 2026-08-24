@@ -813,7 +813,11 @@ function CurrentGameSection() {
             game.appId,
             // Bannerlord's Harmony is a MODULE: installing it is not enough,
             // it has to be switched on in the game's launcher too.
-            game.launcherXmlSubpath ?? ""
+            game.launcherXmlSubpath ?? "",
+            // Script extenders are built per game binary: the exe's own
+            // version picks the file, so a downgraded Skyrim gets the SKSE
+            // that actually runs on it instead of the newest.
+            game.processName ?? ""
           );
       // Some games need ini blocks before mods load at all (e.g. FO4's
       // archive invalidation) - apply them as part of framework setup.
@@ -834,8 +838,14 @@ function CurrentGameSection() {
       const installPath =
         "install_path" in result ? result.install_path : undefined;
       if (result.ok) {
+        // Name the matched build when there is one: a user who downgraded
+        // their game on purpose is exactly the user who checks this.
+        const matched =
+          "matched_game_version" in result && result.matched_game_version
+            ? ` for game ${result.matched_game_version}`
+            : "";
         toaster.toast({
-          title: `${game.framework.name} installed`,
+          title: `${game.framework.name} installed${matched}`,
           body: game.framework.launchOptionsTemplate
             ? "Step 2: set the launch command"
             : "That's the setup done — mods will load next time you play",
@@ -934,7 +944,8 @@ function CurrentGameSection() {
           fw.installSubdir ?? "",
           game.modsSubdir,
           game.appId,
-          game.launcherXmlSubpath ?? ""
+          game.launcherXmlSubpath ?? "",
+          game.processName ?? ""
         );
         if (!result.ok) {
           failed++;
@@ -3703,9 +3714,13 @@ function AccountSection() {
             {gate === undefined
               ? "checking…"
               : gate.show
-                ? "On — follows your Nexus Mods account (age verified ✓)"
+                ? gate.ageVerified
+                  ? "On — follows your Nexus Mods account (age verified ✓)"
+                  : "On — follows your Nexus Mods account"
                 : gate.adultPref && !gate.ageVerified
-                  ? "Off — age verification needed on nexusmods.com"
+                  ? // Only reachable where verification is REQUIRED (the UK):
+                    // everywhere else the preference alone opens the gate.
+                    "Off — age verification needed on nexusmods.com"
                   : "Off — enable it in your Nexus Mods account content settings"}
           </Field>
         </PanelSectionRow>
