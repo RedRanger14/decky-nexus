@@ -13223,6 +13223,21 @@ class TestModFileGameVersionDefault(unittest.TestCase):
         finally:
             loop.close()
 
+    def test_the_game_binary_version_is_readable_as_an_endpoint(self):
+        # The companion gate and anything else that reasons about "which
+        # game build is this really" needs the exe's own answer - the
+        # manifest's buildid lies about downgraded games.
+        real = main._pe_file_version
+        main._pe_file_version = lambda path: (1, 7, 99, 0)
+        self.addCleanup(setattr, main, "_pe_file_version", real)
+        loop = asyncio.new_event_loop()
+        try:
+            r = loop.run_until_complete(main.Plugin().get_game_binary_version(
+                "Skyrim Special Edition", "SkyrimSE.exe"))
+        finally:
+            loop.close()
+        self.assertEqual(r.get("version"), "1.7.99")
+
     def test_the_latest_game_gets_the_file_that_names_it(self):
         self._with_exe((1, 7, 99, 0))
         r = self._match()

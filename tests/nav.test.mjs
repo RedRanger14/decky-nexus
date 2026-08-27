@@ -1296,8 +1296,18 @@ test("a mod split across several required files installs all of them", () => {
   // player cannot be expected to know a mod page has a second half.
   const games = read("games.ts");
   assert.ok(
-    /companionFiles: \{[\s\S]{0,400}17230: \["preloader"\]/.test(games),
-    "Engine Fixes is not declared as a multi-file mod for Skyrim"
+    /companionFiles: \{[\s\S]{0,600}17230: \[\{ pattern: "preloader", untilGame: "1\.7" \}\]/.test(
+      games
+    ),
+    "Engine Fixes' preloader is not declared, or lost its 1.7 retirement - " +
+      "the author says it is not required from game 1.7.99"
+  );
+  // And the mechanism that honours untilGame must exist: without it the
+  // bound is decoration.
+  const inst = read("install.ts");
+  assert.ok(
+    /versionAtLeast\(gameVersion, e\.untilGame\)/.test(inst),
+    "untilGame is declared but never enforced"
   );
   const install = read("install.ts");
   assert.ok(

@@ -538,6 +538,13 @@ export const setFrameworkEnabled = callable<
  * game's exe, whether that is newer OR older than what is installed. */
 /** Which of a mod's files names the installed game's version, if any.
  * file_id 0 means none does, and the caller keeps its normal default. */
+/** The installed game binary's version from its PE header - the manifest's
+ * buildid lies about downgraded games. Empty when unreadable. */
+export const getGameBinaryVersion = callable<
+  [install_dir: string, process_name: string],
+  { ok: boolean; version?: string }
+>("get_game_binary_version");
+
 export const matchFileToGame = callable<
   [game_domain: string, mod_id: number, install_dir: string, process_name: string],
   {

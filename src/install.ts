@@ -14,6 +14,7 @@ import {
   prefetchModFile,
   prepareModFile,
   matchFileToGame,
+  getGameBinaryVersion,
 } from "./api";
 import { SupportedGame, modeParams, stalenessExemptModIds } from "./games";
 import { nameDownload } from "./state";
@@ -184,9 +185,48 @@ export async function installCompanionFiles(
   modId: number,
   chosenFileName: string
 ): Promise<{ installed: string[]; failed: string[] }> {
-  const patterns = game.companionFiles?.[modId];
+  const declared = game.companionFiles?.[modId];
   const done = { installed: [] as string[], failed: [] as string[] };
-  if (!patterns || patterns.length === 0) return done;
+  if (!declared || declared.length === 0) return done;
+
+  // Entries are strings or { pattern, untilGame }. untilGame retires a
+  // companion from a game version onward: Engine Fixes' beta says the
+  // preloader is "no longer required" from 1.7.99, so shipping it there
+  // would be installing something the author tells users not to have.
+  const entries = declared.map((e) =>
+    typeof e === "string" ? { pattern: e, untilGame: undefined } : e
+  );
+  let gameVersion: string | undefined;
+  if (entries.some((e) => e.untilGame) && game.processName) {
+    gameVersion = await getGameBinaryVersion(
+      game.installDirName,
+      game.processName
+    )
+      .then((r) => r.version || undefined)
+      .catch(() => undefined);
+  }
+  const versionAtLeast = (have: string, bound: string) => {
+    const a = have.split(".").map(Number);
+    const b = bound.split(".").map(Number);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const x = a[i] ?? 0;
+      const y = b[i] ?? 0;
+      if (x !== y) return x > y;
+    }
+    return true;
+  };
+  const patterns = entries
+    .filter(
+      (e) =>
+        !e.untilGame ||
+        // Unknown game version keeps the companion: everywhere below the
+        // bound it is REQUIRED, and a missing required file kills the game
+        // while a retired one merely idles.
+        !gameVersion ||
+        !versionAtLeast(gameVersion, e.untilGame)
+    )
+    .map((e) => e.pattern);
+  if (patterns.length === 0) return done;
 
   const chosen = chosenFileName.toLowerCase();
   // An All-In-One build already contains every part; so does the part

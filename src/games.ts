@@ -248,8 +248,16 @@ export interface SupportedGame {
    * mod id -> substrings matched case-insensitively against the other files'
    * names. Curated on purpose: multiple MAIN files usually means
    * alternatives (SKSE's Steam and GOG builds), and installing all of those
-   * would be actively wrong. */
-  companionFiles?: Record<number, string[]>;
+   * would be actively wrong.
+   *
+   * The object form adds untilGame: the companion applies only while the
+   * game binary's version is BELOW that. Engine Fixes' own beta says "The
+   * SKSE preloader is no longer required for 1.7.99", so on 1.7.99+ the
+   * preloader must stop coming along. */
+  companionFiles?: Record<
+    number,
+    (string | { pattern: string; untilGame?: string })[]
+  >;
   /** Frostbite games (Battlefront II): mods are .fbmod archives that must be
    * COMPILED into a ModData tree, and the game is redirected at it. There is
    * no per-mod install - any change recompiles the whole enabled set - so
@@ -446,8 +454,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // SSE Engine Fixes: "Engine Fixes - Main File" is the SKSE plugin,
       // "Engine Fixes - SKSE64 Preloader" is the d3dx9_42.dll + TBB pair
       // that has to sit beside SkyrimSE.exe. The mod prints a dialog and
-      // closes the game when the second is missing (issue #14).
-      17230: ["preloader"],
+      // closes the game when the second is missing (issue #14). From game
+      // 1.7.99 the author retires the preloader: "no longer required".
+      17230: [{ pattern: "preloader", untilGame: "1.7" }],
     },
     recommendedModIds: [12604, 266], // SkyUI, USSEP - the canon starters
   },

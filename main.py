@@ -13432,6 +13432,25 @@ query Link($slug: String!, $domainName: String!) {
         )
         return await self.install_fomod(token, ids)
 
+    async def get_game_binary_version(
+        self, install_dir: str, process_name: str = "",
+    ) -> dict:
+        """The installed game binary's version, from its PE header.
+
+        The manifest's buildid lies about downgraded games (the downgrade
+        swaps the exe behind Steam's back), so the binary is the authority.
+        """
+        if not process_name:
+            return {"ok": True, "version": ""}
+        install_path, _m, _d = _game_paths(install_dir, "")
+        ver = _pe_file_version(os.path.join(install_path, process_name))
+        if not ver:
+            return {"ok": True, "version": ""}
+        parts = [str(p) for p in ver]
+        while len(parts) > 3 and parts[-1] == "0":
+            parts.pop()
+        return {"ok": True, "version": ".".join(parts)}
+
     async def match_file_to_game(
         self, game_domain: str, mod_id: int, install_dir: str,
         process_name: str = "",
