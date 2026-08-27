@@ -1306,11 +1306,24 @@ test("a mod split across several required files installs all of them", () => {
   );
   // Must live in install.ts so collections and updates get it too, not just
   // the mod page - the lesson from four separate bypass bugs.
+  // EVERY success path, not just one. Engine Fixes' main file is itself a
+  // FOMOD, and that branch returns early - so the first version of this
+  // shipped half a mod and the test still passed, because it only checked
+  // that the call appeared somewhere. Count the successes instead.
+  const modPage = readCode("ModDetailPage.tsx");
   assert.ok(
-    /installCompanionFiles\(game, mod\.modId, file\.file_name\)/.test(
-      read("ModDetailPage.tsx")
-    ),
-    "the mod page never asks for the other required files"
+    /const afterInstall = async/.test(modPage),
+    "there is no single post-install tail, so a branch can skip it"
+  );
+  const successes = [
+    ...modPage.matchAll(/setInstalledFileIds\(\(prev\) => new Set\(prev\)\.add/g),
+  ].length;
+  const tails = [...modPage.matchAll(/await afterInstall\(/g)].length;
+  assert.equal(
+    tails,
+    successes,
+    `${successes} install-success paths but ${tails} call afterInstall - ` +
+      `one of them ships a mod without its other required files`
   );
   // An All-In-One build already contains every part; installing the extra
   // on top would be pointless churn.

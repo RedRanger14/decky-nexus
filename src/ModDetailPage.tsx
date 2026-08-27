@@ -350,6 +350,21 @@ export function ModDetailPage() {
     }
   };
 
+  /** Everything that must happen after ANY successful install of `file`.
+   *
+   * Some mod pages split one working mod across several required files, and
+   * Engine Fixes' main file is itself a FOMOD - so the FOMOD branch, which
+   * returns early, silently skipped this and shipped half a mod. That is
+   * the fifth time an install path has been missed by branching, so there
+   * is now one place to miss. */
+  const afterInstall = async (file: ModFile) => {
+    const extra = await installCompanionFiles(game, mod.modId, file.file_name);
+    if (extra.installed.length > 0 || extra.failed.length > 0) {
+      setCompanions(extra);
+    }
+    return extra;
+  };
+
   const onInstall = async (file: ModFile, payloadChoice = "") => {
     setInstallingFileId(file.file_id);
     setProgress(undefined);
@@ -378,8 +393,18 @@ export function ModDetailPage() {
               const done = await finishFomod(result.fomod_token!, ids);
               if (done.ok) {
                 setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
+                // A FOMOD install is still an install: Engine Fixes' main
+                // file IS a FOMOD, so this branch returning early is why
+                // its preloader never came with it.
+                const extra = await afterInstall(file);
                 refreshInstalled(sel);
-                toaster.toast({ title: `${mod.name} installed`, body: "" });
+                toaster.toast({
+                  title:
+                    extra.installed.length > 0
+                      ? `${mod.name} installed, with ${extra.installed.length} required extra`
+                      : `${mod.name} installed`,
+                  body: "",
+                });
               } else {
                 toaster.toast({
                   title: "Install failed",
@@ -411,6 +436,7 @@ export function ModDetailPage() {
         // risk, author's own words) stays on the page, not in a toast.
         setLaunchOptions(game.appId, game.reshade.launchOptionsTemplate);
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
+        await afterInstall(file);
         refreshInstalled(sel);
         setStale(result.warning);
         toaster.toast({
@@ -421,8 +447,10 @@ export function ModDetailPage() {
       }
       if (result.ok && result.installed_disabled) {
         // Installed and deliberately off. The box stays on the page with
-        // the reason, so nothing depends on catching a toast.
+        // the reason, so nothing depends on catching a toast. Still a real
+        // install, so its other required halves come too.
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
+        await afterInstall(file);
         refreshInstalled(sel);
         setStale(result.warning);
         toaster.toast({
@@ -431,13 +459,7 @@ export function ModDetailPage() {
         });
       } else if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
-        // Some mod pages split ONE mod across several required files.
-        // Engine Fixes' preloader is a separate download that lives beside
-        // the game exe, and without it the game shows a dialog and closes.
-        const extra = await installCompanionFiles(game, mod.modId, file.file_name);
-        if (extra.installed.length > 0 || extra.failed.length > 0) {
-          setCompanions(extra);
-        }
+        const extra = await afterInstall(file);
         refreshInstalled(sel);
         // A successful install can still carry a warning: a Frostbite mod
         // built against a different game build applies cleanly and renders
