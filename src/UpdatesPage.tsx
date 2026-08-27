@@ -36,6 +36,12 @@ export function UpdatesPage() {
     // A script extender is not a mod: it installs beside the game exe and
     // its right build is the one matching that exe. Re-running the framework
     // install picks by game version, so this needs no target passed in.
+    // A blocked row is information, not an action: there is no build to
+    // install. Guarded here too so "Update all" cannot try.
+    if (u.blocked) {
+      toaster.toast({ title: u.name, body: u.blocked });
+      return false;
+    }
     if (u.framework && u.game.framework) {
       const fw = u.game.framework;
       const result = await installFramework(
@@ -224,7 +230,9 @@ export function UpdatesPage() {
                   {u.name}
                 </div>
                 <div style={{ fontSize: "12px", opacity: 0.65 }}>
-                  {u.framework
+                  {u.blocked
+                    ? u.blocked
+                    : u.framework
                     ? // Not "new version": a script extender's right build
                       // is the one matching the game, which after a
                       // downgrade is older than what is installed. Saying
@@ -234,22 +242,26 @@ export function UpdatesPage() {
                         ? `${u.installedVersion} installed, `
                         : "") +
                       `your game needs ${u.current}`
-                    : `${u.game.displayName} · new version ${u.current}`}
+                      : `${u.game.displayName} · new version ${u.current}`}
                 </div>
               </div>
-              <DialogButton
-                disabled={busy}
-                onClick={() => updateOne(u)}
-                style={{
-                  minWidth: "0",
-                  width: "auto",
-                  padding: "6px 14px",
-                  fontSize: "12.5px",
-                  flexShrink: 0,
-                }}
-              >
-                ⬆ Update
-              </DialogButton>
+              {/* No Update button on a blocked row: there is no build to
+                  install, and offering one would be a lie. */}
+              {!u.blocked && (
+                <DialogButton
+                  disabled={busy}
+                  onClick={() => updateOne(u)}
+                  style={{
+                    minWidth: "0",
+                    width: "auto",
+                    padding: "6px 14px",
+                    fontSize: "12.5px",
+                    flexShrink: 0,
+                  }}
+                >
+                  ⬆ Update
+                </DialogButton>
+              )}
               <DialogButton
                 disabled={busy}
                 onClick={() => skipOne(u)}

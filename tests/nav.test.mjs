@@ -1414,3 +1414,24 @@ test("companions ride every install path and follow their parent", () => {
     "companion records are not marked as such"
   );
 });
+
+test("a game newer than its script extender is explained, not offered", () => {
+  // Bethesda shipped Skyrim 1.7.104 while SKSE's newest build was for
+  // 1.7.99. Michael got the game's own "newer version of Skyrim than this
+  // SKSE64 supports" dialog and the plugin said nothing at all.
+  const upd = read("updates.ts");
+  assert.ok(
+    /unsupported_game/.test(upd) && /blocked:/.test(upd),
+    "the scan does not surface an unsupported game version"
+  );
+  const page = read("UpdatesPage.tsx");
+  // Information, not an action: there is nothing to install.
+  assert.ok(
+    /if \(u\.blocked\) \{/.test(page),
+    "applying a blocked row is not short-circuited, so Update all would try it"
+  );
+  assert.ok(
+    /\{!u\.blocked && \(/.test(page),
+    "a blocked row still shows an Update button, which would be a lie"
+  );
+});

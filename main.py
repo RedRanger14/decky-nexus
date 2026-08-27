@@ -1510,6 +1510,16 @@ def _framework_file_for_game_version(file_list: list, avoid_keywords: list,
     return max(matches, key=lambda f: f["file_id"]), needle
 
 
+# A dotted version triple (1.6.1170), bounded so a shorter version cannot
+# match inside a longer one. Built from character codes because writing
+# the escapes literally has now been mangled twice in this file: a \b
+# became a literal backspace (0x08), which print and inspect render
+# invisibly, so the regex looked perfect and matched nothing.
+_VERSION_TRIPLE_RE = re.compile(
+    '(?<![\\d.])(\\d+\\.\\d+\\.\\d+)(?![\\d.])'
+)
+
+
 def _version_parts(text: str) -> list:
     """The numeric runs in a version string: "v2.3.0-beta" -> [2, 3, 0]."""
     return [int(n) for n in re.findall(r"\d+", str(text or ""))]
@@ -13600,8 +13610,34 @@ query Link($slug: String!, $domainName: String!) {
             files.get("files") or [], avoid_file_keywords or [], exe
         )
         if want is None:
-            # No file names this game build, or the exe is unreadable: no
-            # opinion beats a wrong one about the mod everything depends on.
+            # No file names this game build. If the page names OTHER versions
+            # then this game is simply ahead of (or behind) everything the
+            # author has published, and saying nothing is the worst answer:
+            # Bethesda shipped Skyrim 1.7.104 on 2026-08-27 while SKSE's
+            # newest build was for 1.7.99, so every user who took that patch
+            # got "you are using a newer version of Skyrim than this SKSE
+            # supports" with no word from us.
+            stated = []
+            for f in files.get("files") or []:
+                if f.get("category_name") not in ("MAIN", "OPTIONAL",
+                                                  "OLD_VERSION"):
+                    continue
+                text = f"{f.get('name') or ''} {f.get('description') or ''}"
+                for m in _VERSION_TRIPLE_RE.finditer(text):
+                    stated.append(_version_parts(m.group(1)))
+            if game_version and stated:
+                newest = max(stated)
+                return {
+                    "ok": True,
+                    "update_available": False,
+                    "game_version": game_version,
+                    # The mod everything else depends on has nothing for
+                    # this build. Mods will not load at all until it does.
+                    "unsupported_game": True,
+                    "newest_supported": ".".join(str(p) for p in newest),
+                }
+            # The exe is unreadable, or the page states no versions at all:
+            # no opinion beats a wrong one.
             return {"ok": True, "update_available": False,
                     "game_version": game_version}
 

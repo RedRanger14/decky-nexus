@@ -578,6 +578,12 @@ export const checkFrameworkUpdate = callable<
     target_version?: string;
     target_name?: string;
     game_version?: string;
+    /** No published build of the script extender supports the installed
+     * game at all - mods will not load until its author catches up. Not an
+     * update: there is nothing to install that would help. */
+    unsupported_game?: boolean;
+    /** The newest game version the extender's page does support. */
+    newest_supported?: string;
     error?: string;
   }
 >("check_framework_update");

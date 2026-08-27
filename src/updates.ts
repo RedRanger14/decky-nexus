@@ -21,6 +21,9 @@ export interface PendingUpdate {
   /** A framework's version currently ON DISK. `current` keeps its meaning
    * everywhere - the version being offered - so this is the other half. */
   installedVersion?: string;
+  /** Nothing published supports the installed game. There is no update to
+   * apply, so this row explains rather than offers. */
+  blocked?: string;
 }
 
 export async function scanUpdates(
@@ -63,7 +66,24 @@ export async function scanUpdates(
         game.processName ?? "",
         game.framework.avoidFileKeywords ?? []
       ).catch(() => ({ ok: false }) as { ok: boolean });
-      if ("update_available" in fw && fw.update_available) {
+      if ("unsupported_game" in fw && fw.unsupported_game) {
+        // Bethesda shipped Skyrim 1.7.104 while SKSE's newest build was for
+        // 1.7.99. Every user who took that patch got the game's own "newer
+        // version than this SKSE supports" dialog and nothing from us.
+        found.push({
+          game,
+          folder: `framework-blocked:${game.framework.nexusModId}`,
+          modId: game.framework.nexusModId,
+          name: game.framework.name,
+          current: fw.newest_supported || "",
+          framework: true,
+          blocked:
+            `Your game is ${fw.game_version}, and the newest ` +
+            `${game.framework.name} is for ${fw.newest_supported}. Mods will ` +
+            `not load until its author releases a build for your game. ` +
+            `Nothing to install yet - this is not something you can fix.`,
+        });
+      } else if ("update_available" in fw && fw.update_available) {
         found.push({
           game,
           folder: `framework:${game.framework.nexusModId}`,

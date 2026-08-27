@@ -13276,6 +13276,86 @@ class TestFrameworkUpdates(unittest.TestCase):
     Read from disk rather than from a new record, because every existing
     install has no record and a record can drift from the binary."""
 
+    def _check(self, files, exe_version, loader_version=(0, 2, 3, 0)):
+        """Run check_framework_update against a fake page and exe."""
+        async def fake_files(domain, mid):
+            return {"ok": True, "files": files}
+        real_files = main.Plugin.get_mod_files
+        main.Plugin.get_mod_files = lambda self_, d, m: fake_files(d, m)
+        self.addCleanup(setattr, main.Plugin, "get_mod_files", real_files)
+
+        real_pe = main._pe_file_version
+        exe_name = "SkyrimSE.exe"
+
+        def fake_pe(path):
+            return exe_version if path.endswith(exe_name) else loader_version
+
+        main._pe_file_version = fake_pe
+        self.addCleanup(setattr, main, "_pe_file_version", real_pe)
+
+        real_paths = main._game_paths
+        world = tempfile.mkdtemp(prefix="fwsup-")
+        self.addCleanup(shutil.rmtree, world, ignore_errors=True)
+        with open(os.path.join(world, "skse64_loader.exe"), "wb") as fh:
+            fh.write(b"MZ")
+        main._game_paths = lambda install_dir, subdir: (world, world, world)
+        self.addCleanup(setattr, main, "_game_paths", real_paths)
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(
+                main.Plugin().check_framework_update(
+                    "skyrimspecialedition", 30379, "Skyrim Special Edition",
+                    "skse64_loader.exe", exe_name, ["GOG"],
+                )
+            )
+        finally:
+            loop.close()
+
+    # The REAL SKSE page as of 2026-08-27, the day Bethesda shipped 1.7.104.
+    SKSE_REAL = [
+        {"file_id": 792372, "category_name": "MAIN", "version": "2.3.0",
+         "name": "Skyrim Script Extender (SKSE64) Steam",
+         "description": "Compatible with Skyrim Special Edition 1.7.99 from Steam"},
+        {"file_id": 470991, "category_name": "MAIN", "version": "2.2.6",
+         "name": "Skyrim Script Extender (SKSE64) GOG",
+         "description": "Compatible with Skyrim Special Edition 1.6.1179 from GOG.com"},
+        {"file_id": 792256, "category_name": "OLD_VERSION", "version": "2.2.8",
+         "name": "Skyrim Script Extender (SKSE64) Steam",
+         "description": "Compatible with Skyrim Special Edition 1.6.1170 from Steam"},
+    ]
+
+    def test_a_game_newer_than_every_published_build_says_so(self):
+        # Bethesda shipped 1.7.104 mid-afternoon; SKSE's newest was for
+        # 1.7.99. Michael got "you are using a newer version of Skyrim than
+        # this SKSE64 supports" and the plugin had said nothing at all.
+        r = self._check(self.SKSE_REAL, (1, 7, 104, 0))
+        self.assertTrue(r.get("unsupported_game"))
+        self.assertEqual(r.get("game_version"), "1.7.104")
+        self.assertEqual(r.get("newest_supported"), "1.7.99")
+        # NOT an update: there is nothing to install that would help.
+        self.assertFalse(r.get("update_available"))
+
+    def test_a_supported_game_is_not_called_unsupported(self):
+        r = self._check(self.SKSE_REAL, (1, 6, 1170, 0))
+        self.assertFalse(r.get("unsupported_game"))
+        self.assertTrue(r.get("update_available"))
+        self.assertEqual(r.get("target_version"), "2.2.8")
+
+    def test_an_unreadable_exe_stays_silent(self):
+        # No version means no opinion - never warn on a guess about the mod
+        # everything else depends on.
+        r = self._check(self.SKSE_REAL, None)
+        self.assertFalse(r.get("unsupported_game"))
+
+    def test_a_page_that_states_no_versions_stays_silent(self):
+        # Without stated versions we cannot tell "unsupported" from "the
+        # author never writes versions down".
+        vague = [{"file_id": 1, "category_name": "MAIN", "version": "1",
+                  "name": "Script Extender", "description": "Install it."}]
+        r = self._check(vague, (1, 7, 104, 0))
+        self.assertFalse(r.get("unsupported_game"))
+
     def test_a_loader_and_its_page_version_agree_on_the_numbers(self):
         # SKSE: skse64_loader.exe reports 0.2.2.6 for the file called
         # "2.2.6" - a leading zero component. F4SE reports 0.7.9.0 for the
