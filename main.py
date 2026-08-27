@@ -19646,6 +19646,18 @@ query CollectionInstructions($slug: String!) {
             "mods_path": mods_path,
             "mods_dir_exists": os.path.isdir(mods_path),
         }
+        # A new-format ContentCatalog kills a downgraded Skyrim at boot with
+        # no visible cause, and this used to be repaired only if the user
+        # thought to open the Health page - which nobody does when the game
+        # simply will not start. Doing it whenever the panel opens costs a
+        # 76-byte PE read on every other install, and is self-limiting: the
+        # regenerated file is in the old format, so it never matches again.
+        if installed and app_id and os.path.isfile(
+            os.path.join(install_path, "SkyrimSE.exe")
+        ):
+            fixed = _skyrim_cc_catalog_fix(app_id, install_path)
+            if fixed:
+                status["cc_catalog_fixed"] = fixed
         if framework_file:
             if "/" in framework_file:
                 status["framework_installed"] = installed and os.path.exists(

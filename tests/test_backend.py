@@ -13316,6 +13316,92 @@ class TestAdultGateRegions(unittest.TestCase):
         self.assertNotIn('gate["adult_pref"]) and bool(gate["age_verified"]', fn)
 
 
+class TestSkyrimCatalogSelfHeals(unittest.TestCase):
+    """A new-format ContentCatalog crashes a DOWNGRADED Skyrim at boot with
+    std::invalid_argument on the guid key and nothing visible to the player.
+    Confirmed by Nexus's own investigation (2026-08): Bethesda re-keyed
+    Creations to guids, and the community fix is removing the file, which
+    the game regenerates per-exe at launch.
+
+    The repair existed since 1.0.2 but only ran inside the Health page,
+    which is no use to someone whose game will not start."""
+
+    def test_the_repair_runs_when_the_panel_opens(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def get_game_status"):]
+        fn = fn[:fn.index("async def", 10)]
+        self.assertIn("_skyrim_cc_catalog_fix(app_id, install_path)", fn)
+        # Gated on the game actually being Skyrim: every other game would
+        # otherwise pay for a lookup that can never apply to it.
+        self.assertIn('"SkyrimSE.exe"', fn)
+
+    def _world(self, exe_stamp, catalog_text):
+        """A fake game + prefix, with the exe's PE timestamp forced."""
+        world = tempfile.mkdtemp(prefix="skyrim-cc-")
+        self.addCleanup(shutil.rmtree, world, ignore_errors=True)
+        install = os.path.join(world, "common", "Skyrim Special Edition")
+        os.makedirs(install)
+        with open(os.path.join(install, "SkyrimSE.exe"), "wb") as fh:
+            fh.write(b"MZ")
+        real_stamp = main._pe_timestamp
+        main._pe_timestamp = lambda path: exe_stamp
+        self.addCleanup(setattr, main, "_pe_timestamp", real_stamp)
+
+        local = os.path.join(world, "pfx", "Local", "Skyrim Special Edition")
+        os.makedirs(local)
+        catalog = os.path.join(local, "ContentCatalog.txt")
+        if catalog_text is not None:
+            with open(catalog, "w", encoding="utf-8") as fh:
+                fh.write(catalog_text)
+        real_prefix = main._prefix_drive_c
+        main._prefix_drive_c = lambda app_id, *parts: os.path.join(
+            world, "pfx", *[p for p in parts if p not in
+                            ("users", "steamuser", "AppData")]
+        )
+        self.addCleanup(setattr, main, "_prefix_drive_c", real_prefix)
+        return install, catalog
+
+    NEW_FORMAT = (
+        '{ "CSV2_9bbcdace-4556-4e87-b821-0c9b6f2958d0" : { '
+        '"AchievementSafe" : false, "Title" : "Necromantic Grimoire" } }'
+    )
+    OLD_FORMAT = '{ "CSV2_5658" : { "Title" : "Necromantic Grimoire" } }'
+
+    def test_a_downgraded_exe_with_a_new_catalog_is_repaired(self):
+        install, catalog = self._world(1_780_000_000, self.NEW_FORMAT)
+        moved = main._skyrim_cc_catalog_fix(1, install)
+        self.assertTrue(moved)
+        self.assertFalse(os.path.isfile(catalog))
+        # Quarantined, never deleted: it is the user's purchase history.
+        self.assertTrue(os.path.isfile(catalog + ".pre-update-backup"))
+
+    def test_a_current_exe_is_left_alone(self):
+        # The new format is correct for the new exe. Touching it would churn
+        # a file the game rewrites every launch.
+        install, catalog = self._world(1_790_000_000, self.NEW_FORMAT)
+        self.assertEqual(main._skyrim_cc_catalog_fix(1, install), "")
+        self.assertTrue(os.path.isfile(catalog))
+
+    def test_an_old_catalog_on_an_old_exe_is_left_alone(self):
+        install, catalog = self._world(1_780_000_000, self.OLD_FORMAT)
+        self.assertEqual(main._skyrim_cc_catalog_fix(1, install), "")
+        self.assertTrue(os.path.isfile(catalog))
+
+    def test_it_is_idempotent(self):
+        # The regenerated file is old-format, so a second pass must do
+        # nothing - this runs on every panel open.
+        install, catalog = self._world(1_780_000_000, self.NEW_FORMAT)
+        self.assertTrue(main._skyrim_cc_catalog_fix(1, install))
+        with open(catalog, "w", encoding="utf-8") as fh:
+            fh.write(self.OLD_FORMAT)
+        self.assertEqual(main._skyrim_cc_catalog_fix(1, install), "")
+
+    def test_no_catalog_at_all_is_not_an_error(self):
+        install, _catalog = self._world(1_780_000_000, None)
+        self.assertEqual(main._skyrim_cc_catalog_fix(1, install), "")
+
+
 class TestSteamLibraries(unittest.TestCase):
     """Games on an SD card or a second drive live in another Steam library,
     listed in libraryfolders.vdf. The first bug report from a real user was

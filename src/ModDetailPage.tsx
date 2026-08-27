@@ -39,6 +39,7 @@ import { getCompatHint } from "./compat";
 import { frameworkModIds, modeParams } from "./games";
 import {
   finishFomod,
+  installCompanionFiles,
   installLatest,
   installModWith,
   removeMod,
@@ -129,6 +130,12 @@ export function ModDetailPage() {
   // a refusal: a byte signature often survives a patch, and it is the
   // author's mod, not ours to veto.
   const [stale, setStale] = useState<string | undefined>();
+  // Extra required files pulled in from the same mod page. Kept on the page
+  // rather than in a toast: if one FAILED, the game will not start and the
+  // user needs to be able to read why after the toast has gone.
+  const [companions, setCompanions] = useState<
+    { installed: string[]; failed: string[] } | undefined
+  >();
   useEffect(() => {
     getShowAdult()
       .then((r) => setBlurAdult(Boolean(r.ok && r.show_adult && r.blur_adult)))
@@ -424,6 +431,13 @@ export function ModDetailPage() {
         });
       } else if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
+        // Some mod pages split ONE mod across several required files.
+        // Engine Fixes' preloader is a separate download that lives beside
+        // the game exe, and without it the game shows a dialog and closes.
+        const extra = await installCompanionFiles(game, mod.modId, file.file_name);
+        if (extra.installed.length > 0 || extra.failed.length > 0) {
+          setCompanions(extra);
+        }
         refreshInstalled(sel);
         // A successful install can still carry a warning: a Frostbite mod
         // built against a different game build applies cleanly and renders
@@ -438,7 +452,10 @@ export function ModDetailPage() {
         // start anything when tapped.
         const running = isGameRunning(game.appId);
         toaster.toast({
-          title: `${mod.name} installed`,
+          title:
+            extra.installed.length > 0
+              ? `${mod.name} installed, with ${extra.installed.length} required extra`
+              : `${mod.name} installed`,
           body: running
             ? `Tap here to restart ${game.displayName} and load it.`
             : `It will load next time ${game.displayName} starts.`,
@@ -1105,6 +1122,29 @@ export function ModDetailPage() {
         <DownloadsButton />
       </Focusable>
       </Focusable>
+      {companions && companions.failed.length > 0 && (
+        <WarningBox
+          title="One required part did not install"
+          body={
+            `This mod needs more than one file from its page, and ` +
+            `${companions.failed.join(", ")} could not be installed. The mod ` +
+            `will not work until it is. Try installing again, or install ` +
+            `that file by hand from the All files list.`
+          }
+        />
+      )}
+      {companions &&
+        companions.failed.length === 0 &&
+        companions.installed.length > 0 && (
+          <WarningBox
+            title="Extra required files installed"
+            body={
+              `This mod is split across several files on its page, so ` +
+              `${companions.installed.join(", ")} was installed with it. ` +
+              `It will show separately in My Mods.`
+            }
+          />
+        )}
       {incompatible && (
         <WarningBox
           title="Not installable on this device"

@@ -237,6 +237,19 @@ export interface SupportedGame {
    * mods popular enough that people WILL try them, where failing at install
    * time reads as our bug. */
   incompatibleMods?: Record<number, string>;
+  /** Mods whose page splits ONE working mod across several REQUIRED files.
+   *
+   * SSE Engine Fixes is the famous one: its SKSE plugin and its preloader
+   * are separate downloads, they install to different places (Data/SKSE/
+   * Plugins and the game root), and installing only the first leaves the
+   * game refusing to boot with "Engine Fixes did not pre-load". A player
+   * cannot be expected to know a mod page has a second half.
+   *
+   * mod id -> substrings matched case-insensitively against the other files'
+   * names. Curated on purpose: multiple MAIN files usually means
+   * alternatives (SKSE's Steam and GOG builds), and installing all of those
+   * would be actively wrong. */
+  companionFiles?: Record<number, string[]>;
   /** Frostbite games (Battlefront II): mods are .fbmod archives that must be
    * COMPILED into a ModData tree, and the game is redirected at it. There is
    * no per-mod install - any change recompiles the whole enabled set - so
@@ -428,6 +441,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         "bash -c 'exec \"$" +
         "{@/SkyrimSELauncher.exe/skse64_loader.exe}\"' -- %command%",
       cleanupPrefixes: ["skse64"],
+    },
+    companionFiles: {
+      // SSE Engine Fixes: "Engine Fixes - Main File" is the SKSE plugin,
+      // "Engine Fixes - SKSE64 Preloader" is the d3dx9_42.dll + TBB pair
+      // that has to sit beside SkyrimSE.exe. The mod prints a dialog and
+      // closes the game when the second is missing (issue #14).
+      17230: ["preloader"],
     },
     recommendedModIds: [12604, 266], // SkyUI, USSEP - the canon starters
   },

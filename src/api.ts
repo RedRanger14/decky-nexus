@@ -202,6 +202,10 @@ export interface GameStatus {
   install_path: string;
   mods_path: string;
   mods_dir_exists: boolean;
+  /** Skyrim only: a new-format ContentCatalog was quarantined because the
+   * exe is downgraded and would have crashed at boot. Named so the panel
+   * can say what it moved. */
+  cc_catalog_fixed?: string;
   framework_installed?: boolean;
   /** Bannerlord only: the launch script the backend maintains, substituted
    * into the framework's launch template as {blse_script}. */

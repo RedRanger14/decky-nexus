@@ -82,6 +82,7 @@ plugin; treat anything you do with them as untested.
 Asked for and on the list. No code exists for these yet, so they will not
 appear in the plugin until they do.
 
+- Baldur's Gate 3
 - Final Fantasy XII: The Zodiac Age
 - Mass Effect Legendary Edition
 - Nier: Automata

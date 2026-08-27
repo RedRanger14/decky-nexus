@@ -165,6 +165,71 @@ export function installModWith(
   );
 }
 
+/** Install the other REQUIRED files of a mod whose page splits it in two.
+ *
+ * Runs after the main install, inside install.ts so every path gets it: the
+ * mod page, a collection, an update. Each part installs under its own file
+ * name, because the two halves use different install mechanisms (a Data/
+ * folder mod and a game-root files mod) and one record cannot describe
+ * both - and because "Engine Fixes - SKSE64 Preloader" in My Mods says
+ * exactly what it is.
+ *
+ * Returns the names installed, for the caller to mention. Failures are
+ * reported, never thrown: the main mod is already in place and a half
+ * install the user is told about beats an exception they cannot read.
+ */
+export async function installCompanionFiles(
+  game: SupportedGame,
+  modId: number,
+  chosenFileName: string
+): Promise<{ installed: string[]; failed: string[] }> {
+  const patterns = game.companionFiles?.[modId];
+  const done = { installed: [] as string[], failed: [] as string[] };
+  if (!patterns || patterns.length === 0) return done;
+
+  const chosen = chosenFileName.toLowerCase();
+  // An All-In-One build already contains every part; so does the part
+  // itself, if that is what the user picked.
+  if (
+    chosen.includes("all-in-one") ||
+    chosen.includes("all in one") ||
+    patterns.some((p) => chosen.includes(p.toLowerCase()))
+  ) {
+    return done;
+  }
+
+  const files = (await getModFiles(game.nexusDomain, modId)).files ?? [];
+  for (const pattern of patterns) {
+    const needle = pattern.toLowerCase();
+    // Newest match wins, same rule as everywhere else on a mod page.
+    const match = files
+      .filter(
+        (f) =>
+          f.category_name === "MAIN" &&
+          `${f.name} ${f.file_name}`.toLowerCase().includes(needle)
+      )
+      .sort((a, b) => b.file_id - a.file_id)[0];
+    if (!match) {
+      done.failed.push(pattern);
+      continue;
+    }
+    nameDownload(modId, match.name, game.appId);
+    const result = await installModWith(
+      game,
+      modId,
+      match.file_id,
+      match.file_name,
+      // Its own name, so it is its own record and its own My Mods row.
+      match.name,
+      match.version || "",
+      "",
+      match.version || ""
+    );
+    (result.ok ? done.installed : done.failed).push(match.name);
+  }
+  return done;
+}
+
 /** Install a mod's primary (latest main) file through the full pipeline.
  * Registers the download so the QAM Downloads panel tracks it. Returns
  * the InstallResult (needs_choice archives are surfaced to the caller). */

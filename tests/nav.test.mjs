@@ -1288,3 +1288,40 @@ test("only a real download creates a downloads row", () => {
     "background rebuild progress can still create phantom download rows"
   );
 });
+
+test("a mod split across several required files installs all of them", () => {
+  // Issue #14: SSE Engine Fixes ships its SKSE plugin and its preloader as
+  // separate downloads on one page. Installing only the first leaves the
+  // game showing "Engine Fixes did not pre-load" and closing itself. A
+  // player cannot be expected to know a mod page has a second half.
+  const games = read("games.ts");
+  assert.ok(
+    /companionFiles: \{[\s\S]{0,400}17230: \["preloader"\]/.test(games),
+    "Engine Fixes is not declared as a multi-file mod for Skyrim"
+  );
+  const install = read("install.ts");
+  assert.ok(
+    /export async function installCompanionFiles/.test(install),
+    "install.ts does not own the companion-file install"
+  );
+  // Must live in install.ts so collections and updates get it too, not just
+  // the mod page - the lesson from four separate bypass bugs.
+  assert.ok(
+    /installCompanionFiles\(game, mod\.modId, file\.file_name\)/.test(
+      read("ModDetailPage.tsx")
+    ),
+    "the mod page never asks for the other required files"
+  );
+  // An All-In-One build already contains every part; installing the extra
+  // on top would be pointless churn.
+  assert.ok(
+    /all-in-one/.test(install),
+    "an all-in-one archive is not recognised as already complete"
+  );
+  // A failure has to survive the toast: the game will not start without it.
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /One required part did not install/.test(page),
+    "a failed companion install is not shown anywhere lasting"
+  );
+});
