@@ -1,6 +1,11 @@
 // Shared update-scan logic: the QAM badge and the full-screen Updates
 // page both use it (scoped to one game or across all).
-import { checkUpdates, getBlamedFolders, getInstalledMods } from "./api";
+import {
+  checkFrameworkUpdate,
+  checkUpdates,
+  getBlamedFolders,
+  getInstalledMods,
+} from "./api";
 import { ALL_GAMES, SupportedGame, modeParams } from "./games";
 
 export interface PendingUpdate {
@@ -9,6 +14,13 @@ export interface PendingUpdate {
   modId: number;
   name: string;
   current: string;
+  /** A script extender rather than a mod: it has no install record, and its
+   * right build is the one matching the game's exe, not the newest. Applied
+   * by re-running the framework install, which picks by game version. */
+  framework?: boolean;
+  /** A framework's version currently ON DISK. `current` keeps its meaning
+   * everywhere - the version being offered - so this is the other half. */
+  installedVersion?: string;
 }
 
 export async function scanUpdates(
@@ -40,6 +52,31 @@ export async function scanUpdates(
       ),
       checkUpdates(game.nexusDomain, blamed),
     ]);
+    // The script extender everything else depends on. Checked separately
+    // because it writes no install record, so checkUpdates cannot see it.
+    if (game.framework?.nexusModId && game.framework.detectFile) {
+      const fw = await checkFrameworkUpdate(
+        game.nexusDomain,
+        game.framework.nexusModId,
+        game.installDirName,
+        game.framework.detectFile,
+        game.processName ?? "",
+        game.framework.avoidFileKeywords ?? []
+      ).catch(() => ({ ok: false }) as { ok: boolean });
+      if ("update_available" in fw && fw.update_available) {
+        found.push({
+          game,
+          folder: `framework:${game.framework.nexusModId}`,
+          modId: game.framework.nexusModId,
+          name: game.framework.name,
+          // The build that matches this game's exe, which after a
+          // deliberate downgrade is OLDER than what is installed.
+          current: fw.target_version || "",
+          framework: true,
+          installedVersion: fw.installed_version || "",
+        });
+      }
+    }
     if (!updates.ok || !updates.updates) continue;
     const byFolder = new Map((mods.mods ?? []).map((m) => [m.folder, m]));
     for (const [folder, info] of Object.entries(updates.updates)) {

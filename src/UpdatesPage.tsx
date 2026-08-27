@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 
 import { showModal } from "@decky/ui";
 
-import { dismissUpdate } from "./api";
+import { dismissUpdate, installFramework } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { installLatest } from "./install";
 import { PendingUpdate, scanUpdates } from "./updates";
@@ -33,6 +33,41 @@ export function UpdatesPage() {
     u: PendingUpdate,
     payloadChoice = ""
   ): Promise<boolean> => {
+    // A script extender is not a mod: it installs beside the game exe and
+    // its right build is the one matching that exe. Re-running the framework
+    // install picks by game version, so this needs no target passed in.
+    if (u.framework && u.game.framework) {
+      const fw = u.game.framework;
+      const result = await installFramework(
+        u.game.nexusDomain,
+        fw.nexusModId!,
+        u.game.installDirName,
+        fw.installKind ?? "copyRoot",
+        fw.detectFile,
+        fw.avoidFileKeywords ?? [],
+        fw.installSubdir ?? "",
+        u.game.modsSubdir,
+        u.game.appId,
+        u.game.launcherXmlSubpath ?? "",
+        u.game.processName ?? ""
+      );
+      if (result.ok) {
+        setPending((prev) => prev?.filter((p) => p !== u));
+        toaster.toast({
+          title: `${u.name} updated`,
+          body:
+            "matched_game_version" in result && result.matched_game_version
+              ? `Now the build for game ${result.matched_game_version}`
+              : "",
+        });
+        return true;
+      }
+      toaster.toast({
+        title: `${u.name} update failed`,
+        body: result.error ?? "Unknown error",
+      });
+      return false;
+    }
     const result = await installLatest(
       u.game,
       u.modId,
@@ -189,7 +224,17 @@ export function UpdatesPage() {
                   {u.name}
                 </div>
                 <div style={{ fontSize: "12px", opacity: 0.65 }}>
-                  {u.game.displayName} · new version {u.current}
+                  {u.framework
+                    ? // Not "new version": a script extender's right build
+                      // is the one matching the game, which after a
+                      // downgrade is older than what is installed. Saying
+                      // "new" there would look like a mistake.
+                      `${u.game.displayName} · script extender, ` +
+                      (u.installedVersion
+                        ? `${u.installedVersion} installed, `
+                        : "") +
+                      `your game needs ${u.current}`
+                    : `${u.game.displayName} · new version ${u.current}`}
                 </div>
               </div>
               <DialogButton

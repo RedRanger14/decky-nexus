@@ -1338,3 +1338,29 @@ test("a mod split across several required files installs all of them", () => {
     "a failed companion install is not shown anywhere lasting"
   );
 });
+
+test("the script extender is checked for updates like everything else", () => {
+  // Frameworks write no install record and checkUpdates walks records, so
+  // SKSE - the mod everything else depends on - never appeared in the
+  // Updates tab at all. Michael found it deliberately.
+  const upd = read("updates.ts");
+  assert.ok(
+    /checkFrameworkUpdate\(/.test(upd),
+    "the update scan never asks about the script extender"
+  );
+  // Applied by re-running the framework install, which picks the build
+  // matching the game exe. installLatest would fetch the newest, which is
+  // wrong on a downgraded game.
+  const page = read("UpdatesPage.tsx");
+  assert.ok(
+    /u\.framework && u\.game\.framework/.test(page) &&
+      /installFramework\(/.test(page),
+    "a framework update is applied as though it were an ordinary mod"
+  );
+  // "new version" is wrong for an extender: the right build can be OLDER
+  // than what is installed, after a deliberate downgrade.
+  assert.ok(
+    /your game needs \$\{u\.current\}/.test(page),
+    "the framework row still calls its target a new version"
+  );
+});

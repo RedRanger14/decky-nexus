@@ -530,6 +530,32 @@ export const setFrameworkEnabled = callable<
   { ok: boolean; error?: string }
 >("set_framework_enabled");
 
+/** Is the installed script extender the build for the installed game?
+ *
+ * Read from disk, not from a record: frameworks write none, which is why
+ * they never appeared in the Updates tab at all. "Newest" is the wrong
+ * target for a script extender, so this reports the build matching the
+ * game's exe, whether that is newer OR older than what is installed. */
+export const checkFrameworkUpdate = callable<
+  [
+    game_domain: string,
+    mod_id: number,
+    install_dir: string,
+    detect_file: string,
+    process_name: string,
+    avoid_file_keywords: string[]
+  ],
+  {
+    ok: boolean;
+    update_available?: boolean;
+    installed_version?: string;
+    target_version?: string;
+    target_name?: string;
+    game_version?: string;
+    error?: string;
+  }
+>("check_framework_update");
+
 export const installFramework = callable<
   [
     game_domain: string,

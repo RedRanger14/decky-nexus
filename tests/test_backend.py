@@ -13182,6 +13182,61 @@ class TestSkyrimCatalogQuarantine(unittest.TestCase):
             self.assertTrue(os.path.isfile(catalog + ".pre-update-backup"))
 
 
+class TestFrameworkUpdates(unittest.TestCase):
+    """Script extenders write no install record, so check_updates - which
+    walks records - could never see them. SKSE, the mod everything else
+    depends on, has never appeared in the Updates tab. Michael, with 2.2.6
+    sitting on a 1.7.99 game: "its quite an important one to need updating."
+
+    Read from disk rather than from a new record, because every existing
+    install has no record and a record can drift from the binary."""
+
+    def test_a_loader_and_its_page_version_agree_on_the_numbers(self):
+        # SKSE: skse64_loader.exe reports 0.2.2.6 for the file called
+        # "2.2.6" - a leading zero component. F4SE reports 0.7.9.0 for the
+        # file called "0.7.9" - a trailing one. Anchoring either end fails
+        # one of them, so the match is a contiguous run of numbers.
+        self.assertTrue(main._framework_build_matches((0, 2, 2, 6), "2.2.6"))
+        self.assertTrue(main._framework_build_matches((0, 7, 9, 0), "0.7.9"))
+
+    def test_a_mismatched_build_is_reported(self):
+        # The exact case on device: 2.2.6 installed, 2.3.0 needed.
+        self.assertFalse(main._framework_build_matches((0, 2, 2, 6), "2.3.0"))
+        self.assertFalse(main._framework_build_matches((0, 7, 7, 0), "0.7.9"))
+
+    def test_an_unreadable_loader_is_not_called_a_match(self):
+        # No version means no opinion, and the caller treats non-match as
+        # "offer the right build" - which is the safe direction here.
+        self.assertFalse(main._framework_build_matches(None, "2.3.0"))
+
+    def test_a_longer_wanted_version_cannot_match(self):
+        self.assertFalse(main._framework_build_matches((2, 3), "2.3.0.1"))
+
+    def test_versions_are_compared_as_numbers_not_text(self):
+        self.assertEqual(main._version_parts("v2.3.0-beta"), [2, 3, 0])
+        self.assertEqual(main._version_parts(""), [])
+
+    def test_a_missing_loader_is_not_an_update(self):
+        # Not installed is Step 1's business. Reporting an update for
+        # something absent would put a row in the tab that cannot apply.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def check_framework_update"):]
+        fn = fn[:fn.index("async def install_framework")]
+        self.assertIn("if not os.path.isfile(loader):", fn)
+        self.assertIn('"update_available": False', fn)
+
+    def test_the_target_is_the_game_s_build_not_the_newest(self):
+        # A downgraded game's correct SKSE is an OLD_VERSION file. Offering
+        # "the newest" is what broke this in the first place.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def check_framework_update"):]
+        fn = fn[:fn.index("async def install_framework")]
+        self.assertIn("_framework_file_for_game_version(", fn)
+        self.assertNotIn("_pick_main_file(", fn)
+
+
 class TestFrameworkGameVersionMatch(unittest.TestCase):
     """Script extenders are compiled against ONE game binary and publish one
     file per build, with the game version in the description. Installing the

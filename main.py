@@ -1510,6 +1510,32 @@ def _framework_file_for_game_version(file_list: list, avoid_keywords: list,
     return max(matches, key=lambda f: f["file_id"]), needle
 
 
+def _version_parts(text: str) -> list:
+    """The numeric runs in a version string: "v2.3.0-beta" -> [2, 3, 0]."""
+    return [int(n) for n in re.findall(r"\d+", str(text or ""))]
+
+
+def _framework_build_matches(loader_version, file_version: str) -> bool:
+    """Is the installed loader the build this Nexus file publishes?
+
+    Compared as a contiguous run of numbers rather than as strings, because
+    a loader's PE version and its mod page's version agree on the numbers
+    and nothing else: SKSE's skse64_loader.exe reports 0.2.2.6 for the file
+    called "2.2.6", and F4SE's reports 0.7.9.0 for the file called "0.7.9".
+    A leading or trailing zero component is the difference, so anchoring
+    either end would be wrong.
+    """
+    if not loader_version:
+        return False
+    want = _version_parts(file_version)
+    have = list(loader_version)
+    if not want or len(want) > len(have):
+        return False
+    return any(
+        have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)
+    )
+
+
 def _pick_main_file(file_list: list, avoid_keywords: list = ()):
     """Latest MAIN-category file; never trust is_primary alone.
 
@@ -13405,6 +13431,69 @@ query Link($slug: String!, $domainName: String!) {
             f"choices for {entry['mod_name']!r}"
         )
         return await self.install_fomod(token, ids)
+
+    async def check_framework_update(
+        self, game_domain: str, mod_id: int, install_dir: str,
+        detect_file: str = "", process_name: str = "",
+        avoid_file_keywords: list = None,
+    ) -> dict:
+        """Does the installed script extender match the installed game?
+
+        Answers the question the Updates tab could not even ask: frameworks
+        write no install record, so they were invisible to it. Read from
+        disk instead - the loader's PE version is what it actually is.
+
+        "Newest" is the wrong target here. A script extender is built for one
+        game binary, so the right build is the one matching the exe, which on
+        a downgraded game is an OLD_VERSION file. Returns that build when it
+        differs from what is installed, in EITHER direction: too old after a
+        game patch (Michael's 2.2.6 on a 1.7.99 game) and too new after a
+        deliberate downgrade are both broken, and both silent.
+        """
+        if not detect_file or not process_name:
+            return {"ok": True, "update_available": False}
+        install_path, _m, _d = _game_paths(install_dir, "")
+        loader = os.path.join(install_path, *detect_file.split("/"))
+        if not os.path.isfile(loader):
+            # Not installed is Step 1's business, not an update.
+            return {"ok": True, "update_available": False}
+
+        installed_version = _pe_file_version(loader)
+        exe = os.path.join(install_path, process_name)
+        try:
+            files = await self.get_mod_files(game_domain, int(mod_id))
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as e:
+            return {"ok": False, "error": str(e)}
+        if not files.get("ok"):
+            return files
+        want, game_version = _framework_file_for_game_version(
+            files.get("files") or [], avoid_file_keywords or [], exe
+        )
+        if want is None:
+            # No file names this game build, or the exe is unreadable: no
+            # opinion beats a wrong one about the mod everything depends on.
+            return {"ok": True, "update_available": False,
+                    "game_version": game_version}
+
+        matches = _framework_build_matches(installed_version, want["version"])
+        dotted = (
+            ".".join(str(p) for p in installed_version)
+            if installed_version else ""
+        )
+        if not matches:
+            decky.logger.info(
+                f"framework update for {game_domain}: loader {dotted or '?'} "
+                f"does not match {want['name']!r} (v{want['version']}) for "
+                f"game {game_version}"
+            )
+        return {
+            "ok": True,
+            "update_available": not matches,
+            "installed_version": dotted,
+            "target_version": str(want.get("version") or ""),
+            "target_name": str(want.get("name") or ""),
+            "game_version": game_version,
+        }
 
     async def install_framework(
         self,
