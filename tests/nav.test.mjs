@@ -1364,3 +1364,24 @@ test("the script extender is checked for updates like everything else", () => {
     "the framework row still calls its target a new version"
   );
 });
+
+test("a file naming the installed game's version is the default install", () => {
+  // Engine Fixes, third act: the newest MAIN (7.0.20) loads on a 1.7.99
+  // game and dies wanting an address library file that will never exist,
+  // while "7.0.21 beta for Skyrim AE 1.7.99" sat one row down the page.
+  const page = read("ModDetailPage.tsx");
+  assert.ok(
+    /versionMatch\?\.fileId/.test(page),
+    "the mod page's primary file ignores the game-version match"
+  );
+  assert.ok(
+    /Chosen to match your game/.test(page),
+    "an overridden default install is not explained anywhere"
+  );
+  // Updates flow through installLatest, so a version-matched mod must
+  // update to its game's build there too, not to the newest.
+  assert.ok(
+    /matchFileToGame\(/.test(read("install.ts")),
+    "installLatest still takes files[0] unconditionally"
+  );
+});

@@ -13,6 +13,7 @@ import {
   installMod,
   prefetchModFile,
   prepareModFile,
+  matchFileToGame,
 } from "./api";
 import { SupportedGame, modeParams, stalenessExemptModIds } from "./games";
 import { nameDownload } from "./state";
@@ -241,7 +242,24 @@ export async function installLatest(
   payloadChoice = ""
 ): Promise<InstallResult> {
   const files = await getModFiles(game.nexusDomain, modId);
-  const file = files.files?.[0];
+  let file = files.files?.[0];
+  // When a file on the page names the installed game's version, that file
+  // is the author answering "which build do I need" - Engine Fixes 7.0.20
+  // loads on a 1.7.99 game and then dies wanting an address library file
+  // that will never exist, while the page carries a 7.0.21 "for Skyrim AE
+  // 1.7.99" build. Updates flow through here too, so a version-matched mod
+  // updates to its game's build rather than the newest.
+  if (game.processName) {
+    const matched = await matchFileToGame(
+      game.nexusDomain,
+      modId,
+      game.installDirName,
+      game.processName
+    ).catch(() => undefined);
+    if (matched?.file_id) {
+      file = files.files?.find((f) => f.file_id === matched.file_id) ?? file;
+    }
+  }
   if (!file) {
     return { ok: false, error: "No downloadable file found" };
   }

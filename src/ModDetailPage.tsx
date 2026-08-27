@@ -25,6 +25,7 @@ import {
   getModFiles,
   getModRequirements,
   getModSupport,
+  matchFileToGame,
   setEndorsement,
 
   getKnownModVerdict,
@@ -136,6 +137,11 @@ export function ModDetailPage() {
   const [companions, setCompanions] = useState<
     { installed: string[]; failed: string[] } | undefined
   >();
+  // A file on this page that names the installed game's version, when one
+  // does. It becomes the default install, with a line saying so.
+  const [versionMatch, setVersionMatch] = useState<
+    { fileId: number; gameVersion: string } | undefined
+  >();
   useEffect(() => {
     getShowAdult()
       .then((r) => setBlurAdult(Boolean(r.ok && r.show_adult && r.blur_adult)))
@@ -149,6 +155,25 @@ export function ModDetailPage() {
   const [imageFull, setImageFull] = useState(false);
   const [fwInstalled, setFwInstalled] = useState(false);
   const [uploader, setUploader] = useState<NexusMod["uploader"]>();
+
+  const refreshVersionMatch = (s: SelectedMod) => {
+    if (!s.game.processName) return;
+    matchFileToGame(
+      s.game.nexusDomain,
+      s.mod.modId,
+      s.game.installDirName,
+      s.game.processName
+    )
+      .then((r) => {
+        if (r.file_id) {
+          setVersionMatch({
+            fileId: r.file_id,
+            gameVersion: r.game_version ?? "",
+          });
+        }
+      })
+      .catch(() => {});
+  };
 
   const refreshInstalled = (s: SelectedMod) => {
     getInstalledMods(
@@ -248,7 +273,10 @@ export function ModDetailPage() {
   };
 
   useEffect(() => {
-    if (sel) loadAll(sel);
+    if (sel) {
+      loadAll(sel);
+      refreshVersionMatch(sel);
+    }
     const listener = addEventListener<[p: InstallProgress]>(
       "install_progress",
       // Only THIS mod's events - background pipeline events for other
@@ -525,9 +553,17 @@ export function ModDetailPage() {
 
   const fileList = files?.files ?? [];
   // The site's single download button maps to the latest MAIN file; our sort
-  // puts the primary file first and OLD_VERSION files last.
-  const primaryFile =
-    fileList.find((f) => f.category_name !== "OLD_VERSION") ?? fileList[0];
+  // puts the primary file first and OLD_VERSION files last. But when a file
+  // on the page NAMES the installed game's version, the author has answered
+  // the version question already and that answer wins: newest-MAIN handed a
+  // 1.7.99 Skyrim the Engine Fixes build that predates 1.7.99, which loads
+  // and then kills the game asking for an address library file that will
+  // never exist, while a "for Skyrim AE 1.7.99" build sat one row down.
+  const primaryFile = versionMatch?.fileId
+    ? fileList.find((f) => f.file_id === versionMatch.fileId) ??
+      fileList.find((f) => f.category_name !== "OLD_VERSION") ??
+      fileList[0]
+    : fileList.find((f) => f.category_name !== "OLD_VERSION") ?? fileList[0];
 
   // The primary button tells the truth about installed state: up-to-date
   // installs get a disabled "Installed" state, outdated ones an Update.
@@ -1091,6 +1127,20 @@ export function ModDetailPage() {
         {/* What the install is doing, in words, directly under the button
             that is doing it. Michael went to the Downloads page to find out
             whether anything was happening at all - the answer belongs here. */}
+        {versionMatch &&
+          primaryFile?.file_id === versionMatch.fileId &&
+          !primaryBusy && (
+            <div
+              style={{
+                margin: "6px 2px 0",
+                fontSize: "12px",
+                opacity: 0.75,
+                lineHeight: 1.4,
+              }}
+            >
+              Chosen to match your game (version {versionMatch.gameVersion})
+            </div>
+          )}
         {progressNote !== "" && (
           <div
             style={{

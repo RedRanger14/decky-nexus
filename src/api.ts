@@ -536,6 +536,20 @@ export const setFrameworkEnabled = callable<
  * they never appeared in the Updates tab at all. "Newest" is the wrong
  * target for a script extender, so this reports the build matching the
  * game's exe, whether that is newer OR older than what is installed. */
+/** Which of a mod's files names the installed game's version, if any.
+ * file_id 0 means none does, and the caller keeps its normal default. */
+export const matchFileToGame = callable<
+  [game_domain: string, mod_id: number, install_dir: string, process_name: string],
+  {
+    ok: boolean;
+    file_id?: number;
+    file_name?: string;
+    name?: string;
+    version?: string;
+    game_version?: string;
+  }
+>("match_file_to_game");
+
 export const checkFrameworkUpdate = callable<
   [
     game_domain: string,

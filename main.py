@@ -13432,6 +13432,44 @@ query Link($slug: String!, $domainName: String!) {
         )
         return await self.install_fomod(token, ids)
 
+    async def match_file_to_game(
+        self, game_domain: str, mod_id: int, install_dir: str,
+        process_name: str = "",
+    ) -> dict:
+        """Which of a mod's files names the INSTALLED game's version?
+
+        Mod authors publish one file per game build when it matters, and say
+        so in the name: "Engine Fixes 7.0.21 beta for Skyrim AE 1.7.99",
+        "(Part 1) SSE Engine Fixes for 1.6.1170 (v6.2)". Defaulting to the
+        newest MAIN handed a 1.7.99 game the 7.0.20 build that predates it,
+        which loads and then dies asking for an address library file that
+        will never exist. The author already answered the version question
+        in the file name; this reads the answer.
+
+        Returns file_id 0 when no file names the exe's version - most mods
+        never do, and the caller keeps its normal default.
+        """
+        if not process_name:
+            return {"ok": True, "file_id": 0}
+        install_path, _m, _d = _game_paths(install_dir, "")
+        exe = os.path.join(install_path, process_name)
+        files = await self.get_mod_files(game_domain, int(mod_id))
+        if not files.get("ok"):
+            return {"ok": True, "file_id": 0}
+        match, game_version = _framework_file_for_game_version(
+            files.get("files") or [], [], exe
+        )
+        if match is None:
+            return {"ok": True, "file_id": 0, "game_version": game_version}
+        return {
+            "ok": True,
+            "file_id": int(match["file_id"]),
+            "file_name": str(match.get("file_name") or ""),
+            "name": str(match.get("name") or ""),
+            "version": str(match.get("version") or ""),
+            "game_version": game_version,
+        }
+
     async def check_framework_update(
         self, game_domain: str, mod_id: int, install_dir: str,
         detect_file: str = "", process_name: str = "",

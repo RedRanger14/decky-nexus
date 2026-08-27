@@ -13182,6 +13182,76 @@ class TestSkyrimCatalogQuarantine(unittest.TestCase):
             self.assertTrue(os.path.isfile(catalog + ".pre-update-backup"))
 
 
+class TestModFileGameVersionDefault(unittest.TestCase):
+    """The Engine Fixes dialog chain, third act. The preloader fix worked,
+    the SKSE update worked, and then EngineFixes.dll 7.0.20 - the newest
+    MAIN - died on a 1.7.99 game asking for an address library file that
+    will never exist, while "Engine Fixes 7.0.21 beta for Skyrim AE 1.7.99"
+    sat one row down the same page. When a file names the installed game's
+    version, the author has answered the version question; the default
+    should read the answer."""
+
+    FILES = [
+        {"file_id": 725753, "category_name": "MAIN",
+         "name": "Engine Fixes - Main File", "version": "7.0.20",
+         "description": ""},
+        {"file_id": 794484, "category_name": "MAIN",
+         "name": "Engine Fixes 7.0.21 beta for Skyrim AE 1.7.99",
+         "version": "7.0.21", "description": ""},
+        {"file_id": 489502, "category_name": "OLD_VERSION",
+         "name": "(Part 1) SSE Engine Fixes for 1.6.1170 (v6.2)",
+         "version": "6.2", "description": ""},
+    ]
+
+    def _with_exe(self, version_tuple):
+        real = main._pe_file_version
+        main._pe_file_version = lambda path: version_tuple
+        self.addCleanup(setattr, main, "_pe_file_version", real)
+
+    def _match(self):
+        async def fake_files(domain, mid):
+            return {"ok": True, "files": self.FILES}
+        real = main.Plugin.get_mod_files
+        main.Plugin.get_mod_files = lambda self_, d, m: fake_files(d, m)
+        self.addCleanup(setattr, main.Plugin, "get_mod_files", real)
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(main.Plugin().match_file_to_game(
+                "skyrimspecialedition", 17230, "Skyrim Special Edition",
+                "SkyrimSE.exe",
+            ))
+        finally:
+            loop.close()
+
+    def test_the_latest_game_gets_the_file_that_names_it(self):
+        self._with_exe((1, 7, 99, 0))
+        r = self._match()
+        self.assertEqual(r.get("file_id"), 794484)
+        self.assertEqual(r.get("game_version"), "1.7.99")
+
+    def test_a_downgraded_game_gets_the_old_version_file(self):
+        # The correct build for 1.6.1170 is an OLD_VERSION file. That is the
+        # entire point: newest-anything is the wrong axis for these mods.
+        self._with_exe((1, 6, 1170, 0))
+        r = self._match()
+        self.assertEqual(r.get("file_id"), 489502)
+
+    def test_a_version_nobody_names_changes_nothing(self):
+        self._with_exe((1, 6, 640, 0))
+        r = self._match()
+        self.assertEqual(r.get("file_id"), 0)
+
+    def test_no_process_name_means_no_opinion(self):
+        loop = asyncio.new_event_loop()
+        try:
+            r = loop.run_until_complete(main.Plugin().match_file_to_game(
+                "skyrimspecialedition", 17230, "Skyrim Special Edition", "",
+            ))
+        finally:
+            loop.close()
+        self.assertEqual(r.get("file_id"), 0)
+
+
 class TestFrameworkUpdates(unittest.TestCase):
     """Script extenders write no install record, so check_updates - which
     walks records - could never see them. SKSE, the mod everything else
