@@ -7354,7 +7354,7 @@ def _fomod_parse_files(node) -> list:
     return out
 
 
-def _fomod_parse_deps(node, data_path: str):
+def _fomod_parse_deps(node, data_path: str, game_version: str = ""):
     """Composite dependency -> a tree the frontend can evaluate with flag
     state only: file/game dependencies are baked to constants here."""
     if node is None:
@@ -7376,12 +7376,23 @@ def _fomod_parse_deps(node, data_path: str):
             exists = os.path.exists(os.path.join(data_path, fname))
             ok = exists if want in ("active", "inactive") else not exists
             conds.append({"kind": "const", "value": bool(ok)})
+        elif tag == "gamedependency":
+            # Evaluated against the game's REAL binary version (>=, the
+            # convention Vortex and MO2 use). Assuming these were satisfied
+            # is how the wizard offered Engine Fixes' 1.5.97 dll to a
+            # 1.6.1170 game as an equal choice.
+            want_v = _version_parts(child.get("version") or "")
+            have_v = _version_parts(game_version)
+            if want_v and have_v:
+                conds.append({"kind": "const", "value": have_v >= want_v})
+            else:
+                conds.append({"kind": "const", "value": True})
         elif tag == "dependencies":
-            sub = _fomod_parse_deps(child, data_path)
+            sub = _fomod_parse_deps(child, data_path, game_version)
             if sub:
                 conds.append(sub)
         else:
-            # gameDependency / fommDependency: assume satisfied
+            # fommDependency and anything unknown: assume satisfied
             conds.append({"kind": "const", "value": True})
     return {
         "kind": "group",
@@ -7405,7 +7416,27 @@ def _fomod_eval_deps(tree, flags: dict) -> bool:
     return any(results) if tree.get("op") == "or" else all(results)
 
 
-def _fomod_plugin_type(plugin_node, data_path: str) -> str:
+def _fomod_game_version_hints(plugin_node) -> list:
+    """[(game version, type)] for typeDescriptor patterns keyed on a
+    gameDependency - the author saying "this option is for game X"."""
+    hints = []
+    td = plugin_node.find("typeDescriptor")
+    dt = td.find("dependencyType") if td is not None else None
+    patterns = dt.find("patterns") if dt is not None else None
+    if patterns is None:
+        return hints
+    for pat in patterns.findall("pattern"):
+        deps = pat.find("dependencies")
+        t = pat.find("type")
+        if deps is None or t is None:
+            continue
+        for child in deps.iter():
+            if child.tag.lower() == "gamedependency" and child.get("version"):
+                hints.append((child.get("version"), t.get("name") or ""))
+    return hints
+
+
+def _fomod_plugin_type(plugin_node, data_path: str, game_version: str = "") -> str:
     td = plugin_node.find("typeDescriptor")
     if td is None:
         return "Optional"
@@ -7423,7 +7454,9 @@ def _fomod_plugin_type(plugin_node, data_path: str) -> str:
         patterns = dt.find("patterns")
         if patterns is not None:
             for pat in patterns.findall("pattern"):
-                deps = _fomod_parse_deps(pat.find("dependencies"), data_path)
+                deps = _fomod_parse_deps(
+                    pat.find("dependencies"), data_path, game_version
+                )
 
                 def has_flags(tree) -> bool:
                     if not tree:
@@ -7442,7 +7475,7 @@ def _fomod_plugin_type(plugin_node, data_path: str) -> str:
     return "Optional"
 
 
-def _parse_fomod(scratch: str, data_path: str):
+def _parse_fomod(scratch: str, data_path: str, game_version: str = ""):
     """ModuleConfig.xml -> (wizard dict for the frontend, applier context).
     Returns None when the archive has no parsable FOMOD config."""
     cfg = _fomod_config_path(scratch)
@@ -7486,15 +7519,36 @@ def _parse_fomod(scratch: str, data_path: str):
                                         fl.text or ""
                                     ).strip()
                             files = _fomod_parse_files(plugin.find("files"))
-                            ptype = _fomod_plugin_type(plugin, data_path)
+                            ptype = _fomod_plugin_type(
+                                plugin, data_path, game_version
+                            )
                             plugin_index[pid] = {
                                 "files": files,
                                 "flags": flags,
                             }
+                            pname = plugin.get("name") or f"Option {pi + 1}"
+                            # When the author keyed options to game versions,
+                            # say so ON the option. Engine Fixes names its
+                            # options "Anniversary Edition" and "Special
+                            # Edition", and someone whose game is CALLED
+                            # Skyrim Special Edition picks the wrong dll
+                            # every time unless the right one is marked.
+                            hints = _fomod_game_version_hints(plugin)
+                            if hints and game_version:
+                                if ptype == "Recommended":
+                                    pname += (
+                                        f" — matches your game "
+                                        f"({game_version})"
+                                    )
+                                else:
+                                    for hv, ht in hints:
+                                        if ht == "Recommended":
+                                            pname += f" — for game {hv}"
+                                            break
                             plugins.append(
                                 {
                                     "id": pid,
-                                    "name": plugin.get("name") or f"Option {pi + 1}",
+                                    "name": pname,
                                     "description": (
                                         (desc.text or "").strip()
                                         if desc is not None
@@ -7515,7 +7569,7 @@ def _parse_fomod(scratch: str, data_path: str):
                 {
                     "name": step.get("name") or f"Step {si + 1}",
                     "visible": _fomod_parse_deps(
-                        step.find("visible"), data_path
+                        step.find("visible"), data_path, game_version
                     ),
                     "groups": groups,
                 }
@@ -7530,7 +7584,7 @@ def _parse_fomod(scratch: str, data_path: str):
                 conditional.append(
                     {
                         "deps": _fomod_parse_deps(
-                            pat.find("dependencies"), data_path
+                            pat.find("dependencies"), data_path, game_version
                         ),
                         "files": _fomod_parse_files(pat.find("files")),
                     }
@@ -10851,7 +10905,14 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Invalid game domain"}
         records = _load_settings().get("installed", {}).get(game_domain, {})
         tracked = {
-            folder: rec for folder, rec in records.items() if rec.get("mod_id")
+            folder: rec
+            for folder, rec in records.items()
+            if rec.get("mod_id")
+            # A companion file (Engine Fixes' preloader) is PART of another
+            # mod: updating the parent re-resolves its companions, and
+            # updating it alone would install whichever file the page's
+            # default logic picks - a different file entirely.
+            and rec.get("source") != "companion"
         }
         if not tracked:
             return {"ok": True, "updates": {}}
@@ -11397,6 +11458,7 @@ query Link($slug: String!, $domainName: String!) {
         framework_ids: list = None,
         hd2_layout: bool = False,
         reshade_subdir: str = "",
+        process_name: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -11539,6 +11601,7 @@ query Link($slug: String!, $domainName: String!) {
                 repair_only,
                 hd2_layout,
                 reshade_subdir,
+                process_name,
             )
             if result.get("ok") and game_domain == "mountandblade2bannerlord":
                 try:
@@ -11829,6 +11892,7 @@ query Link($slug: String!, $domainName: String!) {
         repair_only: bool = False,
         hd2_layout: bool = False,
         reshade_subdir: str = "",
+        process_name: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -11921,7 +11985,16 @@ query Link($slug: String!, $domainName: String!) {
                 _, data_path_now, _unused2 = _game_paths(
                     install_dir, mods_subdir
                 )
-                parsed = _parse_fomod(scratch, data_path_now)
+                gv = ""
+                if process_name:
+                    ip_now, _m2, _d2 = _game_paths(install_dir, mods_subdir)
+                    pv = _pe_file_version(os.path.join(ip_now, process_name))
+                    if pv:
+                        parts = [str(p) for p in pv]
+                        while len(parts) > 3 and parts[-1] == "0":
+                            parts.pop()
+                        gv = ".".join(parts)
+                parsed = _parse_fomod(scratch, data_path_now, gv)
                 if parsed:
                     wizard, ctx = parsed
                     if wizard["steps"]:

@@ -1395,3 +1395,22 @@ test("a file naming the installed game's version is the default install", () => 
     "installLatest still takes files[0] unconditionally"
   );
 });
+
+test("companions ride every install path and follow their parent", () => {
+  const inst = read("install.ts");
+  // installLatest is what collections and the Updates tab call; without
+  // this, only mod-page installs brought a mod's other required halves.
+  assert.ok(
+    /if \(result\.ok\) \{\s*await installCompanionFiles\(game, modId, file\.file_name\);/.test(
+      inst
+    ),
+    "installLatest does not bring companion files"
+  );
+  // And the companion's own record is marked, so the Updates tab never
+  // offers it alone - applying that used the page's default file logic and
+  // picked a different file entirely.
+  assert.ok(
+    /"companion",\s*match\.version/.test(inst),
+    "companion records are not marked as such"
+  );
+});

@@ -163,7 +163,8 @@ export function installModWith(
     // age them out.
     stalenessExemptModIds(game),
     game.hd2Layout ?? false,
-    game.reshade?.subdir ?? ""
+    game.reshade?.subdir ?? "",
+    game.processName ?? ""
   );
 }
 
@@ -263,7 +264,10 @@ export async function installCompanionFiles(
       // Its own name, so it is its own record and its own My Mods row.
       match.name,
       match.version || "",
-      "",
+      // source "companion": this record FOLLOWS its parent. The Updates tab
+      // must never offer it alone - applying that went through the page's
+      // default file logic and picked a different file entirely.
+      "companion",
       match.version || ""
     );
     (result.ok ? done.installed : done.failed).push(match.name);
@@ -304,7 +308,7 @@ export async function installLatest(
     return { ok: false, error: "No downloadable file found" };
   }
   nameDownload(modId, modName, game.appId);
-  return installModWith(
+  const result = await installModWith(
     game,
     modId,
     file.file_id,
@@ -316,6 +320,13 @@ export async function installLatest(
     "",
     payloadChoice
   );
+  // Companions ride along here too, so collection installs and the Updates
+  // tab bring a mod's other required halves - the mod page has its own
+  // afterInstall, but nothing else did.
+  if (result.ok) {
+    await installCompanionFiles(game, modId, file.file_name);
+  }
+  return result;
 }
 
 /** Toggle a mod, whichever mechanism the game uses.

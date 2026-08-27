@@ -326,7 +326,12 @@ export const installMod = callable<
     framework_ids: number[],
     hd2_layout: boolean,
     /** Where ReShade-shaped archives install (the exe's dir), "" = refuse. */
-    reshade_subdir?: string
+    reshade_subdir?: string,
+    /** The game exe: lets the FOMOD wizard evaluate gameDependency against
+     * the REAL binary version and label which option matches the installed
+     * game. Engine Fixes' wizard offered a 1.5.97 dll and a 1.6.1170 dll as
+     * equal choices, and the wrong one kills the game at boot. */
+    process_name?: string
   ],
   InstallResult
 >("install_mod");

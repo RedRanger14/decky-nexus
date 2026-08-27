@@ -13322,6 +13322,103 @@ class TestFrameworkUpdates(unittest.TestCase):
         self.assertNotIn("_pick_main_file(", fn)
 
 
+class TestFomodGameVersion(unittest.TestCase):
+    """The week's root cause, found at the end of it. Engine Fixes' FOMOD
+    offers an AE dll and an SE dll and declares with gameDependency which
+    game version wants which; we treated gameDependency as always-satisfied,
+    so the wizard offered both as equal choices to a person whose game is
+    CALLED Skyrim Special Edition. The natural pick is the wrong dll, which
+    loads and then kills the game asking for an address library file that
+    will never exist - the same dll produced both of this week's REL/ID
+    dialogs on 1.7.99 and on 1.6.1170. XML below is the REAL ModuleConfig
+    from the mod, trimmed."""
+
+    XML = (
+        '<config><moduleName>EngineFixes</moduleName>'
+        '<requiredInstallFiles><folder source="Required" destination=""/>'
+        '</requiredInstallFiles>'
+        '<installSteps order="Explicit"><installStep name="Main">'
+        '<optionalFileGroups order="Explicit">'
+        '<group name="DLL" type="SelectExactlyOne"><plugins order="Explicit">'
+        '<plugin name="SSE v1.6.1170 (Anniversary Edition)">'
+        '<description>For 1.6.1170</description>'
+        '<files><folder source="AE/SKSE/Plugins" destination="SKSE/Plugins"/></files>'
+        '<typeDescriptor><dependencyType><defaultType name="Optional"/>'
+        '<patterns>'
+        '<pattern><dependencies><gameDependency version="1.6.1170"/></dependencies>'
+        '<type name="Recommended"/></pattern>'
+        '<pattern><dependencies><gameDependency version="1.5.97"/></dependencies>'
+        '<type name="Optional"/></pattern>'
+        '</patterns></dependencyType></typeDescriptor></plugin>'
+        '<plugin name="SSE v1.5.97 (Special Edition)">'
+        '<description>For 1.5.97</description>'
+        '<files><folder source="SE/SKSE/Plugins" destination="SKSE/Plugins"/></files>'
+        '<typeDescriptor><dependencyType><defaultType name="Optional"/>'
+        '<patterns>'
+        '<pattern><dependencies><gameDependency version="1.6.1170"/></dependencies>'
+        '<type name="Optional"/></pattern>'
+        '<pattern><dependencies><gameDependency version="1.5.97"/></dependencies>'
+        '<type name="Recommended"/></pattern>'
+        '</patterns></dependencyType></typeDescriptor></plugin>'
+        '</plugins></group></optionalFileGroups></installStep></installSteps>'
+        '</config>'
+    )
+
+    def _wizard(self, game_version):
+        scratch = tempfile.mkdtemp(prefix="fomod-gv-")
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        os.makedirs(os.path.join(scratch, "fomod"))
+        with open(os.path.join(scratch, "fomod", "ModuleConfig.xml"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(self.XML)
+        wizard, _ctx = main._parse_fomod(scratch, scratch, game_version)
+        return wizard["steps"][0]["groups"][0]["plugins"]
+
+    def test_the_installed_game_marks_its_own_build(self):
+        # 1.6.1170: the AE option is Recommended and SAYS it matches; the SE
+        # option says which game it is actually for. Michael picked "Special
+        # Edition" twice because that is his game's name - the label is the
+        # fix, the type alone was not enough.
+        ae, se = self._wizard("1.6.1170")
+        self.assertEqual(ae["type"], "Recommended")
+        self.assertIn("matches your game (1.6.1170)", ae["name"])
+        self.assertEqual(se["type"], "Optional")
+        self.assertIn("for game 1.5.97", se["name"])
+
+    def test_a_downgrade_below_both_recommends_neither_wrongly(self):
+        # Game 1.5.97: SE is the recommended one, AE marked for 1.6.1170.
+        ae, se = self._wizard("1.5.97")
+        self.assertEqual(se["type"], "Recommended")
+        self.assertIn("matches your game (1.5.97)", se["name"])
+        self.assertIn("for game 1.6.1170", ae["name"])
+
+    def test_no_game_version_keeps_the_old_behaviour(self):
+        # An unreadable exe must not change anything: gameDependency reads
+        # as satisfied, names stay the author's.
+        ae, se = self._wizard("")
+        self.assertNotIn("matches your game", ae["name"])
+        self.assertNotIn("for game", se["name"])
+
+    def test_versions_compare_numerically_not_textually(self):
+        # 1.7.99 >= 1.6.1170 must hold even though "1.7.99" < "1.6.1170" as
+        # strings. On 1.7.99 the AE (1.6.1170+) option is the recommended
+        # one of the two on this page.
+        ae, se = self._wizard("1.7.99")
+        self.assertEqual(ae["type"], "Recommended")
+
+
+class TestCompanionRecordsFollowTheirParent(unittest.TestCase):
+    def test_check_updates_never_offers_a_companion_alone(self):
+        # The Updates tab offered "Engine Fixes - SKSE64 Preloader" and
+        # applying it errored - the GOOD outcome, since installLatest picks
+        # the page's default file, which is a different file entirely.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index("async def check_updates"):]
+        fn = fn[:fn.index("async def", 10)]
+        self.assertIn('rec.get("source") != "companion"', fn)
+
+
 class TestFrameworkGameVersionMatch(unittest.TestCase):
     """Script extenders are compiled against ONE game binary and publish one
     file per build, with the game version in the description. Installing the
