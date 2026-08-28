@@ -194,7 +194,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "BepInEx",
-    "launchOptionsTemplate": "winhttp=n,bUnityPlayer.soproton_experimental",
+    "launchOptionsTemplate": "winhttp=n,bwinhttp.dllBepInExdoorstop_config.inichangelog.txtUnityPlayer.soproton_experimental",
     "prefixTools": [
       "26"
     ],
@@ -204,7 +204,9 @@
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
-    "cleanupPrefixes": []
+    "cleanupPrefixes": [
+      "\"winhttp.dll\", \"BepInEx\", \"doorstop_config.ini\", \"changelog.txt\","
+    ]
   },
   {
     "appId": "1091500",
@@ -290,7 +292,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "UE4SS",
-    "launchOptionsTemplate": "dwmapi=n,bPalSchemaPal/Binaries/Win64/ue4ss/Mods/PalSchema/dlls/main.dllokaetsu.github.io/PalSchemacopyRootPal/Binaries/Win64/ue4ss/ModsPal/Binaries/Win64/ue4ss/ModsPal/Content/Paks/LogicModsPal/Binaries/Win64/ue4ss/Mods/PalSchema/mods",
+    "launchOptionsTemplate": "dwmapi=n,bPal/Binaries/Win64/dwmapi.dllPal/Binaries/Win64/ue4ssPalSchemaPal/Binaries/Win64/ue4ss/Mods/PalSchema/dlls/main.dllokaetsu.github.io/PalSchemacopyRootPal/Binaries/Win64/ue4ss/Mods",
     "prefixTools": [
       "2237",
       "2361"
@@ -301,7 +303,10 @@
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
-    "cleanupPrefixes": []
+    "cleanupPrefixes": [
+      "\"Pal/Binaries/Win64/dwmapi.dll\", \"Pal/Binaries/Win64/ue4ss\",",
+      "\"Pal/Binaries/Win64/ue4ss/Mods/PalSchema\""
+    ]
   },
   {
     "appId": "2050650",

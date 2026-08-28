@@ -1435,3 +1435,35 @@ test("a game newer than its script extender is explained, not offered", () => {
     "a blocked row still shows an Update button, which would be a lie"
   );
 });
+
+test("every declared framework can be undone by a reset", () => {
+  // copyRoot files have no manifest, so cleanupPrefixes IS the manifest.
+  // Without them a reset leaves the loader in place, Step 1 keeps claiming
+  // it is installed, and the setup cannot honestly be redone. Palworld
+  // shipped with none on either framework.
+  const games = read("games.ts");
+  const missing = [];
+  // Every framework/extraFramework object that installs copyRoot files
+  // must declare how to remove them.
+  const blocks = [...games.matchAll(/installKind:\s*"copyRoot"/g)];
+  assert.ok(blocks.length >= 5, "copyRoot frameworks not found - parser drift");
+  for (const m of blocks) {
+    // Look within the enclosing object literal, bounded generously.
+    const around = games.slice(Math.max(0, m.index - 1200), m.index + 1200);
+    // nexusModId 0 means it is not a Nexus mod installed into the game
+    // folder at all - Battlefront II's compiler is our own binary in the
+    // plugin's runtime dir, and reset_frosty removes that wholesale.
+    const isOurOwnTool = /nexusModId:\s*0\s*,/.test(
+      games.slice(Math.max(0, m.index - 400), m.index + 200)
+    );
+    if (!/cleanupPrefixes:/.test(around) && !isOurOwnTool) {
+      missing.push(games.slice(m.index - 300, m.index + 60).trim().slice(-160));
+    }
+  }
+  assert.deepEqual(
+    missing,
+    [],
+    "a copyRoot framework declares no cleanupPrefixes, so reset cannot " +
+      "remove it:\n" + missing.join("\n---\n")
+  );
+});

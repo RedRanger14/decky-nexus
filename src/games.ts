@@ -780,6 +780,16 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       installKind: "copyRoot",
       // Proton needs the loader dll preferred over the builtin
       launchOptionsTemplate: 'WINEDLLOVERRIDES="winhttp=n,b" %command%',
+      // copyRoot files carry no manifest, so these prefixes ARE the
+      // manifest a reset removes by. Found by the guard test written for
+      // Palworld's identical gap - Silksong is on the roadmap rather than
+      // supported, so nobody had reset it yet.
+      cleanupPrefixes: [
+        "winhttp.dll",
+        "BepInEx",
+        "doorstop_config.ini",
+        "changelog.txt",
+      ],
     },
     // Steam installs the native Linux build by default, which BepInEx's
     // winhttp injection can't hook (verified on device) - mods need the
@@ -818,6 +828,16 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       aliasModIds: [2237, 3405, 3035, 1121, 2034],
       installKind: "copyRoot",
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dwmapi=n,b" %command%',
+      // Reset has to undo Step 1 or the panel keeps claiming UE4SS is
+      // installed and Step 1 cannot honestly be redone. copyRoot files
+      // have no manifest, so the prefixes ARE the manifest. ue4ss/ holds
+      // the loader's own Mods dir, which is where PalSchema and every
+      // Lua mod live - removing it removes them, which is the point of a
+      // reset to vanilla.
+      cleanupPrefixes: [
+        "Pal/Binaries/Win64/dwmapi.dll",
+        "Pal/Binaries/Win64/ue4ss",
+      ],
     },
     extraFrameworks: [
       {
@@ -831,6 +851,10 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         nexusModId: 2361,
         installKind: "copyRoot",
         installSubdir: "Pal/Binaries/Win64/ue4ss/Mods",
+        // Listed even though UE4SS's own prefix already covers it: the
+        // two are installed and removed independently, and a reset that
+        // only removed PalSchema must still take it away cleanly.
+        cleanupPrefixes: ["Pal/Binaries/Win64/ue4ss/Mods/PalSchema"],
       },
     ],
     ue4ss: {
