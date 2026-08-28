@@ -59,6 +59,7 @@ import {
 } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
+import { collectionMouseOnly } from "./compat";
 import { modeParams } from "./games";
 import {
   finishFomod,
@@ -1753,6 +1754,37 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             {preDisabledNote(preDisabled)}
           </div>
         )}
+        {(() => {
+          // A collection that carries a mouse-only config framework can
+          // strand the player in-game behind a window a gamepad cannot
+          // close. Said here, before the install, because afterwards the
+          // only way out is to work out which of a hundred mods did it.
+          const mouseOnly = collectionMouseOnly(
+            game.nexusDomain,
+            (detail?.files ?? []).map((f) => f.modId)
+          );
+          if (mouseOnly.length === 0 || installing) return null;
+          return (
+            <div
+              style={{
+                fontSize: "12.5px",
+                margin: "-6px 0 12px",
+                padding: "8px 10px",
+                borderRadius: "4px",
+                background: "rgba(255, 200, 60, 0.12)",
+                border: "1px solid rgba(255, 200, 60, 0.4)",
+                lineHeight: 1.45,
+              }}
+            >
+              🎮 <b>Needs a mouse:</b> this collection includes{" "}
+              {mouseOnly.map((m) => m.name).join(", ")}.{" "}
+              {mouseOnly[0].effect} You can still install it - hold the STEAM
+              button and use the right trackpad as a pointer, STEAM and the
+              right trigger to click - or turn that mod off in My Mods
+              afterwards.
+            </div>
+          );
+        })()}
         {(manualMods.length > 0 ||
           (detail?.externals.length ?? 0) > 0) &&
           !installing && (

@@ -29,3 +29,97 @@ export function getCompatHint(
     (h) => h.nexusDomain === nexusDomain && h.modId === modId
   )?.hint;
 }
+
+// ---------------------------------------------------------------------------
+// Mods whose in-game UI only answers a mouse.
+//
+// A handheld running Gaming Mode has a gamepad and nothing else. A mod that
+// draws a window with a button you have to CLICK is not merely awkward there,
+// it can strand you: Palworld's Mod Config Menu (UI) opens a "Finish Setup"
+// dialog the first time a mod that uses it loads, and on a controller there
+// is no way to press the button, no way to close the window and no way to
+// reach the mod's own fallbacks behind it.
+//
+// This is deliberately a list of FRAMEWORKS, not of mods. Mod Config Menu is
+// a config interface other authors build against, so the mods that inherit
+// the problem are exactly the mods that list it as a Nexus requirement - and
+// we already download those requirements. Naming the framework once therefore
+// covers every mod that uses it, including ones published after this line was
+// written, which a per-mod list never would.
+export interface MouseOnlyMod {
+  nexusDomain: string;
+  modId: number;
+  /** How the mod is named to the player. */
+  name: string;
+  /** What actually happens on a controller. */
+  effect: string;
+}
+
+export const MOUSE_ONLY_MODS: MouseOnlyMod[] = [
+  {
+    nexusDomain: "palworld",
+    modId: 577, // Mod Config Menu (UI)
+    name: "Mod Config Menu (UI)",
+    effect:
+      "It opens a setup window the first time it loads, and its buttons " +
+      "only answer a mouse. On a controller the window cannot be closed, " +
+      "which leaves you stuck in the game (verified 2026-08-28).",
+  },
+];
+
+function findMouseOnly(
+  nexusDomain: string,
+  modId: number
+): MouseOnlyMod | undefined {
+  return MOUSE_ONLY_MODS.find(
+    (m) => m.nexusDomain === nexusDomain && m.modId === modId
+  );
+}
+
+/** Which mouse-only frameworks a collection pulls in.
+ *
+ * Matched against the collection's own mod-id list, which we already have -
+ * no per-mod requirement lookup, which at 100+ mods would be far too slow to
+ * run before the install button. A collection that includes a mod configured
+ * through one of these frameworks includes the framework too, so the id list
+ * is enough to catch it. */
+export function collectionMouseOnly(
+  nexusDomain: string,
+  modIds: number[]
+): MouseOnlyMod[] {
+  const ids = new Set(modIds);
+  return MOUSE_ONLY_MODS.filter(
+    (m) => m.nexusDomain === nexusDomain && ids.has(m.modId)
+  );
+}
+
+/** Warning text when this mod needs a mouse - either because it IS one of
+ * the mouse-only frameworks, or because it lists one as a requirement.
+ *
+ * `requirements` may be undefined while the page is still loading; that only
+ * costs us the inherited case, and the direct case still reports. */
+export function getControllerWarning(
+  nexusDomain: string,
+  modId: number,
+  requirements?: { modId: number; modName: string }[]
+): string | undefined {
+  const direct = findMouseOnly(nexusDomain, modId);
+  if (direct) {
+    return (
+      `${direct.name} ${direct.effect} Install it only if you can attach a ` +
+      `mouse, or use Steam's own pointer (hold the STEAM button and use the ` +
+      `right trackpad, STEAM and the right trigger to click).`
+    );
+  }
+  for (const req of requirements ?? []) {
+    const via = findMouseOnly(nexusDomain, req.modId);
+    if (via) {
+      return (
+        `This mod is configured through ${via.name}, which it requires. ` +
+        `${via.effect} The mod itself may work, but its settings are out of ` +
+        `reach on a controller alone.`
+      );
+    }
+  }
+  return undefined;
+}

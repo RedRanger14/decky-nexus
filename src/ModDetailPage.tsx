@@ -36,7 +36,7 @@ import { knownBrokenNote, requirementSetupNotes } from "./panelRules";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
 import { popOurPage, pushOurPage } from "./Tabs";
-import { getCompatHint } from "./compat";
+import { getCompatHint, getControllerWarning } from "./compat";
 import { frameworkModIds, modeParams } from "./games";
 import {
   finishFomod,
@@ -618,6 +618,14 @@ export function ModDetailPage() {
 
   const heroUrl = mod.pictureUrl ?? mod.thumbnailUrl;
   const compatHint = getCompatHint(game.nexusDomain, mod.modId);
+  // Mods that only answer a mouse. Said BEFORE the download, next to the
+  // install button, because the failure mode is being stranded in the game
+  // with a window a gamepad cannot close.
+  const controllerWarning = getControllerWarning(
+    game.nexusDomain,
+    mod.modId,
+    requirements
+  );
   const updatedDate = mod.updatedAt ? new Date(mod.updatedAt).toLocaleDateString() : "";
   const createdDate = mod.createdAt ? new Date(mod.createdAt).toLocaleDateString() : "";
   const descLong = (description?.length ?? 0) > DESC_COLLAPSE_LENGTH;
@@ -883,6 +891,20 @@ export function ModDetailPage() {
               }}
             >
               🐧 <b>Linux note:</b> {compatHint}
+            </div>
+          )}
+          {controllerWarning && (
+            <div
+              style={{
+                marginTop: "10px",
+                padding: "8px 10px",
+                background: "rgba(255, 200, 60, 0.12)",
+                borderLeft: "3px solid #ffc83c",
+                borderRadius: "4px",
+                fontSize: "13px",
+              }}
+            >
+              🎮 <b>Needs a mouse:</b> {controllerWarning}
             </div>
           )}
           {dlcNeed !== "" && (
