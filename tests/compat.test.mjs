@@ -109,12 +109,40 @@ test("a collection switches the stranding mod off, not the framework", () => {
   const off = collectionAutoOff("palworld", [1, CREATIVE_MENU, MOD_CONFIG_MENU]);
   assert.equal(off.length, 1);
   assert.equal(off[0].modId, CREATIVE_MENU, "Creative Menu goes off");
-  assert.equal(off[0].via.modId, MOD_CONFIG_MENU, "because of the framework");
+  assert.match(off[0].reason, /cannot be closed/);
   // The framework alone strands nobody: it sat inert through a whole
   // collection until a mod registered with it. It stays on.
   assert.deepEqual(collectionAutoOff("palworld", [MOD_CONFIG_MENU]), []);
   assert.deepEqual(collectionAutoOff("palworld", [1, 2, 3]), []);
   assert.deepEqual(collectionAutoOff("stardewvalley", [CREATIVE_MENU]), []);
+});
+
+// One of a Kind - Pal Variant Overhaul (524): loads after every reskin by
+// design (the zzzz folder name) and swaps Pal looks at runtime, so in a
+// reskin-heavy collection every affected Pal rendered as a broken mix of
+// the two. A/B verified on device 2026-08-28: off = every reskin correct,
+// with the reinstalled single-variant FOMOD mods confirmed applied.
+test("a mod that fights the rest of a collection goes in switched off", () => {
+  const ONE_OF_A_KIND = 524;
+  const off = collectionAutoOff("palworld", [1, ONE_OF_A_KIND, 2]);
+  assert.equal(off.length, 1);
+  assert.equal(off[0].modId, ONE_OF_A_KIND);
+  assert.match(off[0].reason, /reskins/i);
+  // Per-domain, like everything else in this file.
+  assert.deepEqual(collectionAutoOff("stardewvalley", [ONE_OF_A_KIND]), []);
+  // Its own mod page is untouched: alone, outside a reskin collection,
+  // the mod is fine - this is a collection-context rule only.
+  assert.equal(getStrandingWarning("palworld", ONE_OF_A_KIND), undefined);
+});
+
+test("both auto-off sources merge into one list", () => {
+  const ONE_OF_A_KIND = 524;
+  const off = collectionAutoOff("palworld", [CREATIVE_MENU, ONE_OF_A_KIND]);
+  assert.deepEqual(
+    off.map((o) => o.modId).sort((a, b) => a - b),
+    [ONE_OF_A_KIND, CREATIVE_MENU].sort((a, b) => a - b)
+  );
+  for (const o of off) assert.ok(o.reason.length > 20, "every entry says why");
 });
 
 // The whole point of this feature is that it fires BEFORE the download, so
@@ -150,7 +178,7 @@ test("the mod page and the collection page both consult the rule", () => {
   );
   assert.match(
     coll,
-    /strandingOffNote\(/,
+    /autoOffNote\(/,
     "CollectionPage must tell the user what it switched off"
   );
 });

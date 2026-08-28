@@ -22,7 +22,7 @@ import {
   isRemaining,
 
   preDisabledNote,
-  strandingOffNote,
+  autoOffNote,
   directNote,
   isGoneFromNexus,
   isNetworkError,
@@ -170,9 +170,12 @@ export function CollectionPage() {
   // Mods switched off before the first launch because this game build has
   // already been seen to fail on them.
   const [preDisabled, setPreDisabled] = useState<string[]>([]);
-  // Mods installed but left off because their setup window traps the
-  // player in Gaming Mode.
-  const [strandingOff, setStrandingOff] = useState<string[]>([]);
+  // Mods installed but left off, with the reason each was: a setup window
+  // that traps the player in Gaming Mode, or a mod that fights the rest of
+  // the collection.
+  const [autoOff, setAutoOff] = useState<
+    { name: string; reason: string }[]
+  >([]);
   // Mods this collection lists that Nexus will not serve any more.
   const [unavailable, setUnavailable] = useState<string[]>([]);
   // Files fetched from a URL the collection supplied rather than Nexus.
@@ -481,18 +484,18 @@ export function CollectionPage() {
     } catch {
       /* the panel still repairs it after the first launch */
     }
-    // Mods whose first-run window traps the player get installed but
-    // switched OFF: in Gaming Mode no input reaches that window, so it
-    // cannot be closed and locks the player in the game (Creative Menu,
-    // 2026-08-28 - controller, keyboard and trackpad all tried). Installed
-    // rather than skipped so a desktop session can still set them up.
+    // Mods verified to ruin the session get installed but switched OFF: a
+    // first-run window no input in Gaming Mode can close (Creative Menu),
+    // or a variant overhaul that fights every reskin around it (One of a
+    // Kind - both A/B verified on device, 2026-08-28). Installed rather
+    // than skipped so switching one back on is one tap in My Mods.
     try {
-      const autoOff = collectionAutoOff(
+      const wanted = collectionAutoOff(
         game.nexusDomain,
         (detail?.files ?? []).map((f) => f.modId)
       );
-      if (autoOff.length > 0) {
-        const offIds = new Set(autoOff.map((a) => a.modId));
+      if (wanted.length > 0) {
+        const reasonById = new Map(wanted.map((a) => [a.modId, a.reason]));
         const inst = await getInstalledMods(
           game.nexusDomain,
           game.installDirName,
@@ -500,13 +503,18 @@ export function CollectionPage() {
           ...modeParams(game),
           game.protectedModFolders ?? []
         );
-        const names: string[] = [];
+        const off: { name: string; reason: string }[] = [];
         for (const m of inst.mods ?? []) {
-          if (!m.mod_id || !offIds.has(m.mod_id) || !m.enabled) continue;
+          if (!m.mod_id || !reasonById.has(m.mod_id) || !m.enabled) continue;
           const r = await toggleMod(game, m.folder, false);
-          if (r.ok) names.push(m.name || m.folder);
+          if (r.ok) {
+            off.push({
+              name: m.name || m.folder,
+              reason: reasonById.get(m.mod_id)!,
+            });
+          }
         }
-        if (names.length > 0) setStrandingOff(names);
+        if (off.length > 0) setAutoOff(off);
       }
     } catch {
       /* the pre-install warning box still names the mod and the risk */
@@ -1789,7 +1797,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             {preDisabledNote(preDisabled)}
           </div>
         )}
-        {strandingOff.length > 0 && !installing && (
+        {autoOff.length > 0 && !installing && (
           <div
             style={{
               fontSize: "12.5px",
@@ -1801,25 +1809,29 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               lineHeight: 1.45,
             }}
           >
-            🎮 {strandingOffNote(strandingOff)}
+            🎮 {autoOffNote(autoOff)}
           </div>
         )}
         {(() => {
-          // A collection that carries a stranding-UI framework can lock
-          // the player in-game behind a window no input reaches. Said
-          // here, before the install, because afterwards the only way out
-          // is to work out which of a hundred mods did it.
+          // Mods this collection carries that will be installed switched
+          // off, and any stranding-UI framework it includes. Said here,
+          // before the install, because afterwards the only way out is to
+          // work out which of a hundred mods did it.
           const ids = (detail?.files ?? []).map((f) => f.modId);
           const stranding = collectionStrandingUi(game.nexusDomain, ids);
-          if (stranding.length === 0 || installing || strandingOff.length > 0)
+          const willOff = collectionAutoOff(game.nexusDomain, ids)
+            .map((a) => ({
+              name:
+                detail?.files.find((f) => f.modId === a.modId)?.modName ?? "",
+              reason: a.reason,
+            }))
+            .filter((a) => a.name);
+          if (
+            (stranding.length === 0 && willOff.length === 0) ||
+            installing ||
+            autoOff.length > 0
+          )
             return null;
-          const autoOff = collectionAutoOff(game.nexusDomain, ids);
-          const offNames = autoOff
-            .map(
-              (a) =>
-                detail?.files.find((f) => f.modId === a.modId)?.modName ?? ""
-            )
-            .filter(Boolean);
           return (
             <div
               style={{
@@ -1832,14 +1844,24 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 lineHeight: 1.45,
               }}
             >
-              🎮 <b>Gaming Mode warning:</b> this collection includes{" "}
-              {stranding.map((m) => m.name).join(", ")}.{" "}
-              {stranding[0].effect}{" "}
-              {offNames.length > 0
-                ? `${offNames.join(", ")} will be installed switched off so ` +
-                  `this cannot happen. If you also play on a desktop, you ` +
-                  `can switch it on in My Mods.`
-                : `The rest of the collection is unaffected.`}
+              🎮{" "}
+              {willOff.length > 0 ? (
+                <>
+                  <b>
+                    {willOff.map((a) => a.name).join(", ")} will be installed
+                    switched off.
+                  </b>{" "}
+                  {willOff.map((a) => a.reason).join(" ")} My Mods can switch
+                  {willOff.length === 1 ? " it" : " them"} back on afterwards.
+                </>
+              ) : (
+                <>
+                  <b>Gaming Mode warning:</b> this collection includes{" "}
+                  {stranding.map((m) => m.name).join(", ")}.{" "}
+                  {stranding[0].effect} The rest of the collection is
+                  unaffected.
+                </>
+              )}
             </div>
           );
         })()}

@@ -20,7 +20,7 @@ import {
   knownBrokenNote,
   lastRunSummary,
   preDisabledNote,
-  strandingOffNote,
+  autoOffNote,
   repairedNote,
   unavailableNote,
   updatedNote,
@@ -940,32 +940,37 @@ test("several pre-disabled read in the plural and count the rest", () => {
   assert.match(msg, /updates arrive/);
 });
 
-// --- strandingOffNote ------------------------------------------------------
-// Creative Menu, 2026-08-28: its first-run window takes no input at all in
-// Gaming Mode (controller, keyboard and trackpad all tried), so it cannot
-// be closed and locks the player in the game. Collections now install such
-// mods switched off; this is what says so.
+// --- autoOffNote -----------------------------------------------------------
+// Mods a collection installed switched off, each with its reason: Creative
+// Menu's first-run window takes no input at all in Gaming Mode, and One of
+// a Kind fights every reskin around it. The plugin acted on its own, so it
+// says what it did, why, and how to undo it.
 
-test("nothing switched off for a stranding window says nothing", () => {
-  assert.equal(strandingOffNote([]), "");
-  assert.equal(strandingOffNote([""]), "");
+test("nothing switched off says nothing", () => {
+  assert.equal(autoOffNote([]), "");
+  assert.equal(autoOffNote([{ name: "", reason: "x" }]), "");
 });
 
-test("a stranding mod left off is named, explained and reversible", () => {
-  const msg = strandingOffNote(["Creative Menu"]);
-  assert.match(msg, /Creative Menu was installed but left switched off/);
-  assert.match(msg, /takes no input in Gaming Mode/);
-  assert.match(msg, /not even from a keyboard or mouse/);
-  assert.match(msg, /locks you out of the game/);
-  assert.match(msg, /switch it on in My Mods/);
+test("a mod left off is named, given its reason, and reversible", () => {
+  const msg = autoOffNote([
+    { name: "Creative Menu", reason: "Its window cannot be closed here." },
+  ]);
+  assert.match(msg, /One mod was installed but left switched off/);
+  assert.match(msg, /Creative Menu: Its window cannot be closed here\./);
+  assert.match(msg, /My Mods can switch it back on/);
   assert.doesNotMatch(msg, /—/, "no em dashes in player-facing copy");
   assert.doesNotMatch(msg, /touch\s?screen/i, "never the touchscreen answer");
 });
 
-test("several stranding mods read in the plural", () => {
-  const msg = strandingOffNote(["A", "B"]);
-  assert.match(msg, /A, B were installed but left switched off/);
-  assert.match(msg, /switch them on in My Mods/);
+test("several mods left off each keep their own reason", () => {
+  const msg = autoOffNote([
+    { name: "A", reason: "Reason one." },
+    { name: "B", reason: "Reason two." },
+  ]);
+  assert.match(msg, /2 mods were installed but left switched off/);
+  assert.match(msg, /A: Reason one\./);
+  assert.match(msg, /B: Reason two\./);
+  assert.match(msg, /My Mods can switch them back on/);
 });
 
 test("the mod page names the version it watched fail", () => {

@@ -109,25 +109,64 @@ export function collectionStrandingUi(
   );
 }
 
-/** Which of a collection's mods should be installed SWITCHED OFF.
+// ---------------------------------------------------------------------------
+// Mods a collection installs switched off because they fight the rest of it.
+//
+// A different failure class from the stranding UIs: these load fine and
+// take input fine, but override the same assets as the mods around them.
+// Curated, and only ever from a combination watched failing on device.
+export interface CollectionOffMod {
+  nexusDomain: string;
+  modId: number;
+  name: string;
+  /** Why it goes in switched off, shown to the player with the note. */
+  reason: string;
+}
+
+export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
+  {
+    nexusDomain: "palworld",
+    modId: 524, // One of a Kind - Pal Variant Overhaul
+    name: "One of a Kind - Pal Variant Overhaul",
+    // The 2nd most popular collection: ~100 per-Pal reskins plus this,
+    // which names itself zzzz... to load after all of them and swaps Pal
+    // looks at runtime per individual. The two composite into broken
+    // chimera renders - modded face on a vanilla body, an alpha boss as
+    // a half-textured blend. With it off, every reskin showed correctly
+    // (A/B on device, 2026-08-28).
+    reason:
+      "It changes how Pals look at runtime, on top of every other mod, " +
+      "so in a collection full of Pal reskins the two fight and Pals " +
+      "render as a broken mix of both (seen on this device). With it " +
+      "off, the collection's reskins show as their authors intended.",
+  },
+];
+
+/** Which of a collection's mods should be installed SWITCHED OFF, each
+ * with the reason the player is shown.
  *
- * These are the mods that open the stranding window themselves (the
- * undeclaredUsers of a stranding-UI framework), not the framework: Mod
- * Config Menu sat inert through a whole collection until Creative Menu
- * registered with it, so the framework alone is safe to leave on.
- * Installing rather than skipping keeps the collection complete for someone
- * who also plays on desktop - they switch the mod on in My Mods and lose
- * nothing. */
+ * Two sources. Stranding-UI users (Creative Menu): the mods that open the
+ * stranding window themselves, not the framework - Mod Config Menu sat
+ * inert through a whole collection until Creative Menu registered with it,
+ * so the framework alone is safe to leave on. And COLLECTION_OFF_MODS:
+ * mods verified to fight the rest of a collection. Installing rather than
+ * skipping keeps the collection complete - switching one on in My Mods is
+ * one tap and loses nothing. */
 export function collectionAutoOff(
   nexusDomain: string,
   modIds: number[]
-): { modId: number; via: StrandingUiMod }[] {
+): { modId: number; reason: string }[] {
   const ids = new Set(modIds);
-  const out: { modId: number; via: StrandingUiMod }[] = [];
+  const out: { modId: number; reason: string }[] = [];
   for (const fw of STRANDING_UI_MODS) {
     if (fw.nexusDomain !== nexusDomain) continue;
     for (const u of fw.undeclaredUsers ?? []) {
-      if (ids.has(u)) out.push({ modId: u, via: fw });
+      if (ids.has(u)) out.push({ modId: u, reason: fw.effect });
+    }
+  }
+  for (const m of COLLECTION_OFF_MODS) {
+    if (m.nexusDomain === nexusDomain && ids.has(m.modId)) {
+      out.push({ modId: m.modId, reason: m.reason });
     }
   }
   return out;

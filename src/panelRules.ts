@@ -613,26 +613,26 @@ export function preDisabledNote(names: string[]): string {
   );
 }
 
-/** What the collection page says about mods installed switched off because
- * their setup window traps the player in Gaming Mode.
+/** What the collection page says about mods it installed switched off,
+ * each with its reason.
  *
  * The stakes are different from preDisabledNote: a version-mismatched mod
- * refuses to load, but a stranding setup window loads FINE and then locks
- * the player in the game with no way to close it - controller, keyboard
- * and trackpad were all tried and none reached it (Creative Menu, device,
- * 2026-08-28). Same contract though - the plugin acted on its own, so it
- * says what it did and how to undo it. */
-export function strandingOffNote(names: string[]): string {
-  const off = names.filter(Boolean);
+ * refuses to load, but these load FINE and then ruin the session - a setup
+ * window no input can close (Creative Menu), or a variant overhaul that
+ * fights every reskin around it (One of a Kind). Same contract though -
+ * the plugin acted on its own, so it says what it did, why, and how to
+ * undo it. */
+export function autoOffNote(
+  items: { name: string; reason: string }[]
+): string {
+  const off = items.filter((i) => i.name);
   if (!off.length) return "";
   const one = off.length === 1;
+  const parts = off.map((i) => `${i.name}: ${i.reason}`);
   return (
-    `${off.join(", ")} ${one ? "was" : "were"} installed but left switched ` +
-    `off. ${one ? "Its" : "Their"} setup window takes no input in Gaming ` +
-    `Mode, not even from a keyboard or mouse, so it cannot be closed and ` +
-    `locks you out of the game. If you also play on a desktop, you can ` +
-    `switch ${one ? "it" : "them"} on in My Mods and finish the setup ` +
-    `there.`
+    `${one ? "One mod was" : `${off.length} mods were`} installed but ` +
+    `left switched off. ${parts.join(" ")} My Mods can switch ` +
+    `${one ? "it" : "them"} back on.`
   );
 }
 
