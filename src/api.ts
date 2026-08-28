@@ -331,7 +331,9 @@ export const installMod = callable<
      * the REAL binary version and label which option matches the installed
      * game. Engine Fixes' wizard offered a 1.5.97 dll and a 1.6.1170 dll as
      * equal choices, and the wrong one kills the game at boot. */
-    process_name?: string
+    process_name?: string,
+    /** PalSchema's mods dir (Palworld): json-schema mods route here. */
+    palschema_subdir?: string
   ],
   InstallResult
 >("install_mod");

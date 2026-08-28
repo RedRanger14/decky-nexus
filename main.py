@@ -4677,6 +4677,67 @@ def _looks_like_data(dir_path: str) -> bool:
     return loose_config and not has_exe
 
 
+# The subfolders a PalSchema mod may contain, from its own documentation
+# (okaetsu.github.io/PalSchema): each is a schema domain the framework
+# validates. "raw" is data-table edits without the safety logic.
+PALSCHEMA_MOD_DIRS = {
+    "appearance", "blueprints", "buildings", "enums", "helpguide",
+    "items", "pals", "raw", "skins", "spawns", "translations",
+}
+
+
+def _looks_like_palschema_mod(scratch: str) -> bool:
+    """A folder containing json under one of PalSchema's schema dirs.
+
+    Verified against a live mod ("Instant Research (PalSchema)"): the
+    archive is <ModName>/raw/<file>.json and nothing else - no Scripts/, no
+    dlls/, no enabled.txt - so the UE4SS detector never sees it and it would
+    have fallen through to the pak path, landing json where nothing reads
+    it.
+    """
+    for root, _dirs, names in os.walk(scratch):
+        if os.path.basename(root).lower() in PALSCHEMA_MOD_DIRS and any(
+            n.lower().endswith(".json") for n in names
+        ):
+            return True
+    return False
+
+
+def _route_palschema_payload(
+    scratch: str, install_path: str, palschema_subdir: str, mod_name: str
+) -> dict:
+    """Place a PalSchema mod folder under PalSchema/mods/.
+
+    Same contract as _route_ue4ss_payload's folder branch: the folder IS the
+    mod, a single wrapper is kept as the mod's identity, loose schema dirs
+    get wrapped in one named for the mod.
+    """
+    entries = os.listdir(scratch)
+    if (
+        len(entries) == 1
+        and os.path.isdir(os.path.join(scratch, entries[0]))
+        # A single top folder is the mod's identity - unless it IS one of
+        # the schema dirs ("raw/" shipped bare), where treating it as a
+        # wrapper would install PalSchema/mods/raw and lose the level the
+        # framework routes by.
+        and entries[0].lower() not in PALSCHEMA_MOD_DIRS
+    ):
+        src, folder = os.path.join(scratch, entries[0]), entries[0]
+    else:
+        folder = _safe_name(mod_name)
+        src = os.path.join(scratch, folder)
+        os.makedirs(src, exist_ok=True)
+        for e in entries:
+            if e != folder:
+                shutil.move(os.path.join(scratch, e), os.path.join(src, e))
+    target = os.path.join(install_path, *palschema_subdir.split("/"))
+    os.makedirs(target, exist_ok=True)
+    dst = os.path.join(target, folder)
+    _force_rmtree(dst)
+    shutil.move(src, dst)
+    return {"mode": "folder", "target": palschema_subdir, "folder": folder}
+
+
 def _looks_like_ue4ss_mod(scratch: str) -> bool:
     """UE4SS mods come in three shapes: Scripts/main.lua (Lua), a LogicMods
     dir (Blueprint), or dlls/main.dll (native) - usually with an
@@ -11469,6 +11530,7 @@ query Link($slug: String!, $domainName: String!) {
         hd2_layout: bool = False,
         reshade_subdir: str = "",
         process_name: str = "",
+        palschema_subdir: str = "",
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -11612,6 +11674,7 @@ query Link($slug: String!, $domainName: String!) {
                 hd2_layout,
                 reshade_subdir,
                 process_name,
+                palschema_subdir,
             )
             if result.get("ok") and game_domain == "mountandblade2bannerlord":
                 try:
@@ -11903,6 +11966,7 @@ query Link($slug: String!, $domainName: String!) {
         hd2_layout: bool = False,
         reshade_subdir: str = "",
         process_name: str = "",
+        palschema_subdir: str = "",
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -12407,6 +12471,62 @@ query Link($slug: String!, $domainName: String!) {
             )
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": folder}
+
+        # PalSchema mods: json under the framework's schema dirs. Routed
+        # before the UE4SS check - they carry none of its markers, and the
+        # pak fallback would land json where nothing reads it.
+        if palschema_subdir and _looks_like_palschema_mod(scratch) and not (
+            _looks_like_ue4ss_mod(scratch)
+        ):
+            install_path, _m2, _d2 = _game_paths(install_dir, "")
+            # PalSchema itself has to be there: its mods dir sits inside the
+            # framework's own folder, and json copied into a skeleton of it
+            # silently never loads.
+            schema_root = os.path.join(
+                install_path, *palschema_subdir.split("/")[:-1]
+            )
+            if not os.path.isfile(os.path.join(schema_root, "dlls", "main.dll")):
+                _force_rmtree(scratch)
+                return {
+                    "ok": False,
+                    "error": "This mod needs PalSchema, which isn't set up "
+                    "yet. Run Step 1 on the game's panel first - it installs "
+                    "UE4SS and PalSchema together.",
+                }
+            route = _route_palschema_payload(
+                scratch, install_path, palschema_subdir, mod_name
+            )
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            record_key = route.get("folder") or _safe_name(mod_name)
+            settings = _load_settings()
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            _new_record = {
+                "mod_id": mod_id,
+                "file_id": file_id,
+                "name": mod_name,
+                "version": mod_version,
+                "file_name": file_name,
+                "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
+                "collection_slug": collection_slug,
+                **route,
+            }
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key), _new_record
+            )
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed PalSchema mod {mod_name!r} -> {route.get('target')!r}"
+            )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": record_key}
 
         # UE4SS script/Blueprint mods: route them to the loader's dirs when
         # the game declares UE4SS support; refuse with a clear message when
@@ -14587,8 +14707,18 @@ query Link($slug: String!, $domainName: String!) {
                 # but NOT a real structure dir: BLSE ships bin/... which is
                 # already game-root-relative - flattening it would dump
                 # Win64_Shipping_Client at the root. The detect file's first
-                # path component tells us which dirs are structural.
-                detect_root = detect_file.split("/")[0].lower()
+                # path component tells us which dirs are structural - taken
+                # RELATIVE to install_subdir when one is set, because the
+                # archive's layout is relative to where it lands: PalSchema
+                # ships PalSchema/dlls/main.dll destined for ue4ss/Mods, and
+                # comparing its wrapper against the full detect path's "Pal"
+                # would flatten away the folder that IS the mod.
+                detect_rel = detect_file
+                if install_subdir and detect_file.lower().startswith(
+                    install_subdir.lower() + "/"
+                ):
+                    detect_rel = detect_file[len(install_subdir) + 1:]
+                detect_root = detect_rel.split("/")[0].lower()
                 if (
                     len(top) == 1
                     and os.path.isdir(os.path.join(scratch, top[0]))

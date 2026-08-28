@@ -13719,6 +13719,91 @@ class TestSkyrimCatalogSelfHeals(unittest.TestCase):
         self.assertEqual(main._skyrim_cc_catalog_fix(1, install), "")
 
 
+class TestPalworldPalSchema(unittest.TestCase):
+    """PalSchema mods are folders of json under the framework's schema dirs
+    (verified against a live mod: <Name>/raw/<file>.json and nothing else).
+    They carry none of the UE4SS markers, so without their own route they
+    fell through to the pak path and landed json where nothing reads it."""
+
+    def _payload(self, layout):
+        scratch = tempfile.mkdtemp(prefix="palschema-")
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        for rel in layout:
+            p = os.path.join(scratch, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write("{}")
+        return scratch
+
+    def test_a_real_palschema_shape_is_recognised(self):
+        s = self._payload(["mEi_Lab_InstantCost1_P/raw/InstantCost1_P.json"])
+        self.assertTrue(main._looks_like_palschema_mod(s))
+        # And it is NOT a UE4SS mod: no Scripts, dlls or enabled.txt.
+        self.assertFalse(main._looks_like_ue4ss_mod(s))
+
+    def test_a_pak_or_lua_mod_is_not_claimed(self):
+        s = self._payload(["BNLrelease_P.pak"])
+        self.assertFalse(main._looks_like_palschema_mod(s))
+        s2 = self._payload(["MapUnlocker/Scripts/main.lua",
+                            "MapUnlocker/enabled.txt"])
+        self.assertFalse(main._looks_like_palschema_mod(s2))
+
+    def test_json_outside_schema_dirs_is_not_claimed(self):
+        # Plenty of mods ship a config.json; that is not a PalSchema mod.
+        s = self._payload(["SomeMod/config.json"])
+        self.assertFalse(main._looks_like_palschema_mod(s))
+
+    def test_routing_keeps_the_wrapper_as_the_mods_identity(self):
+        s = self._payload(["mEi_Lab_InstantCost1_P/raw/InstantCost1_P.json"])
+        game = tempfile.mkdtemp(prefix="palgame-")
+        self.addCleanup(shutil.rmtree, game, ignore_errors=True)
+        route = main._route_palschema_payload(
+            s, game, "Pal/Binaries/Win64/ue4ss/Mods/PalSchema/mods", "Instant Research"
+        )
+        self.assertEqual(route["folder"], "mEi_Lab_InstantCost1_P")
+        self.assertEqual(route["mode"], "folder")
+        self.assertTrue(os.path.isfile(os.path.join(
+            game, "Pal", "Binaries", "Win64", "ue4ss", "Mods", "PalSchema",
+            "mods", "mEi_Lab_InstantCost1_P", "raw", "InstantCost1_P.json",
+        )))
+
+    def test_loose_schema_dirs_get_wrapped_with_the_mods_name(self):
+        s = self._payload(["raw/things.json"])
+        game = tempfile.mkdtemp(prefix="palgame2-")
+        self.addCleanup(shutil.rmtree, game, ignore_errors=True)
+        route = main._route_palschema_payload(
+            s, game, "PalSchema/mods", "Loose Mod"
+        )
+        self.assertEqual(route["folder"], "Loose Mod")
+        self.assertTrue(os.path.isfile(os.path.join(
+            game, "PalSchema", "mods", "Loose Mod", "raw", "things.json",
+        )))
+
+    def test_the_install_branch_requires_palschema_itself(self):
+        # json copied into a skeleton of the framework's dirs silently never
+        # loads, so a missing PalSchema is a refusal with the fix named.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("_looks_like_palschema_mod(scratch)")
+        block = source[i:i + 1600]
+        self.assertIn('os.path.join(schema_root, "dlls", "main.dll")', block)
+        self.assertIn("Run Step 1", block)
+
+
+class TestFrameworkFlattenSubdirRelative(unittest.TestCase):
+    def test_the_wrapper_that_is_the_mod_survives(self):
+        # PalSchema ships PalSchema/dlls/main.dll destined for ue4ss/Mods.
+        # The flatten guard compared its wrapper against the full detect
+        # path's first component ("Pal"), so the folder that IS the mod got
+        # flattened away into loose files.
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        fn = source[source.index('detect_rel = detect_file'):]
+        fn = fn[:600]
+        self.assertIn("install_subdir.lower()", fn)
+        self.assertIn('detect_rel.split("/")[0].lower()', fn)
+
+
 class TestSteamLibraries(unittest.TestCase):
     """Games on an SD card or a second drive live in another Steam library,
     listed in libraryfolders.vdf. The first bug report from a real user was

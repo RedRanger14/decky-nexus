@@ -290,9 +290,10 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "UE4SS",
-    "launchOptionsTemplate": "dwmapi=n,bPal/Binaries/Win64/ue4ss/ModsPal/Content/Paks/LogicMods",
+    "launchOptionsTemplate": "dwmapi=n,bPalSchemaPal/Binaries/Win64/ue4ss/Mods/PalSchema/dlls/main.dllokaetsu.github.io/PalSchemacopyRootPal/Binaries/Win64/ue4ss/ModsPal/Binaries/Win64/ue4ss/ModsPal/Content/Paks/LogicModsPal/Binaries/Win64/ue4ss/Mods/PalSchema/mods",
     "prefixTools": [
-      "3405"
+      "2237",
+      "2361"
     ],
     "manualTools": 0,
     "hasLauncherBypass": false,

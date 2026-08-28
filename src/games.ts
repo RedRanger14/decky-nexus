@@ -339,6 +339,11 @@ export interface SupportedGame {
   /** UE4SS games: where script/Blueprint mods route. Lua and native mods
    * become folders (with enabled.txt) under modsSubdir; Blueprint paks go
    * flat into logicModsSubdir. Absent = UE4SS mods are refused. */
+  /** PalSchema (Palworld): json-schema mods live under the framework's own
+   * mods dir. Presence routes json-shaped payloads there. */
+  palSchema?: {
+    modsSubdir: string;
+  };
   ue4ss?: {
     modsSubdir: string;
     logicModsSubdir: string;
@@ -794,23 +799,48 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     modsSubdir: "Pal/Content/Paks/~mods", // TODO verify subfolder pak mounting
     moddedSaveWarning: false,
     processName: "Palworld-Win64-Shipping.exe",
-    // Script mods (the biggest ones) need UE4SS. Palworld uses a fork;
-    // mod 3405 is the Linux/Proton-fixes build ("UE4SS Palworld").
-    // Archive verified: dwmapi.dll + ue4ss/ at root -> Pal/Binaries/Win64.
+    // Script mods (the biggest ones) need UE4SS. The fork this pointed at
+    // originally (3405) went dark - its file list 403s - and the living
+    // build is 2237 "UE4SS Experimental (Palworld)", which is also the
+    // exact build PalSchema's requirements name. Archive verified
+    // (2026-08-28): game-root-relative, Pal/Binaries/Win64/dwmapi.dll +
+    // ue4ss/ baked in - so no installSubdir, unlike the old fork. Its
+    // shipped mods.txt already has BPModLoaderMod, BPML_GenericFunctions
+    // and Keybinds on and the console/cheat mods off, which is the exact
+    // state PalSchema's docs require.
     framework: {
       name: "UE4SS",
       detectFile: "Pal/Binaries/Win64/dwmapi.dll",
       url: "docs.ue4ss.com",
-      nexusModId: 3405,
-      // Mods requirement-link any of the UE4SS uploads interchangeably.
-      aliasModIds: [3405, 3035, 1121],
+      nexusModId: 2237,
+      // Mods requirement-link any of the UE4SS uploads interchangeably,
+      // including the dead fork and the generic 2034 upload.
+      aliasModIds: [2237, 3405, 3035, 1121, 2034],
       installKind: "copyRoot",
-      installSubdir: "Pal/Binaries/Win64",
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dwmapi=n,b" %command%',
     },
+    extraFrameworks: [
+      {
+        // PalSchema (Okaetsu): the json-based framework half the current
+        // top mods target. A UE4SS C++ mod: the archive is a PalSchema/
+        // folder (dlls/main.dll + enabled.txt, verified 2026-08-28) that
+        // lives under ue4ss/Mods.
+        name: "PalSchema",
+        detectFile: "Pal/Binaries/Win64/ue4ss/Mods/PalSchema/dlls/main.dll",
+        url: "okaetsu.github.io/PalSchema",
+        nexusModId: 2361,
+        installKind: "copyRoot",
+        installSubdir: "Pal/Binaries/Win64/ue4ss/Mods",
+      },
+    ],
     ue4ss: {
       modsSubdir: "Pal/Binaries/Win64/ue4ss/Mods",
       logicModsSubdir: "Pal/Content/Paks/LogicMods",
+    },
+    // PalSchema mods are folders of json under the framework's own mods
+    // dir, a completely different place from pak mods and UE4SS Lua mods.
+    palSchema: {
+      modsSubdir: "Pal/Binaries/Win64/ue4ss/Mods/PalSchema/mods",
     },
   },
   261550: {

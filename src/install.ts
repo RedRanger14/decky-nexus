@@ -164,7 +164,8 @@ export function installModWith(
     stalenessExemptModIds(game),
     game.hd2Layout ?? false,
     game.reshade?.subdir ?? "",
-    game.processName ?? ""
+    game.processName ?? "",
+    game.palSchema?.modsSubdir ?? ""
   );
 }
 
