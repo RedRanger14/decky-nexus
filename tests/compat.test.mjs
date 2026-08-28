@@ -17,6 +17,7 @@ import {
 // touchscreen because this plugin is for steamos and there will be plently
 // of devices running steamos or bazzite that have no touch screen".
 const MOD_CONFIG_MENU = 577;
+const CREATIVE_MENU = 703; // the mod he actually got stuck behind
 const CREATIVE_MENU_LIKE = 999901; // a mod that merely REQUIRES the above
 
 test("the mouse-only list names the framework, not its dependents", () => {
@@ -47,6 +48,29 @@ test("a mod inherits the warning through its Nexus requirements", () => {
   ]);
   assert.ok(w, "a mod configured through the framework must warn too");
   assert.match(w, /Mod Config Menu/);
+});
+
+// Checked live against the Nexus API on 2026-08-28: Creative Menu declares
+// NO nexusRequirements at all, so the requirements path finds nothing. From
+// a collection it is still caught (the collection carries the framework),
+// but from its own page it would have installed in silence.
+test("a known user that declares no requirements is still caught", () => {
+  const w = getControllerWarning("palworld", CREATIVE_MENU, []);
+  assert.ok(w, "Creative Menu must warn even with an empty requirements list");
+  assert.match(w, /Mod Config Menu/);
+  // And with requirements never having loaded at all.
+  assert.ok(getControllerWarning("palworld", CREATIVE_MENU, undefined));
+});
+
+test("a collection warns on a known user even without the framework", () => {
+  const hits = collectionMouseOnly("palworld", [1, CREATIVE_MENU, 2]);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].modId, MOD_CONFIG_MENU);
+  // ...and does not double-report when the collection carries both.
+  assert.equal(
+    collectionMouseOnly("palworld", [CREATIVE_MENU, MOD_CONFIG_MENU]).length,
+    1
+  );
 });
 
 test("an unrelated mod is never warned about", () => {

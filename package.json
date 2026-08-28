@@ -1,6 +1,6 @@
 {
   "name": "decky-nexus",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Browse, install and manage Nexus Mods for the game you are playing, from Gaming Mode on a controller. Unofficial Decky Loader plugin.",
   "type": "module",
   "scripts": {

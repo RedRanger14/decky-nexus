@@ -53,6 +53,15 @@ export interface MouseOnlyMod {
   name: string;
   /** What actually happens on a controller. */
   effect: string;
+  /** Mods that use this framework without declaring it as a Nexus
+   * requirement, so the requirements list cannot find them.
+   *
+   * Creative Menu is the one that caught us: it is configured entirely
+   * through Mod Config Menu and declares no requirements at all, so from a
+   * collection it is caught (the collection carries the framework) but from
+   * its own page it would have installed silently. Curated, and only ever
+   * from a mod we have actually watched do this. */
+  undeclaredUsers?: number[];
 }
 
 export const MOUSE_ONLY_MODS: MouseOnlyMod[] = [
@@ -64,6 +73,9 @@ export const MOUSE_ONLY_MODS: MouseOnlyMod[] = [
       "It opens a setup window the first time it loads, and its buttons " +
       "only answer a mouse. On a controller the window cannot be closed, " +
       "which leaves you stuck in the game (verified 2026-08-28).",
+    undeclaredUsers: [
+      703, // Creative Menu: declares no Nexus requirements whatsoever
+    ],
   },
 ];
 
@@ -89,12 +101,16 @@ export function collectionMouseOnly(
 ): MouseOnlyMod[] {
   const ids = new Set(modIds);
   return MOUSE_ONLY_MODS.filter(
-    (m) => m.nexusDomain === nexusDomain && ids.has(m.modId)
+    (m) =>
+      m.nexusDomain === nexusDomain &&
+      (ids.has(m.modId) ||
+        (m.undeclaredUsers ?? []).some((u) => ids.has(u)))
   );
 }
 
-/** Warning text when this mod needs a mouse - either because it IS one of
- * the mouse-only frameworks, or because it lists one as a requirement.
+/** Warning text when this mod needs a mouse - because it IS one of the
+ * mouse-only frameworks, because it lists one as a requirement, or because
+ * it is a known user of one that declares no requirements at all.
  *
  * `requirements` may be undefined while the page is still loading; that only
  * costs us the inherited case, and the direct case still reports. */
@@ -111,8 +127,13 @@ export function getControllerWarning(
       `right trackpad, STEAM and the right trigger to click).`
     );
   }
-  for (const req of requirements ?? []) {
-    const via = findMouseOnly(nexusDomain, req.modId);
+  const reqIds = (requirements ?? []).map((r) => r.modId);
+  for (const fw of MOUSE_ONLY_MODS) {
+    if (fw.nexusDomain !== nexusDomain) continue;
+    const via =
+      reqIds.includes(fw.modId) || (fw.undeclaredUsers ?? []).includes(modId)
+        ? fw
+        : undefined;
     if (via) {
       return (
         `This mod is configured through ${via.name}, which it requires. ` +
