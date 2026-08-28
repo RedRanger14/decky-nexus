@@ -23,7 +23,7 @@ care about.
 
 ## Supported games
 
-Twelve games, each one installed, modded and played on real hardware before
+Thirteen games, each one installed, modded and played on real hardware before
 it shipped. That is what supported means here: not that the code has a config
 entry for it, but that someone finished a session with mods running.
 
@@ -33,12 +33,23 @@ entry for it, but that someone finished a session with mods running.
 4. Fallout: New Vegas
 5. Helldivers 2 (*)
 6. Mount & Blade II: Bannerlord
-7. Resident Evil 4
-8. Skyrim Special Edition
-9. Slay the Spire 2
-10. STAR WARS Battlefront II (2017) (**)
-11. Stardew Valley
-12. The Witcher 3
+7. Palworld (***)
+8. Resident Evil 4
+9. Skyrim Special Edition
+10. Slay the Spire 2
+11. STAR WARS Battlefront II (2017) (**)
+12. Stardew Valley
+13. The Witcher 3
+
+(***) Palworld mods come in four different shapes and the plugin routes each
+to where its loader actually reads it: pak mods, UE4SS script and Blueprint
+mods, and PalSchema's JSON mods, which are folders of json that would sit
+inert anywhere else. Step 1 installs UE4SS and PalSchema together. Two
+100-mod collections were installed and played to get here, and both taught
+us something: mods that offer alternatives now ask which you want instead of
+installing every variant at once, and mods verified to strand you or to
+fight the rest of a collection are installed switched off, with the page
+saying which and why.
 
 (**) Battlefront II mods are not files the game reads - they are compiled
 into a data pack, which is why no Deck plugin has supported a Frostbite game
@@ -75,7 +86,6 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
-- Palworld
 
 ### Requested, not started
 
