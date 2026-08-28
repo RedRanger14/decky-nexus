@@ -15,12 +15,6 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 > third-party client. Bugs are ours, so please report them here rather than
 > to Nexus Mods support.
 
-**Status:** 1.2 beta. Supports the games listed below; Slay the Spire 2 was
-the proving ground and is no longer the limit. Beta means the supported games
-have each been installed, modded and played on real hardware, which is not
-the same as everything working. Expect rough edges, and back up saves you
-care about.
-
 ## Supported games
 
 Thirteen games, each one installed, modded and played on real hardware before
@@ -31,53 +25,15 @@ entry for it, but that someone finished a session with mods running.
 2. Elden Ring
 3. Fallout 4
 4. Fallout: New Vegas
-5. Helldivers 2 (*)
+5. Helldivers 2
 6. Mount & Blade II: Bannerlord
-7. Palworld (***)
+7. Palworld
 8. Resident Evil 4
 9. Skyrim Special Edition
 10. Slay the Spire 2
-11. STAR WARS Battlefront II (2017) (**)
+11. STAR WARS Battlefront II (2017)
 12. Stardew Valley
 13. The Witcher 3
-
-(***) Palworld mods come in four different shapes and the plugin routes each
-to where its loader actually reads it: pak mods, UE4SS script and Blueprint
-mods, and PalSchema's JSON mods, which are folders of json that would sit
-inert anywhere else. Step 1 installs UE4SS and PalSchema together. Two
-100-mod collections were installed and played to get here, and both taught
-us something: mods that offer alternatives now ask which you want instead of
-installing every variant at once, and mods verified to strand you or to
-fight the rest of a collection are installed switched off, with the page
-saying which and why.
-
-(**) Battlefront II mods are not files the game reads - they are compiled
-into a data pack, which is why no Deck plugin has supported a Frostbite game
-before. Step 1 in the panel downloads the compiler (40 MB, once). After that
-installing works like any other game, except that every install or toggle
-recompiles the pack, which takes a minute or two. Retextures, replacement
-character models and multi-part mods all work: a mod that ships as a set
-(base, text and weapon parts) installs whole, and one that offers
-alternatives asks which you want by the author's own names for them.
-
-The compiler is our own build. The format Battlefront II uses was
-unimplemented upstream, and getting mods to render correctly took six fixes
-between the format and the mod pipeline, all documented in
-docs/frosty-swbf2/. Correctness is checked rather than hoped for: the
-compiler's output was compared asset by asset against the desktop Frosty
-Mod Manager's for the same mod, decompressed content included, and every
-pack is read back before the plugin offers it.
-
-Plugins for the desktop Frosty Mod Manager itself - BetterSabers is the most
-popular - are not game mods and cannot work in Gaming Mode. They are labelled
-in the store rather than left to fail on install.
-
-(*) Helldivers 2 is a live-service game that changes its data files with
-every update, which breaks most mods until their authors release new
-versions. The plugin flags out-of-date mods with a PRE-UPDATE badge and can
-filter to mods updated since the game's last patch, but a mod that installed
-cleanly and does nothing usually just needs its author to catch up. That is
-the game, not the plugin, and it is the same in every mod manager.
 
 ### On the roadmap
 
@@ -107,41 +63,21 @@ hardware, so the list grows slowly and on purpose.
 ## What it does
 
 - **Finds the game you are playing** and shows its Nexus mods, with search,
-  sort and curated rails, on a controller. Games on an SD card or a second
-  drive are found the same as internal ones, with nothing to configure.
-- **Downloads and installs** into the right place for that game, whether that
-  is a mods folder, the game's data directory, a Proton prefix, or a mod
-  loader profile. Which one is per game and handled for you.
-- **Collections**, installed in order, with a report at the end naming
-  anything skipped and why.
-- **FOMOD installers**, presented as a controller-friendly wizard rather than
-  a desktop dialog.
-- **Load order applied automatically** where a game needs one, from the
-  collection's own ordering. Reordering it by hand is not supported yet.
-- **Enable and disable** any installed mod, and reset a game to vanilla.
-- **A health check** that reads the game's own logs and says what is actually
-  broken, rather than guessing.
-- **Updates**, checked against Nexus per mod, applied with one tap, and when
-  an update offers versions the picker opens right there.
-- **Filters next to sort**: the game's own categories, recently updated, and
-  on live-service games "since the game's last update".
-- **Load order for Bannerlord** is solved from the mods' own declared rules,
-  and the launcher used is the one that honours them.
-- **ReShade packages install** on games configured for it, with the launch
-  options set automatically and the risk stated plainly: ReShade injects
-  into the game's process, which anti-cheat may treat differently from
-  ordinary mods. The warning is on the mod page before you download.
-- **Endorsements and author support links**, so the people who made the mods
-  still get credit.
-- **When a mod was uploaded and last updated**, on its page, because "is this
-  thing still alive?" is usually the first question.
-- **Long installs say what they are doing**, with a named stage and a live
-  percentage rather than a still bar, so a slow step cannot be mistaken for a
-  hung one.
-- **Mods that cannot work here are labelled before you download them**:
-  desktop-only tools carry a badge on the tile and an explanation on the mod
-  page, and a mod built for a different build of the game says so on its page
-  and in My Mods.
+  sort and curated rails, on a controller.
+- **Downloads and installs mods and collections** into the right place for
+  that game automatically, with FOMOD installers presented as a
+  controller-friendly wizard rather than a desktop dialog.
+- **Applies load order automatically** where a game needs one.
+- **Enable, disable and reset**: switch any installed mod on or off, or put
+  the whole game back to vanilla.
+- **A health check** that reads the game's own logs and says what is
+  actually broken, rather than guessing.
+- **One-tap updates**, checked against Nexus per mod.
+- **Endorsements and author support links**, so the people who made the
+  mods still get credit.
+- **Clear feedback throughout**: live progress on long installs, and mods
+  that cannot work here say so before you download them rather than
+  failing after.
 
 Not supported yet: manual load order editing, Vortex profile import, and
 mods that need a Windows tool to install.
