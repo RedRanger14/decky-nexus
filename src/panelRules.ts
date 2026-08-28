@@ -613,6 +613,29 @@ export function preDisabledNote(names: string[]): string {
   );
 }
 
+/** What the collection page says about mods installed switched off because
+ * their setup window traps the player in Gaming Mode.
+ *
+ * The stakes are different from preDisabledNote: a version-mismatched mod
+ * refuses to load, but a stranding setup window loads FINE and then locks
+ * the player in the game with no way to close it - controller, keyboard
+ * and trackpad were all tried and none reached it (Creative Menu, device,
+ * 2026-08-28). Same contract though - the plugin acted on its own, so it
+ * says what it did and how to undo it. */
+export function strandingOffNote(names: string[]): string {
+  const off = names.filter(Boolean);
+  if (!off.length) return "";
+  const one = off.length === 1;
+  return (
+    `${off.join(", ")} ${one ? "was" : "were"} installed but left switched ` +
+    `off. ${one ? "Its" : "Their"} setup window takes no input in Gaming ` +
+    `Mode, not even from a keyboard or mouse, so it cannot be closed and ` +
+    `locks you out of the game. If you also play on a desktop, you can ` +
+    `switch ${one ? "it" : "them"} on in My Mods and finish the setup ` +
+    `there.`
+  );
+}
+
 /** What the panel says about mods it switched off without being asked.
  *
  * Silence would be worse than a button. Somebody who installed a

@@ -12472,6 +12472,116 @@ query Link($slug: String!, $domainName: String!) {
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": folder}
 
+        # FOMOD wizard archives for folder-mode games: park and let the
+        # wizard (or a collection curator's recorded choices) pick. This
+        # check once lived only in the dataDir branch, so for pak games
+        # every mutually exclusive variant in the archive installed at
+        # once - eight Bushi paks fighting over one Pal, and the chimera
+        # renders that implies (device, 2026-08-28).
+        if (
+            install_mode == "folder"
+            and not payload_choice
+            and _fomod_config_path(scratch)
+        ):
+            gv = ""
+            if process_name:
+                pv = _pe_file_version(
+                    os.path.join(install_path, process_name)
+                )
+                if pv:
+                    parts = [str(p) for p in pv]
+                    while len(parts) > 3 and parts[-1] == "0":
+                        parts.pop()
+                    gv = ".".join(parts)
+            parsed = _parse_fomod(scratch, mods_path, gv)
+            if parsed:
+                wizard, ctx = parsed
+                if wizard["steps"]:
+                    _prune_pending_fomods()
+                    token = f"{mod_id}-{file_id}-{int(time.time())}"
+                    PENDING_FOMODS[token] = {
+                        "at": time.time(),
+                        "scratch": scratch,
+                        "ctx": ctx,
+                        "game_domain": game_domain,
+                        "mod_id": mod_id,
+                        "file_id": file_id,
+                        "file_name": file_name,
+                        "mod_name": mod_name,
+                        "mod_version": mod_version,
+                        "install_dir": install_dir,
+                        "mods_subdir": mods_subdir,
+                        "app_id": app_id,
+                        "plugins_subpath": plugins_subpath,
+                        "plugins_style": plugins_style,
+                        "page_version": page_version,
+                        "record_source": record_source,
+                        "collection_slug": collection_slug,
+                        "repair_only": repair_only,
+                        # The finish re-enters _install_mod_inner with
+                        # these exact arguments. The archive is left in
+                        # the cache on purpose: the re-entry's download
+                        # short-circuits on it, and the staged selection
+                        # is a prepared scratch, so it goes straight to
+                        # payload routing.
+                        "resume_kwargs": {
+                            "game_domain": game_domain,
+                            "mod_id": mod_id,
+                            "file_id": file_id,
+                            "file_name": file_name,
+                            "mod_name": mod_name,
+                            "mod_version": mod_version,
+                            "install_dir": install_dir,
+                            "mods_subdir": mods_subdir,
+                            "dl_key": dl_key,
+                            "dl_expires": dl_expires,
+                            "install_mode": install_mode,
+                            "app_id": app_id,
+                            "plugins_subpath": plugins_subpath,
+                            "plugins_style": plugins_style,
+                            "payload_choice": payload_choice,
+                            "ue4ss_subdir": ue4ss_subdir,
+                            "logicmods_subdir": logicmods_subdir,
+                            "launcher_xml_subpath": launcher_xml_subpath,
+                            "flat_extensions": flat_extensions,
+                            "page_version": page_version,
+                            "record_source": record_source,
+                            "witcher_layout": witcher_layout,
+                            "collection_slug": collection_slug,
+                            "cp77_layout": cp77_layout,
+                            "pakpatch_layout": pakpatch_layout,
+                            "repair_only": repair_only,
+                            "hd2_layout": hd2_layout,
+                            "reshade_subdir": reshade_subdir,
+                            "process_name": process_name,
+                            "palschema_subdir": palschema_subdir,
+                        },
+                    }
+                    await _emit_progress(mod_id, "error", 0, "fomod wizard")
+                    return {
+                        "ok": False,
+                        "needs_fomod": True,
+                        "fomod_token": token,
+                        "wizard": wizard,
+                    }
+                # Wizard-less FOMOD (only requiredInstallFiles): stage it
+                # and continue with the staged tree as the payload.
+                staging = os.path.join(scratch, "__fomod_staged__")
+                os.makedirs(staging, exist_ok=True)
+                if _fomod_stage(ctx, [], staging) > 0:
+                    for e in os.listdir(scratch):
+                        if e != "__fomod_staged__":
+                            _force_rmtree(os.path.join(scratch, e))
+                    for e in os.listdir(staging):
+                        shutil.move(
+                            os.path.join(staging, e),
+                            os.path.join(scratch, e),
+                        )
+                    os.rmdir(staging)
+                    entries = os.listdir(scratch)
+                else:
+                    _force_rmtree(staging)
+
         # PalSchema mods: json under the framework's schema dirs. Routed
         # before the UE4SS check - they carry none of its markers, and the
         # pak fallback would land json where nothing reads it.
@@ -13522,6 +13632,25 @@ query Link($slug: String!, $domainName: String!) {
                         "options it offers are not in the archive. Skipped."
                     ),
                 }
+
+            if entry.get("resume_kwargs"):
+                # Folder-mode game: leave the staged selection as a
+                # prepared extract and re-enter the normal install, which
+                # now sees only the chosen files and routes them like any
+                # other payload (pak folder, UE4SS, PalSchema).
+                for e in os.listdir(scratch):
+                    if e != "__fomod_staged__":
+                        _force_rmtree(os.path.join(scratch, e))
+                for e in os.listdir(staging):
+                    shutil.move(
+                        os.path.join(staging, e), os.path.join(scratch, e)
+                    )
+                os.rmdir(staging)
+                with open(scratch + PREPARED_MARKER, "w") as f:
+                    f.write("fomod")
+                return await self._install_mod_inner(
+                    **entry["resume_kwargs"]
+                )
 
             fomod_install_path, mods_path, _unused = _game_paths(
                 entry["install_dir"], entry["mods_subdir"]

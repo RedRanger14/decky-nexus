@@ -22,6 +22,7 @@ import {
   isRemaining,
 
   preDisabledNote,
+  strandingOffNote,
   directNote,
   isGoneFromNexus,
   isNetworkError,
@@ -59,13 +60,14 @@ import {
 } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
-import { collectionMouseOnly } from "./compat";
+import { collectionAutoOff, collectionStrandingUi } from "./compat";
 import { modeParams } from "./games";
 import {
   finishFomod,
   installPinned,
   prefetchPinned,
   preparePinned,
+  toggleMod,
 } from "./install";
 import { backAction } from "./navRules";
 import {
@@ -168,6 +170,9 @@ export function CollectionPage() {
   // Mods switched off before the first launch because this game build has
   // already been seen to fail on them.
   const [preDisabled, setPreDisabled] = useState<string[]>([]);
+  // Mods installed but left off because their setup window traps the
+  // player in Gaming Mode.
+  const [strandingOff, setStrandingOff] = useState<string[]>([]);
   // Mods this collection lists that Nexus will not serve any more.
   const [unavailable, setUnavailable] = useState<string[]>([]);
   // Files fetched from a URL the collection supplied rather than Nexus.
@@ -475,6 +480,36 @@ export function CollectionPage() {
       }
     } catch {
       /* the panel still repairs it after the first launch */
+    }
+    // Mods whose first-run window traps the player get installed but
+    // switched OFF: in Gaming Mode no input reaches that window, so it
+    // cannot be closed and locks the player in the game (Creative Menu,
+    // 2026-08-28 - controller, keyboard and trackpad all tried). Installed
+    // rather than skipped so a desktop session can still set them up.
+    try {
+      const autoOff = collectionAutoOff(
+        game.nexusDomain,
+        (detail?.files ?? []).map((f) => f.modId)
+      );
+      if (autoOff.length > 0) {
+        const offIds = new Set(autoOff.map((a) => a.modId));
+        const inst = await getInstalledMods(
+          game.nexusDomain,
+          game.installDirName,
+          game.modsSubdir,
+          ...modeParams(game),
+          game.protectedModFolders ?? []
+        );
+        const names: string[] = [];
+        for (const m of inst.mods ?? []) {
+          if (!m.mod_id || !offIds.has(m.mod_id) || !m.enabled) continue;
+          const r = await toggleMod(game, m.folder, false);
+          if (r.ok) names.push(m.name || m.folder);
+        }
+        if (names.length > 0) setStrandingOff(names);
+      }
+    } catch {
+      /* the pre-install warning box still names the mod and the risk */
     }
     try {
       const extras = await getCollectionExtras(
@@ -1754,16 +1789,37 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             {preDisabledNote(preDisabled)}
           </div>
         )}
+        {strandingOff.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              margin: "-6px 0 12px",
+              padding: "8px 10px",
+              borderRadius: "4px",
+              background: "rgba(255, 200, 60, 0.12)",
+              border: "1px solid rgba(255, 200, 60, 0.4)",
+              lineHeight: 1.45,
+            }}
+          >
+            🎮 {strandingOffNote(strandingOff)}
+          </div>
+        )}
         {(() => {
-          // A collection that carries a mouse-only config framework can
-          // strand the player in-game behind a window a gamepad cannot
-          // close. Said here, before the install, because afterwards the
-          // only way out is to work out which of a hundred mods did it.
-          const mouseOnly = collectionMouseOnly(
-            game.nexusDomain,
-            (detail?.files ?? []).map((f) => f.modId)
-          );
-          if (mouseOnly.length === 0 || installing) return null;
+          // A collection that carries a stranding-UI framework can lock
+          // the player in-game behind a window no input reaches. Said
+          // here, before the install, because afterwards the only way out
+          // is to work out which of a hundred mods did it.
+          const ids = (detail?.files ?? []).map((f) => f.modId);
+          const stranding = collectionStrandingUi(game.nexusDomain, ids);
+          if (stranding.length === 0 || installing || strandingOff.length > 0)
+            return null;
+          const autoOff = collectionAutoOff(game.nexusDomain, ids);
+          const offNames = autoOff
+            .map(
+              (a) =>
+                detail?.files.find((f) => f.modId === a.modId)?.modName ?? ""
+            )
+            .filter(Boolean);
           return (
             <div
               style={{
@@ -1776,12 +1832,14 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 lineHeight: 1.45,
               }}
             >
-              🎮 <b>Needs a mouse:</b> this collection includes{" "}
-              {mouseOnly.map((m) => m.name).join(", ")}.{" "}
-              {mouseOnly[0].effect} You can still install it - hold the STEAM
-              button and use the right trackpad as a pointer, STEAM and the
-              right trigger to click - or turn that mod off in My Mods
-              afterwards.
+              🎮 <b>Gaming Mode warning:</b> this collection includes{" "}
+              {stranding.map((m) => m.name).join(", ")}.{" "}
+              {stranding[0].effect}{" "}
+              {offNames.length > 0
+                ? `${offNames.join(", ")} will be installed switched off so ` +
+                  `this cannot happen. If you also play on a desktop, you ` +
+                  `can switch it on in My Mods.`
+                : `The rest of the collection is unaffected.`}
             </div>
           );
         })()}

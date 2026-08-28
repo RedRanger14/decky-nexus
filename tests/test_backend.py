@@ -15874,5 +15874,133 @@ class TestStaleNativeWarning(unittest.TestCase):
             self.assertEqual(main._game_updated_at(999999), 0)
 
 
+class TestFolderModeFomod(unittest.TestCase):
+    """A Palworld pak archive with a FOMOD wizard: mutually exclusive
+    variants of one Pal in a single archive. The FOMOD check lived only
+    in the dataDir branch, so folder-mode games installed EVERY variant
+    at once - eight Bushi paks fighting over one Pal, and the chimera
+    renders that implies (device, 2026-08-28, SexyBushiFomodInstaller)."""
+
+    DOMAIN = "palworld"
+    GAME = "Fomod Pak Test"
+    MOD, FILE = 4321, 98765
+
+    CONFIG = """<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <moduleName>Sexy Bushi</moduleName>
+  <installSteps order="Explicit">
+    <installStep name="Variant">
+      <optionalFileGroups order="Explicit">
+        <group name="Pick one" type="SelectExactlyOne">
+          <plugins order="Explicit">
+            <plugin name="SFW">
+              <description>Safe</description>
+              <files><file source="01.SexyBushi_SFW_P.pak" destination="01.SexyBushi_SFW_P.pak" /></files>
+              <typeDescriptor><type name="Recommended" /></typeDescriptor>
+            </plugin>
+            <plugin name="NSFW">
+              <description>Not safe</description>
+              <files><file source="05.SexyBushi_NSFW_P.pak" destination="05.SexyBushi_NSFW_P.pak" /></files>
+              <typeDescriptor><type name="Optional" /></typeDescriptor>
+            </plugin>
+          </plugins>
+        </group>
+      </optionalFileGroups>
+    </installStep>
+  </installSteps>
+</config>"""
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.mods = os.path.join(
+            self.install, "Pal", "Content", "Paks", "~mods"
+        )
+        os.makedirs(self.mods)
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        shutil.rmtree(
+            main._extract_scratch(self.MOD, self.FILE), ignore_errors=True
+        )
+        archive = main._archive_cache_path(self.MOD, self.FILE, "bushi.zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            z.writestr("fomod/ModuleConfig.xml", self.CONFIG)
+            z.writestr("01.SexyBushi_SFW_P.pak", "sfw")
+            z.writestr("05.SexyBushi_NSFW_P.pak", "nsfw")
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        main.PENDING_FOMODS.clear()
+
+    def _start(self):
+        return run(self.plugin.install_mod(
+            self.DOMAIN, self.MOD, self.FILE, "bushi.zip", "Sexy Bushi",
+            "1.0", self.GAME, "Pal/Content/Paks/~mods", "", "", "folder", 0,
+        ))
+
+    def _paks(self):
+        found = []
+        for _root, _dirs, names in os.walk(self.mods):
+            found += [n for n in names if n.endswith(".pak")]
+        return sorted(found)
+
+    def test_the_wizard_is_offered_not_bypassed(self):
+        # Before the fix this returned ok with BOTH paks on disk.
+        r = self._start()
+        self.assertTrue(r.get("needs_fomod"), r)
+        self.assertTrue(r.get("fomod_token"))
+        self.assertTrue(r["wizard"]["steps"])
+        self.assertEqual(self._paks(), [])
+
+    def test_finishing_installs_only_the_chosen_variant(self):
+        r = self._start()
+        plugins = r["wizard"]["steps"][0]["groups"][0]["plugins"]
+        sfw = next(p for p in plugins if p["name"].startswith("SFW"))
+        done = run(self.plugin.install_fomod(r["fomod_token"], [sfw["id"]]))
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual(self._paks(), ["01.SexyBushi_SFW_P.pak"])
+        recs = main._load_settings()["installed"][self.DOMAIN]
+        self.assertTrue(
+            any(v.get("mod_id") == self.MOD for v in recs.values()), recs
+        )
+
+    def test_curator_choices_finish_it_without_a_wizard(self):
+        # The collection path: Vortex-manifest-shaped choices answer the
+        # wizard, and only the curator's variant lands.
+        r = self._start()
+        done = run(self.plugin.install_fomod_auto(
+            r["fomod_token"], [{"name": "Pick one", "choices": ["NSFW"]}]
+        ))
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual(self._paks(), ["05.SexyBushi_NSFW_P.pak"])
+
+    def test_the_finish_survives_the_archive_cache_being_evicted(self):
+        # The finish re-enters the installer, whose download step is
+        # normally short-circuited by the cached archive. If the cache
+        # was cleaned between park and finish, the staged selection is
+        # already a prepared scratch - the download result is unused.
+        r = self._start()
+        plugins = r["wizard"]["steps"][0]["groups"][0]["plugins"]
+        sfw = next(p for p in plugins if p["name"].startswith("SFW"))
+
+        async def fake_download(*a, **k):
+            return "", os.path.join(TEST_ROOT, "gone.zip")
+
+        real = main._download_archive
+        main._download_archive = fake_download
+        try:
+            done = run(
+                self.plugin.install_fomod(r["fomod_token"], [sfw["id"]])
+            )
+        finally:
+            main._download_archive = real
+        self.assertTrue(done.get("ok"), done)
+        self.assertEqual(self._paks(), ["01.SexyBushi_SFW_P.pak"])
+
+
 if __name__ == "__main__":
     unittest.main()

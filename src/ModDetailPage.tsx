@@ -36,7 +36,7 @@ import { knownBrokenNote, requirementSetupNotes } from "./panelRules";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
 import { popOurPage, pushOurPage } from "./Tabs";
-import { getCompatHint, getControllerWarning } from "./compat";
+import { getCompatHint, getStrandingWarning } from "./compat";
 import { frameworkModIds, modeParams } from "./games";
 import {
   finishFomod,
@@ -618,10 +618,10 @@ export function ModDetailPage() {
 
   const heroUrl = mod.pictureUrl ?? mod.thumbnailUrl;
   const compatHint = getCompatHint(game.nexusDomain, mod.modId);
-  // Mods that only answer a mouse. Said BEFORE the download, next to the
-  // install button, because the failure mode is being stranded in the game
-  // with a window a gamepad cannot close.
-  const controllerWarning = getControllerWarning(
+  // Mods whose setup window traps the player in Gaming Mode. Said BEFORE
+  // the download, next to the install button, because the failure mode is
+  // being locked in the game behind a window nothing can close.
+  const strandingWarning = getStrandingWarning(
     game.nexusDomain,
     mod.modId,
     requirements
@@ -893,7 +893,7 @@ export function ModDetailPage() {
               🐧 <b>Linux note:</b> {compatHint}
             </div>
           )}
-          {controllerWarning && (
+          {strandingWarning && (
             <div
               style={{
                 marginTop: "10px",
@@ -904,7 +904,7 @@ export function ModDetailPage() {
                 fontSize: "13px",
               }}
             >
-              🎮 <b>Needs a mouse:</b> {controllerWarning}
+              🎮 <b>Gaming Mode warning:</b> {strandingWarning}
             </div>
           )}
           {dlcNeed !== "" && (

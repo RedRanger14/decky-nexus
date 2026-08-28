@@ -20,6 +20,7 @@ import {
   knownBrokenNote,
   lastRunSummary,
   preDisabledNote,
+  strandingOffNote,
   repairedNote,
   unavailableNote,
   updatedNote,
@@ -937,6 +938,34 @@ test("several pre-disabled read in the plural and count the rest", () => {
   assert.match(msg, /A, B, C and 1 more were left switched off/);
   assert.match(msg, /they do not work/);
   assert.match(msg, /updates arrive/);
+});
+
+// --- strandingOffNote ------------------------------------------------------
+// Creative Menu, 2026-08-28: its first-run window takes no input at all in
+// Gaming Mode (controller, keyboard and trackpad all tried), so it cannot
+// be closed and locks the player in the game. Collections now install such
+// mods switched off; this is what says so.
+
+test("nothing switched off for a stranding window says nothing", () => {
+  assert.equal(strandingOffNote([]), "");
+  assert.equal(strandingOffNote([""]), "");
+});
+
+test("a stranding mod left off is named, explained and reversible", () => {
+  const msg = strandingOffNote(["Creative Menu"]);
+  assert.match(msg, /Creative Menu was installed but left switched off/);
+  assert.match(msg, /takes no input in Gaming Mode/);
+  assert.match(msg, /not even from a keyboard or mouse/);
+  assert.match(msg, /locks you out of the game/);
+  assert.match(msg, /switch it on in My Mods/);
+  assert.doesNotMatch(msg, /—/, "no em dashes in player-facing copy");
+  assert.doesNotMatch(msg, /touch\s?screen/i, "never the touchscreen answer");
+});
+
+test("several stranding mods read in the plural", () => {
+  const msg = strandingOffNote(["A", "B"]);
+  assert.match(msg, /A, B were installed but left switched off/);
+  assert.match(msg, /switch them on in My Mods/);
 });
 
 test("the mod page names the version it watched fail", () => {
