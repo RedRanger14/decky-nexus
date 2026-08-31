@@ -6249,15 +6249,20 @@ def _lz4_block_decompress(src: bytes, out_size: int) -> bytes:
     return bytes(out)
 
 
-def _lspk_pak_metas(pak_path: str) -> list:
-    """Every mod registration inside an LSPK pak: the ModuleInfo fields of
-    each Mods/<Folder>/meta.lsx. A pak can carry several (frameworks), or
-    none (pure asset overrides), and modsettings.lsx wants exactly these
-    fields. Proven against ImpUI's real pak before being trusted.
+BG3_SE_UNAVAILABLE = (
+    "This mod needs the BG3 Script Extender, which cannot run on the "
+    "native Linux build of the game that SteamOS installs (it loads as a "
+    "Windows DLL beside bg3.exe, and the Linux build has neither). The "
+    "files are installed and harmless, but the mod will not do anything."
+)
 
-    Raises ValueError with a readable message for anything unreadable."""
-    with open(pak_path, "rb") as f:
-        raw = f.read()
+
+def _lspk_file_table(raw: bytes) -> bytes:
+    """The decompressed file table of an LSPK v18 pak: num_files entries of
+    272 bytes (256B name, then offset/part/flags/sizes).
+
+    The ONE place the format's offsets are written down. Both the meta
+    reader and the Script Extender check go through here."""
     if raw[:4] != b"LSPK":
         raise ValueError("not a BG3 pak (no LSPK signature)")
     ver = int.from_bytes(raw[4:8], "little")
@@ -6271,15 +6276,62 @@ def _lspk_pak_metas(pak_path: str) -> list:
     comp_size = int.from_bytes(raw[fl_off + 4 : fl_off + 8], "little")
     if num_files > 100000:
         raise ValueError("pak file table is implausible - corrupt download?")
-    table = _lz4_block_decompress(
+    return _lz4_block_decompress(
         raw[fl_off + 8 : fl_off + 8 + comp_size], num_files * 272
     )
-    metas = []
-    for e in range(num_files):
-        base = e * 272
-        name = table[base : base + 256].split(b"\0", 1)[0].decode(
-            "utf-8", "replace"
+
+
+def _lspk_entry_names(raw: bytes) -> list:
+    """Every stored path in an LSPK v18 pak."""
+    table = _lspk_file_table(raw)
+    out = []
+    for base in range(0, len(table), 272):
+        out.append(
+            table[base : base + 256].split(b"\0", 1)[0].decode(
+                "utf-8", "replace"
+            )
         )
+    return out
+
+
+def _pak_needs_script_extender(pak_path: str) -> bool:
+    """Does this pak carry a Script Extender config?
+
+    An SE mod ships Mods/<Name>/ScriptExtender/Config.json, and that is
+    what the extender reads to load it. Absence is equally meaningful: pure
+    pak mods (Better Hotbar, Distinctive Dyes) have no such entry. Any read
+    failure answers False - a warning we cannot justify is worse than none,
+    and the install path reports real parse errors separately."""
+    try:
+        with open(pak_path, "rb") as f:
+            raw = f.read()
+        names = _lspk_entry_names(raw)
+    except (OSError, ValueError):
+        return False
+    for n in names:
+        parts = n.replace("\\", "/").lower().split("/")
+        if "scriptextender" in parts:
+            return True
+    return False
+
+
+def _lspk_pak_metas(pak_path: str) -> list:
+    """Every mod registration inside an LSPK pak: the ModuleInfo fields of
+    each Mods/<Folder>/meta.lsx. A pak can carry several (frameworks), or
+    none (pure asset overrides), and modsettings.lsx wants exactly these
+    fields. Proven against ImpUI's real pak before being trusted.
+
+    Raises ValueError with a readable message for anything unreadable."""
+    with open(pak_path, "rb") as f:
+        raw = f.read()
+    # One parse of the layout, shared with the Script Extender check:
+    # two copies of a binary format's offsets that must agree is the
+    # kind of drift this project has been bitten by.
+    names = _lspk_entry_names(raw)
+    table = _lspk_file_table(raw)
+    metas = []
+    for e, name in enumerate(names):
+        base = e * 272
         if not (name.startswith("Mods/") and name.endswith("/meta.lsx")):
             continue
         off_lo = int.from_bytes(table[base + 256 : base + 260], "little")
@@ -12718,6 +12770,7 @@ query Link($slug: String!, $domainName: String!) {
                     ),
                 }
             all_metas, meta_err = [], ""
+            needs_se = False
             staged = []
             for p in paks:
                 try:
@@ -12725,6 +12778,8 @@ query Link($slug: String!, $domainName: String!) {
                 except ValueError as exc:
                     meta_err = f"{os.path.basename(p)}: {exc}"
                     got = []
+                if _pak_needs_script_extender(p):
+                    needs_se = True
                 staged.append((p, got))
             os.makedirs(_bg3_mods_dir(), exist_ok=True)
             file_names = []
@@ -12759,6 +12814,10 @@ query Link($slug: String!, $domainName: String!) {
                 "files": file_names,
                 "bg3_mods": all_metas,
                 "enabled": True,
+                # Kept ON the record, not just returned: the moment this
+                # matters is when someone wonders weeks later why a mod
+                # they installed does nothing.
+                **({"warning": BG3_SE_UNAVAILABLE} if needs_se else {}),
             })
             err = _write_bg3_modsettings(settings, game_domain)
             if err:
@@ -12781,9 +12840,14 @@ query Link($slug: String!, $domainName: String!) {
             decky.logger.info(
                 f"installed bg3 mod {mod_name!r}: {file_names} "
                 f"({len(all_metas)} registered)"
+                + (" [needs Script Extender - inert here]" if needs_se else "")
             )
             await _emit_progress(mod_id, "done", 100)
-            return {"ok": True, "folder": key}
+            return {
+                "ok": True,
+                "folder": key,
+                **({"warning": BG3_SE_UNAVAILABLE} if needs_se else {}),
+            }
 
         # FOMOD wizard archives for folder-mode games: park and let the
         # wizard (or a collection curator's recorded choices) pick. This
@@ -16436,6 +16500,8 @@ query Link($slug: String!, $domainName: String!) {
 
         removed = 0
         errors = []
+        # bg3 keys are popped after the modsettings rewrite, not during.
+        bg3_removed = []
         for key, rec in sorted(records.items()):
             if not belongs(rec):
                 continue
@@ -16455,6 +16521,25 @@ query Link($slug: String!, $domainName: String!) {
                 elif mode == "me3":
                     if _remove_me3_record(game_domain, key, settings):
                         removed += 1
+                elif mode == "bg3":
+                    for n in rec.get("files") or []:
+                        if not _safe_rel_path(n) or "/" in n:
+                            continue
+                        for bg3_base in (
+                            _bg3_mods_dir(), _bg3_disabled_dir()
+                        ):
+                            try:
+                                os.remove(os.path.join(bg3_base, n))
+                            except OSError:
+                                pass
+                    # Disabled, not popped: _write_bg3_modsettings only
+                    # removes entries a record still OWNS, so dropping the
+                    # record first would strand its registration in
+                    # modsettings.lsx forever. Same ordering as
+                    # uninstall_mod. The pop happens after the rewrite.
+                    rec["enabled"] = False
+                    bg3_removed.append(key)
+                    removed += 1
                 else:
                     target = rec.get("target")
                     folder = rec.get("folder") or key
@@ -16495,6 +16580,14 @@ query Link($slug: String!, $domainName: String!) {
         )
         if game_domain in ME3_GAMES:
             _write_me3_profile(game_domain, settings)
+        if bg3_removed:
+            err = _write_bg3_modsettings(settings, game_domain)
+            if err:
+                errors.append(err)
+            for key in bg3_removed:
+                settings.get("installed", {}).get(game_domain, {}).pop(
+                    key, None
+                )
         _save_settings(settings)
         # Witcher-class games: never leave a filelist line pointing at a
         # deleted menu XML (crashes the game at the menu).

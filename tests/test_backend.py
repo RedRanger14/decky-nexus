@@ -16500,6 +16500,147 @@ class TestBg3Mode(unittest.TestCase):
         self.assertTrue(mods[0]["enabled"])
         self.assertTrue(mods[0]["togglable"])
 
+    # ---- Script Extender detection -------------------------------------
+    # The native Linux build cannot run the extender, so an SE mod installs
+    # perfectly and does nothing. Verified on device against the real "BG3
+    # Essentials" collection (2026-08-31): the marker split those mods
+    # cleanly, no false positive either way.
+    #   marker present: Auto Wares - MCM, Database Cleaner, Records,
+    #     Volition Cabinet, Tooltip Manager, Mod Configuration Menu
+    #   marker absent:  Distinctive Dyes, Better Inventory UI, Better Hotbar 2
+
+    @classmethod
+    def _make_se_pak(cls, uuid, folder="SEMod"):
+        """A pak carrying a ScriptExtender/Config.json, the way every SE mod
+        checked on device does."""
+        meta = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<save><region id="Config"><node id="root"><children>'
+            '<node id="ModuleInfo">'
+            f'<attribute id="Folder" type="LSString" value="{folder}"/>'
+            f'<attribute id="Name" type="LSString" value="SE Mod"/>'
+            f'<attribute id="UUID" type="guid" value="{uuid}"/>'
+            '<attribute id="Version64" type="int64" value="1"/>'
+            "</node></children></node></region></save>"
+        ).encode()
+        members = [
+            (f"Mods/{folder}/meta.lsx", meta, len(meta), 0),
+            (
+                f"Mods/{folder}/ScriptExtender/Config.json",
+                b'{"RequiredVersion":20}',
+                22,
+                0,
+            ),
+        ]
+        blobs, entries = b"", []
+        offset = 40
+        for mname, blob, unc, method in members:
+            entries.append((mname, offset, method, len(blob), unc))
+            blobs += blob
+            offset += len(blob)
+        table = b""
+        for mname, off, method, disk, unc in entries:
+            table += mname.encode().ljust(256, b"\0")
+            table += (off & 0xFFFFFFFF).to_bytes(4, "little")
+            table += (off >> 32).to_bytes(2, "little")
+            table += bytes([0, method])
+            table += disk.to_bytes(4, "little")
+            table += unc.to_bytes(4, "little")
+        ctable = cls._lz4_store(table)
+        fl_off = 40 + len(blobs)
+        header = (
+            b"LSPK" + (18).to_bytes(4, "little")
+            + fl_off.to_bytes(8, "little")
+            + (8 + len(ctable)).to_bytes(4, "little")
+            + bytes([0, 0]) + b"\0" * 16 + (1).to_bytes(2, "little")
+        )
+        return (
+            header + blobs
+            + len(entries).to_bytes(4, "little")
+            + len(ctable).to_bytes(4, "little")
+            + ctable
+        )
+
+    def test_a_script_extender_pak_is_detected(self):
+        path = os.path.join(TEST_ROOT, "se.pak")
+        with open(path, "wb") as f:
+            f.write(self._make_se_pak("bbbb2222-0000-0000-0000-000000000002"))
+        self.assertTrue(main._pak_needs_script_extender(path))
+
+    def test_a_plain_pak_is_not_flagged(self):
+        path = os.path.join(TEST_ROOT, "plain.pak")
+        with open(path, "wb") as f:
+            f.write(self._make_pak("cccc3333-0000-0000-0000-000000000003"))
+        self.assertFalse(main._pak_needs_script_extender(path))
+
+    def test_a_broken_pak_is_not_flagged(self):
+        """A warning we cannot justify is worse than none, and the install
+        path reports real parse failures separately."""
+        path = os.path.join(TEST_ROOT, "junk.pak")
+        with open(path, "wb") as f:
+            f.write(b"not a pak at all")
+        self.assertFalse(main._pak_needs_script_extender(path))
+
+    def test_an_se_mod_installs_but_carries_the_warning(self):
+        self._archive({"SEMod.pak": self._make_se_pak(
+            "bbbb2222-0000-0000-0000-000000000002")})
+        r = self._install("An SE Mod")
+        # Installed, not refused: the files are harmless and the author's
+        # mod is not ours to veto. But it must SAY it will do nothing.
+        self.assertTrue(r.get("ok"), r)
+        self.assertIn("Script Extender", r.get("warning", ""))
+        rec = main._load_settings()["installed"][self.DOMAIN]["An SE Mod"]
+        # On the record, so it survives the toast and reappears in My Mods.
+        self.assertIn("Script Extender", rec.get("warning", ""))
+        self.assertIn("native Linux", rec.get("warning", ""))
+
+    def test_a_plain_mod_carries_no_warning(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        r = self._install()
+        self.assertTrue(r.get("ok"), r)
+        self.assertNotIn("warning", r)
+        rec = main._load_settings()["installed"][self.DOMAIN]["Test Mod"]
+        self.assertNotIn("warning", rec)
+
+    def test_collection_uninstall_removes_paks_and_registrations(self):
+        """Without a bg3 branch this fell through to the folder logic, which
+        looks for a DIRECTORY under the game's Data dir: nothing was deleted,
+        yet the record was popped and counted as removed - leaving every pak
+        installed and registered with nothing left to manage it by."""
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        # Keywords, not positions: install_mod takes 30-odd parameters and
+        # its own comments warn that they are passed positionally from the
+        # frontend, so a miscount here would test the wrong thing quietly.
+        r = run(self.plugin.install_mod(
+            self.DOMAIN, self.MOD, self.FILE, "m.zip", "Coll Mod", "1.0",
+            self.GAME, "Data",
+            install_mode="bg3", app_id=1086940,
+            record_source="collection", collection_slug="slug1",
+        ))
+        self.assertTrue(r.get("ok"), r)
+        rec = main._load_settings()["installed"][self.DOMAIN]["Coll Mod"]
+        self.assertEqual(rec.get("collection_slug"), "slug1")
+        out = run(self.plugin.uninstall_collection(
+            self.DOMAIN, self.GAME, "Data",
+            install_mode="bg3", app_id=1086940, slug="slug1",
+        ))
+        self.assertTrue(out.get("ok"), out)
+        self.assertEqual(out.get("removed"), 1)
+        self.assertFalse(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "TestMod.pak")))
+        self.assertNotIn(
+            "aaaa1111-0000-0000-0000-000000000001",
+            self._uuids_in_modsettings(),
+        )
+        self.assertNotIn(
+            "Coll Mod",
+            main._load_settings().get("installed", {}).get(self.DOMAIN, {}),
+        )
+        # And the game's own entries are still there afterwards.
+        self.assertEqual(len(self._uuids_in_modsettings()), 2)
+
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
         main.HOME_ROOT = TEST_ROOT
