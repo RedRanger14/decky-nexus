@@ -1096,3 +1096,88 @@ export function requirementSetupNotes(
       notes: (r.notes ?? "").trim(),
     }));
 }
+
+// ---------------------------------------------------------------------------
+// Store header layout, from MEASURED width.
+//
+// The header row (game art, title, search, sort, filter) has been wrong in
+// both directions now. Icon squares chosen by window.innerWidth shipped for
+// one build: the icons meant nothing, and Steam reports a logical resolution
+// that cannot tell a TV from a Deck, so the TV got squares with room to
+// spare. The replacement, fixed 150px dropdowns beside a fixed 300px search,
+// assumed the Deck's logical width and was wider than the real one: the
+// filter hung off the screen edge, and when the gamepad focused it Steam
+// panned the whole page, pushing the tabs off the left (device photos,
+// 2026-08-31).
+//
+// So the header now works like the store rails have since 1.2.2: it watches
+// its own container's width and picks sizes from that. Every tier keeps
+// words on the controls - "Featured" and "All mods" survive down to the
+// narrowest tier, because the one thing the icon experiment proved is that
+// the icons meant nothing.
+
+export interface StoreHeaderPlan {
+  /** Game art height in px; 0 hides it (narrowest tier). Width follows the
+   * Steam header.jpg aspect ratio. */
+  artHeight: number;
+  /** Fixed width of each of the two dropdowns. Never below 120: that is
+   * the narrowest "All mods" renders as words rather than clipped ones. */
+  controlWidth: number;
+  /** The search box flexes between these. */
+  searchMin: number;
+  searchMax: number;
+  /** The title block shrinks (with an ellipsis) no further than this. */
+  titleMin: number;
+  gap: number;
+}
+
+/** Steam's header.jpg is 460x215; width at a given height follows. */
+export const STORE_ART_RATIO = 460 / 215;
+/** The filter dropdown keeps this much air against the screen edge. */
+export const STORE_HEADER_EDGE = 8;
+
+export function storeHeaderPlan(measuredWidth: number): StoreHeaderPlan {
+  const w = measuredWidth > 0 ? measuredWidth : 900; // pre-measure: fit a Deck
+  if (w >= 1150) {
+    return {
+      artHeight: 52, controlWidth: 150,
+      searchMin: 220, searchMax: 300, titleMin: 110, gap: 14,
+    };
+  }
+  if (w >= 950) {
+    return {
+      artHeight: 52, controlWidth: 140,
+      searchMin: 180, searchMax: 280, titleMin: 110, gap: 14,
+    };
+  }
+  if (w >= 800) {
+    return {
+      artHeight: 40, controlWidth: 128,
+      searchMin: 160, searchMax: 240, titleMin: 110, gap: 12,
+    };
+  }
+  return {
+    artHeight: 0, controlWidth: 120,
+    searchMin: 140, searchMax: 220, titleMin: 100, gap: 12,
+  };
+}
+
+/** The narrowest the header row can lay out under a plan. The fit contract
+ * lives in one place so the test can hold every width to it: a plan whose
+ * minimum exceeds the width it was made for is the exact bug that panned
+ * the page sideways. */
+export function storeHeaderMinWidth(plan: StoreHeaderPlan): number {
+  const art = plan.artHeight > 0 ? plan.artHeight * STORE_ART_RATIO : 0;
+  // Children: [art?] title spacer search sort filter. The spacer is
+  // zero-width but still costs a flex gap on each side; counting children
+  // rather than guessing keeps this honest.
+  const children = (plan.artHeight > 0 ? 1 : 0) + 5;
+  return (
+    art +
+    plan.titleMin +
+    plan.searchMin +
+    plan.controlWidth * 2 +
+    (children - 1) * plan.gap +
+    STORE_HEADER_EDGE
+  );
+}

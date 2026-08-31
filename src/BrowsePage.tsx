@@ -42,6 +42,7 @@ import {
 const Scroller: any = ScrollPanelGroup;
 import { PageBackdrop, SectionHeading, StackedThumb } from "./chrome";
 import { NEXUS_ORANGE } from "./theme";
+import { storeHeaderPlan, STORE_HEADER_EDGE } from "./panelRules";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 
 const SORT_OPTIONS = [
@@ -581,6 +582,11 @@ function ModCarousel({
 // first paints at the right width instead of flashing a guess.
 let lastRailCols = 5;
 
+// Remembered across page opens, like lastRailCols: the first frame renders
+// with the last known width instead of a guess, so tiers do not visibly
+// snap on every navigation.
+let lastHeaderWidth = 0;
+
 export function BrowsePage() {
   // Explicit scope from the QAM beats ambient resolution (which could
   // go stale and surface another game's store).
@@ -908,6 +914,29 @@ export function BrowsePage() {
   const railTitle = heroIsCurated ? "Trending now" : "Also trending";
   const pinned = usePinnedTop();
 
+  // The header sizes itself from its own measured width, exactly like the
+  // rails: Steam's logical resolution is no guide to the panel this renders
+  // on, and the fixed-width version was wider than the Deck's real width -
+  // the filter hung off the screen edge, and focusing it panned the whole
+  // page sideways (device photos, 2026-08-31).
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [headerWidth, setHeaderWidth] = useState(lastHeaderWidth);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const compute = () => {
+      const width = el.clientWidth;
+      if (width <= 0) return;
+      lastHeaderWidth = width;
+      setHeaderWidth(width);
+    };
+    compute();
+    const watcher = new ResizeObserver(compute);
+    watcher.observe(el);
+    return () => watcher.disconnect();
+  }, []);
+  const header = storeHeaderPlan(headerWidth);
+
   return (
     // onCancel: B returns to the plugin's QAM panel instead of dumping the
     // user on the home screen with everything closed.
@@ -996,22 +1025,53 @@ export function BrowsePage() {
             the search scrolled off the top, which is the half Michael was
             actually reaching for. Nav and search are the two things a store
             page must never hide. */}
+        {/* The ref lives on a plain div, same as the rails: Focusable is
+            Steam's component and whether it forwards refs is not ours to
+            rely on. */}
+        <div ref={headerRef}>
         <Focusable
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "14px",
+            gap: `${header.gap}px`,
             padding: "12px 0",
           }}
         >
-          <img
-            src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${game.appId}/header.jpg`}
-            alt=""
-            onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
-            style={{ height: "52px", borderRadius: "6px", flexShrink: 0 }}
-          />
-          <div style={{ flexShrink: 0, minWidth: 0 }}>
-            <h2 style={{ margin: 0, whiteSpace: "nowrap", lineHeight: 1.15 }}>
+          {/* Every size below comes from storeHeaderPlan, which is derived
+              from this row's MEASURED width - tested in panelRules.test.mjs
+              to fit at every width. The previous fixed sizes assumed the
+              Deck's logical width and were wider than the real one, so the
+              filter hung off screen and focusing it panned the page. The
+              controls keep words at every tier: the icon-square experiment
+              proved the icons meant nothing. */}
+          {header.artHeight > 0 && (
+            <img
+              src={`https://cdn.cloudflare.steamstatic.com/steam/apps/${game.appId}/header.jpg`}
+              alt=""
+              onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+              style={{
+                height: `${header.artHeight}px`,
+                borderRadius: "6px",
+                flexShrink: 0,
+              }}
+            />
+          )}
+          <div
+            style={{
+              flexShrink: 1,
+              minWidth: `${header.titleMin}px`,
+              overflow: "hidden",
+            }}
+          >
+            <h2
+              style={{
+                margin: 0,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                lineHeight: 1.15,
+              }}
+            >
               {game.displayName}
             </h2>
             <div style={{ fontSize: "13px", fontWeight: 400, opacity: 0.6 }}>
@@ -1021,7 +1081,14 @@ export function BrowsePage() {
           <div style={{ flexGrow: 1 }} />
           {!collectionsMode && (
           <>
-          <div style={{ width: "300px", flexShrink: 0 }}>
+          <div
+            style={{
+              flexGrow: 1,
+              flexShrink: 1,
+              minWidth: `${header.searchMin}px`,
+              maxWidth: `${header.searchMax}px`,
+            }}
+          >
             <TextField
               label="Search"
               value={search}
@@ -1037,13 +1104,7 @@ export function BrowsePage() {
               }}
             />
           </div>
-          {/* Two narrow dropdowns, not icon squares. The icon-button idea
-              shipped for one build and failed twice over: the icons meant
-              nothing, and Steam reports a fixed logical resolution so
-              window.innerWidth cannot tell a TV from a Deck - the TV got
-              squares with room to spare. 150px fits the Deck beside the
-              search box, and every label still reads as words. */}
-          <div style={{ width: "150px", flexShrink: 0 }}>
+          <div style={{ width: `${header.controlWidth}px`, flexShrink: 0 }}>
             <Dropdown
               rgOptions={SORT_OPTIONS}
               selectedOption={sort}
@@ -1053,10 +1114,10 @@ export function BrowsePage() {
           </div>
           <div
             style={{
-              width: "150px",
+              width: `${header.controlWidth}px`,
               flexShrink: 0,
               // The last control needs air against the screen edge.
-              marginRight: "8px",
+              marginRight: `${STORE_HEADER_EDGE}px`,
             }}
           >
             <Dropdown
@@ -1080,6 +1141,7 @@ export function BrowsePage() {
           </>
           )}
         </Focusable>
+        </div>
         </div>
 
         {collectionsMode ? (

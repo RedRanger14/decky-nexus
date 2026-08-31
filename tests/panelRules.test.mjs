@@ -21,6 +21,8 @@ import {
   lastRunSummary,
   preDisabledNote,
   autoOffNote,
+  storeHeaderPlan,
+  storeHeaderMinWidth,
   repairedNote,
   unavailableNote,
   updatedNote,
@@ -1430,4 +1432,76 @@ test("requirement notes that carry instructions get their own line", () => {
 test("no requirement notes means no block", () => {
   assert.deepEqual(requirementSetupNotes(undefined), []);
   assert.deepEqual(requirementSetupNotes([{ modName: "X", notes: "" }]), []);
+});
+
+
+// --- storeHeaderPlan --------------------------------------------------------
+// The store header has been wrong in both directions: icon squares that
+// meant nothing on a TV, then fixed widths that hung the filter off the
+// Deck's screen edge - and focusing the off-screen control made Steam pan
+// the whole page sideways (device photos, 2026-08-31). The plan is derived
+// from the row's MEASURED width, and this holds it to the one contract that
+// matters: at every width, the row it plans must fit.
+
+import fs from "node:fs";
+
+test("the planned header row fits at every width it can meet", () => {
+  for (let w = 560; w <= 1920; w += 4) {
+    const plan = storeHeaderPlan(w);
+    const min = storeHeaderMinWidth(plan);
+    assert.ok(
+      min <= w,
+      `at ${w}px the plan needs ${min}px - this is the pan-the-page bug`
+    );
+  }
+});
+
+test("every tier keeps words on the controls", () => {
+  // The icon-square experiment shipped once: the icons meant nothing.
+  // 120px is the narrowest "All mods" and "Featured" render as words.
+  for (const w of [560, 700, 820, 900, 1000, 1100, 1232, 1600]) {
+    assert.ok(
+      storeHeaderPlan(w).controlWidth >= 120,
+      `controls must stay worded at ${w}px`
+    );
+  }
+});
+
+test("large screens keep the layout they had", () => {
+  const plan = storeHeaderPlan(1600);
+  assert.equal(plan.artHeight, 52);
+  assert.equal(plan.controlWidth, 150);
+  assert.equal(plan.searchMax, 300);
+});
+
+test("narrow screens trade art before they trade words", () => {
+  // The game art is decoration; the controls are the page. On the
+  // narrowest tier the art goes entirely and the controls stay worded.
+  const plan = storeHeaderPlan(700);
+  assert.equal(plan.artHeight, 0);
+  assert.ok(plan.controlWidth >= 120);
+  assert.ok(plan.searchMin >= 120, "search must stay usable");
+});
+
+test("an unmeasured header plans for a Deck, not a desktop", () => {
+  // First render happens before ResizeObserver fires. Planning wide and
+  // shrinking would repeat the exact overflow this exists to prevent;
+  // planning narrow and growing is invisible.
+  const plan = storeHeaderPlan(0);
+  assert.ok(storeHeaderMinWidth(plan) <= 900);
+});
+
+test("the store page actually consults the plan", () => {
+  const src = fs.readFileSync("src/BrowsePage.tsx", "utf8");
+  assert.match(src, /storeHeaderPlan\(/, "BrowsePage must call the planner");
+  assert.match(
+    src,
+    /new ResizeObserver/,
+    "the width must be measured, not taken from the window"
+  );
+  assert.doesNotMatch(
+    src,
+    /width: "300px"|width: "150px"/,
+    "no fixed header widths may survive - they are the overflow"
+  );
 });
