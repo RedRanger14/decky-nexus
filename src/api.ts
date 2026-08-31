@@ -7,7 +7,7 @@ import { callable } from "@decky/api";
 // "frosty": Frostbite games compile mods into a ModData tree, so there
 // are no mod folders to scan and no per-mod toggle - every change
 // recompiles the enabled set. See docs/frosty-swbf2/WORKING.md.
-export type InstallMode = "folder" | "dataDir" | "me3" | "frosty";
+export type InstallMode = "folder" | "dataDir" | "me3" | "frosty" | "bg3";
 
 export interface NexusMod {
   modId: number;

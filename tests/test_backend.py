@@ -16193,5 +16193,329 @@ class TestReleaseZipGate(unittest.TestCase):
             self.assertEqual(problems, [], f"{os.path.basename(z)}: {problems}")
 
 
+class TestBg3Mode(unittest.TestCase):
+    """Baldur's Gate 3, native Linux build: paks into the Larian profile's
+    Mods dir, registered in modsettings.lsx from each pak's embedded
+    meta.lsx. The parse was proven against ImpUI's real pak on device
+    before this existed; these tests hold the whole mode to that shape
+    with synthetic LSPK v18 paks built byte by byte."""
+
+    DOMAIN = "baldursgate3"
+    GAME = "BG3 Test"
+    MOD, FILE = 7777, 55555
+
+    # The REAL baseline captured from the game's first run on the Legion
+    # (2026-08-31), plus one foreign entry standing in for a mod.io install
+    # the plugin must never disturb.
+    BASELINE = """<?xml version="1.0" encoding="UTF-8"?>
+<save>
+    <version major="4" minor="8" revision="0" build="700"/>
+    <region id="ModuleSettings">
+        <node id="root">
+            <children>
+                <node id="Mods">
+                    <children>
+                        <node id="ModuleShortDesc">
+                            <attribute id="Folder" type="LSString" value="GustavX"/>
+                            <attribute id="MD5" type="LSString" value=""/>
+                            <attribute id="Name" type="LSString" value="GustavX"/>
+                            <attribute id="PublishHandle" type="uint64" value="0"/>
+                            <attribute id="UUID" type="guid" value="cb555efe-2d9e-131f-8195-a89329d218ea"/>
+                            <attribute id="Version64" type="int64" value="36028797018963968"/>
+                        </node>
+                        <node id="ModuleShortDesc">
+                            <attribute id="Folder" type="LSString" value="ModIoThing"/>
+                            <attribute id="MD5" type="LSString" value=""/>
+                            <attribute id="Name" type="LSString" value="Mod.io Thing"/>
+                            <attribute id="PublishHandle" type="uint64" value="42"/>
+                            <attribute id="UUID" type="guid" value="11111111-2222-3333-4444-555555555555"/>
+                            <attribute id="Version64" type="int64" value="1"/>
+                        </node>
+                    </children>
+                </node>
+            </children>
+        </node>
+    </region>
+</save>
+"""
+
+    @staticmethod
+    def _lz4_store(data: bytes) -> bytes:
+        """Literal-only LZ4 block: valid per spec (the last sequence ends
+        after its literals), and enough to compress anything for a test."""
+        out = bytearray()
+        n = len(data)
+        if n < 15:
+            out.append(n << 4)
+        else:
+            out.append(0xF0)
+            rest = n - 15
+            while rest >= 255:
+                out.append(255)
+                rest -= 255
+            out.append(rest)
+        out += data
+        return bytes(out)
+
+    @classmethod
+    def _make_pak(cls, uuid, name="Test Mod", folder="TestMod",
+                  version="72198331526283346", with_meta=True,
+                  compress_meta=False):
+        """A minimal LSPK v18 pak: 40-byte header, member data, then the
+        LZ4-compressed file table (272-byte entries)."""
+        members = []
+        if with_meta:
+            meta = (
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<save><region id="Config"><node id="root"><children>'
+                '<node id="ModuleInfo">'
+                f'<attribute id="Folder" type="LSString" value="{folder}"/>'
+                f'<attribute id="Name" type="LSString" value="{name}"/>'
+                f'<attribute id="UUID" type="guid" value="{uuid}"/>'
+                f'<attribute id="Version64" type="int64" value="{version}"/>'
+                "</node></children></node></region></save>"
+            ).encode()
+            if compress_meta:
+                members.append(
+                    (f"Mods/{folder}/meta.lsx", cls._lz4_store(meta),
+                     len(meta), 2)
+                )
+            else:
+                members.append(
+                    (f"Mods/{folder}/meta.lsx", meta, len(meta), 0)
+                )
+        members.append(("Public/Whatever/data.bin", b"payload", 7, 0))
+        blobs, entries = b"", []
+        offset = 40
+        for mname, blob, unc, method in members:
+            entries.append((mname, offset, method, len(blob), unc))
+            blobs += blob
+            offset += len(blob)
+        table = b""
+        for mname, off, method, disk, unc in entries:
+            table += mname.encode().ljust(256, b"\0")
+            table += (off & 0xFFFFFFFF).to_bytes(4, "little")
+            table += (off >> 32).to_bytes(2, "little")
+            table += bytes([0, method])
+            table += disk.to_bytes(4, "little")
+            table += unc.to_bytes(4, "little")
+        ctable = cls._lz4_store(table)
+        fl_off = 40 + len(blobs)
+        header = (
+            b"LSPK" + (18).to_bytes(4, "little")
+            + fl_off.to_bytes(8, "little")
+            + (8 + len(ctable)).to_bytes(4, "little")
+            + bytes([0, 0]) + b"\0" * 16 + (1).to_bytes(2, "little")
+        )
+        assert len(header) == 40, len(header)
+        return (
+            header + blobs
+            + len(entries).to_bytes(4, "little")
+            + len(ctable).to_bytes(4, "little")
+            + ctable
+        )
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        os.makedirs(os.path.join(self.install, "bin"))
+        self._real_root = main.BG3_PROFILE_ROOT
+        main.BG3_PROFILE_ROOT = os.path.join(TEST_ROOT, "bg3-profile")
+        shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
+        pub = os.path.join(main.BG3_PROFILE_ROOT, "PlayerProfiles", "Public")
+        os.makedirs(pub)
+        with open(os.path.join(pub, "modsettings.lsx"), "w") as f:
+            f.write(self.BASELINE)
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        shutil.rmtree(
+            main._extract_scratch(self.MOD, self.FILE), ignore_errors=True
+        )
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
+        main.BG3_PROFILE_ROOT = self._real_root
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def _archive(self, entries: dict):
+        archive = main._archive_cache_path(self.MOD, self.FILE, "m.zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            for rel, body in entries.items():
+                z.writestr(rel, body)
+
+    def _install(self, mod_name="Test Mod"):
+        return run(self.plugin.install_mod(
+            self.DOMAIN, self.MOD, self.FILE, "m.zip", mod_name, "1.0",
+            self.GAME, "Data", "", "", "bg3", 1086940,
+        ))
+
+    def _uuids_in_modsettings(self):
+        doc = main.xml_parse_file(main._bg3_modsettings_path())
+        out = []
+        for node in doc.iter("node"):
+            if node.get("id") == "ModuleShortDesc":
+                for a in node.findall("attribute"):
+                    if a.get("id") == "UUID":
+                        out.append(a.get("value"))
+        return out
+
+    # ---- the decompressor is held to real LZ4, not just our stored form
+    def test_lz4_match_sequences_decode(self):
+        # token 0x35: 3 literals then a 9-byte match at offset 3 -
+        # overlapping copy, the case naive slicing gets wrong.
+        block = bytes([0x35]) + b"abc" + (3).to_bytes(2, "little")
+        self.assertEqual(
+            main._lz4_block_decompress(block, 12), b"abcabcabcabc"
+        )
+
+    def test_lz4_literal_extension_decodes(self):
+        data = bytes(range(256)) * 3
+        self.assertEqual(
+            main._lz4_block_decompress(self._lz4_store(data), len(data)),
+            data,
+        )
+
+    def test_pak_meta_reads_from_synthetic_and_compressed(self):
+        for compress in (False, True):
+            pak = self._make_pak(
+                "aaaa1111-0000-0000-0000-000000000001",
+                compress_meta=compress,
+            )
+            path = os.path.join(TEST_ROOT, "probe.pak")
+            with open(path, "wb") as f:
+                f.write(pak)
+            metas = main._lspk_pak_metas(path)
+            self.assertEqual(len(metas), 1, f"compress={compress}")
+            self.assertEqual(
+                metas[0]["uuid"], "aaaa1111-0000-0000-0000-000000000001"
+            )
+            self.assertEqual(metas[0]["folder"], "TestMod")
+            self.assertEqual(metas[0]["version64"], "72198331526283346")
+
+    def test_install_registers_and_preserves_foreign_entries(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        r = self._install()
+        self.assertTrue(r.get("ok"), r)
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "TestMod.pak")))
+        uuids = self._uuids_in_modsettings()
+        # GustavX FIRST - the game's own campaign must stay at the top -
+        # the mod.io entry untouched, ours appended.
+        self.assertEqual(uuids[0], "cb555efe-2d9e-131f-8195-a89329d218ea")
+        self.assertIn("11111111-2222-3333-4444-555555555555", uuids)
+        self.assertIn("aaaa1111-0000-0000-0000-000000000001", uuids)
+        rec = main._load_settings()["installed"][self.DOMAIN]["Test Mod"]
+        self.assertEqual(rec["mode"], "bg3")
+        self.assertEqual(rec["files"], ["TestMod.pak"])
+
+    def test_disable_pulls_the_pak_and_the_registration(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self._install()
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, "Data", "Test Mod", False, "bg3", self.DOMAIN))
+        self.assertTrue(r.get("ok"), r)
+        self.assertFalse(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "TestMod.pak")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_disabled_dir(), "TestMod.pak")))
+        uuids = self._uuids_in_modsettings()
+        self.assertNotIn("aaaa1111-0000-0000-0000-000000000001", uuids)
+        self.assertIn("11111111-2222-3333-4444-555555555555", uuids)
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, "Data", "Test Mod", True, "bg3", self.DOMAIN))
+        self.assertTrue(r.get("ok"), r)
+        self.assertIn(
+            "aaaa1111-0000-0000-0000-000000000001",
+            self._uuids_in_modsettings(),
+        )
+
+    def test_uninstall_cleans_files_registration_and_record(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self._install()
+        r = run(self.plugin.uninstall_mod(
+            self.DOMAIN, self.GAME, "Data", "Test Mod", "bg3"))
+        self.assertTrue(r.get("ok"), r)
+        self.assertFalse(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "TestMod.pak")))
+        self.assertNotIn(
+            "aaaa1111-0000-0000-0000-000000000001",
+            self._uuids_in_modsettings(),
+        )
+        self.assertNotIn(
+            "Test Mod",
+            main._load_settings().get("installed", {}).get(self.DOMAIN, {}),
+        )
+        # The game's own entries survived every step of the round trip.
+        self.assertEqual(
+            self._uuids_in_modsettings(),
+            [
+                "cb555efe-2d9e-131f-8195-a89329d218ea",
+                "11111111-2222-3333-4444-555555555555",
+            ],
+        )
+
+    def test_without_first_launch_nothing_is_touched(self):
+        os.remove(main._bg3_modsettings_path())
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        r = self._install()
+        self.assertFalse(r.get("ok"))
+        self.assertIn("Launch", r.get("error", ""))
+        self.assertFalse(os.path.isdir(main._bg3_mods_dir()))
+
+    def test_a_pakless_archive_names_the_real_problem(self):
+        self._archive({"DWrite.dll": b"MZwindows", "readme.txt": b"hi"})
+        r = self._install("Some SE Mod")
+        self.assertFalse(r.get("ok"))
+        self.assertIn("Script Extender", r.get("error", ""))
+
+    def test_an_override_pak_without_meta_still_installs(self):
+        self._archive({"Override.pak": self._make_pak(
+            "unused", with_meta=False)})
+        r = self._install("Pure Override")
+        self.assertTrue(r.get("ok"), r)
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "Override.pak")))
+        # No registration to write, and the game's list is untouched.
+        self.assertEqual(len(self._uuids_in_modsettings()), 2)
+
+    def test_listing_reads_the_records(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self._install()
+        r = run(self.plugin.get_installed_mods(
+            self.DOMAIN, self.GAME, "Data", "bg3", 1086940))
+        self.assertTrue(r.get("ok"), r)
+        mods = r["mods"]
+        self.assertEqual(len(mods), 1)
+        self.assertEqual(mods[0]["name"], "Test Mod")
+        self.assertTrue(mods[0]["enabled"])
+        self.assertTrue(mods[0]["togglable"])
+
+    def test_home_relative_docs_check(self):
+        real = main.HOME_ROOT
+        main.HOME_ROOT = TEST_ROOT
+        try:
+            marker = os.path.join(TEST_ROOT, "somefile.txt")
+            with open(marker, "w") as f:
+                f.write("x")
+            r = run(self.plugin.check_docs_file(0, "~/somefile.txt"))
+            self.assertTrue(r["exists"])
+            r = run(self.plugin.check_docs_file(0, "~/absent.txt"))
+            self.assertFalse(r["exists"])
+            r = run(self.plugin.check_docs_file(0, "~/../escape"))
+            self.assertFalse(r.get("ok", True))
+        finally:
+            main.HOME_ROOT = real
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -359,6 +359,53 @@ export interface SupportedGame {
 }
 
 export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
+  1086940: {
+    appId: 1086940,
+    displayName: "Baldur's Gate 3",
+    nexusDomain: "baldursgate3",
+    installDirName: "Baldurs Gate 3",
+    // Unused by the bg3 install mode (mods live in the Larian profile in
+    // the Linux home, not under the game), but the scanner APIs take it.
+    modsSubdir: "Data",
+    installMode: "bg3",
+    moddedSaveWarning: true,
+    // The native Linux build's binary is an ELF, not a PE - version
+    // matching reads nothing from it and quietly no-ops.
+    processName: "bin/bg3",
+    //
+    // Recon (Legion, 2026-08-31): SteamOS installs the NATIVE build
+    // (bin/bg3, no Proton prefix). Mods are LSPK v18 paks registered in
+    // modsettings.lsx; the profile tree only exists after the game has
+    // run once, hence the notice below. The Script Extender does not run
+    // on the native build, so SE-only mods cannot work here at all.
+    firstRunNotice: {
+      message:
+        "Launch Baldur's Gate 3 once before installing mods. The first " +
+        "run creates the mod list that installs are registered in.",
+      goneWhenDocsFile:
+        "~/.local/share/Larian Studios/Baldur's Gate 3/PlayerProfiles/" +
+        "Public/modsettings.lsx",
+    },
+    // Windows DLL injection: these load via bink2w64/DWrite beside
+    // bg3.exe, and the native Linux build has neither the exe nor a
+    // Windows loader path. Both are top-10 popular, so failing at install
+    // time would read as our bug.
+    heroExcludeModIds: [944, 945],
+    incompatibleMods: {
+      944:
+        "Native Mod Loader injects a Windows DLL beside bg3.exe. The " +
+        "native Linux build of the game that SteamOS installs has no " +
+        "bg3.exe and no DLL loading, so there is nothing for it to hook.",
+      945:
+        "Native Camera Tweaks is a Windows DLL loaded by Native Mod " +
+        "Loader, and neither can run on the native Linux build of the " +
+        "game that SteamOS installs.",
+    },
+    underConstruction:
+      "Baldur's Gate 3 support is new: pak mods install and register, " +
+      "but Script Extender mods cannot run on the native Linux build, " +
+      "and load-order editing is not here yet.",
+  },
   2868840: {
     appId: 2868840,
     displayName: "Slay the Spire 2",

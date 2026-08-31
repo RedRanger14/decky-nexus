@@ -209,6 +209,26 @@
     ]
   },
   {
+    "appId": "1086940",
+    "displayName": "Baldur's Gate 3",
+    "nexusDomain": "baldursgate3",
+    "installDirName": "Baldurs Gate 3",
+    "modsSubdir": "Data",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": "bg3",
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "1091500",
     "displayName": "Cyberpunk 2077",
     "nexusDomain": "cyberpunk2077",

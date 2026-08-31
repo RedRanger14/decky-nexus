@@ -6176,6 +6176,224 @@ def _me3_records(settings: dict, game_domain: str) -> list:
     return me3
 
 
+# ---- Baldur's Gate 3 (native Linux build) -----------------------------------
+# Mods are LSPK paks in the Larian profile's Mods dir, registered in
+# modsettings.lsx. An unregistered pak never loads (Patch 8), and the
+# registration fields come from the pak's own embedded meta.lsx.
+HOME_ROOT = os.path.expanduser("~")
+BG3_PROFILE_ROOT = os.path.join(
+    HOME_ROOT, ".local", "share", "Larian Studios", "Baldur's Gate 3"
+)
+
+
+def _bg3_mods_dir() -> str:
+    return os.path.join(BG3_PROFILE_ROOT, "Mods")
+
+
+def _bg3_disabled_dir() -> str:
+    return os.path.join(BG3_PROFILE_ROOT, "Mods-disabled")
+
+
+def _bg3_modsettings_path() -> str:
+    return os.path.join(
+        BG3_PROFILE_ROOT, "PlayerProfiles", "Public", "modsettings.lsx"
+    )
+
+
+BG3_LAUNCH_FIRST = (
+    "Launch Baldur's Gate 3 once first - the first run creates the mod "
+    "list (modsettings.lsx) that installs are registered in."
+)
+
+
+def _lz4_block_decompress(src: bytes, out_size: int) -> bytes:
+    """LZ4 BLOCK decompress, pure python - no frame header. LSPK compresses
+    both its file table and its members this way, and nothing in the
+    standard library reads it. The format is [token][literals][match]
+    sequences; both counts extend by 255-chunks while their nibble is 15.
+    The last sequence legally ends after its literals."""
+    out = bytearray()
+    i, n = 0, len(src)
+    while i < n and len(out) < out_size:
+        token = src[i]
+        i += 1
+        lit = token >> 4
+        if lit == 15:
+            while True:
+                b = src[i]
+                i += 1
+                lit += b
+                if b != 255:
+                    break
+        out += src[i : i + lit]
+        i += lit
+        if i >= n or len(out) >= out_size:
+            break
+        off = int.from_bytes(src[i : i + 2], "little")
+        i += 2
+        if off == 0:
+            raise ValueError("corrupt LZ4 block (zero offset)")
+        mlen = (token & 0xF) + 4
+        if (token & 0xF) == 15:
+            while True:
+                b = src[i]
+                i += 1
+                mlen += b
+                if b != 255:
+                    break
+        start = len(out) - off
+        if start < 0:
+            raise ValueError("corrupt LZ4 block (offset past start)")
+        for k in range(mlen):
+            out.append(out[start + k])
+    return bytes(out)
+
+
+def _lspk_pak_metas(pak_path: str) -> list:
+    """Every mod registration inside an LSPK pak: the ModuleInfo fields of
+    each Mods/<Folder>/meta.lsx. A pak can carry several (frameworks), or
+    none (pure asset overrides), and modsettings.lsx wants exactly these
+    fields. Proven against ImpUI's real pak before being trusted.
+
+    Raises ValueError with a readable message for anything unreadable."""
+    with open(pak_path, "rb") as f:
+        raw = f.read()
+    if raw[:4] != b"LSPK":
+        raise ValueError("not a BG3 pak (no LSPK signature)")
+    ver = int.from_bytes(raw[4:8], "little")
+    if ver != 18:
+        raise ValueError(
+            f"pak format version {ver} - this was built for a much older "
+            "game and the current game cannot load it"
+        )
+    fl_off = int.from_bytes(raw[8:16], "little")
+    num_files = int.from_bytes(raw[fl_off : fl_off + 4], "little")
+    comp_size = int.from_bytes(raw[fl_off + 4 : fl_off + 8], "little")
+    if num_files > 100000:
+        raise ValueError("pak file table is implausible - corrupt download?")
+    table = _lz4_block_decompress(
+        raw[fl_off + 8 : fl_off + 8 + comp_size], num_files * 272
+    )
+    metas = []
+    for e in range(num_files):
+        base = e * 272
+        name = table[base : base + 256].split(b"\0", 1)[0].decode(
+            "utf-8", "replace"
+        )
+        if not (name.startswith("Mods/") and name.endswith("/meta.lsx")):
+            continue
+        off_lo = int.from_bytes(table[base + 256 : base + 260], "little")
+        off_hi = int.from_bytes(table[base + 260 : base + 262], "little")
+        flags = table[base + 263]
+        size_disk = int.from_bytes(table[base + 264 : base + 268], "little")
+        size_unc = int.from_bytes(table[base + 268 : base + 272], "little")
+        offset = off_lo | (off_hi << 32)
+        blob = raw[offset : offset + size_disk]
+        method = flags & 0xF
+        if method == 0:
+            data = blob
+        elif method == 1:
+            # Lazy on purpose: Decky's embedded Python is minimal (it has
+            # no xml package at all), so nothing here may ASSUME a module
+            # at import time - a missing one would kill the whole plugin
+            # at load rather than one install with a message.
+            try:
+                import zlib
+            except ImportError:
+                raise ValueError("meta.lsx uses zlib, unavailable here")
+            data = zlib.decompress(blob)
+        elif method == 2:
+            data = _lz4_block_decompress(blob, size_unc)
+        else:
+            raise ValueError(f"meta.lsx uses unhandled compression {method}")
+        # The project's own minimal parser: xml.etree does not exist on
+        # Decky's Python (no pyexpat) - that has crashed in the field once.
+        root = xml_parse(data.decode("utf-8-sig", "replace"))
+        info = {}
+        for node in root.iter("node"):
+            if node.get("id") == "ModuleInfo":
+                for a in node.findall("attribute"):
+                    info[a.get("id")] = a.get("value")
+                break
+        if info.get("UUID"):
+            metas.append({
+                "uuid": info.get("UUID"),
+                "name": info.get("Name") or "",
+                "folder": info.get("Folder") or "",
+                "version64": info.get("Version64")
+                or info.get("Version")
+                or "36028797018963968",
+                "md5": info.get("MD5") or "",
+            })
+    return metas
+
+
+def _bg3_records(settings: dict, game_domain: str) -> list:
+    recs = settings.get("installed", {}).get(game_domain, {})
+    return [(k, r) for k, r in recs.items() if r.get("mode") == "bg3"]
+
+
+def _write_bg3_modsettings(settings: dict, game_domain: str) -> str:
+    """Regenerate modsettings.lsx: the game's own entries (GustavX, and
+    anything installed through the official mod.io manager) stay exactly
+    where they are, every entry we own is removed, and the enabled records'
+    entries are appended in install order. Returns "" or a user-readable
+    error. Mirrors _write_me3_profile: the file is derived state, records
+    are the truth."""
+    path = _bg3_modsettings_path()
+    if not os.path.isfile(path):
+        return BG3_LAUNCH_FIRST
+    doc = xml_parse_file(path)
+    # xml_parse returns the document ELEMENT (<save>), not a wrapper.
+    save = doc if doc.tag == "save" else doc.find("save")
+    mods_children = None
+    for node in doc.iter("node"):
+        if node.get("id") == "Mods":
+            mods_children = node.find("children")
+            break
+    if save is None or mods_children is None:
+        return "modsettings.lsx has no Mods list - launch the game once"
+    owned, enabled_entries = set(), []
+    for _key, rec in _bg3_records(settings, game_domain):
+        for m in rec.get("bg3_mods") or []:
+            u = (m.get("uuid") or "").lower()
+            if not u:
+                continue
+            owned.add(u)
+            if rec.get("enabled", True) and all(
+                u != eu for eu, _em in enabled_entries
+            ):
+                enabled_entries.append((u, m))
+    for desc in list(mods_children.findall("node")):
+        u = ""
+        for a in desc.findall("attribute"):
+            if a.get("id") == "UUID":
+                u = (a.get("value") or "").lower()
+        if u in owned:
+            mods_children.remove(desc)
+    for _u, m in enabled_entries:
+        desc = XmlNode("node")
+        desc.attrib["id"] = "ModuleShortDesc"
+        for aid, atype, val in (
+            ("Folder", "LSString", m.get("folder") or ""),
+            ("MD5", "LSString", m.get("md5") or ""),
+            ("Name", "LSString", m.get("name") or ""),
+            ("PublishHandle", "uint64", "0"),
+            ("UUID", "guid", m.get("uuid") or ""),
+            ("Version64", "int64", str(m.get("version64") or "36028797018963968")),
+        ):
+            a = XmlNode("attribute")
+            a.attrib["id"] = aid
+            a.attrib["type"] = atype
+            a.attrib["value"] = val
+            desc.append(a)
+        mods_children.append(desc)
+    xml_write_file(path, save)
+    return ""
+
+
+
+
 def _me3_regulation_owner(settings: dict, game_domain: str, skip_key: str = ""):
     """Which enabled mod currently owns regulation.bin, if any. Two of
     them cannot coexist: regulation.bin is one file holding every game
@@ -12472,6 +12690,101 @@ query Link($slug: String!, $domainName: String!) {
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": folder}
 
+        # Baldur's Gate 3 (native Linux build): every .pak goes into the
+        # Larian profile's Mods dir and is registered in modsettings.lsx
+        # from its own embedded meta.lsx. Unregistered paks never load
+        # (Patch 8), so a copy without the registration would look
+        # installed and do nothing.
+        if install_mode == "bg3":
+            if not os.path.isfile(_bg3_modsettings_path()):
+                _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, "launch once")
+                return {"ok": False, "error": BG3_LAUNCH_FIRST}
+            paks = []
+            for r, _dirs2, names in os.walk(scratch):
+                for n in sorted(names):
+                    if n.lower().endswith(".pak"):
+                        paks.append(os.path.join(r, n))
+            if not paks:
+                _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, "no pak")
+                return {
+                    "ok": False,
+                    "error": (
+                        "No .pak file in this download, so it is not a "
+                        "BG3 pak mod. If its page says it needs the "
+                        "Script Extender, that does not run on the "
+                        "native Linux build of the game."
+                    ),
+                }
+            all_metas, meta_err = [], ""
+            staged = []
+            for p in paks:
+                try:
+                    got = _lspk_pak_metas(p)
+                except ValueError as exc:
+                    meta_err = f"{os.path.basename(p)}: {exc}"
+                    got = []
+                staged.append((p, got))
+            os.makedirs(_bg3_mods_dir(), exist_ok=True)
+            file_names = []
+            for p, got in staged:
+                dst = os.path.join(_bg3_mods_dir(), os.path.basename(p))
+                if os.path.isfile(dst):
+                    os.remove(dst)
+                shutil.move(p, dst)
+                file_names.append(os.path.basename(p))
+                all_metas.extend(got)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            settings = _load_settings()
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            key = _safe_name(mod_name)
+            installed[key] = _merge_install_record(installed.get(key), {
+                "mod_id": mod_id,
+                "file_id": file_id,
+                "name": mod_name,
+                "version": mod_version,
+                "file_name": file_name,
+                "installed_at": int(time.time()),
+                "page_version": page_version,
+                "source": record_source,
+                "collection_slug": collection_slug,
+                "mode": "bg3",
+                "files": file_names,
+                "bg3_mods": all_metas,
+                "enabled": True,
+            })
+            err = _write_bg3_modsettings(settings, game_domain)
+            if err:
+                # Roll the copy back: paks in place but unregistered is
+                # exactly the "installed and does nothing" trap.
+                installed.pop(key, None)
+                for n in file_names:
+                    try:
+                        os.remove(os.path.join(_bg3_mods_dir(), n))
+                    except OSError:
+                        pass
+                _save_settings(settings)
+                await _emit_progress(mod_id, "error", 0, "modsettings")
+                return {"ok": False, "error": err}
+            _save_settings(settings)
+            if meta_err and not all_metas:
+                decky.logger.warning(
+                    f"bg3 {mod_name!r}: no registration read - {meta_err}"
+                )
+            decky.logger.info(
+                f"installed bg3 mod {mod_name!r}: {file_names} "
+                f"({len(all_metas)} registered)"
+            )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": key}
+
         # FOMOD wizard archives for folder-mode games: park and let the
         # wizard (or a collection curator's recorded choices) pick. This
         # check once lived only in the dataDir branch, so for pak games
@@ -14949,6 +15262,15 @@ query Link($slug: String!, $domainName: String!) {
         """Does a file exist under the prefix's Documents? Used for
         first-run notices (e.g. Bannerlord's LauncherData.xml only exists
         once the game has run)."""
+        if (subpath or "").startswith("~/"):
+            # Native Linux games (BG3) keep their profile in the real home,
+            # not a prefix. Rooted at the same base the installer uses, so
+            # the notice clears exactly when installs become possible.
+            rel = subpath[2:]
+            if not _safe_rel_path(rel):
+                return {"ok": False, "error": "Invalid path"}
+            path = os.path.join(HOME_ROOT, *rel.split("/"))
+            return {"ok": True, "exists": os.path.exists(path)}
         if not _safe_rel_path(subpath or ""):
             return {"ok": False, "error": "Invalid path"}
         path = _prefix_user_path(app_id, "Documents", *subpath.split("/"))
@@ -18994,6 +19316,34 @@ query CollectionInstructions($slug: String!) {
                 ),
             }
 
+        if install_mode == "bg3":
+            settings = _load_settings()
+            results = [
+                {
+                    "folder": key,
+                    "enabled": bool(rec.get("enabled", True)),
+                    "tracked": True,
+                    "name": rec.get("name") or key,
+                    "version": rec.get("version") or "",
+                    "mod_id": rec.get("mod_id"),
+                    "togglable": True,
+                    "source": rec.get("source") or "",
+                    "collection_slug": rec.get("collection_slug") or "",
+                }
+                for key, rec in _bg3_records(settings, game_domain)
+            ]
+            results.sort(key=lambda m: (m["name"] or "").lower())
+            return {
+                "ok": True,
+                "mods": results,
+                "collections": settings.get("collections", {}).get(
+                    game_domain, {}
+                ),
+                "attention": settings.get("collection_attention", {}).get(
+                    game_domain, {}
+                ),
+            }
+
         if install_mode == "me3":
             settings = _load_settings()
             results = [
@@ -19214,6 +19564,35 @@ query CollectionInstructions($slug: String!) {
         plugins_style: str = "starred",
         hidden_folders: list = None,
     ) -> dict:
+        if install_mode == "bg3":
+            # The registration decides what loads, but the pak moves too:
+            # historically the engine applied asset-override paks WITHOUT a
+            # registration, so a "disabled" reskin that stayed in Mods/
+            # could keep applying. Out of the folder means off.
+            settings = _load_settings()
+            rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+            if not rec or rec.get("mode") != "bg3":
+                return {"ok": False, "error": f"{folder} is not tracked"}
+            src_dir = _bg3_disabled_dir() if enabled else _bg3_mods_dir()
+            dst_dir = _bg3_mods_dir() if enabled else _bg3_disabled_dir()
+            os.makedirs(dst_dir, exist_ok=True)
+            for n in rec.get("files") or []:
+                src = os.path.join(src_dir, n)
+                if os.path.isfile(src):
+                    dst = os.path.join(dst_dir, n)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.move(src, dst)
+            rec["enabled"] = bool(enabled)
+            err = _write_bg3_modsettings(settings, game_domain)
+            if err:
+                return {"ok": False, "error": err}
+            _save_settings(settings)
+            decky.logger.info(
+                f"{'enabled' if enabled else 'disabled'} bg3 mod {folder!r}"
+            )
+            return {"ok": True}
+
         if install_mode == "me3":
             # Nothing moves on disk: the profile decides what loads, so a
             # toggle is one 'enabled' flag and a rewrite.
@@ -19520,6 +19899,32 @@ query CollectionInstructions($slug: String!) {
         and forget its record."""
         if os.sep in folder or "/" in folder or folder in (".", ".."):
             return {"ok": False, "error": "Invalid mod folder name"}
+        if install_mode == "bg3":
+            settings = _load_settings()
+            rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+            if not rec or rec.get("mode") != "bg3":
+                return {"ok": False, "error": f"{folder} is not tracked"}
+            for n in rec.get("files") or []:
+                if not _safe_rel_path(n) or "/" in n:
+                    continue
+                for base in (_bg3_mods_dir(), _bg3_disabled_dir()):
+                    try:
+                        os.remove(os.path.join(base, n))
+                    except OSError:
+                        pass
+            # Disabled first, THEN written, THEN dropped: the writer only
+            # removes entries a record still owns, so popping first would
+            # leave the registration behind forever - the test caught
+            # exactly that before it shipped.
+            rec["enabled"] = False
+            err = _write_bg3_modsettings(settings, game_domain)
+            if err:
+                return {"ok": False, "error": err}
+            settings["installed"][game_domain].pop(folder, None)
+            _save_settings(settings)
+            decky.logger.info(f"uninstalled bg3 mod {folder!r}")
+            return {"ok": True}
+
         if install_mode == "me3":
             settings = _load_settings()
             if not _remove_me3_record(game_domain, folder, settings):
@@ -19704,6 +20109,36 @@ query CollectionInstructions($slug: String!) {
         ones (framework components like SMAPI's SaveBackup)."""
         try:
             protected_set = {p.lower() for p in (protected or [])}
+            if install_mode == "bg3":
+                settings = _load_settings()
+                removed_list, kept = [], []
+                for key, rec in list(_bg3_records(settings, game_domain)):
+                    if key.lower() in protected_set:
+                        kept.append(key)
+                        continue
+                    for n in rec.get("files") or []:
+                        if not _safe_rel_path(n) or "/" in n:
+                            continue
+                        for base in (_bg3_mods_dir(), _bg3_disabled_dir()):
+                            try:
+                                os.remove(os.path.join(base, n))
+                            except OSError:
+                                pass
+                    # Disable, not pop: the writer only removes entries a
+                    # record still owns (see uninstall_mod above).
+                    rec["enabled"] = False
+                    removed_list.append(key)
+                err = _write_bg3_modsettings(settings, game_domain)
+                if err and removed_list:
+                    decky.logger.warning(f"bg3 reset: {err}")
+                for key in removed_list:
+                    settings["installed"][game_domain].pop(key, None)
+                _save_settings(settings)
+                decky.logger.info(
+                    f"uninstall_all (bg3): removed {removed_list}, kept {kept}"
+                )
+                return {"ok": True, "removed": len(removed_list), "kept": kept}
+
             if install_mode == "me3":
                 settings = _load_settings()
                 removed_list, kept = [], []

@@ -14,7 +14,12 @@ param(
     [switch]$PackOnly,
     # Deploy even if the device is mid-download or mid-patch. Restarting
     # Decky kills that work, so this is off by default.
-    [switch]$Force
+    [switch]$Force,
+    # Deploy to this host/IP instead of the configured ones. Needed whenever
+    # BOTH handhelds are awake: they each answer to steamdeck.local, and
+    # mDNS hands the name to whichever claimed it first - on 2026-08-31 that
+    # was the Deck while the target was the Legion at its raw IP.
+    [string]$TargetHost = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,11 +54,19 @@ $staleDir = "$($cfg.deckdir)/homebrew/plugins/$($folder -replace ' ', '-')"
 # flaky, so deckipfallback (a raw LAN IP) is tried when the name doesn't answer.
 $hosts = @($cfg.deckip)
 if ($cfg.deckipfallback) { $hosts += $cfg.deckipfallback }
+if ($TargetHost) { $hosts = @($TargetHost) }
 
 # ---- build -----------------------------------------------------------------
 if (-not $SkipBuild) {
-    pnpm run build
-    if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
+    # pnpm writes progress to stderr even on success, and under
+    # $ErrorActionPreference = "Stop" that becomes a terminating error on a
+    # build that worked (only when this script is invoked directly - the
+    # pnpm-run wrapper happened to mask it). The exit code is the verdict.
+    $ErrorActionPreference = "Continue"
+    pnpm run build 2>&1 | Write-Host
+    $buildExit = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($buildExit -ne 0) { throw "frontend build failed" }
 }
 if (-not (Test-Path (Join-Path $root "dist\index.js"))) { throw "dist/index.js missing - run pnpm run build" }
 
