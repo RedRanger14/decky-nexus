@@ -404,7 +404,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     underConstruction:
       "Baldur's Gate 3 support is new: pak mods install and register, " +
       "but Script Extender mods cannot run on the native Linux build, " +
-      "and load-order editing is not here yet.",
+      "and load-order editing is not here yet. The first time you boot " +
+      "with mods, the game's own Mods menu may ask you to confirm " +
+      "third-party mods once - that is the game, and one tap.",
   },
   2868840: {
     appId: 2868840,
