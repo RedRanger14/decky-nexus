@@ -53,6 +53,7 @@ appear in the plugin until they do.
 - Mass Effect Legendary Edition
 - Nier: Automata
 - Skyrim VR
+- Subnautica
 
 Want one moved up, or a new one added? Open a [game request][issues] and say
 which. Adding a game means installing it, modding it and playing it on

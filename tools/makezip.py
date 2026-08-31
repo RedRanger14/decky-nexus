@@ -1,9 +1,14 @@
-"""Build the release zip with POSIX separators.
+r"""Build the release zip with POSIX separators.
 
 PowerShell's Compress-Archive writes Windows path separators into zip
-entries, so Linux tools see one file named "Nexus-Mods\LICENSE" rather than
+entries, so Linux tools see one file named "Nexus Mods\LICENSE" rather than
 a folder, and Decky's installer hangs on "PARSING ZIP FILE". Windows hides
 this on read, so it survived a verification pass.
+
+The r-prefix matters: without it the backslash above is an invalid escape
+sequence, python prints a SyntaxWarning to stderr, and release.ps1 (which
+runs with $ErrorActionPreference = "Stop") treats that warning as a fatal
+error and abandons the release.
 """
 import os
 import sys

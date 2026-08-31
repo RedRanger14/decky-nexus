@@ -16002,5 +16002,172 @@ class TestFolderModeFomod(unittest.TestCase):
         self.assertEqual(self._paks(), ["01.SexyBushi_SFW_P.pak"])
 
 
+class TestReleaseZipGate(unittest.TestCase):
+    """A release zip that cannot install must not be publishable.
+
+    v1.4.0 shipped with its top folder named "Nexus-Mods" against a
+    plugin.json name of "Nexus Mods", because the zip was hand-built with
+    Compress-Archive instead of by release.ps1. Decky reports that
+    disagreement by sitting on "PARSING ZIP FILE" forever and install.sh
+    dies with "extraction did not produce Nexus Mods/plugin.json", so the
+    only symptom anybody saw was a user saying the update does not work and
+    falling back to 1.0.0.
+
+    release.ps1 already carried a comment warning about exactly this. A
+    comment did not stop it, so the check now lives in the code that runs on
+    every path to publishing, and here.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+        import makestore
+
+        self.check = makestore.check_zip
+        with open(os.path.join(REPO_ROOT, "plugin.json"), encoding="utf-8") as f:
+            self.plugin_name = json.load(f)["name"]
+        self.tmp = os.path.join(TEST_ROOT, "zipgate")
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        os.makedirs(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _zip(self, entries: dict, name="rel.zip") -> str:
+        path = os.path.join(self.tmp, name)
+        with zipfile.ZipFile(path, "w") as z:
+            for rel, body in entries.items():
+                z.writestr(rel, body)
+        return path
+
+    def _good_entries(self, top=None, version="9.9.9"):
+        top = top if top is not None else self.plugin_name
+        return {
+            f"{top}/plugin.json": json.dumps({"name": self.plugin_name}),
+            f"{top}/package.json": json.dumps({"version": version}),
+            f"{top}/main.py": "x",
+            f"{top}/dist/index.js": "x",
+            f"{top}/LICENSE": "x",
+            f"{top}/README.md": "x",
+        }
+
+    def test_a_correct_zip_passes(self):
+        z = self._zip(self._good_entries())
+        self.assertEqual(self.check(z, self.plugin_name, "9.9.9"), [])
+
+    def test_the_hyphenated_folder_that_shipped_is_refused(self):
+        # The exact v1.4.0 mistake.
+        z = self._zip(self._good_entries(top="Nexus-Mods"))
+        problems = self.check(z, self.plugin_name, "9.9.9")
+        self.assertTrue(problems)
+        self.assertIn("top-level folder", problems[0])
+        self.assertIn("Nexus-Mods", problems[0])
+
+    def test_windows_separators_are_refused(self):
+        # Invisible on Windows, which is how it shipped once before: a Linux
+        # tool sees one file called "Nexus Mods\LICENSE", not a folder.
+        #
+        # The entry has to be forged. zipfile rewrites os.sep to "/" on
+        # write, so on Windows there is no way through the library to
+        # produce the name Compress-Archive produces. Patching the bytes is:
+        # the replacement is the same length, so every offset in the local
+        # header and the central directory stays valid.
+        path = os.path.join(self.tmp, "backslash.zip")
+        good = f"{self.plugin_name}/LICENSE"
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr(good, "x")
+        with open(path, "rb") as f:
+            raw = f.read()
+        with open(path, "wb") as f:
+            f.write(raw.replace(good.encode(), good.replace("/", "\\").encode()))
+        # orig_filename, not namelist(): on Windows zipfile normalises the
+        # separator away as it reads, so namelist() would report this forged
+        # zip as clean. That is the same trap the check itself fell into.
+        self.assertIn(
+            "\\",
+            zipfile.ZipFile(path).infolist()[0].orig_filename,
+            "forging the entry failed",
+        )
+        problems = self.check(path, self.plugin_name, "9.9.9")
+        self.assertTrue(
+            any("Windows separators" in p for p in problems), problems
+        )
+
+    def test_a_missing_runtime_file_is_refused(self):
+        for drop in ("plugin.json", "main.py", "dist/index.js"):
+            entries = self._good_entries()
+            del entries[f"{self.plugin_name}/{drop}"]
+            z = self._zip(entries, name=f"drop-{drop.replace('/', '_')}.zip")
+            problems = self.check(z, self.plugin_name, "9.9.9")
+            self.assertTrue(problems, f"dropping {drop} must be refused")
+
+    def test_a_zip_of_the_wrong_version_is_refused(self):
+        # Publishing last release's artifact under this release's tag: the
+        # filename would say 9.9.9 and the running plugin would be 1.0.0.
+        z = self._zip(self._good_entries(version="1.0.0"))
+        problems = self.check(z, self.plugin_name, "9.9.9")
+        self.assertTrue(any("1.0.0" in p for p in problems))
+
+    def test_two_top_level_folders_are_refused(self):
+        entries = self._good_entries()
+        entries["Other/thing.txt"] = "x"
+        z = self._zip(entries)
+        problems = self.check(z, self.plugin_name, "9.9.9")
+        self.assertTrue(any("ONE top-level folder" in p for p in problems))
+
+    def test_an_empty_or_corrupt_zip_is_refused_not_crashed_on(self):
+        empty = os.path.join(self.tmp, "empty.zip")
+        with zipfile.ZipFile(empty, "w"):
+            pass
+        self.assertTrue(self.check(empty, self.plugin_name, "9.9.9"))
+        junk = os.path.join(self.tmp, "junk.zip")
+        with open(junk, "wb") as f:
+            f.write(b"not a zip at all")
+        self.assertTrue(self.check(junk, self.plugin_name, "9.9.9"))
+
+    def test_install_sh_and_plugin_json_agree_on_the_folder_name(self):
+        """install.sh hardcodes PLUGIN and refuses anything else. If someone
+        renames the plugin in plugin.json, the installer must be renamed with
+        it or every install dies at the extraction check."""
+        with open(os.path.join(REPO_ROOT, "install.sh"), encoding="utf-8") as f:
+            script = f.read()
+        self.assertIn(
+            f'PLUGIN="{self.plugin_name}"',
+            script,
+            "install.sh's PLUGIN must match plugin.json's name exactly",
+        )
+
+    def test_release_ps1_takes_the_folder_name_from_plugin_json(self):
+        """Not from a literal. The literal is what drifted."""
+        with open(os.path.join(REPO_ROOT, "release.ps1"), encoding="utf-8") as f:
+            script = f.read()
+        self.assertIn("$pluginJson.name", script)
+        self.assertIn("checkzip.py", script, "release.ps1 must gate on the check")
+        # Compress-Archive is what produced the broken zip. It is named in a
+        # comment warning against it, so only CALLS count.
+        called = [
+            line
+            for line in script.splitlines()
+            if "Compress-Archive" in line and not line.strip().startswith("#")
+        ]
+        self.assertEqual(called, [], "release.ps1 must not call Compress-Archive")
+
+    def test_any_built_zip_in_dist_is_installable(self):
+        """Catches a stale hand-built artifact sitting in dist/ waiting to be
+        uploaded. Skips when there is nothing built."""
+        dist = os.path.join(REPO_ROOT, "dist")
+        zips = [
+            os.path.join(dist, n)
+            for n in (os.listdir(dist) if os.path.isdir(dist) else [])
+            if n.endswith(".zip")
+        ]
+        if not zips:
+            self.skipTest("no release zip built")
+        with open(os.path.join(REPO_ROOT, "package.json"), encoding="utf-8") as f:
+            version = json.load(f)["version"]
+        for z in zips:
+            problems = self.check(z, self.plugin_name, version)
+            self.assertEqual(problems, [], f"{os.path.basename(z)}: {problems}")
+
+
 if __name__ == "__main__":
     unittest.main()

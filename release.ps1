@@ -27,8 +27,15 @@ $pluginDir = $pluginJson.name
 Write-Host "Plugin folder in zip: '$pluginDir' (from plugin.json)" -ForegroundColor Cyan
 
 Write-Host "Building v$version ..." -ForegroundColor Cyan
-pnpm run build
-if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
+# pnpm writes progress to stderr even on success, and with
+# $ErrorActionPreference = "Stop" PowerShell turns that into a terminating
+# NativeCommandError - the script died on a build that had worked. Only the
+# exit code says whether it built, so judge it by that alone.
+$ErrorActionPreference = "Continue"
+pnpm run build 2>&1 | Write-Host
+$buildExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($buildExit -ne 0) { throw "frontend build failed" }
 if (-not (Test-Path (Join-Path $root "dist\index.js"))) {
     throw "dist/index.js missing"
 }
@@ -59,8 +66,24 @@ if (Test-Path $out) { Remove-Item -Force $out }
 # are normalised away on read: it took listing the entries on the device.
 $pyFile = Join-Path $env:TEMP "decky-nexus-zip.py"
 Copy-Item (Join-Path $root "tools\makezip.py") $pyFile
-python $pyFile $stage $out
-if ($LASTEXITCODE -ne 0) { throw "zip build failed" }
+# Same reason as the build above: anything python writes to stderr, warnings
+# included, would otherwise be fatal. The exit code is the verdict.
+$ErrorActionPreference = "Continue"
+python $pyFile $stage $out 2>&1 | Write-Host
+$zipExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($zipExit -ne 0) { throw "zip build failed" }
+
+# The gate that makes this script the only sane way to build a release: the
+# same checks makestore.py runs before it will index an artifact. v1.4.0 was
+# published with a hand-built zip whose top folder was "Nexus-Mods" against a
+# plugin.json name of "Nexus Mods", and nothing caught it until a user could
+# not update.
+$ErrorActionPreference = "Continue"
+python (Join-Path $root "tools\checkzip.py") $out 2>&1 | Write-Host
+$checkExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($checkExit -ne 0) { throw "the zip that was just built will not install" }
 
 $size = [math]::Round((Get-Item $out).Length / 1KB, 1)
 Write-Host ""
