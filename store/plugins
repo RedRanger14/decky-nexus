@@ -13,6 +13,11 @@
     "image_url": "https://raw.githubusercontent.com/RedRanger14/decky-nexus/main/store/banner.png",
     "versions": [
       {
+        "name": "1.4.1",
+        "hash": "56ebf9b45a97d027d916d62ede68c898a6e039ebd0432f2efc585f6b2387dee2",
+        "artifact": "https://github.com/RedRanger14/decky-nexus/releases/download/v1.4.1/Nexus-Mods-1.4.1.zip"
+      },
+      {
         "name": "1.4.0",
         "hash": "40aa75ff88f275c0ef76808988276200c5d9955a7512a69196081abe29a8c7fb",
         "artifact": "https://github.com/RedRanger14/decky-nexus/releases/download/v1.4.0/Nexus-Mods-1.4.0.zip"

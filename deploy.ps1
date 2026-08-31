@@ -28,8 +28,23 @@ if (-not (Test-Path $settingsPath)) {
     exit 1
 }
 $cfg = Get-Content $settingsPath -Raw | ConvertFrom-Json
-$folder = $cfg.pluginname -replace ' ', '-'   # template convention: no spaces in the folder name
+# The folder is plugin.json's name VERBATIM, spaces and all - the same
+# source release.ps1 and install.sh use.
+#
+# This used to strip spaces on a "template convention: no spaces in folder
+# names" assumption, which is simply wrong for Decky: it installs into the
+# plugin.json name as written, so a real user's Deck has a folder called
+# "Nexus Mods" while every dev deploy went to "Nexus-Mods". Two consequences,
+# both real: hardware testing was never testing the layout users get
+# (including which settings directory Decky reads), and deploying onto a
+# device that already had a released build left TWO plugin folders, so Decky
+# loaded the plugin twice.
+$pluginJson = Get-Content (Join-Path $root "plugin.json") -Raw | ConvertFrom-Json
+$folder = $pluginJson.name
 $pluginDir = "$($cfg.deckdir)/homebrew/plugins/$folder"
+# The folder this used to deploy to. Removed on the device if it is still
+# there, because leaving it means two copies of the plugin in the QAM.
+$staleDir = "$($cfg.deckdir)/homebrew/plugins/$($folder -replace ' ', '-')"
 # deckip is usually an mDNS name (steamdeck.local); Windows mDNS resolution is
 # flaky, so deckipfallback (a raw LAN IP) is tried when the name doesn't answer.
 $hosts = @($cfg.deckip)
@@ -59,10 +74,26 @@ if ($PackOnly) { exit 0 }
 $remoteScript = (
     'set -e',
     "PLUGIN_DIR=`"$pluginDir`"",
+    "STALE_DIR=`"$staleDir`"",
+    "SET_DIR=`"$($cfg.deckdir)/homebrew/settings`"",
     'mkdir -p "$PLUGIN_DIR"',
     'rm -rf "$PLUGIN_DIR/dist"',
     'tar -xzf /tmp/decky-nexus-deploy.tar.gz -C "$PLUGIN_DIR"',
     "chown -R $($cfg.deckuser):$($cfg.deckuser) `"`$PLUGIN_DIR`"",
+    # Carry the old dev deployment's settings across BEFORE removing it, or
+    # switching to the correct folder would silently cost this device its
+    # API key and its record of what is installed. Only when the correct
+    # folder has none of its own: never overwrite real settings.
+    'if [ "$STALE_DIR" != "$PLUGIN_DIR" ] && [ -d "$STALE_DIR" ]; then',
+    '  STALE_SET="$SET_DIR/$(basename "$STALE_DIR")"',
+    '  GOOD_SET="$SET_DIR/$(basename "$PLUGIN_DIR")"',
+    '  if [ -d "$STALE_SET" ] && [ ! -d "$GOOD_SET" ]; then',
+    '    cp -r "$STALE_SET" "$GOOD_SET" && echo ">>> carried settings over from $STALE_SET"',
+    "    chown -R $($cfg.deckuser):$($cfg.deckuser) `"`$GOOD_SET`"",
+    '  fi',
+    '  rm -rf "$STALE_DIR"',
+    '  echo ">>> removed the old dev plugin folder $STALE_DIR (it would load as a second copy)"',
+    'fi',
     'rm -f /tmp/decky-nexus-deploy.tar.gz /tmp/decky-nexus-remote.sh',
     'systemctl restart plugin_loader',
     'echo ">>> deployed to $PLUGIN_DIR, Decky restarted"'

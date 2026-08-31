@@ -16136,6 +16136,30 @@ class TestReleaseZipGate(unittest.TestCase):
             "install.sh's PLUGIN must match plugin.json's name exactly",
         )
 
+    def test_deploy_ps1_uses_the_same_folder_users_get(self):
+        """deploy.ps1 stripped the space out of the plugin name, so every dev
+        deploy went to "Nexus-Mods" while a real install goes to "Nexus
+        Mods". Hardware testing was therefore never testing the layout users
+        get, and deploying onto a device that already had a released build
+        left TWO plugin folders for Decky to load."""
+        with open(os.path.join(REPO_ROOT, "deploy.ps1"), encoding="utf-8") as f:
+            script = f.read()
+        stripping = [
+            line
+            for line in script.splitlines()
+            if "$folder =" in line
+            and "-replace ' ', '-'" in line
+            and not line.strip().startswith("#")
+        ]
+        self.assertEqual(
+            stripping, [], "deploy.ps1 must not strip spaces from the folder"
+        )
+        self.assertIn(
+            "$pluginJson.name",
+            script,
+            "deploy.ps1 must take the folder from plugin.json, like the others",
+        )
+
     def test_release_ps1_takes_the_folder_name_from_plugin_json(self):
         """Not from a literal. The literal is what drifted."""
         with open(os.path.join(REPO_ROOT, "release.ps1"), encoding="utf-8") as f:
