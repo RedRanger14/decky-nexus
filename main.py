@@ -12758,17 +12758,36 @@ query Link($slug: String!, $domainName: String!) {
                     if n.lower().endswith(".pak"):
                         paks.append(os.path.join(r, n))
             if not paks:
+                # Say what it actually IS before refusing it. The first
+                # collection run blamed the Script Extender for 49 texture
+                # packs - loose-file mods, a different (unsupported) shape.
+                lower = []
+                for r2, _d3, n2 in os.walk(scratch):
+                    lower += [x.lower() for x in n2]
                 _force_rmtree(scratch)
                 await _emit_progress(mod_id, "error", 0, "no pak")
-                return {
-                    "ok": False,
-                    "error": (
-                        "No .pak file in this download, so it is not a "
-                        "BG3 pak mod. If its page says it needs the "
-                        "Script Extender, that does not run on the "
-                        "native Linux build of the game."
-                    ),
-                }
+                if any(x.endswith(".dll") for x in lower):
+                    msg = (
+                        "This mod is a Windows loader (.dll) - the Script "
+                        "Extender family - and the native Linux build of "
+                        "the game has no way to load it."
+                    )
+                elif any(
+                    x.endswith((".dds", ".gr2", ".lsf", ".loca", ".gts",
+                                ".gtp", ".ttf"))
+                    for x in lower
+                ):
+                    msg = (
+                        "This mod ships loose game files rather than a "
+                        ".pak, and loose-file BG3 mods are not supported "
+                        "here yet."
+                    )
+                else:
+                    msg = (
+                        "No .pak file in this download, so there is "
+                        "nothing the game could load from it."
+                    )
+                return {"ok": False, "error": msg}
             all_metas, meta_err = [], ""
             needs_se = False
             staged = []
@@ -12800,6 +12819,26 @@ query Link($slug: String!, $domainName: String!) {
                 game_domain, {}
             )
             key = _safe_name(mod_name)
+            prev = installed.get(key)
+            if prev and prev.get("mode") == "bg3":
+                # A second FILE from the same mod page (collections pin
+                # several: hotbar variants, resolution options). Replacing
+                # the record orphaned the earlier file's pak and its
+                # registration - the DIQ collection left 125 entries and a
+                # pak that nothing owned. Merge: one record owns every
+                # file installed from this page.
+                file_names = [
+                    n for n in (prev.get("files") or [])
+                    if n not in file_names
+                ] + file_names
+                new_uuids = {m.get("uuid") for m in all_metas}
+                all_metas = [
+                    m for m in (prev.get("bg3_mods") or [])
+                    if m.get("uuid") not in new_uuids
+                ] + all_metas
+                needs_se = needs_se or "Script Extender" in (
+                    prev.get("warning") or ""
+                )
             installed[key] = _merge_install_record(installed.get(key), {
                 "mod_id": mod_id,
                 "file_id": file_id,

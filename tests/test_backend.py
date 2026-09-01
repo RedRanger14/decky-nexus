@@ -16641,6 +16641,60 @@ class TestBg3Mode(unittest.TestCase):
         # And the game's own entries are still there afterwards.
         self.assertEqual(len(self._uuids_in_modsettings()), 2)
 
+    def test_two_files_from_one_mod_page_share_one_record(self):
+        """Collections pin several FILES from one page (Better Hotbar 2
+        ships three variants). Replacing the record orphaned the earlier
+        pak and its registration: the DIQ collection's 951 installs left
+        829 records, and its uninstall left 125 entries and a pak nothing
+        owned. One record must own every file installed from a page."""
+        self._archive({"VariantA.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001", folder="VarA")})
+        self.assertTrue(self._install("Multi File Mod").get("ok"))
+        self._archive({"VariantB.pak": self._make_pak(
+            "dddd4444-0000-0000-0000-000000000004", folder="VarB")})
+        self.assertTrue(self._install("Multi File Mod").get("ok"))
+        rec = main._load_settings()["installed"][self.DOMAIN][
+            "Multi File Mod"
+        ]
+        self.assertEqual(
+            sorted(rec["files"]), ["VariantA.pak", "VariantB.pak"]
+        )
+        uuids = self._uuids_in_modsettings()
+        self.assertIn("aaaa1111-0000-0000-0000-000000000001", uuids)
+        self.assertIn("dddd4444-0000-0000-0000-000000000004", uuids)
+        # And the uninstall takes BOTH paks and BOTH registrations with it.
+        r = run(self.plugin.uninstall_mod(
+            self.DOMAIN, self.GAME, "Data", "Multi File Mod", "bg3"))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(os.listdir(main._bg3_mods_dir()), [])
+        self.assertEqual(len(self._uuids_in_modsettings()), 2)
+
+    def test_reinstalling_the_same_file_does_not_duplicate(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        rec = main._load_settings()["installed"][self.DOMAIN]["Test Mod"]
+        self.assertEqual(rec["files"], ["TestMod.pak"])
+        uuids = self._uuids_in_modsettings()
+        self.assertEqual(
+            uuids.count("aaaa1111-0000-0000-0000-000000000001"), 1
+        )
+
+    def test_a_loose_file_mod_is_named_for_what_it_is(self):
+        """The first collection run blamed the Script Extender for 49
+        texture packs. Wrong diagnosis in an error is worse than none."""
+        self._archive({
+            "Generated/Public/Shared/Assets/skin.DDS": b"x",
+            "readme.txt": b"textures",
+        })
+        r = self._install("Vivid Something")
+        self.assertFalse(r.get("ok"))
+        self.assertIn("loose", r.get("error", "").lower())
+        self.assertNotIn("Script Extender", r.get("error", ""))
+
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
         main.HOME_ROOT = TEST_ROOT
