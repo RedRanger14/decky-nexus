@@ -386,6 +386,14 @@ export const installFomodAuto = callable<
   InstallResult
 >("install_fomod_auto");
 
+/** BG3: switch off installed mods whose pak-declared dependencies are
+ * missing (the collection never included them). Returns what it disabled
+ * and why - the collection page folds these into the left-off note. */
+export const bg3DisableBrokenDeps = callable<
+  [game_domain: string, install_dir: string],
+  { ok: boolean; disabled?: { name: string; reason: string }[]; error?: string }
+>("bg3_disable_broken_deps");
+
 export const getCollectionManifest = callable<
   [slug: string, game_domain: string],
   { ok: boolean; choices?: Record<string, unknown>; error?: string }

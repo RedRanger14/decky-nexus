@@ -16981,6 +16981,140 @@ class TestBg3Mode(unittest.TestCase):
             self.GAME, "Mods", "Test Mod", False, "bg3", self.DOMAIN))
         self.assertTrue(r.get("ok"), r)
 
+    # ---- broken-dependency pass -----------------------------------------
+    # Goon+ shipped three NPC redesigns depending on Witcher gear paks the
+    # curator never included, and a new game hung at 80% (device,
+    # 2026-09-01). Paks declare their dependencies in meta.lsx; anything
+    # whose dependency is neither registered nor a Larian engine module
+    # goes off, with the reason.
+
+    @classmethod
+    def _make_dep_pak(cls, uuid, folder, dep_uuid=None, dep_name=""):
+        dep_xml = ""
+        if dep_uuid:
+            dep_xml = (
+                '<node id="Dependencies"><children>'
+                '<node id="ModuleShortDesc">'
+                f'<attribute id="UUID" type="guid" value="{dep_uuid}"/>'
+                f'<attribute id="Name" type="LSString" value="{dep_name}"/>'
+                "</node></children></node>"
+            )
+        meta = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<save><region id="Config"><node id="root"><children>'
+            + dep_xml +
+            '<node id="ModuleInfo">'
+            f'<attribute id="Folder" type="LSString" value="{folder}"/>'
+            f'<attribute id="Name" type="LSString" value="{folder}"/>'
+            f'<attribute id="UUID" type="guid" value="{uuid}"/>'
+            '<attribute id="Version64" type="int64" value="1"/>'
+            "</node></children></node></region></save>"
+        ).encode()
+        members = [(f"Mods/{folder}/meta.lsx", meta, len(meta), 0)]
+        blobs, entries = b"", []
+        offset = 40
+        for mname, blob, unc, method in members:
+            entries.append((mname, offset, method, len(blob), unc))
+            blobs += blob
+            offset += len(blob)
+        table = b""
+        for mname, off, method, disk, unc in entries:
+            table += mname.encode().ljust(256, b"\0")
+            table += (off & 0xFFFFFFFF).to_bytes(4, "little")
+            table += (off >> 32).to_bytes(2, "little")
+            table += bytes([0, method])
+            table += disk.to_bytes(4, "little")
+            table += unc.to_bytes(4, "little")
+        ctable = cls._lz4_store(table)
+        return (
+            b"LSPK" + (18).to_bytes(4, "little")
+            + (40 + len(blobs)).to_bytes(8, "little")
+            + (8 + len(ctable)).to_bytes(4, "little")
+            + bytes([0, 0]) + b"\0" * 16 + (1).to_bytes(2, "little")
+            + blobs
+            + len(entries).to_bytes(4, "little")
+            + len(ctable).to_bytes(4, "little") + ctable
+        )
+
+    def test_a_mod_with_a_missing_dependency_is_switched_off(self):
+        self._archive({"Broken.pak": self._make_dep_pak(
+            "aaaa1111-0000-0000-0000-00000000000a", "BrokenMod",
+            dep_uuid="9999aaaa-0000-0000-0000-000000000099",
+            dep_name="Witcher Gear Pack")})
+        self.assertTrue(self._install("Broken Mod").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        names = [d["name"] for d in r["disabled"]]
+        self.assertEqual(names, ["Broken Mod"])
+        self.assertIn("Witcher Gear Pack", r["disabled"][0]["reason"])
+        rec = main._load_settings()["installed"][self.DOMAIN]["Broken Mod"]
+        self.assertFalse(rec["enabled"])
+        self.assertIn("Witcher Gear Pack", rec.get("warning", ""))
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_disabled_dir(), "Broken.pak")))
+        self.assertNotIn(
+            "aaaa1111-0000-0000-0000-00000000000a",
+            self._uuids_in_modsettings(),
+        )
+
+    def test_a_dependency_satisfied_by_another_mod_stays_on(self):
+        self._archive({"Provider.pak": self._make_dep_pak(
+            "bbbb2222-0000-0000-0000-00000000000b", "ProviderMod")})
+        self.assertTrue(self._install("Provider").get("ok"))
+        self._archive({"Consumer.pak": self._make_dep_pak(
+            "cccc3333-0000-0000-0000-00000000000c", "ConsumerMod",
+            dep_uuid="bbbb2222-0000-0000-0000-00000000000b",
+            dep_name="ProviderMod")})
+        self.assertTrue(self._install("Consumer").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r["disabled"], [])
+
+    def test_a_dependency_on_an_engine_module_is_fine(self):
+        self._archive({"UsesEngine.pak": self._make_dep_pak(
+            "dddd4444-0000-0000-0000-00000000000d", "UsesEngine",
+            dep_uuid="cb555efe-2d9e-131f-8195-a89329d218ea",
+            dep_name="GustavX")})
+        self.assertTrue(self._install("Uses Engine").get("ok"))
+        # And one by NAME only, unregistered uuid (DiceSet_06 etc).
+        self._archive({"UsesDice.pak": self._make_dep_pak(
+            "eeee5555-0000-0000-0000-00000000000e", "UsesDice",
+            dep_uuid="12345678-0000-0000-0000-0000000000ff",
+            dep_name="DiceSet_06")})
+        self.assertTrue(self._install("Uses Dice").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r["disabled"], [])
+
+    def test_disabling_a_provider_cascades_to_its_dependents(self):
+        # A needs a missing pak; B needs A. Both must fall, in one pass.
+        self._archive({"A.pak": self._make_dep_pak(
+            "aaaa6666-0000-0000-0000-00000000006a", "ModA",
+            dep_uuid="9999aaaa-0000-0000-0000-000000000099",
+            dep_name="Missing Thing")})
+        self.assertTrue(self._install("Mod A").get("ok"))
+        self._archive({"B.pak": self._make_dep_pak(
+            "bbbb7777-0000-0000-0000-00000000007b", "ModB",
+            dep_uuid="aaaa6666-0000-0000-0000-00000000006a",
+            dep_name="ModA")})
+        self.assertTrue(self._install("Mod B").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(
+            sorted(d["name"] for d in r["disabled"]), ["Mod A", "Mod B"]
+        )
+
+    def test_the_pass_refuses_while_the_game_runs(self):
+        real = main._bg3_running
+        main._bg3_running = lambda: True
+        try:
+            r = run(self.plugin.bg3_disable_broken_deps(
+                self.DOMAIN, self.GAME))
+            self.assertFalse(r.get("ok"))
+            self.assertIn("running", r.get("error", ""))
+        finally:
+            main._bg3_running = real
+
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
         main.HOME_ROOT = TEST_ROOT

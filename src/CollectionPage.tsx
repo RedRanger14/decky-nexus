@@ -30,6 +30,7 @@ import {
   unavailableNote,} from "./panelRules";
 
 import {
+  bg3DisableBrokenDeps,
   endorseCollection,
   applyKnownPrerequisites,
   applyKnownVerdicts,
@@ -495,6 +496,18 @@ export function CollectionPage() {
         (detail?.files ?? []).map((f) => f.modId)
       );
       const off: { name: string; reason: string }[] = [];
+      // BG3: a curator can ship a mod whose pak depends on paks the
+      // collection never included, and the game hangs mid-load around the
+      // missing pieces (Goon+, device, 2026-09-01). The backend reads
+      // every pak's declared dependencies and switches off what cannot
+      // stand; the note below tells the user what and why.
+      if ((game.installMode ?? "folder") === "bg3") {
+        const broken = await bg3DisableBrokenDeps(
+          game.nexusDomain,
+          game.installDirName
+        );
+        for (const b of broken.disabled ?? []) off.push(b);
+      }
       const inst = await getInstalledMods(
         game.nexusDomain,
         game.installDirName,

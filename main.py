@@ -6414,6 +6414,20 @@ def _lspk_pak_metas(pak_path: str) -> list:
                 for a in node.findall("attribute"):
                     info[a.get("id")] = a.get("value")
                 break
+        deps = []
+        for node in root.iter("node"):
+            if node.get("id") != "Dependencies":
+                continue
+            for sub in node.iter("node"):
+                if sub.get("id") in ("ModuleShortDesc", "ModuleDescriptor"):
+                    du = dn = ""
+                    for a in sub.findall("attribute"):
+                        if a.get("id") == "UUID":
+                            du = (a.get("value") or "").lower()
+                        if a.get("id") == "Name":
+                            dn = a.get("value") or ""
+                    if du:
+                        deps.append({"uuid": du, "name": dn})
         if info.get("UUID"):
             metas.append({
                 "uuid": info.get("UUID"),
@@ -6423,6 +6437,7 @@ def _lspk_pak_metas(pak_path: str) -> list:
                 or info.get("Version")
                 or "36028797018963968",
                 "md5": info.get("MD5") or "",
+                **({"deps": deps} if deps else {}),
             })
     return metas
 
@@ -6456,6 +6471,100 @@ def _bg3_running() -> bool:
 def _bg3_records(settings: dict, game_domain: str) -> list:
     recs = settings.get("installed", {}).get(game_domain, {})
     return [(k, r) for k, r in recs.items() if r.get("mode") == "bg3"]
+
+
+# Larian's own engine modules: present in every install, never listed in
+# modsettings.lsx. A pak depending on one is depending on the base game.
+# Matched by name because the first run of the dependency scan flagged 100+
+# of these as "missing" before the filter existed.
+def _bg3_builtin_module(name: str) -> bool:
+    n = (name or "").lower().replace(" ", "").replace("_", "")
+    if n.startswith("diceset"):
+        return True
+    return n in {
+        "gustav", "gustavdev", "gustavx", "shared", "shareddev", "honour",
+        "mainui", "modbrowser", "crossplayui", "photomode", "engine",
+    }
+
+
+def _bg3_broken_dep_pass(settings: dict, game_domain: str) -> list:
+    """Switch off every enabled bg3 record owning a module whose declared
+    dependency is neither registered nor builtin. Returns the (name,
+    reason) pairs it disabled.
+
+    This is BG3's version of the Bethesda missing-masters rule, and it was
+    written the day it was needed: the Goon+ collection shipped three NPC
+    redesigns depending on Witcher gear paks the curator never included,
+    and a new game hung at 80% while the level loaded around modules that
+    were not there. Cascading, because disabling a provider can orphan its
+    dependents: the loop reruns until nothing else falls."""
+    ms_path = _bg3_modsettings_path()
+    # Foreign means NOT OURS: modsettings still lists the modules of the
+    # very records this pass is judging, so counting every entry made a
+    # disabled provider look present and the cascade never cascaded - the
+    # test caught it. Subtract everything our records own, enabled or not.
+    ours = set()
+    for _key, rec in _bg3_records(settings, game_domain):
+        for meta in rec.get("bg3_mods") or []:
+            ours.add((meta.get("uuid") or "").lower())
+    foreign = set()
+    if os.path.isfile(ms_path):
+        doc = xml_parse_file(ms_path)
+        for node in doc.iter("node"):
+            if node.get("id") == "ModuleShortDesc":
+                for a in node.findall("attribute"):
+                    if a.get("id") == "UUID":
+                        u = (a.get("value") or "").lower()
+                        if u not in ours:
+                            foreign.add(u)
+    disabled = []
+    while True:
+        enabled_modules = set(foreign)
+        recs = _bg3_records(settings, game_domain)
+        for _key, rec in recs:
+            if rec.get("enabled", True):
+                for meta in rec.get("bg3_mods") or []:
+                    enabled_modules.add((meta.get("uuid") or "").lower())
+        fell = False
+        for key, rec in recs:
+            if not rec.get("enabled", True):
+                continue
+            missing = None
+            for meta in rec.get("bg3_mods") or []:
+                for dep in meta.get("deps") or []:
+                    if dep.get("uuid") in enabled_modules:
+                        continue
+                    if _bg3_builtin_module(dep.get("name")):
+                        continue
+                    missing = (meta.get("name") or key, dep.get("name")
+                               or dep.get("uuid"))
+                    break
+                if missing:
+                    break
+            if not missing:
+                continue
+            # Move its paks out and mark it, same as a manual toggle.
+            os.makedirs(_bg3_disabled_dir(), exist_ok=True)
+            for n in rec.get("files") or []:
+                src = os.path.join(_bg3_mods_dir(), n)
+                if os.path.isfile(src):
+                    dst = os.path.join(_bg3_disabled_dir(), n)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.move(src, dst)
+            rec["enabled"] = False
+            reason = (
+                f"Its part '{missing[0]}' needs '{missing[1]}', which is "
+                "not installed. A mod loading around missing pieces can "
+                "hang the game while it starts, so it was left switched "
+                "off."
+            )
+            rec["warning"] = reason
+            disabled.append((rec.get("name") or key, reason))
+            fell = True
+        if not fell:
+            break
+    return disabled
 
 
 def _write_bg3_modsettings(settings: dict, game_domain: str) -> str:
@@ -14347,6 +14456,38 @@ query Link($slug: String!, $domainName: String!) {
             f"choices for {entry['mod_name']!r}"
         )
         return await self.install_fomod(token, ids)
+
+    async def bg3_disable_broken_deps(
+        self, game_domain: str, install_dir: str
+    ) -> dict:
+        """After a collection lands: switch off every mod whose declared
+        pak dependencies are missing, and say which. See
+        _bg3_broken_dep_pass for the day this earned its keep."""
+        try:
+            if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+                return {"ok": False, "error": "Invalid game domain"}
+            if _bg3_running():
+                return {"ok": False, "error": BG3_GAME_RUNNING}
+            settings = _load_settings()
+            disabled = _bg3_broken_dep_pass(settings, game_domain)
+            if disabled:
+                err = _write_bg3_modsettings(settings, game_domain)
+                if err:
+                    return {"ok": False, "error": err}
+                _save_settings(settings)
+                decky.logger.info(
+                    "bg3 broken-dependency pass switched off: "
+                    + ", ".join(n for n, _r in disabled)
+                )
+            return {
+                "ok": True,
+                "disabled": [
+                    {"name": n, "reason": r} for n, r in disabled
+                ],
+            }
+        except Exception as e:
+            decky.logger.error(f"bg3_disable_broken_deps: {e!r}")
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     async def get_game_binary_version(
         self, install_dir: str, process_name: str = "",
