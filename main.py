@@ -12923,10 +12923,18 @@ query Link($slug: String!, $domainName: String!) {
                 if _pak_needs_script_extender(p):
                     needs_se = True
                 staged.append((p, got))
-            os.makedirs(_bg3_mods_dir(), exist_ok=True)
+            # Collection-sourced SE mods land switched off: they can
+            # never run here (no Script Extender on the native build), and
+            # a curator's 60-mod list is not a person choosing this one
+            # with its page open. Direct installs keep the user's choice.
+            install_off = needs_se and record_source == "collection"
+            dest_dir = (
+                _bg3_disabled_dir() if install_off else _bg3_mods_dir()
+            )
+            os.makedirs(dest_dir, exist_ok=True)
             file_names = []
             for p, got in staged:
-                dst = os.path.join(_bg3_mods_dir(), os.path.basename(p))
+                dst = os.path.join(dest_dir, os.path.basename(p))
                 if os.path.isfile(dst):
                     os.remove(dst)
                 shutil.move(p, dst)
@@ -12975,7 +12983,7 @@ query Link($slug: String!, $domainName: String!) {
                 "mode": "bg3",
                 "files": file_names,
                 "bg3_mods": all_metas,
-                "enabled": True,
+                "enabled": not install_off,
                 # Loose files shipped ALONGSIDE paks (rare). Removed at
                 # uninstall; a disable toggles only the paks, which the
                 # code comment at the toggle explains.
@@ -13006,13 +13014,16 @@ query Link($slug: String!, $domainName: String!) {
             decky.logger.info(
                 f"installed bg3 mod {mod_name!r}: {file_names} "
                 f"({len(all_metas)} registered)"
-                + (" [needs Script Extender - inert here]" if needs_se else "")
+                + (" [needs Script Extender - left OFF]" if install_off
+                   else " [needs Script Extender - inert here]"
+                   if needs_se else "")
             )
             await _emit_progress(mod_id, "done", 100)
             return {
                 "ok": True,
                 "folder": key,
                 **({"warning": BG3_SE_UNAVAILABLE} if needs_se else {}),
+                **({"disabled": True} if install_off else {}),
             }
 
         # FOMOD wizard archives for folder-mode games: park and let the
@@ -19588,6 +19599,8 @@ query CollectionInstructions($slug: String!) {
                     "togglable": True,
                     "source": rec.get("source") or "",
                     "collection_slug": rec.get("collection_slug") or "",
+                    **({"warning": rec["warning"]}
+                       if rec.get("warning") else {}),
                 }
                 for key, rec in _bg3_records(settings, game_domain)
             ]
@@ -19605,6 +19618,8 @@ query CollectionInstructions($slug: String!) {
                     "togglable": False,
                     "source": rec.get("source") or "",
                     "collection_slug": rec.get("collection_slug") or "",
+                    **({"warning": rec["warning"]}
+                       if rec.get("warning") else {}),
                 }
                 for key, rec in settings.get("installed", {})
                 .get(game_domain, {}).items()

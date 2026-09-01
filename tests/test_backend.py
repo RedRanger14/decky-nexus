@@ -16881,6 +16881,70 @@ class TestBg3Mode(unittest.TestCase):
             main._zstd_decompress(blob, len(payload)), payload
         )
 
+    def test_listings_carry_the_warning(self):
+        """My Mods has rendered mod.warning for weeks; the bg3 listing
+        never sent the field, so Michael went looking for the Script
+        Extender warning and could not find it."""
+        self._archive({"SEMod.pak": self._make_se_pak(
+            "bbbb2222-0000-0000-0000-000000000002")})
+        self.assertTrue(self._install("An SE Mod").get("ok"))
+        r = run(self.plugin.get_installed_mods(
+            self.DOMAIN, self.GAME, "Mods", "bg3", 1086940))
+        mods = {m["name"]: m for m in r["mods"]}
+        self.assertIn("Script Extender", mods["An SE Mod"].get("warning", ""))
+
+    def test_a_collection_se_mod_installs_switched_off(self):
+        """Michael: "I would all collections to install but the broken/not
+        supported ones just skip/disable by default - we are aiming for a
+        console-like audience". An SE mod can never run on the native
+        build, so from a collection it arrives OFF: pak parked in
+        Mods-disabled, no registration, warning on the record."""
+        self._archive({"SEMod.pak": self._make_se_pak(
+            "bbbb2222-0000-0000-0000-000000000002")})
+        r = run(self.plugin.install_mod(
+            self.DOMAIN, self.MOD, self.FILE, "m.zip", "Coll SE Mod", "1.0",
+            self.GAME, "Mods",
+            install_mode="bg3", app_id=1086940,
+            record_source="collection", collection_slug="slugse",
+        ))
+        self.assertTrue(r.get("ok"), r)
+        self.assertTrue(r.get("disabled"))
+        self.assertFalse(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "SEMod.pak")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_disabled_dir(), "SEMod.pak")))
+        self.assertNotIn(
+            "bbbb2222-0000-0000-0000-000000000002",
+            self._uuids_in_modsettings(),
+        )
+        rec = main._load_settings()["installed"][self.DOMAIN]["Coll SE Mod"]
+        self.assertFalse(rec["enabled"])
+        self.assertIn("Script Extender", rec.get("warning", ""))
+        # The listing shows it off, with the reason, and still togglable -
+        # switching it back on is the same one tap every auto-off mod has.
+        lst = run(self.plugin.get_installed_mods(
+            self.DOMAIN, self.GAME, "Mods", "bg3", 1086940))
+        row = {m["name"]: m for m in lst["mods"]}["Coll SE Mod"]
+        self.assertFalse(row["enabled"])
+        self.assertTrue(row["togglable"])
+        self.assertIn("Script Extender", row.get("warning", ""))
+
+    def test_a_direct_se_install_keeps_the_users_choice(self):
+        """The person read the page and chose it: installed ENABLED, with
+        the warning. A registered pak whose scripts never run is harmless,
+        and the author's mod is not ours to veto."""
+        self._archive({"SEMod.pak": self._make_se_pak(
+            "bbbb2222-0000-0000-0000-000000000002")})
+        r = self._install("An SE Mod")
+        self.assertTrue(r.get("ok"), r)
+        self.assertNotIn("disabled", r)
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "SEMod.pak")))
+        self.assertIn(
+            "bbbb2222-0000-0000-0000-000000000002",
+            self._uuids_in_modsettings(),
+        )
+
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
         main.HOME_ROOT = TEST_ROOT

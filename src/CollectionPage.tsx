@@ -494,16 +494,16 @@ export function CollectionPage() {
         game.nexusDomain,
         (detail?.files ?? []).map((f) => f.modId)
       );
+      const off: { name: string; reason: string }[] = [];
+      const inst = await getInstalledMods(
+        game.nexusDomain,
+        game.installDirName,
+        game.modsSubdir,
+        ...modeParams(game),
+        game.protectedModFolders ?? []
+      );
       if (wanted.length > 0) {
         const reasonById = new Map(wanted.map((a) => [a.modId, a.reason]));
-        const inst = await getInstalledMods(
-          game.nexusDomain,
-          game.installDirName,
-          game.modsSubdir,
-          ...modeParams(game),
-          game.protectedModFolders ?? []
-        );
-        const off: { name: string; reason: string }[] = [];
         for (const m of inst.mods ?? []) {
           if (!m.mod_id || !reasonById.has(m.mod_id) || !m.enabled) continue;
           const r = await toggleMod(game, m.folder, false);
@@ -514,8 +514,18 @@ export function CollectionPage() {
             });
           }
         }
-        if (off.length > 0) setAutoOff(off);
       }
+      // Mods the BACKEND installed switched off (BG3's Script Extender
+      // mods: they can never run on the native build). The record carries
+      // both the disabled state and the reason, so the same note covers
+      // them - the console-audience rule is one experience: everything
+      // installs, what cannot work arrives off, and the page says so.
+      for (const m of inst.mods ?? []) {
+        if (m.enabled || !m.warning) continue;
+        if (off.some((o) => o.name === (m.name || m.folder))) continue;
+        off.push({ name: m.name || m.folder, reason: m.warning });
+      }
+      if (off.length > 0) setAutoOff(off);
     } catch {
       /* the pre-install warning box still names the mod and the risk */
     }
