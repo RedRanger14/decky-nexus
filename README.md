@@ -51,6 +51,8 @@ appear in the plugin until they do.
 - Baldur's Gate 3
 - Final Fantasy XII: The Zodiac Age
 - Mass Effect Legendary Edition
+- Dragon's Dogma 2
+- Horizon Forbidden West
 - Nier: Automata
 - Skyrim VR
 - Subnautica

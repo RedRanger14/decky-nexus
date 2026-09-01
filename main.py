@@ -6427,6 +6427,32 @@ def _lspk_pak_metas(pak_path: str) -> list:
     return metas
 
 
+BG3_GAME_RUNNING = (
+    "Baldur's Gate 3 is running. It reads its mod list while it starts, "
+    "and changing mods under a running game can hang it - quit the game "
+    "first, then try again."
+)
+
+
+def _bg3_running() -> bool:
+    """Is the native bg3 process alive? /proc comm scan: the binary is
+    bin/bg3, so comm is exactly "bg3". Errors answer False - a guard that
+    cannot be evaluated must not lock every install out forever."""
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid}/comm") as f:
+                    if f.read().strip() == "bg3":
+                        return True
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return False
+
+
 def _bg3_records(settings: dict, game_domain: str) -> list:
     recs = settings.get("installed", {}).get(game_domain, {})
     return [(k, r) for k, r in recs.items() if r.get("mode") == "bg3"]
@@ -12795,6 +12821,10 @@ query Link($slug: String!, $domainName: String!) {
         # (Patch 8), so a copy without the registration would look
         # installed and do nothing.
         if install_mode == "bg3":
+            if _bg3_running():
+                _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, "game running")
+                return {"ok": False, "error": BG3_GAME_RUNNING}
             if not os.path.isfile(_bg3_modsettings_path()):
                 _force_rmtree(scratch)
                 await _emit_progress(mod_id, "error", 0, "launch once")
@@ -16662,6 +16692,8 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Invalid game domain"}
         if not slug:
             return {"ok": False, "error": "Missing collection slug"}
+        if install_mode == "bg3" and _bg3_running():
+            return {"ok": False, "error": BG3_GAME_RUNNING}
         settings = _load_settings()
         install_path, mods_path, disabled_path = _game_paths(
             install_dir, mods_subdir
@@ -19858,6 +19890,8 @@ query CollectionInstructions($slug: String!) {
         hidden_folders: list = None,
     ) -> dict:
         if install_mode == "bg3":
+            if _bg3_running():
+                return {"ok": False, "error": BG3_GAME_RUNNING}
             # The registration decides what loads, but the pak moves too:
             # historically the engine applied asset-override paks WITHOUT a
             # registration, so a "disabled" reskin that stayed in Mods/
@@ -20202,6 +20236,8 @@ query CollectionInstructions($slug: String!) {
         if os.sep in folder or "/" in folder or folder in (".", ".."):
             return {"ok": False, "error": "Invalid mod folder name"}
         if install_mode == "bg3":
+            if _bg3_running():
+                return {"ok": False, "error": BG3_GAME_RUNNING}
             settings = _load_settings()
             rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
             if rec and rec.get("mode") == "files":
@@ -20435,6 +20471,8 @@ query CollectionInstructions($slug: String!) {
         try:
             protected_set = {p.lower() for p in (protected or [])}
             if install_mode == "bg3":
+                if _bg3_running():
+                    return {"ok": False, "error": BG3_GAME_RUNNING}
                 settings = _load_settings()
                 removed_list, kept = [], []
                 bg3_install_path, _m2, _d2 = _game_paths(install_dir, "")

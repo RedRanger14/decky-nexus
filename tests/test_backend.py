@@ -16945,6 +16945,42 @@ class TestBg3Mode(unittest.TestCase):
             self._uuids_in_modsettings(),
         )
 
+    def test_every_mutation_refuses_while_the_game_runs(self):
+        """Moving paks under a loading game hung it at 94% on device
+        (2026-09-01) - and the mover was the plugin's own maintainer, so a
+        human warning is not enough. Every bg3 mutation path checks."""
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        real = main._bg3_running
+        main._bg3_running = lambda: True
+        try:
+            self._archive({"TestMod.pak": self._make_pak(
+                "aaaa1111-0000-0000-0000-000000000001")})
+            r = self._install("Another Mod")
+            self.assertFalse(r.get("ok"))
+            self.assertIn("running", r.get("error", ""))
+            r = run(self.plugin.set_mod_enabled(
+                self.GAME, "Mods", "Test Mod", False, "bg3", self.DOMAIN))
+            self.assertFalse(r.get("ok"))
+            r = run(self.plugin.uninstall_mod(
+                self.DOMAIN, self.GAME, "Mods", "Test Mod", "bg3"))
+            self.assertFalse(r.get("ok"))
+            r = run(self.plugin.uninstall_all_mods(
+                self.DOMAIN, self.GAME, "Mods", [], "bg3", 1086940))
+            self.assertFalse(r.get("ok"))
+            r = run(self.plugin.uninstall_collection(
+                self.DOMAIN, self.GAME, "Mods",
+                install_mode="bg3", app_id=1086940, slug="any",
+            ))
+            self.assertFalse(r.get("ok"))
+        finally:
+            main._bg3_running = real
+        # And with the game closed, the same calls work again.
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Test Mod", False, "bg3", self.DOMAIN))
+        self.assertTrue(r.get("ok"), r)
+
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
         main.HOME_ROOT = TEST_ROOT
