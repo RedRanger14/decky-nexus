@@ -213,7 +213,7 @@
     "displayName": "Baldur's Gate 3",
     "nexusDomain": "baldursgate3",
     "installDirName": "Baldurs Gate 3",
-    "modsSubdir": "Data",
+    "modsSubdir": "Mods",
     "pluginsTxtSubpath": null,
     "pluginsTxtStyle": null,
     "installMode": "bg3",

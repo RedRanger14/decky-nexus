@@ -16321,6 +16321,7 @@ class TestBg3Mode(unittest.TestCase):
         self.install = os.path.join(main.STEAM_COMMON, self.GAME)
         shutil.rmtree(self.install, ignore_errors=True)
         os.makedirs(os.path.join(self.install, "bin"))
+        os.makedirs(os.path.join(self.install, "Data"))
         self._real_root = main.BG3_PROFILE_ROOT
         main.BG3_PROFILE_ROOT = os.path.join(TEST_ROOT, "bg3-profile")
         shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
@@ -16683,17 +16684,202 @@ class TestBg3Mode(unittest.TestCase):
             uuids.count("aaaa1111-0000-0000-0000-000000000001"), 1
         )
 
-    def test_a_loose_file_mod_is_named_for_what_it_is(self):
-        """The first collection run blamed the Script Extender for 49
-        texture packs. Wrong diagnosis in an error is worse than none."""
+    def test_a_loose_file_mod_installs_into_data(self):
+        """The first collection run refused 49 of these as 'needs the
+        Script Extender'. They are Generated/ trees of textures - verified
+        against four real archives - and they belong under the game's
+        Data dir with a per-file record."""
         self._archive({
             "Generated/Public/Shared/Assets/skin.DDS": b"x",
-            "readme.txt": b"textures",
+            "Generated/Public/SharedDev/Assets/head.GR2": b"y",
+            "readme.txt": b"notes",
         })
         r = self._install("Vivid Something")
+        self.assertTrue(r.get("ok"), r)
+        data = os.path.join(self.install, "Data")
+        self.assertTrue(os.path.isfile(os.path.join(
+            data, "Generated", "Public", "Shared", "Assets", "skin.DDS")))
+        rec = main._load_settings()["installed"][self.DOMAIN][
+            "Vivid Something"
+        ]
+        self.assertEqual(rec["mode"], "files")
+        self.assertEqual(rec["target"], "Data")
+        self.assertEqual(len(rec["files"]), 2)
+        # The readme was NOT dumped into the game.
+        self.assertFalse(os.path.isfile(os.path.join(data, "readme.txt")))
+        # And modsettings was not touched: loose files have no registration.
+        self.assertEqual(len(self._uuids_in_modsettings()), 2)
+
+    def test_a_wrapped_loose_mod_finds_its_tree(self):
+        # Shadowheart Hair Tweak ships "Shadowheart Hair Tweak/Generated/..."
+        self._archive({
+            "Wrap Folder/Generated/Public/Shared/Assets/hair.gr2": b"x",
+        })
+        r = self._install("Wrapped Loose")
+        self.assertTrue(r.get("ok"), r)
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.install, "Data", "Generated", "Public", "Shared",
+            "Assets", "hair.gr2")))
+
+    def test_loose_uninstall_removes_files_and_prunes_dirs(self):
+        self._archive({
+            "Generated/Public/Shared/Assets/skin.DDS": b"x",
+        })
+        self.assertTrue(self._install("Vivid Something").get("ok"))
+        r = run(self.plugin.uninstall_mod(
+            self.DOMAIN, self.GAME, "Data", "Vivid Something", "bg3"))
+        self.assertTrue(r.get("ok"), r)
+        data = os.path.join(self.install, "Data")
+        self.assertFalse(os.path.exists(
+            os.path.join(data, "Generated")))
+        self.assertNotIn(
+            "Vivid Something",
+            main._load_settings().get("installed", {}).get(self.DOMAIN, {}),
+        )
+
+    def test_loose_mods_list_and_refuse_to_toggle_with_a_reason(self):
+        self._archive({
+            "Generated/Public/Shared/Assets/skin.DDS": b"x",
+        })
+        self.assertTrue(self._install("Vivid Something").get("ok"))
+        r = run(self.plugin.get_installed_mods(
+            self.DOMAIN, self.GAME, "Data", "bg3", 1086940))
+        mods = {m["name"]: m for m in r["mods"]}
+        self.assertIn("Vivid Something", mods)
+        self.assertFalse(mods["Vivid Something"]["togglable"])
+        t = run(self.plugin.set_mod_enabled(
+            self.GAME, "Data", "Vivid Something", False, "bg3", self.DOMAIN))
+        self.assertFalse(t.get("ok"))
+        self.assertIn("uninstall", t.get("error", ""))
+
+    def test_reset_removes_loose_mods_too(self):
+        self._archive({
+            "Generated/Public/Shared/Assets/skin.DDS": b"x",
+        })
+        self.assertTrue(self._install("Vivid Something").get("ok"))
+        r = run(self.plugin.uninstall_all_mods(
+            self.DOMAIN, self.GAME, "Data", [], "bg3", 1086940))
+        self.assertTrue(r.get("ok"), r)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.install, "Data", "Generated")))
+
+    def test_a_mixed_archive_installs_both_and_uninstalls_both(self):
+        """Rare shape: a pak plus loose texture files in one archive."""
+        self._archive({
+            "TestMod.pak": self._make_pak(
+                "aaaa1111-0000-0000-0000-000000000001"),
+            "Generated/Public/Shared/Assets/extra.DDS": b"x",
+        })
+        r = self._install("Mixed Mod")
+        self.assertTrue(r.get("ok"), r)
+        rec = main._load_settings()["installed"][self.DOMAIN]["Mixed Mod"]
+        self.assertEqual(rec["mode"], "bg3")
+        self.assertEqual(rec["loose_files"],
+                         ["Generated/Public/Shared/Assets/extra.DDS"])
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.install, "Data", "Generated", "Public", "Shared",
+            "Assets", "extra.DDS")))
+        r = run(self.plugin.uninstall_mod(
+            self.DOMAIN, self.GAME, "Data", "Mixed Mod", "bg3"))
+        self.assertTrue(r.get("ok"), r)
+        self.assertFalse(os.path.isfile(os.path.join(
+            self.install, "Data", "Generated", "Public", "Shared",
+            "Assets", "extra.DDS")))
+        self.assertEqual(os.listdir(main._bg3_mods_dir()), [])
+
+    def test_a_dll_only_archive_still_names_the_extender(self):
+        self._archive({"DWrite.dll": b"MZwindows"})
+        r = self._install("The Extender Itself")
         self.assertFalse(r.get("ok"))
-        self.assertIn("loose", r.get("error", "").lower())
-        self.assertNotIn("Script Extender", r.get("error", ""))
+        self.assertIn("Script Extender", r.get("error", ""))
+
+    # ---- zstd-compressed meta (LSPK method 3) ---------------------------
+    def test_zstd_meta_registers_via_the_decompressor(self):
+        # Integration: method 3 must route through _zstd_decompress. The
+        # real decompression is covered by the next test where a zstd
+        # backend exists (always true on the device, where it matters).
+        meta = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<save><region id="Config"><node id="root"><children>'
+            '<node id="ModuleInfo">'
+            '<attribute id="Folder" type="LSString" value="ZMod"/>'
+            '<attribute id="Name" type="LSString" value="Z Mod"/>'
+            '<attribute id="UUID" type="guid" '
+            'value="eeee5555-0000-0000-0000-000000000005"/>'
+            '<attribute id="Version64" type="int64" value="1"/>'
+            "</node></children></node></region></save>"
+        ).encode()
+        pak = self._make_pak("ignored")  # rebuilt below with method 3
+        # Build a pak whose meta entry claims method 3 with fake bytes,
+        # and stub the decompressor to return the real meta.
+        members = [("Mods/ZMod/meta.lsx", b"ZSTDBYTES", len(meta), 3)]
+        blobs, entries = b"", []
+        offset = 40
+        for mname, blob, unc, method in members:
+            entries.append((mname, offset, method, len(blob), unc))
+            blobs += blob
+            offset += len(blob)
+        table = b""
+        for mname, off, method, disk, unc in entries:
+            table += mname.encode().ljust(256, b"\0")
+            table += (off & 0xFFFFFFFF).to_bytes(4, "little")
+            table += (off >> 32).to_bytes(2, "little")
+            table += bytes([0, method])
+            table += disk.to_bytes(4, "little")
+            table += unc.to_bytes(4, "little")
+        ctable = self._lz4_store(table)
+        pak = (
+            b"LSPK" + (18).to_bytes(4, "little")
+            + (40 + len(blobs)).to_bytes(8, "little")
+            + (8 + len(ctable)).to_bytes(4, "little")
+            + bytes([0, 0]) + b"\0" * 16 + (1).to_bytes(2, "little")
+            + blobs
+            + len(entries).to_bytes(4, "little")
+            + len(ctable).to_bytes(4, "little") + ctable
+        )
+        path = os.path.join(TEST_ROOT, "z.pak")
+        with open(path, "wb") as f:
+            f.write(pak)
+        real = main._zstd_decompress
+        calls = []
+
+        def fake(blob, out_size=0):
+            calls.append(blob)
+            return meta
+
+        main._zstd_decompress = fake
+        try:
+            metas = main._lspk_pak_metas(path)
+        finally:
+            main._zstd_decompress = real
+        self.assertEqual(calls, [b"ZSTDBYTES"])
+        self.assertEqual(
+            metas[0]["uuid"], "eeee5555-0000-0000-0000-000000000005"
+        )
+
+    def test_zstd_roundtrip_where_a_backend_exists(self):
+        """Real decompression. Runs wherever zstd exists - which includes
+        the Legion, where every test run happens before a deploy ships."""
+        import shutil as _sh
+        payload = b"the same bytes " * 100
+        blob = None
+        try:
+            import zstandard as _z
+            blob = _z.ZstdCompressor().compress(payload)
+        except ImportError:
+            exe = _sh.which("zstd")
+            if exe:
+                import subprocess
+                p = subprocess.run(
+                    [exe, "--stdout"], input=payload, capture_output=True
+                )
+                if p.returncode == 0:
+                    blob = p.stdout
+        if blob is None:
+            self.skipTest("no zstd backend on this machine")
+        self.assertEqual(
+            main._zstd_decompress(blob, len(payload)), payload
+        )
 
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT

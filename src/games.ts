@@ -366,7 +366,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     installDirName: "Baldurs Gate 3",
     // Unused by the bg3 install mode (mods live in the Larian profile in
     // the Linux home, not under the game), but the scanner APIs take it.
-    modsSubdir: "Data",
+    // DELIBERATELY not "Data": the generic folder-mode reset removes every
+    // subfolder of modsSubdir, so if a future call ever fell through with
+    // the wrong mode, "Data" would have it deleting the game's own files.
+    // "Mods" does not exist under the game root on the native build, so a
+    // fall-through removes nothing.
+    modsSubdir: "Mods",
     installMode: "bg3",
     moddedSaveWarning: true,
     // The native Linux build's binary is an ELF, not a PE - version

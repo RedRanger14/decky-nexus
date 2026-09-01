@@ -6257,6 +6257,51 @@ BG3_SE_UNAVAILABLE = (
 )
 
 
+def _zstd_decompress(blob: bytes, out_size: int = 0) -> bytes:
+    """zstd via whatever this environment offers, in order of preference:
+    stdlib (3.14+), the zstandard package, then the zstd CLI that SteamOS
+    ships. Raises ValueError with a readable message when none exists -
+    the caller treats that like any other unreadable metadata."""
+    try:
+        from compression import zstd as _zmod  # Python 3.14+
+        return _zmod.decompress(blob)
+    except ImportError:
+        pass
+    try:
+        import zstandard as _zmod
+        try:
+            return _zmod.ZstdDecompressor().decompress(blob)
+        except _zmod.ZstdError:
+            # Frames without a stored content size need an explicit cap.
+            return _zmod.ZstdDecompressor().decompress(
+                blob, max_output_size=max(out_size, 1) * 4 + 1024
+            )
+    except ImportError:
+        pass
+    import subprocess
+
+    exe = shutil.which("zstd")
+    if not exe:
+        raise ValueError(
+            "this pak's metadata is zstd-compressed and nothing here can "
+            "decompress it"
+        )
+    proc = subprocess.run(
+        [exe, "-d", "--stdout"],
+        input=blob,
+        capture_output=True,
+        # env= is mandatory: Decky's own environment poisons child
+        # processes (see _host_env).
+        env=_host_env(),
+    )
+    if proc.returncode != 0:
+        raise ValueError(
+            "zstd could not decompress the pak metadata: "
+            + proc.stderr.decode("utf-8", "replace")[:200]
+        )
+    return proc.stdout
+
+
 def _lspk_file_table(raw: bytes) -> bytes:
     """The decompressed file table of an LSPK v18 pak: num_files entries of
     272 bytes (256B name, then offset/part/flags/sizes).
@@ -6356,6 +6401,8 @@ def _lspk_pak_metas(pak_path: str) -> list:
             data = zlib.decompress(blob)
         elif method == 2:
             data = _lz4_block_decompress(blob, size_unc)
+        elif method == 3:
+            data = _zstd_decompress(blob, size_unc)
         else:
             raise ValueError(f"meta.lsx uses unhandled compression {method}")
         # The project's own minimal parser: xml.etree does not exist on
@@ -12757,10 +12804,19 @@ query Link($slug: String!, $domainName: String!) {
                 for n in sorted(names):
                     if n.lower().endswith(".pak"):
                         paks.append(os.path.join(r, n))
-            if not paks:
+            # Loose-file trees, top-most occurrence only: a Generated/ dir
+            # holds thousands of files, and descending into one would list
+            # them all as candidate roots.
+            data_roots = []
+            for r, dirs2, _n3 in os.walk(scratch):
+                for d3 in list(dirs2):
+                    if d3 in ("Generated", "Public", "Localization", "Video"):
+                        data_roots.append(os.path.join(r, d3))
+                        dirs2.remove(d3)
+            if not paks and not data_roots:
                 # Say what it actually IS before refusing it. The first
                 # collection run blamed the Script Extender for 49 texture
-                # packs - loose-file mods, a different (unsupported) shape.
+                # packs that were really loose-file mods (now supported).
                 lower = []
                 for r2, _d3, n2 in os.walk(scratch):
                     lower += [x.lower() for x in n2]
@@ -12772,22 +12828,89 @@ query Link($slug: String!, $domainName: String!) {
                         "Extender family - and the native Linux build of "
                         "the game has no way to load it."
                     )
-                elif any(
-                    x.endswith((".dds", ".gr2", ".lsf", ".loca", ".gts",
-                                ".gtp", ".ttf"))
-                    for x in lower
-                ):
-                    msg = (
-                        "This mod ships loose game files rather than a "
-                        ".pak, and loose-file BG3 mods are not supported "
-                        "here yet."
-                    )
                 else:
                     msg = (
-                        "No .pak file in this download, so there is "
-                        "nothing the game could load from it."
+                        "No .pak file and no game-data folder in this "
+                        "download, so there is nothing the game could "
+                        "load from it."
                     )
                 return {"ok": False, "error": msg}
+
+            # Merge any loose tree into the game's Data dir. Runs for
+            # pakless mods (the record is files-mode and the existing
+            # machinery removes it) and alongside paks for archives that
+            # ship both.
+            loose_rels = []
+            if data_roots:
+                install_path, _m2, _d2 = _game_paths(install_dir, "")
+                bg3_data = os.path.join(install_path, "Data")
+                if not os.path.isdir(bg3_data):
+                    _force_rmtree(scratch)
+                    await _emit_progress(mod_id, "error", 0, "no Data dir")
+                    return {
+                        "ok": False,
+                        "error": "The game's Data folder was not found.",
+                    }
+                for root_dir in data_roots:
+                    top = os.path.basename(root_dir)
+                    for r3, _d4, names3 in os.walk(root_dir):
+                        for n3 in names3:
+                            srcf = os.path.join(r3, n3)
+                            rel = (
+                                top + "/" + os.path.relpath(
+                                    srcf, root_dir
+                                ).replace(os.sep, "/")
+                            ).strip("/")
+                            if not _safe_rel_path(rel):
+                                continue
+                            dst = os.path.join(bg3_data, *rel.split("/"))
+                            os.makedirs(os.path.dirname(dst), exist_ok=True)
+                            if os.path.isfile(dst):
+                                os.remove(dst)
+                            shutil.move(srcf, dst)
+                            loose_rels.append(rel)
+
+            if not paks:
+                # Pure loose-file mod: a files-mode record, the shape the
+                # existing uninstall and collection machinery already
+                # removes (per-file, with empty-dir pruning).
+                _force_rmtree(scratch)
+                try:
+                    os.remove(archive_path)
+                except OSError:
+                    pass
+                settings = _load_settings()
+                installed = settings.setdefault("installed", {}).setdefault(
+                    game_domain, {}
+                )
+                key = _safe_name(mod_name)
+                prev = installed.get(key)
+                if prev and prev.get("mode") == "files":
+                    loose_rels = [
+                        x for x in (prev.get("files") or [])
+                        if x not in loose_rels
+                    ] + loose_rels
+                installed[key] = _merge_install_record(installed.get(key), {
+                    "mod_id": mod_id,
+                    "file_id": file_id,
+                    "name": mod_name,
+                    "version": mod_version,
+                    "file_name": file_name,
+                    "installed_at": int(time.time()),
+                    "page_version": page_version,
+                    "source": record_source,
+                    "collection_slug": collection_slug,
+                    "mode": "files",
+                    "target": "Data",
+                    "files": loose_rels,
+                })
+                _save_settings(settings)
+                decky.logger.info(
+                    f"installed bg3 loose-file mod {mod_name!r}: "
+                    f"{len(loose_rels)} files into Data/"
+                )
+                await _emit_progress(mod_id, "done", 100)
+                return {"ok": True, "folder": key}
             all_metas, meta_err = [], ""
             needs_se = False
             staged = []
@@ -12853,6 +12976,10 @@ query Link($slug: String!, $domainName: String!) {
                 "files": file_names,
                 "bg3_mods": all_metas,
                 "enabled": True,
+                # Loose files shipped ALONGSIDE paks (rare). Removed at
+                # uninstall; a disable toggles only the paks, which the
+                # code comment at the toggle explains.
+                **({"loose_files": loose_rels} if loose_rels else {}),
                 # Kept ON the record, not just returned: the moment this
                 # matters is when someone wonders weeks later why a mod
                 # they installed does nothing.
@@ -19464,6 +19591,25 @@ query CollectionInstructions($slug: String!) {
                 }
                 for key, rec in _bg3_records(settings, game_domain)
             ]
+            results += [
+                {
+                    "folder": key,
+                    "enabled": True,
+                    "tracked": True,
+                    "name": rec.get("name") or key,
+                    "version": rec.get("version") or "",
+                    "mod_id": rec.get("mod_id"),
+                    # Loose files have no registration to pull and no safe
+                    # place to park thousands of textures: uninstall is
+                    # the off switch.
+                    "togglable": False,
+                    "source": rec.get("source") or "",
+                    "collection_slug": rec.get("collection_slug") or "",
+                }
+                for key, rec in settings.get("installed", {})
+                .get(game_domain, {}).items()
+                if rec.get("mode") == "files"
+            ]
             results.sort(key=lambda m: (m["name"] or "").lower())
             return {
                 "ok": True,
@@ -19703,6 +19849,15 @@ query CollectionInstructions($slug: String!) {
             # could keep applying. Out of the folder means off.
             settings = _load_settings()
             rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+            if rec and rec.get("mode") == "files":
+                return {
+                    "ok": False,
+                    "error": (
+                        "This mod is loose files in the game's Data "
+                        "folder and cannot be switched off - uninstall "
+                        "it instead."
+                    ),
+                }
             if not rec or rec.get("mode") != "bg3":
                 return {"ok": False, "error": f"{folder} is not tracked"}
             src_dir = _bg3_disabled_dir() if enabled else _bg3_mods_dir()
@@ -20034,8 +20189,31 @@ query CollectionInstructions($slug: String!) {
         if install_mode == "bg3":
             settings = _load_settings()
             rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+            if rec and rec.get("mode") == "files":
+                # Loose-file mod: per-file removal with dir pruning, the
+                # machinery the rest of the plugin already uses.
+                install_path, _m2, _d2 = _game_paths(install_dir, "")
+                if _remove_files_record(
+                    game_domain, folder, install_path, settings
+                ):
+                    _save_settings(settings)
+                    decky.logger.info(
+                        f"uninstalled bg3 loose-file mod {folder!r}"
+                    )
+                    return {"ok": True}
+                return {"ok": False, "error": f"{folder} is not tracked"}
             if not rec or rec.get("mode") != "bg3":
                 return {"ok": False, "error": f"{folder} is not tracked"}
+            install_path, _m2, _d2 = _game_paths(install_dir, "")
+            for rel in rec.get("loose_files") or []:
+                if not _safe_rel_path(rel):
+                    continue
+                try:
+                    os.remove(os.path.join(
+                        install_path, "Data", *rel.split("/")
+                    ))
+                except OSError:
+                    pass
             for n in rec.get("files") or []:
                 if not _safe_rel_path(n) or "/" in n:
                     continue
@@ -20244,10 +20422,33 @@ query CollectionInstructions($slug: String!) {
             if install_mode == "bg3":
                 settings = _load_settings()
                 removed_list, kept = [], []
+                bg3_install_path, _m2, _d2 = _game_paths(install_dir, "")
+                loose_keys = [
+                    k for k, r in settings.get("installed", {})
+                    .get(game_domain, {}).items()
+                    if r.get("mode") == "files"
+                ]
+                for key in loose_keys:
+                    if key.lower() in protected_set:
+                        kept.append(key)
+                        continue
+                    if _remove_files_record(
+                        game_domain, key, bg3_install_path, settings
+                    ):
+                        removed_list.append(key)
                 for key, rec in list(_bg3_records(settings, game_domain)):
                     if key.lower() in protected_set:
                         kept.append(key)
                         continue
+                    for rel in rec.get("loose_files") or []:
+                        if not _safe_rel_path(rel):
+                            continue
+                        try:
+                            os.remove(os.path.join(
+                                bg3_install_path, "Data", *rel.split("/")
+                            ))
+                        except OSError:
+                            pass
                     for n in rec.get("files") or []:
                         if not _safe_rel_path(n) or "/" in n:
                             continue
