@@ -16322,6 +16322,14 @@ class TestBg3Mode(unittest.TestCase):
         shutil.rmtree(self.install, ignore_errors=True)
         os.makedirs(os.path.join(self.install, "bin"))
         os.makedirs(os.path.join(self.install, "Data"))
+        # The guard reads the REAL /proc for a live bg3, so on a machine
+        # where someone is actually playing, every install in this class
+        # was refused and 29 tests failed - on Linux only, because Windows
+        # never has bg3 running. A test must not depend on what the
+        # machine happens to be doing; the guard has its own test that
+        # stubs this True deliberately.
+        self._real_running = main._bg3_running
+        main._bg3_running = lambda: False
         self._real_root = main.BG3_PROFILE_ROOT
         main.BG3_PROFILE_ROOT = os.path.join(TEST_ROOT, "bg3-profile")
         shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
@@ -16341,6 +16349,7 @@ class TestBg3Mode(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
         main.BG3_PROFILE_ROOT = self._real_root
+        main._bg3_running = self._real_running
         shutil.rmtree(self.install, ignore_errors=True)
 
     def _archive(self, entries: dict):
@@ -16944,6 +16953,22 @@ class TestBg3Mode(unittest.TestCase):
             "bbbb2222-0000-0000-0000-000000000002",
             self._uuids_in_modsettings(),
         )
+
+    def test_this_class_does_not_depend_on_a_live_game(self):
+        """29 tests here failed on the Legion and passed on Windows, purely
+        because someone was playing BG3 at the time: _bg3_running reads the
+        real /proc, so the guard refused every test install. A suite whose
+        result depends on what the machine is doing is not a suite."""
+        self.assertIs(
+            main._bg3_running(), False,
+            "setUp must stub _bg3_running so ambient state cannot decide",
+        )
+        with open(os.path.join(REPO_ROOT, "tests", "test_backend.py"),
+                  encoding="utf-8") as f:
+            src = f.read()
+        i = src.index("class TestBg3Mode")
+        setup = src[i : src.index("def tearDown", i)]
+        self.assertIn("_bg3_running = lambda: False", setup)
 
     def test_every_mutation_refuses_while_the_game_runs(self):
         """Moving paks under a loading game hung it at 94% on device
