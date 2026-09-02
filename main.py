@@ -16373,6 +16373,8 @@ query Link($slug: String!, $domainName: String!) {
         errors = []
         restored = []
         root_leftovers = []
+        # bg3 keys are popped after modsettings is rewritten, not during.
+        bg3_reset_keys = []
         for key, rec in sorted(records.items()):
             try:
                 mode = rec.get("mode") or "folder"
@@ -16390,6 +16392,32 @@ query Link($slug: String!, $domainName: String!) {
                 elif mode == "me3":
                     if _remove_me3_record(game_domain, key, settings):
                         removed += 1
+                elif mode == "bg3":
+                    for n in rec.get("files") or []:
+                        if not _safe_rel_path(n) or "/" in n:
+                            continue
+                        for bg3_base in (
+                            _bg3_mods_dir(), _bg3_disabled_dir()
+                        ):
+                            try:
+                                os.remove(os.path.join(bg3_base, n))
+                            except OSError:
+                                pass
+                    for rel in rec.get("loose_files") or []:
+                        if not _safe_rel_path(rel):
+                            continue
+                        try:
+                            os.remove(os.path.join(
+                                install_path, "Data", *rel.split("/")
+                            ))
+                        except OSError:
+                            pass
+                    # Disabled, not popped: _write_bg3_modsettings only
+                    # drops entries a record still OWNS, so popping first
+                    # would strand the registration forever.
+                    rec["enabled"] = False
+                    bg3_reset_keys.append(key)
+                    removed += 1
                 elif game_domain in ME3_GAMES:
                     # An me3 game's records are never game-dir-relative.
                     # The folder fallback below would resolve this one
@@ -16825,6 +16853,17 @@ query Link($slug: String!, $domainName: String!) {
                 )
             except OSError as e:
                 errors.append(f"{original}: {e}")
+        # BEFORE the wholesale wipe below: _write_bg3_modsettings only
+        # removes entries a record still OWNS, and that loop clears this
+        # game's whole "installed" section. Running after it left every
+        # registration in modsettings.lsx with nothing to remove it - the
+        # exact leftover state that had a 31-mod collection booting 128
+        # mods (device, 2026-09-02). The test drives all four removal
+        # paths for real, so ordering cannot rot again.
+        if bg3_reset_keys:
+            bg3_err = _write_bg3_modsettings(settings, game_domain)
+            if bg3_err:
+                errors.append(bg3_err)
         for section in ("installed", "collections", "framework_setup",
                         "collection_attention", "w3_merges", "skipped",
                         "auto_fixed", "update_attempts",

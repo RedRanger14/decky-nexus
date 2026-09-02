@@ -17302,6 +17302,117 @@ class TestBg3Mode(unittest.TestCase):
         finally:
             f2.close()
 
+    def test_every_removal_path_clears_bg3_mods(self):
+        """Four separate endpoints can remove mods, and bg3 needed a branch
+        in each. They were fixed ONE AT A TIME as each bit: uninstall_mod,
+        then uninstall_collection, then uninstall_all_mods, and finally
+        reset_game_modding - which was missed until a reset before a small
+        collection left the previous collection's 97 paks on disk AND
+        registered, so a "31-mod cosmetic collection" booted 128 mods and
+        hung at 80%.
+
+        A bg3 record is FILES in the Larian profile, not a folder under the
+        game, so the generic folder fallback deletes nothing while still
+        dropping the record: it looks like it worked. This test drives all
+        four for real rather than trusting that each was remembered.
+        """
+        paths = []
+
+        def fresh(name, uuid, slug=""):
+            self._archive({f"{name}.pak": self._make_pak(uuid, folder=name)})
+            r = run(self.plugin.install_mod(
+                self.DOMAIN, self.MOD, self.FILE, "m.zip", name, "1.0",
+                self.GAME, "Mods",
+                install_mode="bg3", app_id=1086940,
+                record_source="collection" if slug else "",
+                collection_slug=slug,
+            ))
+            self.assertTrue(r.get("ok"), r)
+            p = os.path.join(main._bg3_mods_dir(), f"{name}.pak")
+            self.assertTrue(os.path.isfile(p), f"{name} did not install")
+            paths.append(p)
+            return p
+
+        def assert_gone(p, endpoint):
+            self.assertFalse(
+                os.path.isfile(p),
+                f"{endpoint} left {os.path.basename(p)} on disk",
+            )
+            left = main._load_settings().get("installed", {}).get(
+                self.DOMAIN, {})
+            self.assertEqual(
+                [k for k, v in left.items() if v.get("mode") == "bg3"], [],
+                f"{endpoint} left a bg3 record behind",
+            )
+            # And nothing of ours may survive in the game's mod list.
+            self.assertEqual(
+                self._uuids_in_modsettings(),
+                [
+                    "cb555efe-2d9e-131f-8195-a89329d218ea",
+                    "11111111-2222-3333-4444-555555555555",
+                ],
+                f"{endpoint} left a registration in modsettings.lsx",
+            )
+
+        # 1. uninstall_mod
+        p = fresh("PathOne", "aaaa0001-0000-0000-0000-000000000001")
+        r = run(self.plugin.uninstall_mod(
+            self.DOMAIN, self.GAME, "Mods", "PathOne", "bg3"))
+        self.assertTrue(r.get("ok"), r)
+        assert_gone(p, "uninstall_mod")
+
+        # 2. uninstall_collection
+        p = fresh("PathTwo", "aaaa0002-0000-0000-0000-000000000002", "slugX")
+        r = run(self.plugin.uninstall_collection(
+            self.DOMAIN, self.GAME, "Mods",
+            install_mode="bg3", app_id=1086940, slug="slugX"))
+        self.assertTrue(r.get("ok"), r)
+        assert_gone(p, "uninstall_collection")
+
+        # 3. uninstall_all_mods (My Mods "remove everything")
+        p = fresh("PathThree", "aaaa0003-0000-0000-0000-000000000003")
+        r = run(self.plugin.uninstall_all_mods(
+            self.DOMAIN, self.GAME, "Mods", [], "bg3", 1086940))
+        self.assertTrue(r.get("ok"), r)
+        assert_gone(p, "uninstall_all_mods")
+
+        # 4. reset_game_modding (the one that was missed)
+        p = fresh("PathFour", "aaaa0004-0000-0000-0000-000000000004")
+        r = run(self.plugin.reset_game_modding(
+            self.DOMAIN, self.GAME, "Mods", "bg3", 1086940))
+        self.assertTrue(r.get("ok"), r)
+        assert_gone(p, "reset_game_modding")
+
+    def test_reset_also_clears_loose_files_and_disabled_paks(self):
+        """Reset must sweep what a disable parked and what a loose-file mod
+        merged into Data/, not only what is currently active."""
+        # A parked pak.
+        self._archive({"Parked.pak": self._make_pak(
+            "aaaa0005-0000-0000-0000-000000000005", folder="Parked")})
+        self.assertTrue(self._install("Parked Mod").get("ok"))
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Parked Mod", False, "bg3", self.DOMAIN))
+        parked = os.path.join(main._bg3_disabled_dir(), "Parked.pak")
+        self.assertTrue(os.path.isfile(parked))
+        # A loose-file mod.
+        self._archive({"Generated/Public/Shared/Assets/t.DDS": b"x"})
+        self.assertTrue(self._install("Loose Mod").get("ok"))
+        loose = os.path.join(
+            self.install, "Data", "Generated", "Public", "Shared",
+            "Assets", "t.DDS")
+        self.assertTrue(os.path.isfile(loose))
+
+        r = run(self.plugin.reset_game_modding(
+            self.DOMAIN, self.GAME, "Mods", "bg3", 1086940))
+        self.assertTrue(r.get("ok"), r)
+        self.assertFalse(os.path.isfile(parked), "reset left a parked pak")
+        self.assertFalse(os.path.isfile(loose), "reset left loose files")
+        self.assertEqual(
+            [k for k, v in main._load_settings().get("installed", {})
+             .get(self.DOMAIN, {}).items()], [],
+            "reset left records behind",
+        )
+
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
         main.HOME_ROOT = TEST_ROOT
