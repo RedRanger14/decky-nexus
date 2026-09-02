@@ -16348,6 +16348,10 @@ class TestBg3Mode(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
+        try:
+            os.remove(main._bg3_stats_cache_path())
+        except OSError:
+            pass
         main.BG3_PROFILE_ROOT = self._real_root
         main._bg3_running = self._real_running
         shutil.rmtree(self.install, ignore_errors=True)
@@ -17412,6 +17416,174 @@ class TestBg3Mode(unittest.TestCase):
              .get(self.DOMAIN, {}).items()], [],
             "reset left records behind",
         )
+
+    # ---- the divider bug: '>' inside an attribute value -------------------
+    def test_xml_attribute_values_may_contain_greater_than(self):
+        """Load Order Tabs names its modules '--------------------------->
+        Accesories'. The tokenizer ended the tag at that first '>', every
+        later attribute nested under the wrong node, the UUID was never
+        seen, and 37 modules went unregistered - which is why the game's
+        own menu had to be used to enable them."""
+        doc = main.xml_parse(
+            '<save><node id="ModuleInfo">'
+            '<attribute id="Name" type="FixedString" '
+            'value="---------------------------&gt;  Accesories"/>'
+            '<attribute id="Name2" type="FixedString" '
+            'value="--------------------------->  Accesories"/>'
+            '<attribute id="UUID" type="FixedString" '
+            'value="81cca0ce-a866-4731-8da2-486f3a2ce52d"/>'
+            "</node></save>"
+        )
+        node = doc.find("node")
+        attrs = {a.get("id"): a.get("value") for a in node.findall("attribute")}
+        self.assertEqual(attrs.get("Name2"), "--------------------------->  Accesories")
+        self.assertEqual(attrs.get("UUID"), "81cca0ce-a866-4731-8da2-486f3a2ce52d")
+
+    def test_a_divider_pak_registers(self):
+        pak = self._make_pak(
+            "81cca0ce-a866-4731-8da2-486f3a2ce52d",
+            name="--------------------------->             Accesories",
+            folder="Plus Divisions - Accesories",
+        )
+        path = os.path.join(TEST_ROOT, "divider.pak")
+        with open(path, "wb") as f:
+            f.write(pak)
+        metas = main._lspk_pak_metas(path)
+        self.assertEqual(len(metas), 1, "the arrow in the name must not hide the UUID")
+        self.assertEqual(metas[0]["uuid"], "81cca0ce-a866-4731-8da2-486f3a2ce52d")
+
+    # ---- the Gustav guard ----------------------------------------------------
+    def test_the_base_game_pak_is_plausible(self):
+        # Gustav.pak, read off the device: 145,832 files, a 4,862,848-byte
+        # compressed table at offset 13,181,890,472 in a 12,575MB file.
+        self.assertTrue(main._lspk_table_plausible(
+            145832, 4862848, 13181890472, 12575 * 1048576 + 5_000_000))
+
+    def test_a_table_past_the_end_of_the_file_is_not(self):
+        self.assertFalse(main._lspk_table_plausible(100, 5000, 40, 1000))
+        self.assertFalse(main._lspk_table_plausible(0, 100, 40, 10_000))
+        self.assertFalse(main._lspk_table_plausible(10, 0, 40, 10_000))
+
+    # ---- LZ4 fast path -------------------------------------------------------
+    def test_lz4_non_overlapping_match_copies_correctly(self):
+        # 8 literals, then a match of 8 at offset 8: no overlap, one slice.
+        block = bytes([0x84]) + b"abcdefgh" + (8).to_bytes(2, "little")
+        self.assertEqual(
+            main._lz4_block_decompress(block, 16), b"abcdefghabcdefgh")
+
+    # ---- the corrected stats rule ---------------------------------------------
+    def _vanilla_pak(self, *names):
+        """A fake base-game pak in the test game's Data dir defining
+        stat entries, so the rule can tell an override from a loop."""
+        stats = "".join(
+            f'new entry "{n}"\ntype "Object"\ndata "Rarity" "Common"\n\n'
+            for n in names
+        )
+        data_dir = os.path.join(self.install, "Data")
+        os.makedirs(data_dir, exist_ok=True)
+        with open(os.path.join(data_dir, "Shared.pak"), "wb") as f:
+            f.write(self._make_stats_pak(
+                "00000000-0000-0000-0000-00000000dead", "Shared", stats))
+
+    def test_overriding_a_vanilla_entry_is_not_flagged(self):
+        """UnlockLevelCurve does this 16 times, Vanilla Equipment Overhaul
+        691 times: `new entry "X"` / `using "X"` where X is the game's own
+        entry. The first version of the rule parked all 15 such mods."""
+        self._vanilla_pak("Shout_WildShape_Badger", "ARM_Camp_Body")
+        self._archive({"Override.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000a1", "UnlockLevelCurve",
+            'new entry "Shout_WildShape_Badger"\ntype "SpellData"\n'
+            'using "Shout_WildShape_Badger"\ndata "Level" "13"\n')})
+        self.assertTrue(self._install("UnlockLevelCurve").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r["disabled"], [], r)
+        self.assertTrue(
+            os.path.isfile(main._bg3_stats_cache_path()),
+            "the vanilla name set must be cached after the first read",
+        )
+
+    def test_inheriting_from_nothing_is_still_flagged(self):
+        # Tasha's shape: the mod's ONLY definition of TW_Dye_Consort is the
+        # one inheriting from TW_Dye_Consort, and nobody else defines it.
+        self._vanilla_pak("ARM_Camp_Body")
+        self._archive({"SelfRef.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000f1", "TW_Outfits",
+            self.SELF_REF_STATS)})
+        self.assertTrue(self._install("Tashas Cauldron of Outfits").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        names = [d["name"] for d in r["disabled"]]
+        self.assertIn("Tashas Cauldron of Outfits", names)
+        reason = next(d["reason"] for d in r["disabled"]
+                      if d["name"] == "Tashas Cauldron of Outfits")
+        self.assertIn("does not exist anywhere", reason)
+        self.assertIn("TW_Dye_Consort", reason)
+        # Honest copy: no claim about hangs the data cannot prove.
+        self.assertNotIn("loop forever", reason)
+
+    def test_overriding_another_enabled_mods_entry_is_fine(self):
+        self._vanilla_pak("ARM_Camp_Body")
+        self._archive({"Provider.pak": self._make_stats_pak(
+            "bbbb2222-0000-0000-0000-0000000000b2", "ProviderMod",
+            'new entry "MY_Base_Item"\ntype "Object"\n')})
+        self.assertTrue(self._install("Provider").get("ok"))
+        self._archive({"Patch.pak": self._make_stats_pak(
+            "cccc3333-0000-0000-0000-0000000000c3", "PatchMod",
+            'new entry "MY_Base_Item"\ntype "Object"\nusing "MY_Base_Item"\n'
+            'data "Rarity" "Legendary"\n')})
+        self.assertTrue(self._install("Patch").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertEqual(r["disabled"], [], r)
+
+    def test_a_mod_wrongly_parked_by_the_old_rule_comes_back(self):
+        """Fifteen legitimate mods were parked by the first version, with
+        the warning 'inherit from themselves'. The corrected pass re-judges
+        them and switches the innocent ones back on."""
+        self._vanilla_pak("Shout_WildShape_Badger")
+        self._archive({"ULC.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000a1", "UnlockLevelCurve",
+            'new entry "Shout_WildShape_Badger"\ntype "SpellData"\n'
+            'using "Shout_WildShape_Badger"\n')})
+        self.assertTrue(self._install("UnlockLevelCurve").get("ok"))
+        # Simulate the old rule's verdict.
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "UnlockLevelCurve", False, "bg3", self.DOMAIN))
+        s = main._load_settings()
+        s["installed"][self.DOMAIN]["UnlockLevelCurve"]["warning"] = (
+            "Its data has 16 item(s) that inherit from themselves (for "
+            "example 'Shout_WildShape_Badger'), which makes the game loop "
+            "forever while loading instead of starting."
+        )
+        main._save_settings(s)
+        self.assertNotIn(
+            "aaaa1111-0000-0000-0000-0000000000a1",
+            self._uuids_in_modsettings())
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        rec = main._load_settings()["installed"][self.DOMAIN]["UnlockLevelCurve"]
+        self.assertTrue(rec["enabled"], "the innocent mod must come back on")
+        self.assertNotIn("warning", rec)
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "ULC.pak")))
+        self.assertIn(
+            "aaaa1111-0000-0000-0000-0000000000a1",
+            self._uuids_in_modsettings(),
+            "its registration must be written back",
+        )
+
+    def test_a_user_disabled_mod_is_left_alone_by_the_re_judge(self):
+        # Only records the OLD RULE parked are re-enabled. One the user
+        # switched off stays off, whatever its stats look like.
+        self._vanilla_pak("ARM_Camp_Body")
+        self._archive({"Fine.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000f2", "Fine",
+            self.HEALTHY_STATS)})
+        self.assertTrue(self._install("A Fine Mod").get("ok"))
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "A Fine Mod", False, "bg3", self.DOMAIN))
+        run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        rec = main._load_settings()["installed"][self.DOMAIN]["A Fine Mod"]
+        self.assertFalse(rec["enabled"])
 
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT

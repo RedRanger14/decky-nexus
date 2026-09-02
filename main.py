@@ -5095,7 +5095,10 @@ _XML_TOKEN = re.compile(
     r"<!--.*?-->"                 # comments
     r"|<!\[CDATA\[.*?\]\]>"   # cdata
     r"|<\?.*?\?>"               # declarations
-    r"|<[^>]+>"                   # tags
+    # Tags: quoted attribute values are consumed whole, so a '>' inside
+    # one does not end the tag. '>' is legal in an XML attribute value and
+    # real mods put arrows in their names.
+    r"""|<(?:[^>"']|"[^"]*"|'[^']*')+>"""
     r"|[^<]+",                    # text
     re.S,
 )
@@ -6244,8 +6247,14 @@ def _lz4_block_decompress(src: bytes, out_size: int) -> bytes:
         start = len(out) - off
         if start < 0:
             raise ValueError("corrupt LZ4 block (offset past start)")
-        for k in range(mlen):
-            out.append(out[start + k])
+        if off >= mlen:
+            # No overlap: one slice. The per-byte loop below is only for
+            # the run-length case, and made a 40MB table take tens of
+            # seconds.
+            out += out[start : start + mlen]
+        else:
+            for k in range(mlen):
+                out.append(out[start + k])
     return bytes(out)
 
 
@@ -6319,11 +6328,28 @@ def _lspk_file_table(raw: bytes) -> bytes:
     fl_off = int.from_bytes(raw[8:16], "little")
     num_files = int.from_bytes(raw[fl_off : fl_off + 4], "little")
     comp_size = int.from_bytes(raw[fl_off + 4 : fl_off + 8], "little")
-    if num_files > 100000:
+    if not _lspk_table_plausible(num_files, comp_size, fl_off, len(raw)):
         raise ValueError("pak file table is implausible - corrupt download?")
     return _lz4_block_decompress(
         raw[fl_off + 8 : fl_off + 8 + comp_size], num_files * 272
     )
+
+
+def _lspk_table_plausible(num_files: int, comp_size: int, fl_off: int,
+                          file_size: int) -> bool:
+    """Does the declared file table fit the file it claims to describe?
+
+    The first guard was a flat "more than 100,000 files is corrupt", and
+    the base game's Gustav.pak has 145,832. Derive the bound from the file
+    instead: the compressed table must lie inside it, and it cannot have
+    compressed below a couple of bytes per entry."""
+    if num_files <= 0 or comp_size <= 0 or fl_off < 40:
+        return False
+    if fl_off + 8 + comp_size > file_size:
+        return False
+    if num_files > 5_000_000:
+        return False
+    return comp_size >= num_files * 2 // 100
 
 
 def _lspk_open(path: str):
@@ -6346,7 +6372,10 @@ def _lspk_open(path: str):
         f.seek(fl_off)
         num_files = int.from_bytes(f.read(4), "little")
         comp_size = int.from_bytes(f.read(4), "little")
-        if num_files > 100000:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(fl_off + 8)
+        if not _lspk_table_plausible(num_files, comp_size, fl_off, size):
             raise ValueError("pak file table is implausible")
         table = _lz4_block_decompress(f.read(comp_size), num_files * 272)
         entries = []
@@ -6401,6 +6430,77 @@ _STATS_USING_RE = re.compile(
 )
 
 
+_BG3_VANILLA_PAKS = ("Shared.pak", "SharedDev.pak", "Gustav.pak",
+                     "GustavDev.pak", "GustavX.pak", "Honour.pak")
+
+
+def _bg3_stats_cache_path() -> str:
+    return os.path.join(os.path.dirname(SETTINGS_PATH), "bg3-vanilla-stats.json")
+
+
+def _pak_stat_names_and_uses(path: str):
+    """({entry names defined}, {entry: parent}) from one pak's stats."""
+    defined, uses = {}, {}
+    try:
+        f, entries = _lspk_open(path)
+    except (OSError, ValueError):
+        return defined, uses
+    try:
+        for entry in entries:
+            name = entry[0].lower().replace("\\", "/")
+            if not (name.endswith(".txt") and "/stats/generated/data/" in name):
+                continue
+            try:
+                text = _lspk_read_member(f, entry).decode("utf-8", "replace")
+            except (OSError, ValueError):
+                continue
+            for blk in re.split('(?m)^' + chr(92) + 's*new entry' + chr(92) + 's+"', text)[1:]:
+                ent = blk.split('"', 1)[0]
+                defined[ent] = defined.get(ent, 0) + 1
+                mu = _STATS_USING_RE.search(blk)
+                if mu:
+                    uses[ent] = mu.group(1)
+    finally:
+        f.close()
+    return defined, uses
+
+
+def _bg3_vanilla_stat_names(install_path: str) -> set:
+    """Every stat entry the base game defines, from its own paks.
+
+    Cached beside the settings, keyed on each pak's size and mtime, so a
+    game patch invalidates it and a normal run pays nothing. Gustav.pak
+    alone declares 145,832 files; reading its table once is fine, on every
+    collection install it is not."""
+    data = os.path.join(install_path, "Data")
+    key = {}
+    for pk in _BG3_VANILLA_PAKS:
+        p = os.path.join(data, pk)
+        if os.path.isfile(p):
+            st = os.stat(p)
+            key[pk] = [st.st_size, int(st.st_mtime)]
+    if not key:
+        return set()
+    cache = _bg3_stats_cache_path()
+    try:
+        with open(cache, encoding="utf-8") as f:
+            saved = json.load(f)
+        if saved.get("key") == key:
+            return set(saved.get("names") or [])
+    except (OSError, ValueError):
+        pass
+    names = set()
+    for pk in key:
+        defined, _uses = _pak_stat_names_and_uses(os.path.join(data, pk))
+        names |= set(defined)
+    try:
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump({"key": key, "names": sorted(names)}, f)
+    except OSError:
+        pass
+    return names
+
+
 def _pak_stat_cycles(path: str) -> list:
     """[(entry, parent)] for stat entries whose inheritance loops inside
     this pak - self-referential, or a cycle among its own entries.
@@ -6451,40 +6551,112 @@ def _pak_stat_cycles(path: str) -> list:
     return bad
 
 
-def _bg3_stats_health_pass(settings: dict, game_domain: str) -> list:
-    """Switch off every enabled bg3 record whose paks contain looping stat
-    inheritance. Returns (name, reason) pairs."""
-    disabled = []
-    for key, rec in _bg3_records(settings, game_domain):
-        if not rec.get("enabled", True):
-            continue
-        hits = []
+def _bg3_stats_health_pass(settings: dict, game_domain: str,
+                           install_path: str = "") -> list:
+    """Switch off every enabled bg3 record whose stats inherit from an
+    entry that NOBODY defines - not the base game, not any enabled mod, not
+    the mod itself. Returns (name, reason) pairs.
+
+    Also the undo for its own first version: records that version parked
+    for "inheriting from themselves" are re-judged, and the ones that were
+    legitimate overrides come back on with the warning cleared. Fifteen
+    mods on device, UnlockLevelCurve among them.
+    """
+    vanilla = _bg3_vanilla_stat_names(install_path) if install_path else set()
+    recs = _bg3_records(settings, game_domain)
+    # Pass 1: what every enabled mod defines, and what each uses.
+    per_rec = {}
+    for key, rec in recs:
+        defined, uses = {}, {}
         for n in rec.get("files") or []:
             if not _safe_rel_path(n) or "/" in n:
                 continue
-            path = os.path.join(_bg3_mods_dir(), n)
-            if os.path.isfile(path):
-                hits += _pak_stat_cycles(path)
-        if not hits:
+            for base in (_bg3_mods_dir(), _bg3_disabled_dir()):
+                p = os.path.join(base, n)
+                if os.path.isfile(p):
+                    d2, u2 = _pak_stat_names_and_uses(p)
+                    for nm, cnt in d2.items():
+                        defined[nm] = defined.get(nm, 0) + cnt
+                    uses.update(u2)
+                    break
+        per_rec[key] = (defined, uses)
+
+    changed = []
+    for key, rec in recs:
+        defined, uses = per_rec[key]
+        was_ours = "inherit from" in (rec.get("warning") or "")
+        if not rec.get("enabled", True) and not was_ours:
             continue
-        os.makedirs(_bg3_disabled_dir(), exist_ok=True)
-        for n in rec.get("files") or []:
-            src = os.path.join(_bg3_mods_dir(), n)
-            if os.path.isfile(src):
-                dst = os.path.join(_bg3_disabled_dir(), n)
-                if os.path.isfile(dst):
-                    os.remove(dst)
-                shutil.move(src, dst)
-        rec["enabled"] = False
-        reason = (
-            f"Its data has {len(hits)} item(s) that inherit from "
-            f"themselves (for example '{hits[0][0]}'), which makes the "
-            "game loop forever while loading instead of starting. That is "
-            "a fault in the mod, so it was left switched off."
-        )
-        rec["warning"] = reason
-        disabled.append((rec.get("name") or key, reason))
-    return disabled
+        # What OTHERS provide: the base game plus every other enabled mod.
+        # A mod's own single definition of X does not make `X using X`
+        # resolvable - that is Tasha's, an entry inheriting from nothing.
+        # X defined by the base game (UnlockLevelCurve, Vanilla Equipment
+        # Overhaul) or by another mod IS the override pattern, and fine.
+        others = set(vanilla)
+        for k2, r2 in recs:
+            if k2 != key and r2.get("enabled", True):
+                others |= set(per_rec[k2][0])
+
+        def resolvable(ent, parent):
+            if parent in others:
+                return True
+            cnt = defined.get(parent, 0)
+            if cnt == 0:
+                return False
+            return parent != ent or cnt > 1
+
+        bad = [
+            (ent, parent) for ent, parent in uses.items()
+            if not resolvable(ent, parent)
+        ]
+        # A mod-only cycle (A uses B, B uses A, nobody else defines
+        # either) is bad too.
+        for start, parent in uses.items():
+            if parent in others or parent == start:
+                continue
+            seen, cur = {start}, parent
+            while cur in uses and cur not in others:
+                if cur in seen:
+                    bad.append((start, parent))
+                    break
+                seen.add(cur)
+                cur = uses[cur]
+        if bad and rec.get("enabled", True):
+            os.makedirs(_bg3_disabled_dir(), exist_ok=True)
+            for n in rec.get("files") or []:
+                src = os.path.join(_bg3_mods_dir(), n)
+                if os.path.isfile(src):
+                    dst = os.path.join(_bg3_disabled_dir(), n)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.move(src, dst)
+            rec["enabled"] = False
+            reason = (
+                f"Its data has {len(bad)} item(s) that inherit from "
+                f"something that does not exist anywhere (for example "
+                f"'{bad[0][0]}' from '{bad[0][1]}'), so the game cannot "
+                "load them correctly. That is a fault in the mod, so it "
+                "was left switched off."
+            )
+            rec["warning"] = reason
+            changed.append((rec.get("name") or key, reason))
+        elif not bad and was_ours and not rec.get("enabled", True):
+            # Wrongly parked by the first version of this rule.
+            os.makedirs(_bg3_mods_dir(), exist_ok=True)
+            for n in rec.get("files") or []:
+                src = os.path.join(_bg3_disabled_dir(), n)
+                if os.path.isfile(src):
+                    dst = os.path.join(_bg3_mods_dir(), n)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.move(src, dst)
+            rec["enabled"] = True
+            rec.pop("warning", None)
+            decky.logger.info(
+                f"bg3 stats: re-enabled {key!r} - its self-inheritance is "
+                "an override of an entry that exists, not a loop"
+            )
+    return changed
 
 
 def _lspk_entry_names(raw: bytes) -> list:
@@ -14630,11 +14802,20 @@ query Link($slug: String!, $domainName: String!) {
             if _bg3_running():
                 return {"ok": False, "error": BG3_GAME_RUNNING}
             settings = _load_settings()
-            # Stats first: a looping mod is switched off before the
-            # dependency pass judges what still stands without it.
-            disabled = _bg3_stats_health_pass(settings, game_domain)
+            bg3_install_path, _m2, _d2 = _game_paths(install_dir, "")
+            # Stats first: a broken mod is switched off before the
+            # dependency pass judges what still stands without it. The
+            # stats pass may also RE-ENABLE mods its first version wrongly
+            # parked, so modsettings is rewritten whenever anything moved.
+            before = {k: r.get("enabled", True)
+                      for k, r in _bg3_records(settings, game_domain)}
+            disabled = _bg3_stats_health_pass(
+                settings, game_domain, bg3_install_path
+            )
             disabled += _bg3_broken_dep_pass(settings, game_domain)
-            if disabled:
+            after = {k: r.get("enabled", True)
+                     for k, r in _bg3_records(settings, game_domain)}
+            if disabled or before != after:
                 err = _write_bg3_modsettings(settings, game_domain)
                 if err:
                     return {"ok": False, "error": err}
