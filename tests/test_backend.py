@@ -17294,5 +17294,211 @@ class TestBg3Mode(unittest.TestCase):
             main.HOME_ROOT = real
 
 
+class TestBg3BootHunt(unittest.TestCase):
+    """The boot-hunt classifier, held to the numbers actually measured on
+    device (2026-09-02). Judging a boot is the whole risk in an unattended
+    bisection: call a healthy boot a spin and it condemns an innocent mod,
+    call a spin healthy and the hunt walks straight past the culprit."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+        import bg3boothunt
+
+        self.h = bg3boothunt
+
+    @staticmethod
+    def _code(path):
+        """Source with comments and docstrings stripped.
+
+        These tests assert on what the tool DOES. Without stripping, a
+        comment mentioning "rungameid" would satisfy a check that the code
+        never calls it - and this file's own comments mention every one of
+        these mistakes by name.
+        """
+        import io as _io
+        import tokenize
+
+        with _io.open(path, encoding="utf-8") as f:
+            src = f.read()
+        lines = src.splitlines(keepends=True)
+        # Absolute offset of the start of each 1-based line.
+        starts = [0]
+        for ln in lines:
+            starts.append(starts[-1] + len(ln))
+
+        def off(pos):
+            row, col = pos
+            return starts[row - 1] + col
+
+        try:
+            toks = list(tokenize.generate_tokens(_io.StringIO(src).readline))
+        except tokenize.TokenError:
+            return src
+        # Blank out comment and docstring RANGES in the original text
+        # rather than rebuilding from tokens: rebuilding turned
+        # "timeout=20" into three separate pieces, so a search for
+        # "timeout=" found nothing and the test lied about the code.
+        blanks = []
+        prev_meaningful = None
+        for tok in toks:
+            if tok.type == tokenize.COMMENT:
+                blanks.append((off(tok.start), off(tok.end)))
+                continue
+            if tok.type == tokenize.STRING and prev_meaningful in (
+                None, tokenize.INDENT, tokenize.NEWLINE, tokenize.NL,
+            ):
+                blanks.append((off(tok.start), off(tok.end)))
+            if tok.type not in (tokenize.NL, tokenize.COMMENT):
+                prev_meaningful = tok.type
+        chars = list(src)
+        for a, b in blanks:
+            for i in range(a, min(b, len(chars))):
+                if chars[i] != "\n":
+                    chars[i] = " "
+        return "".join(chars)
+
+    def _series(self, specs):
+        """specs: list of (cpu_ticks_delta, rss_delta_mb, io_delta_mb),
+        turned into the cumulative samples the classifier reads."""
+        out = [{"cpu_ticks": 0, "rss_mb": 1800, "io_mb": 1000}]
+        for cpu, rss, io in specs:
+            last = out[-1]
+            out.append({
+                "cpu_ticks": last["cpu_ticks"] + cpu,
+                "rss_mb": last["rss_mb"] + rss,
+                "io_mb": last["io_mb"] + io,
+            })
+        return out
+
+    # ---- the measured spin ------------------------------------------------
+    # 79% world load: ~3180 ticks per 10s (three cores), RSS 1975MB flat,
+    # zero bytes read or written. 94% boot: ~2050 ticks (two cores), same
+    # flatness. Both must read as spins.
+    def test_the_measured_three_core_spin_is_caught(self):
+        s = self._series([(3180, 0, 0)] * 7)
+        self.assertEqual(self.h.classify(s, False, False), "spin")
+
+    def test_the_measured_two_core_spin_is_caught(self):
+        s = self._series([(2050, 1, 0)] * 7)
+        self.assertEqual(self.h.classify(s, False, False), "spin")
+
+    def test_a_spin_needs_to_persist_before_it_is_called(self):
+        """Three samples of pinned CPU is a loading stutter, not a verdict."""
+        s = self._series([(3180, 0, 0)] * 3)
+        self.assertEqual(self.h.classify(s, False, False), "watching")
+
+    def test_one_core_busy_is_not_a_spin(self):
+        # A single busy core is ordinary work; the fault pinned 2-3.
+        s = self._series([(1000, 0, 0)] * 8)
+        self.assertNotEqual(self.h.classify(s, False, False), "spin")
+
+    def test_growing_memory_is_never_a_spin(self):
+        # The control run grew RSS by 966MB on its way to the menu while
+        # burning plenty of CPU. Loading is busy AND productive.
+        s = self._series([(3180, 140, 2)] * 8)
+        self.assertEqual(self.h.classify(s, False, False), "ok")
+
+    def test_disk_activity_is_never_a_spin(self):
+        s = self._series([(3180, 0, 40)] * 8)
+        self.assertEqual(self.h.classify(s, False, False), "ok")
+
+    # ---- healthy boots ----------------------------------------------------
+    def test_the_measured_control_boot_reads_as_ok(self):
+        # Real numbers: rss +966MB, io +8MB inside one sample.
+        s = self._series([(900, 966, 8)])
+        self.assertEqual(self.h.classify(s, True, False), "ok")
+
+    def test_settled_at_the_press_any_key_screen_is_ok(self):
+        """Michael: "you have to press a button to see the menu". A game
+        idling there has a loaded game's memory, low CPU, and has written
+        its profile files - that combination is success, not a stall."""
+        s = self._series([(200, 0, 0)] * 4)
+        s = [dict(x, rss_mb=x["rss_mb"] + 1000) for x in s]
+        self.assertEqual(self.h.classify(s, True, False), "ok")
+
+    def test_idle_without_profile_files_is_not_yet_ok(self):
+        # Low CPU and flat memory but nothing written: too early to call.
+        s = self._series([(200, 0, 0)] * 4)
+        s = [dict(x, rss_mb=x["rss_mb"] + 1000) for x in s]
+        self.assertNotEqual(self.h.classify(s, False, False), "ok")
+
+    # ---- the honesty requirement -----------------------------------------
+    def test_running_out_of_time_is_inconclusive_not_spin(self):
+        """The first version of this called a timeout a spin, which would
+        have blamed whichever half happened to be loaded."""
+        s = self._series([(700, 2, 0)] * 8)
+        self.assertEqual(self.h.classify(s, False, True), "inconclusive")
+
+    def test_too_few_samples_says_watching(self):
+        self.assertEqual(self.h.classify([], False, False), "watching")
+        self.assertEqual(
+            self.h.classify([{"cpu_ticks": 0, "rss_mb": 1, "io_mb": 1}],
+                            False, False),
+            "watching",
+        )
+
+    # ---- the lessons that cost a run each --------------------------------
+    def test_it_launches_with_applaunch_not_the_store_url(self):
+        """steam://rungameid opened the STORE PAGE and the game never
+        started, which the watcher read as failure."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        self.assertIn('"-applaunch"', src)
+        self.assertNotIn("rungameid", src)
+
+    def test_every_subprocess_call_has_a_timeout(self):
+        """One pkill that never returned wedged an entire run reading its
+        pipe."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        self.assertIn("timeout=", src)
+        # subprocess.run must only be reached through the wrapper that
+        # always passes a timeout.
+        self.assertEqual(
+            src.count("subprocess.run("), 1,
+            "subprocess.run belongs only in run_cmd, which times out",
+        )
+
+    def test_it_is_not_named_after_a_stdlib_module(self):
+        """The first version was bisect.py and shadowed the stdlib, dying
+        during import with no output at all."""
+        import importlib.util
+
+        name = "bg3boothunt"
+        self.assertIsNone(
+            importlib.util.find_spec(name) if name in sys.stdlib_module_names
+            else None
+        )
+        self.assertNotIn(name, sys.stdlib_module_names)
+
+    def test_it_kills_the_game_before_changing_mod_state(self):
+        """The plugin refuses to touch mods while bg3 runs. Every toggle in
+        the first run was refused, leaving a control run that tested
+        nothing."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def apply_state(")
+        body = src[i : i + 700]
+        self.assertIn("kill_game", body)
+        self.assertIn("refusing to guess", body)
+
+    def test_it_restores_the_mod_set_on_every_exit_path(self):
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def hunt(")
+        body = src[i:]
+        self.assertIn("finally:", body)
+        self.assertIn("SIGINT", body)
+        self.assertIn("restore-only", src)
+
+    def test_it_samples_the_child_not_the_shim(self):
+        """The shim sits in do_wait on its child: sampling it showed 93MB
+        and 0% CPU, which nearly sent the diagnosis chasing a phantom."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def game_pid(")
+        self.assertIn("children", src[i : i + 600])
+
+    def test_a_failing_control_run_aborts_instead_of_bisecting(self):
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("control run")
+        self.assertIn("ABORT", src[i : i + 900])
+
+
 if __name__ == "__main__":
     unittest.main()
