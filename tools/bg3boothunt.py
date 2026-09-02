@@ -17,13 +17,16 @@ not share:
     spinning: 1.5+ cores pinned, RSS flat to within a few MB, and ZERO
               bytes read or written. (Zero I/O also rules out shader
               compilation, which writes its cache.)
-    healthy:  RSS climbs by hundreds of MB, real I/O, and the game writes
-              its profile files (analytics.lsx, playerprofiles8.lsf) on
-              the way up.
+    healthy:  the game has SETTLED at the press-any-key screen: the memory
+              of a loaded game, its profile files written, and CPU quiet
+              for three samples in a row. Memory growth on its own is
+              loading, not success.
 
 Anything that fits neither is reported as INCONCLUSIVE rather than
 guessed at. An earlier version of this called "I ran out of time" a spin,
-which would have blamed an innocent mod.
+which would have blamed an innocent mod. Another called any boot that had
+grown by 150MB a success, which every boot does in its first 20 seconds,
+so a hang at 94% could never have been caught.
 
 Hard-won details, all of them from a failure
 --------------------------------------------
@@ -52,7 +55,12 @@ Usage
     python3 tools/bg3boothunt.py --restore-only   # after an aborted run
 
 Runs ON the device (it needs the game and the plugin), so copy it over and
-run it there.
+run it there. SteamOS sets logind KillUserProcesses=True, so anything
+started from an ssh session dies the moment that session closes - nohup
+and & do not help. Start it as a transient user service instead:
+
+    systemd-run --user --unit bg3hunt --collect \\
+        sh -c "exec python3 /tmp/bg3boothunt.py --hunt > /tmp/hunt.log 2>&1"
 """
 import argparse
 import json
@@ -70,18 +78,20 @@ LOG_PATH = "/tmp/bg3-boot-hunt.log"
 WANTED_PATH = "/tmp/bg3-boot-hunt-wanted.json"
 
 SAMPLE_SECS = 10
-# A boot that has neither progressed nor spun by here is reported as
+# A boot that has neither settled nor spun by here is reported as
 # inconclusive. A clean boot to the "press any key" screen took ~40s on
-# device, and a spin declares itself inside a minute.
-BOOT_BUDGET_SECS = 240
+# device; a 118-mod one needs longer, and a spin declares itself inside a
+# minute either way.
+BOOT_BUDGET_SECS = 360
 # One core is 100 ticks/sec. A spin pinned 2-3 cores; the menu, being
 # vsync-limited, sits well under this.
 SPIN_TICKS_PER_SAMPLE = int(SAMPLE_SECS * 100 * 1.5)
 SPIN_RSS_TOLERANCE_MB = 6
 SPIN_SAMPLES_NEEDED = 6          # 60s of unambiguous spinning
-PROGRESS_RSS_MB = 150
-PROGRESS_IO_MB = 200
-IDLE_TICKS_PER_SAMPLE = int(SAMPLE_SECS * 100 * 0.6)
+# Measured 2026-09-02 with 118 mods: the press-any-key screen sits at
+# 640-680 ticks per 10s sample (0.65 of a core) with memory flat at 2.1GB
+# and no I/O. The spins sat at 2050 and 3180. One core splits them.
+IDLE_TICKS_PER_SAMPLE = int(SAMPLE_SECS * 100 * 1.0)
 MENU_RSS_MB = 1200
 
 
@@ -105,13 +115,11 @@ def classify(samples, profile_touched, budget_used):
             "io": b["io_mb"] - a["io_mb"],
         })
 
-    # Healthy: the game is visibly loading, or it has settled at the
-    # press-any-key screen with the memory of a loaded game AND has
-    # written its profile files on the way.
-    total_rss = samples[-1]["rss_mb"] - samples[0]["rss_mb"]
-    total_io = samples[-1]["io_mb"] - samples[0]["io_mb"]
-    if total_rss > PROGRESS_RSS_MB or total_io > PROGRESS_IO_MB:
-        return "ok"
+    # Healthy means SETTLED at the press-any-key screen: the memory of a
+    # loaded game, profile files written, and three quiet samples in a
+    # row. Growth alone is never success. The boot that hung at 94% grew
+    # by a gigabyte first, and the version of this that called growth "ok"
+    # would have cleared every late hang there has ever been.
     recent = deltas[-3:]
     if (
         len(recent) >= 3

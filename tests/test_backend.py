@@ -16348,10 +16348,6 @@ class TestBg3Mode(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
-        try:
-            os.remove(main._bg3_stats_cache_path())
-        except OSError:
-            pass
         main.BG3_PROFILE_ROOT = self._real_root
         main._bg3_running = self._real_running
         shutil.rmtree(self.install, ignore_errors=True)
@@ -17144,13 +17140,15 @@ class TestBg3Mode(unittest.TestCase):
         finally:
             main._bg3_running = real
 
-    # ---- stats health: inheritance that loops ---------------------------
-    # Tasha's Cauldron of Outfits, read out of the decompressed pak on
-    # device (2026-09-02): `new entry "TW_Dye_Consort"` followed by
-    # `using "TW_Dye_Consort"`, eight times over. The game was measured
-    # spinning three threads with flat memory and zero I/O at 79% of a
-    # world load. The scan found it in two minutes; bisecting 97 mods
-    # would have cost an evening.
+    # ---- stats: the rule that was withdrawn -------------------------------
+    # v1.5.2 switched off any mod whose stat entries inherited from a name
+    # nobody defined (Tasha's Cauldron: `new entry "TW_Dye_Consort"` then
+    # `using "TW_Dye_Consort"`). That verdict came from reading the file,
+    # never from a boot, and it was wrong: the pattern is the ordinary
+    # override idiom, and on 2026-09-02 an A/B boot with all nine parked
+    # mods back on settled at the press-any-key screen in 50s, like the
+    # control. Twenty-four false positives, no true one. Stats files no
+    # longer decide anything; the pass only heals what the rule parked.
 
     @classmethod
     def _make_stats_pak(cls, uuid, folder, stats_text):
@@ -17211,68 +17209,24 @@ class TestBg3Mode(unittest.TestCase):
         'type "Object"\n'
         'using "MY_Dye_Base"\n'
     )
-    VANILLA_PARENT_STATS = (
-        'new entry "MY_Armour"\n'
-        'type "Armor"\n'
-        # ARM_Camp_Body lives in the BASE GAME's paks. 556 of the
-        # collection's entries inherit vanilla parents like this; calling
-        # them broken would condemn most of the ecosystem.
-        'using "ARM_Camp_Body"\n'
-    )
-
-    def test_a_self_referential_entry_is_detected(self):
-        path = os.path.join(TEST_ROOT, "selfref.pak")
-        with open(path, "wb") as f:
-            f.write(self._make_stats_pak(
-                "aaaa1111-0000-0000-0000-0000000000f1", "TW_Outfits",
-                self.SELF_REF_STATS))
-        hits = main._pak_stat_cycles(path)
-        self.assertEqual(hits, [("TW_Dye_Consort", "TW_Dye_Consort")])
-
-    def test_healthy_inheritance_is_not_flagged(self):
-        path = os.path.join(TEST_ROOT, "healthy.pak")
-        with open(path, "wb") as f:
-            f.write(self._make_stats_pak(
-                "aaaa1111-0000-0000-0000-0000000000f2", "Fine",
-                self.HEALTHY_STATS))
-        self.assertEqual(main._pak_stat_cycles(path), [])
-
-    def test_a_vanilla_parent_is_not_flagged(self):
-        path = os.path.join(TEST_ROOT, "vanilla.pak")
-        with open(path, "wb") as f:
-            f.write(self._make_stats_pak(
-                "aaaa1111-0000-0000-0000-0000000000f3", "UsesVanilla",
-                self.VANILLA_PARENT_STATS))
-        self.assertEqual(main._pak_stat_cycles(path), [])
-
-    def test_a_two_step_cycle_is_detected(self):
-        path = os.path.join(TEST_ROOT, "twostep.pak")
-        with open(path, "wb") as f:
-            f.write(self._make_stats_pak(
-                "aaaa1111-0000-0000-0000-0000000000f4", "TwoStep",
-                'new entry "A"\nusing "B"\n\nnew entry "B"\nusing "A"\n'))
-        hits = main._pak_stat_cycles(path)
-        self.assertTrue(hits, "an A->B->A loop must be caught")
-
-    def test_the_health_pass_switches_a_looping_mod_off(self):
+    def test_a_self_inheriting_mod_is_left_switched_on(self):
+        """Measured 2026-09-02: nine mods parked for exactly this shape
+        booted together to the press-any-key screen in 50s. The pass must
+        not touch them, whatever their stats files say."""
         self._archive({"SelfRef.pak": self._make_stats_pak(
             "aaaa1111-0000-0000-0000-0000000000f1", "TW_Outfits",
             self.SELF_REF_STATS)})
         self.assertTrue(self._install("Tashas Cauldron of Outfits").get("ok"))
         r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
         self.assertTrue(r.get("ok"), r)
-        names = [d["name"] for d in r["disabled"]]
-        self.assertIn("Tashas Cauldron of Outfits", names)
-        reason = next(d["reason"] for d in r["disabled"]
-                      if d["name"] == "Tashas Cauldron of Outfits")
-        self.assertIn("inherit from", reason)
-        self.assertIn("TW_Dye_Consort", reason)
+        self.assertEqual(r["disabled"], [], r)
         rec = main._load_settings()["installed"][self.DOMAIN][
             "Tashas Cauldron of Outfits"]
-        self.assertFalse(rec["enabled"])
+        self.assertTrue(rec.get("enabled", True))
+        self.assertNotIn("warning", rec)
         self.assertTrue(os.path.isfile(
-            os.path.join(main._bg3_disabled_dir(), "SelfRef.pak")))
-        self.assertNotIn(
+            os.path.join(main._bg3_mods_dir(), "SelfRef.pak")))
+        self.assertIn(
             "aaaa1111-0000-0000-0000-0000000000f1",
             self._uuids_in_modsettings(),
         )
@@ -17471,25 +17425,23 @@ class TestBg3Mode(unittest.TestCase):
         self.assertEqual(
             main._lz4_block_decompress(block, 16), b"abcdefghabcdefgh")
 
-    # ---- the corrected stats rule ---------------------------------------------
-    def _vanilla_pak(self, *names):
-        """A fake base-game pak in the test game's Data dir defining
-        stat entries, so the rule can tell an override from a loop."""
-        stats = "".join(
-            f'new entry "{n}"\ntype "Object"\ndata "Rarity" "Common"\n\n'
-            for n in names
-        )
-        data_dir = os.path.join(self.install, "Data")
-        os.makedirs(data_dir, exist_ok=True)
-        with open(os.path.join(data_dir, "Shared.pak"), "wb") as f:
-            f.write(self._make_stats_pak(
-                "00000000-0000-0000-0000-00000000dead", "Shared", stats))
+    # ---- healing what the withdrawn rule parked --------------------------------
+    # The two warning texts the rule wrote, v1.5.2 and v1.5.4. Records on
+    # real devices carry one or the other.
+    OLD_RULE_WARNINGS = (
+        "Its data has 16 item(s) that inherit from themselves (for example "
+        "'Shout_WildShape_Badger'), which makes the game loop forever while "
+        "loading instead of starting.",
+        "Its data has 3 item(s) that inherit from something that does not "
+        "exist anywhere (for example 'X' from 'Y'), so the game cannot load "
+        "them correctly. That is a fault in the mod, so it was left "
+        "switched off.",
+    )
 
     def test_overriding_a_vanilla_entry_is_not_flagged(self):
         """UnlockLevelCurve does this 16 times, Vanilla Equipment Overhaul
-        691 times: `new entry "X"` / `using "X"` where X is the game's own
+        686 times: `new entry "X"` / `using "X"` where X is the game's own
         entry. The first version of the rule parked all 15 such mods."""
-        self._vanilla_pak("Shout_WildShape_Badger", "ARM_Camp_Body")
         self._archive({"Override.pak": self._make_stats_pak(
             "aaaa1111-0000-0000-0000-0000000000a1", "UnlockLevelCurve",
             'new entry "Shout_WildShape_Badger"\ntype "SpellData"\n'
@@ -17498,31 +17450,8 @@ class TestBg3Mode(unittest.TestCase):
         r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
         self.assertTrue(r.get("ok"), r)
         self.assertEqual(r["disabled"], [], r)
-        self.assertTrue(
-            os.path.isfile(main._bg3_stats_cache_path()),
-            "the vanilla name set must be cached after the first read",
-        )
-
-    def test_inheriting_from_nothing_is_still_flagged(self):
-        # Tasha's shape: the mod's ONLY definition of TW_Dye_Consort is the
-        # one inheriting from TW_Dye_Consort, and nobody else defines it.
-        self._vanilla_pak("ARM_Camp_Body")
-        self._archive({"SelfRef.pak": self._make_stats_pak(
-            "aaaa1111-0000-0000-0000-0000000000f1", "TW_Outfits",
-            self.SELF_REF_STATS)})
-        self.assertTrue(self._install("Tashas Cauldron of Outfits").get("ok"))
-        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
-        names = [d["name"] for d in r["disabled"]]
-        self.assertIn("Tashas Cauldron of Outfits", names)
-        reason = next(d["reason"] for d in r["disabled"]
-                      if d["name"] == "Tashas Cauldron of Outfits")
-        self.assertIn("does not exist anywhere", reason)
-        self.assertIn("TW_Dye_Consort", reason)
-        # Honest copy: no claim about hangs the data cannot prove.
-        self.assertNotIn("loop forever", reason)
 
     def test_overriding_another_enabled_mods_entry_is_fine(self):
-        self._vanilla_pak("ARM_Camp_Body")
         self._archive({"Provider.pak": self._make_stats_pak(
             "bbbb2222-0000-0000-0000-0000000000b2", "ProviderMod",
             'new entry "MY_Base_Item"\ntype "Object"\n')})
@@ -17535,55 +17464,178 @@ class TestBg3Mode(unittest.TestCase):
         r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
         self.assertEqual(r["disabled"], [], r)
 
-    def test_a_mod_wrongly_parked_by_the_old_rule_comes_back(self):
-        """Fifteen legitimate mods were parked by the first version, with
-        the warning 'inherit from themselves'. The corrected pass re-judges
-        them and switches the innocent ones back on."""
-        self._vanilla_pak("Shout_WildShape_Badger")
-        self._archive({"ULC.pak": self._make_stats_pak(
-            "aaaa1111-0000-0000-0000-0000000000a1", "UnlockLevelCurve",
-            'new entry "Shout_WildShape_Badger"\ntype "SpellData"\n'
-            'using "Shout_WildShape_Badger"\n')})
-        self.assertTrue(self._install("UnlockLevelCurve").get("ok"))
-        # Simulate the old rule's verdict.
-        run(self.plugin.set_mod_enabled(
-            self.GAME, "Mods", "UnlockLevelCurve", False, "bg3", self.DOMAIN))
-        s = main._load_settings()
-        s["installed"][self.DOMAIN]["UnlockLevelCurve"]["warning"] = (
-            "Its data has 16 item(s) that inherit from themselves (for "
-            "example 'Shout_WildShape_Badger'), which makes the game loop "
-            "forever while loading instead of starting."
-        )
-        main._save_settings(s)
-        self.assertNotIn(
-            "aaaa1111-0000-0000-0000-0000000000a1",
-            self._uuids_in_modsettings())
+    def test_a_mod_parked_by_either_old_rule_comes_back(self):
+        """Fifteen legitimate mods were parked by v1.5.2 and nine more by
+        v1.5.4, each version with its own warning text. Both come back on:
+        paks moved back, registration rewritten, warning gone."""
+        for i, warning in enumerate(self.OLD_RULE_WARNINGS):
+            key = f"Parked {i}"
+            uuid = f"aaaa1111-0000-0000-0000-0000000000a{i}"
+            self._archive({f"Parked{i}.pak": self._make_stats_pak(
+                uuid, f"Parked{i}", self.SELF_REF_STATS)})
+            self.assertTrue(self._install(key).get("ok"))
+            # Simulate the old rule's verdict.
+            run(self.plugin.set_mod_enabled(
+                self.GAME, "Mods", key, False, "bg3", self.DOMAIN))
+            s = main._load_settings()
+            s["installed"][self.DOMAIN][key]["warning"] = warning
+            main._save_settings(s)
+            self.assertNotIn(uuid, self._uuids_in_modsettings())
         r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
         self.assertTrue(r.get("ok"), r)
-        rec = main._load_settings()["installed"][self.DOMAIN]["UnlockLevelCurve"]
-        self.assertTrue(rec["enabled"], "the innocent mod must come back on")
-        self.assertNotIn("warning", rec)
-        self.assertTrue(os.path.isfile(
-            os.path.join(main._bg3_mods_dir(), "ULC.pak")))
-        self.assertIn(
-            "aaaa1111-0000-0000-0000-0000000000a1",
-            self._uuids_in_modsettings(),
-            "its registration must be written back",
-        )
+        self.assertEqual(sorted(r["healed"]), ["Parked 0", "Parked 1"])
+        for i in range(len(self.OLD_RULE_WARNINGS)):
+            key = f"Parked {i}"
+            rec = main._load_settings()["installed"][self.DOMAIN][key]
+            self.assertTrue(rec["enabled"], f"{key} must come back on")
+            self.assertNotIn("warning", rec)
+            self.assertTrue(os.path.isfile(
+                os.path.join(main._bg3_mods_dir(), f"Parked{i}.pak")))
+            self.assertIn(
+                f"aaaa1111-0000-0000-0000-0000000000a{i}",
+                self._uuids_in_modsettings(),
+                "its registration must be written back",
+            )
 
-    def test_a_user_disabled_mod_is_left_alone_by_the_re_judge(self):
+    def test_a_stale_warning_on_an_enabled_mod_is_cleared(self):
+        """The A/B run switched the parked mods back on through the
+        ordinary toggle, which leaves the warning text in place. The heal
+        clears it so My Mods stops showing a verdict that was withdrawn."""
+        self._archive({"Fine.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000f2", "Fine",
+            self.HEALTHY_STATS)})
+        self.assertTrue(self._install("A Fine Mod").get("ok"))
+        s = main._load_settings()
+        s["installed"][self.DOMAIN]["A Fine Mod"]["warning"] = (
+            self.OLD_RULE_WARNINGS[1])
+        main._save_settings(s)
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r["healed"], ["A Fine Mod"])
+        rec = main._load_settings()["installed"][self.DOMAIN]["A Fine Mod"]
+        self.assertTrue(rec.get("enabled", True))
+        self.assertNotIn("warning", rec)
+
+    def test_a_user_disabled_mod_is_left_alone_by_the_heal(self):
         # Only records the OLD RULE parked are re-enabled. One the user
         # switched off stays off, whatever its stats look like.
-        self._vanilla_pak("ARM_Camp_Body")
         self._archive({"Fine.pak": self._make_stats_pak(
             "aaaa1111-0000-0000-0000-0000000000f2", "Fine",
             self.HEALTHY_STATS)})
         self.assertTrue(self._install("A Fine Mod").get("ok"))
         run(self.plugin.set_mod_enabled(
             self.GAME, "Mods", "A Fine Mod", False, "bg3", self.DOMAIN))
-        run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertEqual(r["healed"], [])
         rec = main._load_settings()["installed"][self.DOMAIN]["A Fine Mod"]
         self.assertFalse(rec["enabled"])
+
+    def test_a_script_extender_mod_stays_parked_through_the_heal(self):
+        # Parked for a reason that still holds (the SE cannot run here)
+        # is not the withdrawn rule's doing, and must stay parked.
+        self._archive({"Fine.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000f2", "Fine",
+            self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Needs SE").get("ok"))
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Needs SE", False, "bg3", self.DOMAIN))
+        s = main._load_settings()
+        s["installed"][self.DOMAIN]["Needs SE"]["warning"] = main.BG3_SE_UNAVAILABLE
+        main._save_settings(s)
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertEqual(r["healed"], [])
+        rec = main._load_settings()["installed"][self.DOMAIN]["Needs SE"]
+        self.assertFalse(rec["enabled"])
+        self.assertEqual(rec["warning"], main.BG3_SE_UNAVAILABLE)
+
+    # ---- records repaired from the paks on disk ----------------------------------
+    # On device (2026-09-02) 35 load-order divider paks sat in Mods with no
+    # modsettings entry: their record was written by the tokenizer that lost
+    # UUIDs on a `>` inside an attribute, so the stored metadata had no UUID
+    # to register. The game had registered them itself when Michael pressed
+    # enable-all, and the next rewrite dropped them again ("I had to enable
+    # the mods this time"). The pak on disk knows its own UUID; the pass
+    # re-reads it.
+
+    def test_stored_metadata_that_lost_its_uuid_is_repaired_from_the_pak(self):
+        self._archive({"Divider.pak": self._make_stats_pak(
+            "dddd4444-0000-0000-0000-0000000000d4", "Divider",
+            self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Load Order Tabs").get("ok"))
+        # Simulate the old tokenizer's record: metadata without a UUID.
+        s = main._load_settings()
+        for meta in s["installed"][self.DOMAIN]["Load Order Tabs"]["bg3_mods"]:
+            meta["uuid"] = ""
+        main._save_settings(s)
+        # ...and the entry gone from modsettings, as the game's own rewrite
+        # left it on device. The writer alone cannot bring it back: with no
+        # stored UUID it owns nothing to register.
+        ms_path = main._bg3_modsettings_path()
+        with open(ms_path, encoding="utf-8") as f:
+            ms = f.read()
+        ms = re.sub(
+            r'<node id="ModuleShortDesc">(?:(?!</node>).)*?dddd4444-0000-0000'
+            r'-0000-0000000000d4(?:(?!</node>).)*?</node>\s*', "", ms,
+            flags=re.S)
+        with open(ms_path, "w", encoding="utf-8") as f:
+            f.write(ms)
+        self.assertNotIn(
+            "dddd4444-0000-0000-0000-0000000000d4", self._uuids_in_modsettings())
+        self.assertEqual(main._write_bg3_modsettings(s, self.DOMAIN), "")
+        self.assertNotIn(
+            "dddd4444-0000-0000-0000-0000000000d4", self._uuids_in_modsettings(),
+            "without a stored UUID the writer has nothing to register")
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r["repaired"], ["Load Order Tabs"])
+        rec = main._load_settings()["installed"][self.DOMAIN]["Load Order Tabs"]
+        self.assertEqual(
+            [m["uuid"] for m in rec["bg3_mods"]],
+            ["dddd4444-0000-0000-0000-0000000000d4"])
+        self.assertIn(
+            "dddd4444-0000-0000-0000-0000000000d4", self._uuids_in_modsettings())
+        # A second pass has nothing left to repair.
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertEqual(r["repaired"], [])
+
+    def test_a_disabled_records_pak_left_in_mods_is_parked(self):
+        """Two disabled records on device still had their paks in Mods. The
+        record is the truth; the pak follows it."""
+        self._archive({"Stray.pak": self._make_stats_pak(
+            "eeee5555-0000-0000-0000-0000000000e5", "Stray",
+            self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Stray Mod").get("ok"))
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Stray Mod", False, "bg3", self.DOMAIN))
+        shutil.move(os.path.join(main._bg3_disabled_dir(), "Stray.pak"),
+                    os.path.join(main._bg3_mods_dir(), "Stray.pak"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r["repaired"], ["Stray Mod"])
+        self.assertFalse(os.path.exists(
+            os.path.join(main._bg3_mods_dir(), "Stray.pak")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_disabled_dir(), "Stray.pak")))
+        self.assertNotIn(
+            "eeee5555-0000-0000-0000-0000000000e5", self._uuids_in_modsettings())
+
+    def test_an_enabled_records_pak_left_parked_comes_back(self):
+        self._archive({"Lost.pak": self._make_stats_pak(
+            "ffff6666-0000-0000-0000-0000000000f6", "Lost",
+            self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Lost Mod").get("ok"))
+        os.makedirs(main._bg3_disabled_dir(), exist_ok=True)
+        shutil.move(os.path.join(main._bg3_mods_dir(), "Lost.pak"),
+                    os.path.join(main._bg3_disabled_dir(), "Lost.pak"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r["repaired"], ["Lost Mod"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "Lost.pak")))
+        self.assertFalse(os.path.exists(
+            os.path.join(main._bg3_disabled_dir(), "Lost.pak")))
+        self.assertIn(
+            "ffff6666-0000-0000-0000-0000000000f6", self._uuids_in_modsettings())
 
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
@@ -17702,18 +17754,37 @@ class TestBg3BootHunt(unittest.TestCase):
 
     def test_growing_memory_is_never_a_spin(self):
         # The control run grew RSS by 966MB on its way to the menu while
-        # burning plenty of CPU. Loading is busy AND productive.
+        # burning plenty of CPU. Loading is busy AND productive - and not
+        # yet success either (test_loading_is_not_success).
         s = self._series([(3180, 140, 2)] * 8)
-        self.assertEqual(self.h.classify(s, False, False), "ok")
+        self.assertEqual(self.h.classify(s, False, False), "watching")
 
     def test_disk_activity_is_never_a_spin(self):
         s = self._series([(3180, 0, 40)] * 8)
-        self.assertEqual(self.h.classify(s, False, False), "ok")
+        self.assertEqual(self.h.classify(s, False, False), "watching")
+
+    def test_a_boot_that_loads_and_then_hangs_is_a_spin(self):
+        """The 94% hang. The game loaded for a while (memory up by a
+        gigabyte, real I/O) and THEN sat pinned with flat memory. The first
+        classifier called a boot "ok" the moment memory had grown by 150MB,
+        so a hang late in the loading bar - the only kind Michael actually
+        saw - could never have been caught, and an A/B built on it would
+        have cleared every mod."""
+        s = self._series([(3180, 300, 60)] * 3 + [(2050, 0, 0)] * 7)
+        self.assertEqual(self.h.classify(s, False, False), "spin")
+
+    def test_loading_is_not_success(self):
+        """Growth means the game is still loading, nothing more. Success is
+        only the settled press-any-key screen."""
+        s = self._series([(3180, 300, 60)] * 5)
+        self.assertNotEqual(self.h.classify(s, False, False), "ok")
+        self.assertNotEqual(self.h.classify(s, True, False), "ok")
 
     # ---- healthy boots ----------------------------------------------------
     def test_the_measured_control_boot_reads_as_ok(self):
-        # Real numbers: rss +966MB, io +8MB inside one sample.
-        s = self._series([(900, 966, 8)])
+        # Real numbers: rss +966MB, io +8MB inside one sample, then the
+        # press-any-key screen: memory flat, CPU low, profile written.
+        s = self._series([(900, 966, 8)] + [(200, 0, 0)] * 3)
         self.assertEqual(self.h.classify(s, True, False), "ok")
 
     def test_settled_at_the_press_any_key_screen_is_ok(self):
@@ -17723,6 +17794,20 @@ class TestBg3BootHunt(unittest.TestCase):
         s = self._series([(200, 0, 0)] * 4)
         s = [dict(x, rss_mb=x["rss_mb"] + 1000) for x in s]
         self.assertEqual(self.h.classify(s, True, False), "ok")
+
+    def test_the_measured_118_mod_boot_settles_as_ok(self):
+        """Real samples from the Legion, 2026-09-02, 118 mods enabled: two
+        samples of loading (0.7GB per sample, 1.7-2.6 cores), then memory
+        flat at 2.1GB and 640-680 ticks per sample at the press-any-key
+        screen. The first idle threshold (0.6 core) sat BELOW that, so a
+        healthy boot could only ever have read as inconclusive."""
+        s = self._series([
+            (1674, 688, 0), (2605, 705, 57),
+            (679, -5, 0), (642, -1, 0), (655, 0, 0),
+        ])
+        self.assertEqual(self.h.classify(s, True, False), "ok")
+        # Without the profile files it is still too early to call.
+        self.assertNotEqual(self.h.classify(s, False, False), "ok")
 
     def test_idle_without_profile_files_is_not_yet_ok(self):
         # Low CPU and flat memory but nothing written: too early to call.

@@ -6419,231 +6419,34 @@ def _lspk_read_member(f, entry) -> bytes:
     raise ValueError(f"unhandled compression {method}")
 
 
-# `new entry "X"` ... `using "Y"`, the two lines that define BG3 stat
-# inheritance. Built from character codes for the reason main.py already
-# learned twice: a mangled escape in this file renders invisibly.
-_STATS_ENTRY_RE = re.compile(
-    '^' + chr(92) + 's*new entry' + chr(92) + 's+"([^"]+)"', re.M
-)
-_STATS_USING_RE = re.compile(
-    '^' + chr(92) + 's*using' + chr(92) + 's+"([^"]+)"', re.M
-)
 
+def _bg3_stats_heal_pass(settings: dict, game_domain: str) -> list:
+    """Undo the stats health rule (v1.5.2 to v1.5.4). The rule is gone.
 
-_BG3_VANILLA_PAKS = ("Shared.pak", "SharedDev.pak", "Gustav.pak",
-                     "GustavDev.pak", "GustavX.pak", "Honour.pak")
+    It switched off any mod whose stat entries inherited from a name
+    nobody defined. That was wrong twice over. `new entry "X"` followed by
+    `using "X"` is the ordinary override idiom (UnlockLevelCurve 16 times,
+    Vanilla Equipment Overhaul 686 times), and an unresolvable parent does
+    not hang the game either: an A/B boot on 2026-09-02 put all nine mods
+    the rule had parked back on at once, and the game settled at the
+    press-any-key screen in 50s, exactly like the control. Twenty-four
+    false positives, no confirmed true positive, and the one hang it was
+    blamed for (Tasha's Cauldron) had only ever been judged from the file.
 
-
-def _bg3_stats_cache_path() -> str:
-    return os.path.join(os.path.dirname(SETTINGS_PATH), "bg3-vanilla-stats.json")
-
-
-def _pak_stat_names_and_uses(path: str):
-    """({entry names defined}, {entry: parent}) from one pak's stats."""
-    defined, uses = {}, {}
-    try:
-        f, entries = _lspk_open(path)
-    except (OSError, ValueError):
-        return defined, uses
-    try:
-        for entry in entries:
-            name = entry[0].lower().replace("\\", "/")
-            if not (name.endswith(".txt") and "/stats/generated/data/" in name):
-                continue
-            try:
-                text = _lspk_read_member(f, entry).decode("utf-8", "replace")
-            except (OSError, ValueError):
-                continue
-            for blk in re.split('(?m)^' + chr(92) + 's*new entry' + chr(92) + 's+"', text)[1:]:
-                ent = blk.split('"', 1)[0]
-                defined[ent] = defined.get(ent, 0) + 1
-                mu = _STATS_USING_RE.search(blk)
-                if mu:
-                    uses[ent] = mu.group(1)
-    finally:
-        f.close()
-    return defined, uses
-
-
-def _bg3_vanilla_stat_names(install_path: str) -> set:
-    """Every stat entry the base game defines, from its own paks.
-
-    Cached beside the settings, keyed on each pak's size and mtime, so a
-    game patch invalidates it and a normal run pays nothing. Gustav.pak
-    alone declares 145,832 files; reading its table once is fine, on every
-    collection install it is not."""
-    data = os.path.join(install_path, "Data")
-    key = {}
-    for pk in _BG3_VANILLA_PAKS:
-        p = os.path.join(data, pk)
-        if os.path.isfile(p):
-            st = os.stat(p)
-            key[pk] = [st.st_size, int(st.st_mtime)]
-    if not key:
-        return set()
-    cache = _bg3_stats_cache_path()
-    try:
-        with open(cache, encoding="utf-8") as f:
-            saved = json.load(f)
-        if saved.get("key") == key:
-            return set(saved.get("names") or [])
-    except (OSError, ValueError):
-        pass
-    names = set()
-    for pk in key:
-        defined, _uses = _pak_stat_names_and_uses(os.path.join(data, pk))
-        names |= set(defined)
-    try:
-        with open(cache, "w", encoding="utf-8") as f:
-            json.dump({"key": key, "names": sorted(names)}, f)
-    except OSError:
-        pass
-    return names
-
-
-def _pak_stat_cycles(path: str) -> list:
-    """[(entry, parent)] for stat entries whose inheritance loops inside
-    this pak - self-referential, or a cycle among its own entries.
-
-    Only self-contained loops count. A parent living in another mod or in
-    the base game cannot be judged from one pak, and calling those broken
-    would condemn most of the ecosystem: 104 of the collection's
-    "undefined" parents were ordinary vanilla names.
+    What remains is to bring its victims back: every record carrying that
+    rule's warning comes back on, paks moved back, warning cleared. A
+    record the user switched off themselves carries no such warning and
+    is left alone. Returns the names healed.
     """
-    uses = {}
-    try:
-        f, entries = _lspk_open(path)
-    except (OSError, ValueError):
-        return []
-    try:
-        for entry in entries:
-            name = entry[0].lower()
-            if not (
-                name.endswith(".txt")
-                and "/stats/generated/data/" in name.replace("\\", "/")
-            ):
-                continue
-            try:
-                text = _lspk_read_member(f, entry).decode("utf-8", "replace")
-            except (OSError, ValueError):
-                continue
-            # Split on entry boundaries so a `using` is attributed to the
-            # entry it actually belongs to.
-            for blk in re.split('(?m)^' + chr(92) + 's*new entry' + chr(92) + 's+"', text)[1:]:
-                ent = blk.split('"', 1)[0]
-                mu = _STATS_USING_RE.search(blk)
-                if mu:
-                    uses[ent] = mu.group(1)
-    finally:
-        f.close()
-    bad = []
-    for start, parent in uses.items():
-        seen, cur = {start}, parent
-        while cur in uses:
-            if cur in seen:
-                bad.append((start, parent))
-                break
-            seen.add(cur)
-            cur = uses[cur]
-        else:
-            if cur == start:
-                bad.append((start, parent))
-    return bad
-
-
-def _bg3_stats_health_pass(settings: dict, game_domain: str,
-                           install_path: str = "") -> list:
-    """Switch off every enabled bg3 record whose stats inherit from an
-    entry that NOBODY defines - not the base game, not any enabled mod, not
-    the mod itself. Returns (name, reason) pairs.
-
-    Also the undo for its own first version: records that version parked
-    for "inheriting from themselves" are re-judged, and the ones that were
-    legitimate overrides come back on with the warning cleared. Fifteen
-    mods on device, UnlockLevelCurve among them.
-    """
-    vanilla = _bg3_vanilla_stat_names(install_path) if install_path else set()
-    recs = _bg3_records(settings, game_domain)
-    # Pass 1: what every enabled mod defines, and what each uses.
-    per_rec = {}
-    for key, rec in recs:
-        defined, uses = {}, {}
-        for n in rec.get("files") or []:
-            if not _safe_rel_path(n) or "/" in n:
-                continue
-            for base in (_bg3_mods_dir(), _bg3_disabled_dir()):
-                p = os.path.join(base, n)
-                if os.path.isfile(p):
-                    d2, u2 = _pak_stat_names_and_uses(p)
-                    for nm, cnt in d2.items():
-                        defined[nm] = defined.get(nm, 0) + cnt
-                    uses.update(u2)
-                    break
-        per_rec[key] = (defined, uses)
-
-    changed = []
-    for key, rec in recs:
-        defined, uses = per_rec[key]
-        was_ours = "inherit from" in (rec.get("warning") or "")
-        if not rec.get("enabled", True) and not was_ours:
+    healed = []
+    for key, rec in _bg3_records(settings, game_domain):
+        if "inherit from" not in (rec.get("warning") or ""):
             continue
-        # What OTHERS provide: the base game plus every other enabled mod.
-        # A mod's own single definition of X does not make `X using X`
-        # resolvable - that is Tasha's, an entry inheriting from nothing.
-        # X defined by the base game (UnlockLevelCurve, Vanilla Equipment
-        # Overhaul) or by another mod IS the override pattern, and fine.
-        others = set(vanilla)
-        for k2, r2 in recs:
-            if k2 != key and r2.get("enabled", True):
-                others |= set(per_rec[k2][0])
-
-        def resolvable(ent, parent):
-            if parent in others:
-                return True
-            cnt = defined.get(parent, 0)
-            if cnt == 0:
-                return False
-            return parent != ent or cnt > 1
-
-        bad = [
-            (ent, parent) for ent, parent in uses.items()
-            if not resolvable(ent, parent)
-        ]
-        # A mod-only cycle (A uses B, B uses A, nobody else defines
-        # either) is bad too.
-        for start, parent in uses.items():
-            if parent in others or parent == start:
-                continue
-            seen, cur = {start}, parent
-            while cur in uses and cur not in others:
-                if cur in seen:
-                    bad.append((start, parent))
-                    break
-                seen.add(cur)
-                cur = uses[cur]
-        if bad and rec.get("enabled", True):
-            os.makedirs(_bg3_disabled_dir(), exist_ok=True)
-            for n in rec.get("files") or []:
-                src = os.path.join(_bg3_mods_dir(), n)
-                if os.path.isfile(src):
-                    dst = os.path.join(_bg3_disabled_dir(), n)
-                    if os.path.isfile(dst):
-                        os.remove(dst)
-                    shutil.move(src, dst)
-            rec["enabled"] = False
-            reason = (
-                f"Its data has {len(bad)} item(s) that inherit from "
-                f"something that does not exist anywhere (for example "
-                f"'{bad[0][0]}' from '{bad[0][1]}'), so the game cannot "
-                "load them correctly. That is a fault in the mod, so it "
-                "was left switched off."
-            )
-            rec["warning"] = reason
-            changed.append((rec.get("name") or key, reason))
-        elif not bad and was_ours and not rec.get("enabled", True):
-            # Wrongly parked by the first version of this rule.
+        if not rec.get("enabled", True):
             os.makedirs(_bg3_mods_dir(), exist_ok=True)
             for n in rec.get("files") or []:
+                if not _safe_rel_path(n) or "/" in n:
+                    continue
                 src = os.path.join(_bg3_disabled_dir(), n)
                 if os.path.isfile(src):
                     dst = os.path.join(_bg3_mods_dir(), n)
@@ -6651,12 +6454,68 @@ def _bg3_stats_health_pass(settings: dict, game_domain: str,
                         os.remove(dst)
                     shutil.move(src, dst)
             rec["enabled"] = True
-            rec.pop("warning", None)
-            decky.logger.info(
-                f"bg3 stats: re-enabled {key!r} - its self-inheritance is "
-                "an override of an entry that exists, not a loop"
-            )
-    return changed
+        rec.pop("warning", None)
+        healed.append(rec.get("name") or key)
+        decky.logger.info(
+            f"bg3 stats: healed {key!r} - the rule that parked it was "
+            "withdrawn after an A/B boot cleared every mod it had blamed"
+        )
+    return healed
+
+
+def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
+    """Make every bg3 record agree with its paks on disk. Returns the names
+    of the records repaired.
+
+    Two disagreements were found on device (2026-09-02). Thirty-five
+    load-order divider paks sat in Mods with no modsettings entry: their
+    record had been written by the tokenizer that lost UUIDs on a `>`
+    inside an attribute value, so the stored metadata had nothing to
+    register, and the game only listed them because Michael had pressed
+    enable-all in its own menu - the next rewrite dropped them again ("I
+    had to enable the mods this time"). And two disabled records still had
+    their paks in Mods. The record is the truth for on/off; the pak is the
+    truth for what it registers.
+    """
+    repaired = []
+    for key, rec in _bg3_records(settings, game_domain):
+        enabled = rec.get("enabled", True)
+        want = _bg3_mods_dir() if enabled else _bg3_disabled_dir()
+        other = _bg3_disabled_dir() if enabled else _bg3_mods_dir()
+        changed = False
+        fresh = {}
+        for n in rec.get("files") or []:
+            if not _safe_rel_path(n) or "/" in n:
+                continue
+            stray, dst = os.path.join(other, n), os.path.join(want, n)
+            if os.path.isfile(stray):
+                if os.path.isfile(dst):
+                    os.remove(stray)
+                else:
+                    os.makedirs(want, exist_ok=True)
+                    shutil.move(stray, dst)
+                changed = True
+            if os.path.isfile(dst):
+                try:
+                    for m in _lspk_pak_metas_seeking(dst):
+                        u = (m.get("uuid") or "").lower()
+                        if u:
+                            fresh[u] = m
+                except (OSError, ValueError):
+                    pass
+        stored = rec.get("bg3_mods") or []
+        known = {(m.get("uuid") or "").lower() for m in stored}
+        if any(u not in known for u in fresh):
+            rec["bg3_mods"] = [
+                m for m in stored
+                if (m.get("uuid") or "")
+                and (m.get("uuid") or "").lower() not in fresh
+            ] + list(fresh.values())
+            changed = True
+        if changed:
+            repaired.append(rec.get("name") or key)
+            decky.logger.info(f"bg3 records: repaired {key!r} from its paks")
+    return repaired
 
 
 def _lspk_entry_names(raw: bytes) -> list:
@@ -6738,40 +6597,69 @@ def _lspk_pak_metas(pak_path: str) -> list:
             data = _zstd_decompress(blob, size_unc)
         else:
             raise ValueError(f"meta.lsx uses unhandled compression {method}")
-        # The project's own minimal parser: xml.etree does not exist on
-        # Decky's Python (no pyexpat) - that has crashed in the field once.
-        root = xml_parse(data.decode("utf-8-sig", "replace"))
-        info = {}
-        for node in root.iter("node"):
-            if node.get("id") == "ModuleInfo":
-                for a in node.findall("attribute"):
-                    info[a.get("id")] = a.get("value")
-                break
-        deps = []
-        for node in root.iter("node"):
-            if node.get("id") != "Dependencies":
+        meta = _lspk_meta_from_lsx(data)
+        if meta:
+            metas.append(meta)
+    return metas
+
+
+def _lspk_meta_from_lsx(data: bytes):
+    """One registration dict from a decompressed meta.lsx, or None when it
+    names no UUID. The project's own minimal parser: xml.etree does not
+    exist on Decky's Python (no pyexpat) - that has crashed in the field
+    once."""
+    root = xml_parse(data.decode("utf-8-sig", "replace"))
+    info = {}
+    for node in root.iter("node"):
+        if node.get("id") == "ModuleInfo":
+            for a in node.findall("attribute"):
+                info[a.get("id")] = a.get("value")
+            break
+    deps = []
+    for node in root.iter("node"):
+        if node.get("id") != "Dependencies":
+            continue
+        for sub in node.iter("node"):
+            if sub.get("id") in ("ModuleShortDesc", "ModuleDescriptor"):
+                du = dn = ""
+                for a in sub.findall("attribute"):
+                    if a.get("id") == "UUID":
+                        du = (a.get("value") or "").lower()
+                    if a.get("id") == "Name":
+                        dn = a.get("value") or ""
+                if du:
+                    deps.append({"uuid": du, "name": dn})
+    if not info.get("UUID"):
+        return None
+    return {
+        "uuid": info.get("UUID"),
+        "name": info.get("Name") or "",
+        "folder": info.get("Folder") or "",
+        "version64": info.get("Version64")
+        or info.get("Version")
+        or "36028797018963968",
+        "md5": info.get("MD5") or "",
+        **({"deps": deps} if deps else {}),
+    }
+
+
+def _lspk_pak_metas_seeking(pak_path: str) -> list:
+    """_lspk_pak_metas without reading the whole pak: the seeking reader
+    fetches the file table and only the meta.lsx members. A collection's
+    Mods folder ran to 31GB on device; a pass that slurped every pak to
+    re-check its registration would be unusable."""
+    f, entries = _lspk_open(pak_path)
+    metas = []
+    try:
+        for entry in entries:
+            name = entry[0].replace("\\", "/")
+            if not (name.startswith("Mods/") and name.endswith("/meta.lsx")):
                 continue
-            for sub in node.iter("node"):
-                if sub.get("id") in ("ModuleShortDesc", "ModuleDescriptor"):
-                    du = dn = ""
-                    for a in sub.findall("attribute"):
-                        if a.get("id") == "UUID":
-                            du = (a.get("value") or "").lower()
-                        if a.get("id") == "Name":
-                            dn = a.get("value") or ""
-                    if du:
-                        deps.append({"uuid": du, "name": dn})
-        if info.get("UUID"):
-            metas.append({
-                "uuid": info.get("UUID"),
-                "name": info.get("Name") or "",
-                "folder": info.get("Folder") or "",
-                "version64": info.get("Version64")
-                or info.get("Version")
-                or "36028797018963968",
-                "md5": info.get("MD5") or "",
-                **({"deps": deps} if deps else {}),
-            })
+            meta = _lspk_meta_from_lsx(_lspk_read_member(f, entry))
+            if meta:
+                metas.append(meta)
+    finally:
+        f.close()
     return metas
 
 
@@ -14795,40 +14683,42 @@ query Link($slug: String!, $domainName: String!) {
     ) -> dict:
         """After a collection lands: switch off every mod whose declared
         pak dependencies are missing, and say which. See
-        _bg3_broken_dep_pass for the day this earned its keep."""
+        _bg3_broken_dep_pass for the day this earned its keep. Also brings
+        back anything the withdrawn stats rule parked (_bg3_stats_heal_pass)
+        so the dependency pass judges the real set."""
         try:
             if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
                 return {"ok": False, "error": "Invalid game domain"}
             if _bg3_running():
                 return {"ok": False, "error": BG3_GAME_RUNNING}
             settings = _load_settings()
-            bg3_install_path, _m2, _d2 = _game_paths(install_dir, "")
-            # Stats first: a broken mod is switched off before the
-            # dependency pass judges what still stands without it. The
-            # stats pass may also RE-ENABLE mods its first version wrongly
-            # parked, so modsettings is rewritten whenever anything moved.
             before = {k: r.get("enabled", True)
                       for k, r in _bg3_records(settings, game_domain)}
-            disabled = _bg3_stats_health_pass(
-                settings, game_domain, bg3_install_path
-            )
-            disabled += _bg3_broken_dep_pass(settings, game_domain)
+            healed = _bg3_stats_heal_pass(settings, game_domain)
+            repaired = _bg3_record_heal_pass(settings, game_domain)
+            disabled = _bg3_broken_dep_pass(settings, game_domain)
             after = {k: r.get("enabled", True)
                      for k, r in _bg3_records(settings, game_domain)}
-            if disabled or before != after:
+            if healed or repaired or disabled or before != after:
                 err = _write_bg3_modsettings(settings, game_domain)
                 if err:
                     return {"ok": False, "error": err}
                 _save_settings(settings)
                 decky.logger.info(
-                    "bg3 broken-dependency pass switched off: "
-                    + ", ".join(n for n, _r in disabled)
+                    "bg3 pass: healed "
+                    + (", ".join(healed) or "nothing")
+                    + "; repaired "
+                    + (", ".join(repaired) or "nothing")
+                    + "; switched off "
+                    + (", ".join(n for n, _r in disabled) or "nothing")
                 )
             return {
                 "ok": True,
                 "disabled": [
                     {"name": n, "reason": r} for n, r in disabled
                 ],
+                "healed": healed,
+                "repaired": repaired,
             }
         except Exception as e:
             decky.logger.error(f"bg3_disable_broken_deps: {e!r}")
