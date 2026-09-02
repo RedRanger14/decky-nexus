@@ -6326,6 +6326,167 @@ def _lspk_file_table(raw: bytes) -> bytes:
     )
 
 
+def _lspk_open(path: str):
+    """(file handle, entry list) for a pak, WITHOUT reading it whole.
+
+    Entries are (name, offset, method, size_on_disk, size_uncompressed).
+    A collection's mod folder runs to tens of gigabytes, so a health check
+    that slurped each pak would be unusable; the header and the file table
+    are all that is needed to decide what to read.
+    """
+    f = open(path, "rb")
+    try:
+        head = f.read(40)
+        if head[:4] != b"LSPK":
+            raise ValueError("not a BG3 pak (no LSPK signature)")
+        ver = int.from_bytes(head[4:8], "little")
+        if ver != 18:
+            raise ValueError(f"pak format version {ver} is not supported")
+        fl_off = int.from_bytes(head[8:16], "little")
+        f.seek(fl_off)
+        num_files = int.from_bytes(f.read(4), "little")
+        comp_size = int.from_bytes(f.read(4), "little")
+        if num_files > 100000:
+            raise ValueError("pak file table is implausible")
+        table = _lz4_block_decompress(f.read(comp_size), num_files * 272)
+        entries = []
+        for e in range(num_files):
+            b = e * 272
+            name = table[b : b + 256].split(b"\0", 1)[0].decode(
+                "utf-8", "replace"
+            )
+            off = int.from_bytes(table[b + 256 : b + 260], "little") | (
+                int.from_bytes(table[b + 260 : b + 262], "little") << 32
+            )
+            entries.append((
+                name,
+                off,
+                table[b + 263] & 0xF,
+                int.from_bytes(table[b + 264 : b + 268], "little"),
+                int.from_bytes(table[b + 268 : b + 272], "little"),
+            ))
+        return f, entries
+    except Exception:
+        f.close()
+        raise
+
+
+def _lspk_read_member(f, entry) -> bytes:
+    _name, off, method, disk, unc = entry
+    f.seek(off)
+    blob = f.read(disk)
+    if method == 0:
+        return blob
+    if method == 1:
+        try:
+            import zlib
+        except ImportError:
+            raise ValueError("zlib unavailable")
+        return zlib.decompress(blob)
+    if method == 2:
+        return _lz4_block_decompress(blob, unc)
+    if method == 3:
+        return _zstd_decompress(blob, unc)
+    raise ValueError(f"unhandled compression {method}")
+
+
+# `new entry "X"` ... `using "Y"`, the two lines that define BG3 stat
+# inheritance. Built from character codes for the reason main.py already
+# learned twice: a mangled escape in this file renders invisibly.
+_STATS_ENTRY_RE = re.compile(
+    '^' + chr(92) + 's*new entry' + chr(92) + 's+"([^"]+)"', re.M
+)
+_STATS_USING_RE = re.compile(
+    '^' + chr(92) + 's*using' + chr(92) + 's+"([^"]+)"', re.M
+)
+
+
+def _pak_stat_cycles(path: str) -> list:
+    """[(entry, parent)] for stat entries whose inheritance loops inside
+    this pak - self-referential, or a cycle among its own entries.
+
+    Only self-contained loops count. A parent living in another mod or in
+    the base game cannot be judged from one pak, and calling those broken
+    would condemn most of the ecosystem: 104 of the collection's
+    "undefined" parents were ordinary vanilla names.
+    """
+    uses = {}
+    try:
+        f, entries = _lspk_open(path)
+    except (OSError, ValueError):
+        return []
+    try:
+        for entry in entries:
+            name = entry[0].lower()
+            if not (
+                name.endswith(".txt")
+                and "/stats/generated/data/" in name.replace("\\", "/")
+            ):
+                continue
+            try:
+                text = _lspk_read_member(f, entry).decode("utf-8", "replace")
+            except (OSError, ValueError):
+                continue
+            # Split on entry boundaries so a `using` is attributed to the
+            # entry it actually belongs to.
+            for blk in re.split('(?m)^' + chr(92) + 's*new entry' + chr(92) + 's+"', text)[1:]:
+                ent = blk.split('"', 1)[0]
+                mu = _STATS_USING_RE.search(blk)
+                if mu:
+                    uses[ent] = mu.group(1)
+    finally:
+        f.close()
+    bad = []
+    for start, parent in uses.items():
+        seen, cur = {start}, parent
+        while cur in uses:
+            if cur in seen:
+                bad.append((start, parent))
+                break
+            seen.add(cur)
+            cur = uses[cur]
+        else:
+            if cur == start:
+                bad.append((start, parent))
+    return bad
+
+
+def _bg3_stats_health_pass(settings: dict, game_domain: str) -> list:
+    """Switch off every enabled bg3 record whose paks contain looping stat
+    inheritance. Returns (name, reason) pairs."""
+    disabled = []
+    for key, rec in _bg3_records(settings, game_domain):
+        if not rec.get("enabled", True):
+            continue
+        hits = []
+        for n in rec.get("files") or []:
+            if not _safe_rel_path(n) or "/" in n:
+                continue
+            path = os.path.join(_bg3_mods_dir(), n)
+            if os.path.isfile(path):
+                hits += _pak_stat_cycles(path)
+        if not hits:
+            continue
+        os.makedirs(_bg3_disabled_dir(), exist_ok=True)
+        for n in rec.get("files") or []:
+            src = os.path.join(_bg3_mods_dir(), n)
+            if os.path.isfile(src):
+                dst = os.path.join(_bg3_disabled_dir(), n)
+                if os.path.isfile(dst):
+                    os.remove(dst)
+                shutil.move(src, dst)
+        rec["enabled"] = False
+        reason = (
+            f"Its data has {len(hits)} item(s) that inherit from "
+            f"themselves (for example '{hits[0][0]}'), which makes the "
+            "game loop forever while loading instead of starting. That is "
+            "a fault in the mod, so it was left switched off."
+        )
+        rec["warning"] = reason
+        disabled.append((rec.get("name") or key, reason))
+    return disabled
+
+
 def _lspk_entry_names(raw: bytes) -> list:
     """Every stored path in an LSPK v18 pak."""
     table = _lspk_file_table(raw)
@@ -14469,7 +14630,10 @@ query Link($slug: String!, $domainName: String!) {
             if _bg3_running():
                 return {"ok": False, "error": BG3_GAME_RUNNING}
             settings = _load_settings()
-            disabled = _bg3_broken_dep_pass(settings, game_domain)
+            # Stats first: a looping mod is switched off before the
+            # dependency pass judges what still stands without it.
+            disabled = _bg3_stats_health_pass(settings, game_domain)
+            disabled += _bg3_broken_dep_pass(settings, game_domain)
             if disabled:
                 err = _write_bg3_modsettings(settings, game_domain)
                 if err:

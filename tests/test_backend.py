@@ -17115,6 +17115,168 @@ class TestBg3Mode(unittest.TestCase):
         finally:
             main._bg3_running = real
 
+    # ---- stats health: inheritance that loops ---------------------------
+    # Tasha's Cauldron of Outfits, read out of the decompressed pak on
+    # device (2026-09-02): `new entry "TW_Dye_Consort"` followed by
+    # `using "TW_Dye_Consort"`, eight times over. The game was measured
+    # spinning three threads with flat memory and zero I/O at 79% of a
+    # world load. The scan found it in two minutes; bisecting 97 mods
+    # would have cost an evening.
+
+    @classmethod
+    def _make_stats_pak(cls, uuid, folder, stats_text):
+        meta = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<save><region id="Config"><node id="root"><children>'
+            '<node id="ModuleInfo">'
+            f'<attribute id="Folder" type="LSString" value="{folder}"/>'
+            f'<attribute id="Name" type="LSString" value="{folder}"/>'
+            f'<attribute id="UUID" type="guid" value="{uuid}"/>'
+            '<attribute id="Version64" type="int64" value="1"/>'
+            "</node></children></node></region></save>"
+        ).encode()
+        stats = stats_text.encode()
+        members = [
+            (f"Mods/{folder}/meta.lsx", meta, len(meta), 0),
+            (f"Public/{folder}/Stats/Generated/Data/Object.txt",
+             stats, len(stats), 0),
+        ]
+        blobs, entries = b"", []
+        offset = 40
+        for mname, blob, unc, method in members:
+            entries.append((mname, offset, method, len(blob), unc))
+            blobs += blob
+            offset += len(blob)
+        table = b""
+        for mname, off, method, disk, unc in entries:
+            table += mname.encode().ljust(256, b"\0")
+            table += (off & 0xFFFFFFFF).to_bytes(4, "little")
+            table += (off >> 32).to_bytes(2, "little")
+            table += bytes([0, method])
+            table += disk.to_bytes(4, "little")
+            table += unc.to_bytes(4, "little")
+        ctable = cls._lz4_store(table)
+        return (
+            b"LSPK" + (18).to_bytes(4, "little")
+            + (40 + len(blobs)).to_bytes(8, "little")
+            + (8 + len(ctable)).to_bytes(4, "little")
+            + bytes([0, 0]) + b"\0" * 16 + (1).to_bytes(2, "little")
+            + blobs
+            + len(entries).to_bytes(4, "little")
+            + len(ctable).to_bytes(4, "little") + ctable
+        )
+
+    # Verbatim shape of the real defect.
+    SELF_REF_STATS = (
+        'new entry "TW_Dye_Consort"\n'
+        'type "Object"\n'
+        'using "TW_Dye_Consort"\n'
+        'data "Rarity" "Legendary"\n'
+    )
+    HEALTHY_STATS = (
+        'new entry "MY_Dye_Base"\n'
+        'type "Object"\n'
+        'data "Rarity" "Common"\n'
+        '\n'
+        'new entry "MY_Dye_Child"\n'
+        'type "Object"\n'
+        'using "MY_Dye_Base"\n'
+    )
+    VANILLA_PARENT_STATS = (
+        'new entry "MY_Armour"\n'
+        'type "Armor"\n'
+        # ARM_Camp_Body lives in the BASE GAME's paks. 556 of the
+        # collection's entries inherit vanilla parents like this; calling
+        # them broken would condemn most of the ecosystem.
+        'using "ARM_Camp_Body"\n'
+    )
+
+    def test_a_self_referential_entry_is_detected(self):
+        path = os.path.join(TEST_ROOT, "selfref.pak")
+        with open(path, "wb") as f:
+            f.write(self._make_stats_pak(
+                "aaaa1111-0000-0000-0000-0000000000f1", "TW_Outfits",
+                self.SELF_REF_STATS))
+        hits = main._pak_stat_cycles(path)
+        self.assertEqual(hits, [("TW_Dye_Consort", "TW_Dye_Consort")])
+
+    def test_healthy_inheritance_is_not_flagged(self):
+        path = os.path.join(TEST_ROOT, "healthy.pak")
+        with open(path, "wb") as f:
+            f.write(self._make_stats_pak(
+                "aaaa1111-0000-0000-0000-0000000000f2", "Fine",
+                self.HEALTHY_STATS))
+        self.assertEqual(main._pak_stat_cycles(path), [])
+
+    def test_a_vanilla_parent_is_not_flagged(self):
+        path = os.path.join(TEST_ROOT, "vanilla.pak")
+        with open(path, "wb") as f:
+            f.write(self._make_stats_pak(
+                "aaaa1111-0000-0000-0000-0000000000f3", "UsesVanilla",
+                self.VANILLA_PARENT_STATS))
+        self.assertEqual(main._pak_stat_cycles(path), [])
+
+    def test_a_two_step_cycle_is_detected(self):
+        path = os.path.join(TEST_ROOT, "twostep.pak")
+        with open(path, "wb") as f:
+            f.write(self._make_stats_pak(
+                "aaaa1111-0000-0000-0000-0000000000f4", "TwoStep",
+                'new entry "A"\nusing "B"\n\nnew entry "B"\nusing "A"\n'))
+        hits = main._pak_stat_cycles(path)
+        self.assertTrue(hits, "an A->B->A loop must be caught")
+
+    def test_the_health_pass_switches_a_looping_mod_off(self):
+        self._archive({"SelfRef.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000f1", "TW_Outfits",
+            self.SELF_REF_STATS)})
+        self.assertTrue(self._install("Tashas Cauldron of Outfits").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        names = [d["name"] for d in r["disabled"]]
+        self.assertIn("Tashas Cauldron of Outfits", names)
+        reason = next(d["reason"] for d in r["disabled"]
+                      if d["name"] == "Tashas Cauldron of Outfits")
+        self.assertIn("inherit from", reason)
+        self.assertIn("TW_Dye_Consort", reason)
+        rec = main._load_settings()["installed"][self.DOMAIN][
+            "Tashas Cauldron of Outfits"]
+        self.assertFalse(rec["enabled"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_disabled_dir(), "SelfRef.pak")))
+        self.assertNotIn(
+            "aaaa1111-0000-0000-0000-0000000000f1",
+            self._uuids_in_modsettings(),
+        )
+
+    def test_the_health_pass_leaves_healthy_mods_alone(self):
+        self._archive({"Fine.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000f2", "Fine",
+            self.HEALTHY_STATS)})
+        self.assertTrue(self._install("A Fine Mod").get("ok"))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r["disabled"], [])
+
+    def test_paks_are_read_by_seeking_not_slurped(self):
+        """A collection's mod folder ran to 31GB on device. A health check
+        that read each pak whole would be unusable, so the reader seeks -
+        and this holds it to that by handing it a pak with a huge declared
+        body it must never read."""
+        path = os.path.join(TEST_ROOT, "seek.pak")
+        with open(path, "wb") as f:
+            f.write(self._make_stats_pak(
+                "aaaa1111-0000-0000-0000-0000000000f5", "Seeky",
+                self.HEALTHY_STATS))
+        f2, entries = main._lspk_open(path)
+        try:
+            self.assertTrue(any(
+                e[0].endswith("meta.lsx") for e in entries))
+            # The handle is open and positioned lazily: nothing was
+            # decompressed just to list the entries.
+            self.assertFalse(f2.closed)
+        finally:
+            f2.close()
+
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
         main.HOME_ROOT = TEST_ROOT
