@@ -6667,7 +6667,12 @@ def _bg3_fill_desc(desc, m: dict) -> None:
         ("Folder", "LSString", m.get("folder") or ""),
         ("MD5", "LSString", m.get("md5") or ""),
         ("Name", "LSString", m.get("name") or ""),
-        ("PublishHandle", "uint64", str(m.get("publish_handle") or "0")),
+        # Always 0, although the pak's handle is on the record. Writing
+        # the real handles (v1.5.6, briefly) made the game treat 31 mods
+        # as mod.io mods to reconcile: 42 connections to the BG3 mod.io
+        # API held open for minutes, the Mod Manager greyed out, nothing
+        # downloaded. Every boot that worked had 0 here.
+        ("PublishHandle", "uint64", "0"),
         ("UUID", "guid", m.get("uuid") or ""),
         ("Version64", "int64", str(m.get("version64") or "36028797018963968")),
     ):
@@ -6869,17 +6874,7 @@ def _write_bg3_modsettings(settings: dict, game_domain: str) -> str:
             continue
         if u in want and u not in seen:
             seen.add(u)
-            m = want[u]
-            if str(m.get("publish_handle") or "0") == "0":
-                for a in desc.findall("attribute"):
-                    if a.get("id") == "PublishHandle" and (
-                        a.get("value") or "0"
-                    ) != "0":
-                        # The game learned this handle from mod.io; a pak
-                        # with none in its meta must not erase it. Two
-                        # entries on device, 2026-09-04.
-                        m = dict(m, publish_handle=a.get("value"))
-            _bg3_fill_desc(desc, m)
+            _bg3_fill_desc(desc, want[u])
         else:
             mods_children.remove(desc)
     for u in order:

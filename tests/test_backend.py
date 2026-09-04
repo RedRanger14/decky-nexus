@@ -17638,13 +17638,15 @@ class TestBg3Mode(unittest.TestCase):
         self.assertIn(
             "ffff6666-0000-0000-0000-0000000000f6", self._uuids_in_modsettings())
 
-    # ---- what the game writes, we write ------------------------------------------
+    # ---- what the game writes, we write (mostly) ---------------------------------
     # Diffed against the game's own rewrite of a 227-entry file (2026-09-04):
     # the one field where our registration disagreed was PublishHandle, the
-    # mod.io handle the toolkit stamps into meta.lsx. The game writes it for
-    # every mod that has one; we wrote 0. And the game saves the order the
-    # player arranged in its menu, which our re-sort into install order
-    # discarded on every toggle.
+    # mod.io handle the toolkit stamps into meta.lsx. Writing it turned out
+    # to be wrong: the game then reconciled 31 mods against mod.io, held 42
+    # API connections open for minutes and greyed out its Mod Manager. So
+    # the handle is recorded but 0 is written, as every working boot had.
+    # The game also saves the order the player arranged in its menu, which
+    # our re-sort into install order discarded on every toggle.
 
     PUBLISHED = '<attribute id="PublishHandle" type="uint64" value="4570308"/>'
 
@@ -17657,27 +17659,27 @@ class TestBg3Mode(unittest.TestCase):
                 return attrs.get(field)
         return None
 
-    def test_the_publish_handle_comes_from_the_pak(self):
+    def test_the_publish_handle_is_recorded_but_zero_is_written(self):
         self._archive({"Rapier.pak": self._make_stats_pak(
             "abab0001-0000-0000-0000-0000000000ab", "InfernalRapier",
             self.HEALTHY_STATS, extra_meta=self.PUBLISHED)})
         self.assertTrue(self._install("Actually Infernal Rapier").get("ok"))
+        rec = main._load_settings()["installed"][self.DOMAIN]["Actually Infernal Rapier"]
+        self.assertEqual(rec["bg3_mods"][0]["publish_handle"], "4570308")
         self.assertEqual(self._modsettings_field(
-            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "4570308")
-        # A mod that was never published keeps the game's own default.
+            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "0",
+            "a real handle here sent the game into a mod.io reconcile that "
+            "never finished, with its Mod Manager greyed out")
         self._archive({"Plain.pak": self._make_stats_pak(
             "abab0002-0000-0000-0000-0000000000ab", "Plain", self.HEALTHY_STATS)})
         self.assertTrue(self._install("Plain Mod").get("ok"))
         self.assertEqual(self._modsettings_field(
             "abab0002-0000-0000-0000-0000000000ab", "PublishHandle"), "0")
 
-    def test_a_handle_the_game_learned_from_modio_is_kept(self):
-        """Two entries on device carried handles the game had looked up on
-        mod.io although the pak's meta has none. Our rewrite must not put
-        0 back over them; the pak's own handle still wins when it has one."""
-        self._archive({"Plain.pak": self._make_stats_pak(
-            "abab0002-0000-0000-0000-0000000000ab", "Plain", self.HEALTHY_STATS)})
-        self.assertTrue(self._install("Plain Mod").get("ok"))
+    def test_a_handle_the_game_wrote_is_reset_on_our_rewrite(self):
+        """The game stamps handles into entries it recognises. Once it has,
+        the next boot reconciles them against mod.io again; our rewrite
+        puts them back to the value every working boot had."""
         self._archive({"Rapier.pak": self._make_stats_pak(
             "abab0001-0000-0000-0000-0000000000ab", "InfernalRapier",
             self.HEALTHY_STATS, extra_meta=self.PUBLISHED)})
@@ -17685,22 +17687,15 @@ class TestBg3Mode(unittest.TestCase):
         path = main._bg3_modsettings_path()
         with open(path, encoding="utf-8") as f:
             txt = f.read()
-        # The game stamps both with handles of its own.
-        txt = txt.replace(
-            '<attribute id="PublishHandle" type="uint64" value="0" />',
-            '<attribute id="PublishHandle" type="uint64" value="999" />')
-        txt = txt.replace(
-            '<attribute id="PublishHandle" type="uint64" value="4570308" />',
-            '<attribute id="PublishHandle" type="uint64" value="999" />')
         with open(path, "w", encoding="utf-8") as f:
-            f.write(txt)
+            f.write(txt.replace(
+                '<attribute id="PublishHandle" type="uint64" value="0" />',
+                '<attribute id="PublishHandle" type="uint64" value="4570308" />'))
+        self.assertEqual(self._modsettings_field(
+            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "4570308")
         self.assertEqual(main._write_bg3_modsettings(main._load_settings(), self.DOMAIN), "")
         self.assertEqual(self._modsettings_field(
-            "abab0002-0000-0000-0000-0000000000ab", "PublishHandle"), "999",
-            "the game's knowledge survives when the pak has none")
-        self.assertEqual(self._modsettings_field(
-            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "4570308",
-            "the pak's own handle wins when it has one")
+            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "0")
 
     def test_a_record_installed_before_handles_learns_its_handle_on_repair(self):
         self._archive({"Rapier.pak": self._make_stats_pak(
@@ -17712,22 +17707,13 @@ class TestBg3Mode(unittest.TestCase):
         for meta in s["installed"][self.DOMAIN]["Actually Infernal Rapier"]["bg3_mods"]:
             meta.pop("publish_handle", None)
         main._save_settings(s)
-        # ...and the file that version wrote, with 0 in the field.
-        path = main._bg3_modsettings_path()
-        with open(path, encoding="utf-8") as f:
-            txt = f.read()
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(txt.replace(
-                '<attribute id="PublishHandle" type="uint64" value="4570308" />',
-                '<attribute id="PublishHandle" type="uint64" value="0" />'))
-        self.assertEqual(main._write_bg3_modsettings(s, self.DOMAIN), "")
-        self.assertEqual(self._modsettings_field(
-            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "0",
-            "the stored record knows no handle, so the writer has none to give")
         r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
         self.assertEqual(r["repaired"], ["Actually Infernal Rapier"])
+        rec = main._load_settings()["installed"][self.DOMAIN]["Actually Infernal Rapier"]
+        self.assertEqual(rec["bg3_mods"][0]["publish_handle"], "4570308")
+        # Recorded, not written.
         self.assertEqual(self._modsettings_field(
-            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "4570308")
+            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "0")
         # And nothing to repair the second time round.
         r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
         self.assertEqual(r["repaired"], [])
