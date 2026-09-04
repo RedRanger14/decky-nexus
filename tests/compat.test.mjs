@@ -5,9 +5,12 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 
 import {
+  COLLECTION_OFF_MODS,
+  COMPAT_HINTS,
   STRANDING_UI_MODS,
   collectionAutoOff,
   collectionStrandingUi,
+  getCompatHint,
   getStrandingWarning,
 } from "../.test-build/compat.js";
 
@@ -194,10 +197,59 @@ test("no advice anywhere tells a handheld user to tap the screen", () => {
   assert.doesNotMatch(sources, /touchscreen|touch screen/i);
 });
 
-// No em dashes in player-facing copy.
+// No Press Any Key Menu (745), Baldur's Gate 3. Michael: "I am at the bg3
+// menu but I cant even click the mod manager option, the controller and
+// other options are working". Isolated over five boots of the 235-mod NG+
+// collection on 2026-09-04: off = the entry opens, on = the entry is dead.
+// The mod ships GUI/Pages/BetterMainMenu.xaml and both input state
+// machines, so it replaces the menu rather than tweaking it, and its copy
+// predates the Mod Manager entry the current build puts there.
+const NO_PRESS_ANY_KEY = 745;
+const IMPUI = 366; // overrides menu files too, and was CLEARED by the A/B
+
+test("the menu-replacing BG3 mod goes into a collection switched off", () => {
+  const off = collectionAutoOff("baldursgate3", [1, NO_PRESS_ANY_KEY, IMPUI]);
+  assert.equal(off.length, 1, "only the mod the boots actually convicted");
+  assert.equal(off[0].modId, NO_PRESS_ANY_KEY);
+  assert.match(off[0].reason, /Mod Manager/);
+  // ImpUI was on for the boot that worked. Overriding menu files is not
+  // itself the fault, so it must never be swept up by association.
+  assert.deepEqual(collectionAutoOff("baldursgate3", [IMPUI]), []);
+  assert.deepEqual(collectionAutoOff("palworld", [NO_PRESS_ANY_KEY]), []);
+});
+
+test("its own mod page says so before the download", () => {
+  const note = getCompatHint("baldursgate3", NO_PRESS_ANY_KEY);
+  assert.ok(note, "a direct install must be warned too");
+  assert.match(note.hint, /Mod Manager/);
+  // Not dressed up as a Linux problem: it replaces the menu everywhere,
+  // and a reader told "Linux note" would assume their desktop is fine.
+  assert.doesNotMatch(note.label ?? "", /Linux/i);
+  assert.doesNotMatch(note.hint, /Linux|SteamOS/i);
+  // The genuinely Linux-only hint keeps the default framing.
+  const linux = getCompatHint("slaythespire2", 854);
+  assert.match(linux.hint, /Linux/);
+  assert.equal(linux.label, undefined, "no label means the Linux default");
+  assert.equal(getCompatHint("baldursgate3", 999999), undefined);
+});
+
+test("the mod page renders each note's own heading, not a hardcoded one", () => {
+  const mod = readFileSync("src/ModDetailPage.tsx", "utf8");
+  assert.match(mod, /compatHint\.hint/, "must render the hint text");
+  assert.match(mod, /compatHint\.label \?\? "Linux note"/);
+  assert.match(mod, /compatHint\.icon \?\? "🐧"/);
+});
+
+// No em dashes in player-facing copy, wherever it lives.
 test("the warning copy carries no em dashes", () => {
   for (const m of STRANDING_UI_MODS) {
     assert.doesNotMatch(m.name + m.effect, /—/);
+  }
+  for (const m of COLLECTION_OFF_MODS) {
+    assert.doesNotMatch(m.name + m.reason, /—/);
+  }
+  for (const h of COMPAT_HINTS) {
+    assert.doesNotMatch(h.hint + (h.label ?? ""), /—/);
   }
   const w = getStrandingWarning("palworld", MOD_CONFIG_MENU);
   assert.doesNotMatch(w, /—/);

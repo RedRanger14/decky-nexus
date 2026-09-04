@@ -8,6 +8,12 @@ export interface CompatHint {
   nexusDomain: string;
   modId: number;
   hint: string;
+  /** How the note is headed, and the emoji beside it. Defaults to the
+   * Linux framing the first entry needed. A mod that misbehaves on every
+   * platform must not present itself as a Linux problem: the reader would
+   * reasonably conclude it works fine on their desktop. */
+  label?: string;
+  icon?: string;
 }
 
 export const COMPAT_HINTS: CompatHint[] = [
@@ -15,19 +21,35 @@ export const COMPAT_HINTS: CompatHint[] = [
     nexusDomain: "slaythespire2",
     modId: 854, // Ironclad Skin-Crimson Blade Valkyrie
     hint:
-      "On the Linux/SteamOS build this mod additionally requires RitsuLib — " +
-      "without it, its startup patching crashes and the skin never loads " +
+      "On the Linux/SteamOS build this mod additionally requires RitsuLib. " +
+      "Without it, its startup patching crashes and the skin never loads " +
       "(Windows is unaffected; verified 2026-07-16). Install RitsuLib first.",
+  },
+  {
+    nexusDomain: "baldursgate3",
+    modId: 745, // No Press Any Key Menu
+    // Not a Linux fault: it replaces the menu on every platform, and the
+    // entry its copy cannot reach is the game's own.
+    label: "Heads up",
+    icon: "⚠️",
+    hint:
+      "This mod replaces the game's main menu with its own copy, and in " +
+      "that copy the Mod Manager option cannot be selected: the menu " +
+      "appears, every other option works, and Mod Manager does nothing. " +
+      "Isolated on this device on 2026-09-04, switching only this mod off " +
+      "and on across five boots of a 223 mod setup. Everything else about " +
+      "the mod works, so the choice is skipping the press any key screen " +
+      "or keeping the game's own mod list.",
   },
 ];
 
 export function getCompatHint(
   nexusDomain: string,
   modId: number
-): string | undefined {
+): CompatHint | undefined {
   return COMPAT_HINTS.find(
     (h) => h.nexusDomain === nexusDomain && h.modId === modId
-  )?.hint;
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +161,24 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "so in a collection full of Pal reskins the two fight and Pals " +
       "render as a broken mix of both (seen on this device). With it " +
       "off, the collection's reskins show as their authors intended.",
+  },
+  {
+    nexusDomain: "baldursgate3",
+    modId: 745, // No Press Any Key Menu
+    name: "No Press Any Key Menu",
+    // It ships GUI/Pages/BetterMainMenu.xaml plus both input state
+    // machines, so it does not tweak the menu, it replaces it - and its
+    // copy predates the Mod Manager entry the current build puts there.
+    // Isolated over five boots of the 235-mod NG+ collection on
+    // 2026-09-04: with it off the entry opens, with it on the entry is
+    // dead while every other menu option and the controller work.
+    // ImpUI overrides menu files too and is unaffected.
+    reason:
+      "It replaces the game's main menu with its own copy, and in that " +
+      "copy the Mod Manager option cannot be selected, so you lose the " +
+      "game's own mod list (isolated on this device). With it off the " +
+      "Mod Manager works, and the only difference is that you see the " +
+      "press any key screen again.",
   },
 ];
 

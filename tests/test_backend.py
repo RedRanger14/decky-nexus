@@ -17641,12 +17641,13 @@ class TestBg3Mode(unittest.TestCase):
     # ---- what the game writes, we write (mostly) ---------------------------------
     # Diffed against the game's own rewrite of a 227-entry file (2026-09-04):
     # the one field where our registration disagreed was PublishHandle, the
-    # mod.io handle the toolkit stamps into meta.lsx. Writing it turned out
-    # to be wrong: the game then reconciled 31 mods against mod.io, held 42
-    # API connections open for minutes and greyed out its Mod Manager. So
-    # the handle is recorded but 0 is written, as every working boot had.
-    # The game also saves the order the player arranged in its menu, which
-    # our re-sort into install order discarded on every toggle.
+    # mod.io handle the toolkit stamps into meta.lsx. We record it and still
+    # write 0, because these paks came from Nexus and should not answer for
+    # mod.io items. (A version that wrote the real handles was shipped on the
+    # theory that they greyed out the in-game Mod Manager; A/B boots later
+    # pinned that on one mod replacing the main menu, so this field is
+    # 0 on its own merits.) The game also saves the order the player
+    # arranged in its menu, which our re-sort into install order discarded.
 
     PUBLISHED = '<attribute id="PublishHandle" type="uint64" value="4570308"/>'
 
@@ -17668,8 +17669,8 @@ class TestBg3Mode(unittest.TestCase):
         self.assertEqual(rec["bg3_mods"][0]["publish_handle"], "4570308")
         self.assertEqual(self._modsettings_field(
             "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "0",
-            "a real handle here sent the game into a mod.io reconcile that "
-            "never finished, with its Mod Manager greyed out")
+            "a Nexus-installed pak must not present itself to the game as "
+            "a mod.io item to reconcile")
         self._archive({"Plain.pak": self._make_stats_pak(
             "abab0002-0000-0000-0000-0000000000ab", "Plain", self.HEALTHY_STATS)})
         self.assertTrue(self._install("Plain Mod").get("ok"))

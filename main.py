@@ -6667,11 +6667,15 @@ def _bg3_fill_desc(desc, m: dict) -> None:
         ("Folder", "LSString", m.get("folder") or ""),
         ("MD5", "LSString", m.get("md5") or ""),
         ("Name", "LSString", m.get("name") or ""),
-        # Always 0, although the pak's handle is on the record. Writing
-        # the real handles (v1.5.6, briefly) made the game treat 31 mods
-        # as mod.io mods to reconcile: 42 connections to the BG3 mod.io
-        # API held open for minutes, the Mod Manager greyed out, nothing
-        # downloaded. Every boot that worked had 0 here.
+        # Always 0, although the pak's own handle is kept on the record.
+        # These files came from Nexus; claiming they are mod.io items
+        # invites the game to reconcile them against mod.io, and a
+        # Nexus-installed pak has no business answering for a mod.io one.
+        # (v1.5.6 briefly wrote the real handles, on the theory that they
+        # were what greyed out the in-game Mod Manager. That theory was
+        # wrong: the culprit was No Press Any Key Menu replacing the main
+        # menu, isolated by A/B boots on 2026-09-04. Writing 0 stands on
+        # its own merits, not on that.)
         ("PublishHandle", "uint64", "0"),
         ("UUID", "guid", m.get("uuid") or ""),
         ("Version64", "int64", str(m.get("version64") or "36028797018963968")),

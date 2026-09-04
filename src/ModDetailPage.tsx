@@ -890,7 +890,8 @@ export function ModDetailPage() {
                 fontSize: "13px",
               }}
             >
-              🐧 <b>Linux note:</b> {compatHint}
+              {compatHint.icon ?? "🐧"} <b>{compatHint.label ?? "Linux note"}:</b>{" "}
+              {compatHint.hint}
             </div>
           )}
           {strandingWarning && (
