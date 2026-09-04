@@ -6504,8 +6504,11 @@ def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
                 except (OSError, ValueError):
                     pass
         stored = rec.get("bg3_mods") or []
-        known = {(m.get("uuid") or "").lower() for m in stored}
-        if any(u not in known for u in fresh):
+        known = {(m.get("uuid") or "").lower(): m for m in stored}
+        if any(
+            u not in known or _bg3_meta_core(known[u]) != _bg3_meta_core(m)
+            for u, m in fresh.items()
+        ):
             rec["bg3_mods"] = [
                 m for m in stored
                 if (m.get("uuid") or "")
@@ -6639,8 +6642,40 @@ def _lspk_meta_from_lsx(data: bytes):
         or info.get("Version")
         or "36028797018963968",
         "md5": info.get("MD5") or "",
+        # The mod.io handle the toolkit stamps on published mods. The
+        # game writes it into modsettings for every mod whose meta.lsx has
+        # one (31 of 223 on device, 2026-09-04); writing 0 there was the
+        # one field where our registration disagreed with the game's.
+        "publish_handle": info.get("PublishHandle") or "0",
         **({"deps": deps} if deps else {}),
     }
+
+
+def _bg3_meta_core(m: dict) -> tuple:
+    """The registration fields of a stored meta, for change detection."""
+    return (
+        (m.get("uuid") or "").lower(), m.get("name") or "",
+        m.get("folder") or "", str(m.get("version64") or ""),
+        m.get("md5") or "", str(m.get("publish_handle") or "0"),
+    )
+
+
+def _bg3_fill_desc(desc, m: dict) -> None:
+    """(Re)write one ModuleShortDesc node's attributes from a meta."""
+    desc.children = []
+    for aid, atype, val in (
+        ("Folder", "LSString", m.get("folder") or ""),
+        ("MD5", "LSString", m.get("md5") or ""),
+        ("Name", "LSString", m.get("name") or ""),
+        ("PublishHandle", "uint64", str(m.get("publish_handle") or "0")),
+        ("UUID", "guid", m.get("uuid") or ""),
+        ("Version64", "int64", str(m.get("version64") or "36028797018963968")),
+    ):
+        a = XmlNode("attribute")
+        a.attrib["id"] = aid
+        a.attrib["type"] = atype
+        a.attrib["value"] = val
+        desc.append(a)
 
 
 def _lspk_pak_metas_seeking(pak_path: str) -> list:
@@ -6808,40 +6843,51 @@ def _write_bg3_modsettings(settings: dict, game_domain: str) -> str:
             break
     if save is None or mods_children is None:
         return "modsettings.lsx has no Mods list - launch the game once"
-    owned, enabled_entries = set(), []
+    owned, want, order = set(), {}, []
     for _key, rec in _bg3_records(settings, game_domain):
         for m in rec.get("bg3_mods") or []:
             u = (m.get("uuid") or "").lower()
             if not u:
                 continue
             owned.add(u)
-            if rec.get("enabled", True) and all(
-                u != eu for eu, _em in enabled_entries
-            ):
-                enabled_entries.append((u, m))
+            if rec.get("enabled", True) and u not in want:
+                want[u] = m
+                order.append(u)
+    # Entries already in the file keep their PLACE: the game saves the
+    # order the player arranged in its own mod menu, and re-sorting it
+    # into install order on every toggle threw that away. Owned entries
+    # are refreshed in place (the game corrects PublishHandle and version
+    # fields the same way), disabled ones and duplicates go, and anything
+    # newly enabled is appended in install order.
+    seen = set()
     for desc in list(mods_children.findall("node")):
         u = ""
         for a in desc.findall("attribute"):
             if a.get("id") == "UUID":
                 u = (a.get("value") or "").lower()
-        if u in owned:
+        if u not in owned:
+            continue
+        if u in want and u not in seen:
+            seen.add(u)
+            m = want[u]
+            if str(m.get("publish_handle") or "0") == "0":
+                for a in desc.findall("attribute"):
+                    if a.get("id") == "PublishHandle" and (
+                        a.get("value") or "0"
+                    ) != "0":
+                        # The game learned this handle from mod.io; a pak
+                        # with none in its meta must not erase it. Two
+                        # entries on device, 2026-09-04.
+                        m = dict(m, publish_handle=a.get("value"))
+            _bg3_fill_desc(desc, m)
+        else:
             mods_children.remove(desc)
-    for _u, m in enabled_entries:
+    for u in order:
+        if u in seen:
+            continue
         desc = XmlNode("node")
         desc.attrib["id"] = "ModuleShortDesc"
-        for aid, atype, val in (
-            ("Folder", "LSString", m.get("folder") or ""),
-            ("MD5", "LSString", m.get("md5") or ""),
-            ("Name", "LSString", m.get("name") or ""),
-            ("PublishHandle", "uint64", "0"),
-            ("UUID", "guid", m.get("uuid") or ""),
-            ("Version64", "int64", str(m.get("version64") or "36028797018963968")),
-        ):
-            a = XmlNode("attribute")
-            a.attrib["id"] = aid
-            a.attrib["type"] = atype
-            a.attrib["value"] = val
-            desc.append(a)
+        _bg3_fill_desc(desc, want[u])
         mods_children.append(desc)
     xml_write_file(path, save)
     return ""

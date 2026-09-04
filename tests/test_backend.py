@@ -17151,7 +17151,7 @@ class TestBg3Mode(unittest.TestCase):
     # longer decide anything; the pass only heals what the rule parked.
 
     @classmethod
-    def _make_stats_pak(cls, uuid, folder, stats_text):
+    def _make_stats_pak(cls, uuid, folder, stats_text, extra_meta=""):
         meta = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             '<save><region id="Config"><node id="root"><children>'
@@ -17160,6 +17160,7 @@ class TestBg3Mode(unittest.TestCase):
             f'<attribute id="Name" type="LSString" value="{folder}"/>'
             f'<attribute id="UUID" type="guid" value="{uuid}"/>'
             '<attribute id="Version64" type="int64" value="1"/>'
+            f"{extra_meta}"
             "</node></children></node></region></save>"
         ).encode()
         stats = stats_text.encode()
@@ -17636,6 +17637,144 @@ class TestBg3Mode(unittest.TestCase):
             os.path.join(main._bg3_disabled_dir(), "Lost.pak")))
         self.assertIn(
             "ffff6666-0000-0000-0000-0000000000f6", self._uuids_in_modsettings())
+
+    # ---- what the game writes, we write ------------------------------------------
+    # Diffed against the game's own rewrite of a 227-entry file (2026-09-04):
+    # the one field where our registration disagreed was PublishHandle, the
+    # mod.io handle the toolkit stamps into meta.lsx. The game writes it for
+    # every mod that has one; we wrote 0. And the game saves the order the
+    # player arranged in its menu, which our re-sort into install order
+    # discarded on every toggle.
+
+    PUBLISHED = '<attribute id="PublishHandle" type="uint64" value="4570308"/>'
+
+    def _modsettings_field(self, uuid, field):
+        with open(main._bg3_modsettings_path(), encoding="utf-8") as f:
+            txt = f.read()
+        for blk in re.findall(r'<node id="ModuleShortDesc">(.*?)</node>', txt, re.S):
+            attrs = dict(re.findall(r'id="(\w+)" type="\w+" value="([^"]*)"', blk))
+            if attrs.get("UUID", "").lower() == uuid:
+                return attrs.get(field)
+        return None
+
+    def test_the_publish_handle_comes_from_the_pak(self):
+        self._archive({"Rapier.pak": self._make_stats_pak(
+            "abab0001-0000-0000-0000-0000000000ab", "InfernalRapier",
+            self.HEALTHY_STATS, extra_meta=self.PUBLISHED)})
+        self.assertTrue(self._install("Actually Infernal Rapier").get("ok"))
+        self.assertEqual(self._modsettings_field(
+            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "4570308")
+        # A mod that was never published keeps the game's own default.
+        self._archive({"Plain.pak": self._make_stats_pak(
+            "abab0002-0000-0000-0000-0000000000ab", "Plain", self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Plain Mod").get("ok"))
+        self.assertEqual(self._modsettings_field(
+            "abab0002-0000-0000-0000-0000000000ab", "PublishHandle"), "0")
+
+    def test_a_handle_the_game_learned_from_modio_is_kept(self):
+        """Two entries on device carried handles the game had looked up on
+        mod.io although the pak's meta has none. Our rewrite must not put
+        0 back over them; the pak's own handle still wins when it has one."""
+        self._archive({"Plain.pak": self._make_stats_pak(
+            "abab0002-0000-0000-0000-0000000000ab", "Plain", self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Plain Mod").get("ok"))
+        self._archive({"Rapier.pak": self._make_stats_pak(
+            "abab0001-0000-0000-0000-0000000000ab", "InfernalRapier",
+            self.HEALTHY_STATS, extra_meta=self.PUBLISHED)})
+        self.assertTrue(self._install("Actually Infernal Rapier").get("ok"))
+        path = main._bg3_modsettings_path()
+        with open(path, encoding="utf-8") as f:
+            txt = f.read()
+        # The game stamps both with handles of its own.
+        txt = txt.replace(
+            '<attribute id="PublishHandle" type="uint64" value="0" />',
+            '<attribute id="PublishHandle" type="uint64" value="999" />')
+        txt = txt.replace(
+            '<attribute id="PublishHandle" type="uint64" value="4570308" />',
+            '<attribute id="PublishHandle" type="uint64" value="999" />')
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(txt)
+        self.assertEqual(main._write_bg3_modsettings(main._load_settings(), self.DOMAIN), "")
+        self.assertEqual(self._modsettings_field(
+            "abab0002-0000-0000-0000-0000000000ab", "PublishHandle"), "999",
+            "the game's knowledge survives when the pak has none")
+        self.assertEqual(self._modsettings_field(
+            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "4570308",
+            "the pak's own handle wins when it has one")
+
+    def test_a_record_installed_before_handles_learns_its_handle_on_repair(self):
+        self._archive({"Rapier.pak": self._make_stats_pak(
+            "abab0001-0000-0000-0000-0000000000ab", "InfernalRapier",
+            self.HEALTHY_STATS, extra_meta=self.PUBLISHED)})
+        self.assertTrue(self._install("Actually Infernal Rapier").get("ok"))
+        # A record written by the version that did not know the field.
+        s = main._load_settings()
+        for meta in s["installed"][self.DOMAIN]["Actually Infernal Rapier"]["bg3_mods"]:
+            meta.pop("publish_handle", None)
+        main._save_settings(s)
+        # ...and the file that version wrote, with 0 in the field.
+        path = main._bg3_modsettings_path()
+        with open(path, encoding="utf-8") as f:
+            txt = f.read()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(txt.replace(
+                '<attribute id="PublishHandle" type="uint64" value="4570308" />',
+                '<attribute id="PublishHandle" type="uint64" value="0" />'))
+        self.assertEqual(main._write_bg3_modsettings(s, self.DOMAIN), "")
+        self.assertEqual(self._modsettings_field(
+            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "0",
+            "the stored record knows no handle, so the writer has none to give")
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertEqual(r["repaired"], ["Actually Infernal Rapier"])
+        self.assertEqual(self._modsettings_field(
+            "abab0001-0000-0000-0000-0000000000ab", "PublishHandle"), "4570308")
+        # And nothing to repair the second time round.
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertEqual(r["repaired"], [])
+
+    def test_rewrites_keep_the_players_order_and_drop_duplicates(self):
+        ids = {}
+        for name in ("Alpha", "Bravo", "Charlie"):
+            u = f"0000{name.lower()}-0000-0000-0000-00000000000{name[0].lower()}"
+            ids[name] = u
+            self._archive({f"{name}.pak": self._make_stats_pak(
+                u, name, self.HEALTHY_STATS)})
+            self.assertTrue(self._install(name).get("ok"))
+        gustav = "cb555efe-2d9e-131f-8195-a89329d218ea"
+        foreign = "11111111-2222-3333-4444-555555555555"
+        self.assertEqual(
+            self._uuids_in_modsettings(),
+            [gustav, foreign, ids["Alpha"], ids["Bravo"], ids["Charlie"]])
+        # The player rearranges in the game's menu (Charlie first) and the
+        # game happens to duplicate Bravo, as it did on device.
+        path = main._bg3_modsettings_path()
+        with open(path, encoding="utf-8") as f:
+            txt = f.read()
+        blocks = dict(
+            (dict(re.findall(r'id="(\w+)" type="\w+" value="([^"]*)"', b))["UUID"], b)
+            for b in re.findall(r'(<node id="ModuleShortDesc">.*?</node>)', txt, re.S)
+        )
+        head, tail = txt.split(blocks[gustav], 1)[0], txt.rsplit(blocks[ids["Charlie"]], 1)[1]
+        body = "".join(blocks[u] for u in (
+            gustav, foreign, ids["Charlie"], ids["Alpha"], ids["Bravo"], ids["Bravo"]))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(head + body + tail)
+        self.assertEqual(main._write_bg3_modsettings(main._load_settings(), self.DOMAIN), "")
+        self.assertEqual(
+            self._uuids_in_modsettings(),
+            [gustav, foreign, ids["Charlie"], ids["Alpha"], ids["Bravo"]],
+            "the arranged order survives a rewrite, minus the duplicate")
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Alpha", False, "bg3", self.DOMAIN))
+        self.assertEqual(
+            self._uuids_in_modsettings(),
+            [gustav, foreign, ids["Charlie"], ids["Bravo"]])
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Alpha", True, "bg3", self.DOMAIN))
+        self.assertEqual(
+            self._uuids_in_modsettings(),
+            [gustav, foreign, ids["Charlie"], ids["Bravo"], ids["Alpha"]],
+            "a re-enabled mod goes to the end, it has no place to return to")
 
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
