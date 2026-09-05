@@ -43,6 +43,12 @@ Hard-won details, all of them from a failure
   nothing. So: kill, verify dead, then toggle.
 * Put a timeout on every subprocess call. One `pkill` that never returned
   wedged the whole run reading its pipe.
+* Kill `bin/LinuxCrashReporter` between boots. The game leaves it on
+  screen when it dies, and while it lives Steam still counts the app as
+  running, so the next `steam -applaunch` does nothing and the boot after
+  a crash silently tests the previous state. Match it with a bracketed
+  regex: a plain `pkill -f LinuxCrashReporter` typed at a shell also
+  matches the command line doing the killing.
 * Restore the caller's mod set on the way out - including on Ctrl+C, on a
   crash, and on a machine that reboots mid-run (the wanted state is
   written to disk first, so --restore-only can finish the job).
@@ -50,9 +56,15 @@ Hard-won details, all of them from a failure
 Usage
 -----
     python3 tools/bg3boothunt.py --check          # environment only
-    python3 tools/bg3boothunt.py --hunt           # bisect enabled mods
-    python3 tools/bg3boothunt.py --collection SLUG
+    python3 tools/bg3boothunt.py --hunt           # bisect a hang (spin)
+    python3 tools/bg3boothunt.py --hunt --crash   # bisect a boot CRASH
+    python3 tools/bg3boothunt.py --collection SLUG --crash
     python3 tools/bg3boothunt.py --restore-only   # after an aborted run
+
+A crash and a hang need different fault signals: a hang is a spin (pinned
+CPU, flat memory), a crash is the process exiting. Pass --crash for the
+second. Either way every boot first deletes ModCrashSanityCheck, or the
+game would boot in safe mode with all mods off and prove nothing.
 
 Runs ON the device (it needs the game and the plugin), so copy it over and
 run it there. SteamOS sets logind KillUserProcesses=True, so anything
@@ -63,6 +75,7 @@ and & do not help. Start it as a transient user service instead:
         sh -c "exec python3 /tmp/bg3boothunt.py --hunt > /tmp/hunt.log 2>&1"
 """
 import argparse
+import glob
 import json
 import os
 import signal
@@ -93,6 +106,24 @@ SPIN_SAMPLES_NEEDED = 6          # 60s of unambiguous spinning
 # and no I/O. The spins sat at 2050 and 3180. One core splits them.
 IDLE_TICKS_PER_SAMPLE = int(SAMPLE_SECS * 100 * 1.0)
 MENU_RSS_MB = 1200
+# GPU time is the honest signal, and the only one that survived contact
+# with a large load order. Measured on device 2026-09-04 (per 10s sample,
+# summed over the process's drm engines):
+#     menu being drawn, 0 mods ... 19,900-20,090ms   cpu 0.8 core
+#     loading screen, transient ..  7,096ms
+#     stuck loading, 303 mods ....  1,835ms           cpu 2.1 cores
+# CPU alone cannot tell those apart: the stuck boot burned MORE CPU than
+# the healthy one, so any "idle means finished" rule gets it backwards.
+MENU_GPU_MS_PER_SAMPLE = 12000
+MENU_GPU_SAMPLES_NEEDED = 3
+# "Stuck" does not require a spin. The count search hit a 303-mod boot
+# that sat six minutes with memory moving 6MB in total, no disk activity
+# and no menu being drawn - obviously dead, but the spin rule refused it
+# because that rule demands pinned CPU. A boot can stall without burning
+# a core. Not progressing AND not drawing a menu, for two solid minutes,
+# is the honest definition, and CPU load is beside the point.
+STUCK_RSS_TOLERANCE_MB = 10
+STUCK_SAMPLES_NEEDED = 12
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +144,48 @@ def classify(samples, profile_touched, budget_used):
             "cpu": b["cpu_ticks"] - a["cpu_ticks"],
             "rss": b["rss_mb"] - a["rss_mb"],
             "io": b["io_mb"] - a["io_mb"],
+            "gpu": b.get("gpu_ms", 0) - a.get("gpu_ms", 0),
         })
+    have_gpu = all("gpu_ms" in s for s in samples)
+
+    # With GPU time available it decides, because it is the one signal
+    # that separates "sitting on a drawn menu" from "stuck loading" - and
+    # the stuck boot is the one burning more CPU, so the CPU rule below
+    # would call it the healthy one.
+    if have_gpu:
+        recent = deltas[-MENU_GPU_SAMPLES_NEEDED:]
+        if (
+            len(recent) >= MENU_GPU_SAMPLES_NEEDED
+            and all(d["gpu"] >= MENU_GPU_MS_PER_SAMPLE for d in recent)
+        ):
+            return "ok"
+        run = spun = 0
+        for d in deltas:
+            not_drawing = d["gpu"] < MENU_GPU_MS_PER_SAMPLE
+            # Fast path: pinned CPU with nothing to show for it.
+            if (
+                d["cpu"] >= SPIN_TICKS_PER_SAMPLE
+                and abs(d["rss"]) <= SPIN_RSS_TOLERANCE_MB
+                and d["io"] == 0
+                and not_drawing
+            ):
+                spun += 1
+                if spun >= SPIN_SAMPLES_NEEDED:
+                    return "spin"
+            else:
+                spun = 0
+            # General case: no progress and no menu, whatever the CPU.
+            if (
+                abs(d["rss"]) <= STUCK_RSS_TOLERANCE_MB
+                and d["io"] == 0
+                and not_drawing
+            ):
+                run += 1
+                if run >= STUCK_SAMPLES_NEEDED:
+                    return "spin"
+            else:
+                run = 0
+        return "inconclusive" if budget_used else "watching"
 
     # Healthy means SETTLED at the press-any-key screen: the memory of a
     # loaded game, profile files written, and three quiet samples in a
@@ -228,20 +300,73 @@ def game_pid():
         return shim
 
 
+# bin/LinuxCrashReporter, the dialog the game leaves behind when it dies,
+# and the Steam-side wrapper that owns the app session. Bracketed so the
+# regex can never match the pkill or pgrep invocation itself.
+CRASH_REPORTER_RE = "[L]inuxCrashReporter"
+STEAM_SESSION_RE = "[A]ppId=" + APPID
+
+
+def _pgrep_f(pattern):
+    out = run_cmd(["pgrep", "-f", pattern], timeout=10)
+    if out is None or out.returncode != 0:
+        return []
+    return [int(x) for x in out.stdout.split() if x.isdigit()]
+
+
+def crash_reporter_running():
+    return bool(_pgrep_f(CRASH_REPORTER_RE))
+
+
 def kill_game(m=None):
-    if not bg3_pids():
-        return True
-    run_cmd(["pkill", "-x", "bg3"], timeout=15)
-    for _ in range(10):
-        time.sleep(2)
-        if not bg3_pids():
+    """Close the game AND everything Steam counts as the running app.
+
+    The crash reporter is the part that matters. When the game dies it
+    leaves bin/LinuxCrashReporter on screen, and while that lives Steam
+    still believes app 1086940 is running - so the next `steam -applaunch`
+    is a silent no-op and the boot after a crash tests nothing at all.
+    That is invisible in the log: the harness just waits out its launch
+    timeout and calls it "never started"."""
+    run_cmd(["pkill", "-f", CRASH_REPORTER_RE], timeout=15)
+    if bg3_pids():
+        run_cmd(["pkill", "-x", "bg3"], timeout=15)
+        for _ in range(10):
+            time.sleep(2)
+            if not bg3_pids():
+                break
+        else:
+            run_cmd(["pkill", "-9", "-x", "bg3"], timeout=15)
+            for _ in range(6):
+                time.sleep(2)
+                if not bg3_pids():
+                    break
+            else:
+                return False
+    # Wait for Steam to let go of the app, or the next launch does nothing.
+    for _ in range(15):
+        if not crash_reporter_running() and not _pgrep_f(STEAM_SESSION_RE):
             return True
-    run_cmd(["pkill", "-9", "-x", "bg3"], timeout=15)
-    for _ in range(6):
+        run_cmd(["pkill", "-9", "-f", CRASH_REPORTER_RE], timeout=10)
         time.sleep(2)
-        if not bg3_pids():
-            return True
-    return False
+    return not bg3_pids()
+
+
+def gpu_ms(pid):
+    """Total GPU engine time the process has used, in milliseconds.
+
+    Read from the DRM fdinfo the amdgpu driver exposes per open file
+    descriptor. Summed across engines and descriptors: the absolute value
+    is not meaningful, only how fast it advances."""
+    total = 0
+    for path in glob.glob(f"/proc/{pid}/fdinfo/*"):
+        try:
+            with open(path) as f:
+                for line in f:
+                    if line.startswith("drm-engine-gfx"):
+                        total += int(line.split(":")[1].strip().split()[0])
+        except (OSError, ValueError, IndexError):
+            continue
+    return total // 1_000_000
 
 
 def sample(pid):
@@ -257,6 +382,7 @@ def sample(pid):
             "cpu_ticks": int(p[13]) + int(p[14]),
             "rss_mb": int(p[23]) * 4096 // (1024 * 1024),
             "io_mb": io_total // (1024 * 1024),
+            "gpu_ms": gpu_ms(pid),
         }
     except (OSError, IndexError, ValueError):
         return None
@@ -271,11 +397,29 @@ def profile_files(m):
     ]
 
 
+def clear_crash_marker(m):
+    """Delete BG3's ModCrashSanityCheck folder.
+
+    The game drops this marker while loading mods and removes it on a
+    clean load. If it is still there at the NEXT launch, the game boots
+    in safe mode with every mod disabled - so after a crash (which leaves
+    it) or after we kill a boot mid-session (which also leaves it), the
+    following boot would test nothing. BG3 Mod Manager deletes it on every
+    export for exactly this reason; so do we, before every launch."""
+    marker = os.path.join(m.BG3_PROFILE_ROOT, "ModCrashSanityCheck")
+    try:
+        import shutil
+        shutil.rmtree(marker, ignore_errors=True)
+    except OSError:
+        pass
+
+
 def boot_once(m, label):
     """Launch, watch, classify. Always leaves the game closed."""
     if not kill_game(m):
         say(f"  {label}: cannot close a previous bg3; aborting this boot")
         return "error"
+    clear_crash_marker(m)
     launch_at = time.time()
     before = {}
     for p in profile_files(m):
@@ -306,9 +450,28 @@ def boot_once(m, label):
         time.sleep(SAMPLE_SECS)
         cur = sample(pid)
         if not cur:
-            say(f"  {label}: the process exited (crash, not a hang)")
+            why = ("the Larian crash reporter is up"
+                   if crash_reporter_running() else "no crash reporter")
+            say(f"  {label}: the process exited ({why})")
+            # Clear it here as well as in kill_game: while it lives Steam
+            # thinks the app is still running and the next launch is a
+            # silent no-op.
+            kill_game(m)
             return "exit"
         samples.append(cur)
+        # Log every sample. Twice now a verdict has been argued about with
+        # only a one-line summary to go on; the raw series costs nothing
+        # and makes every judgement auditable after the fact.
+        prev = samples[-2]
+        say(
+            "    %s t=%3.0f rss=%5d cpu=%5d gpu=%6d io=%+4d"
+            % (
+                label, time.time() - launch_at, cur["rss_mb"],
+                cur["cpu_ticks"] - prev["cpu_ticks"],
+                cur.get("gpu_ms", 0) - prev.get("gpu_ms", 0),
+                cur["io_mb"] - prev["io_mb"],
+            )
+        )
         touched = any(
             os.path.exists(p) and os.path.getmtime(p) > before.get(p, 0) + 1
             for p in profile_files(m)
@@ -388,7 +551,17 @@ def check(m):
     return ok
 
 
-def hunt(m, slug=None):
+def hunt(m, slug=None, fault="spin"):
+    """Bisect the enabled paks to the one that reproduces `fault`.
+
+    fault is the boot verdict that means "the collection's problem is
+    present": "spin" for a hang, "exit" for a crash (the process dies and
+    the Larian reporter appears). read_state returns only pak mods (mode
+    bg3); the loose-file texture mods cannot be toggled through the mod
+    list, so they stay in Data/ across every boot. That makes the control
+    run diagnostic on its own: if the game still faults with every pak
+    off, the cause is those loose files, not a pak we can switch."""
+    word = "crashes" if fault == "exit" else "spins"
     enabled, all_keys = read_state(m)
     if slug:
         s = m._load_settings()
@@ -397,7 +570,7 @@ def hunt(m, slug=None):
             k for k in enabled
             if (recs.get(k) or {}).get("collection_slug") == slug
         )
-        say(f"scoped to collection {slug}: {len(enabled)} mods")
+        say(f"scoped to collection {slug}: {len(enabled)} toggleable paks")
     if not enabled:
         say("nothing enabled to hunt")
         return
@@ -416,13 +589,22 @@ def hunt(m, slug=None):
     signal.signal(signal.SIGTERM, bail)
 
     try:
-        say(f"control run: all {len(enabled)} mods OFF")
+        say(f"control run: all {len(enabled)} paks OFF "
+            f"(looking for a boot that {word})")
         apply_state(m, set(), all_keys)
         v = boot_once(m, "control")
+        if v == fault:
+            say(f"CONTROL {v.upper()}: the game still {word} with every "
+                f"toggleable pak OFF. The cause is therefore NOT a pak in "
+                f"the mod list - it is the loose files this collection "
+                f"merged into the game's Data folder (texture mods and the "
+                f"like), which have no switch. Reporting that rather than "
+                f"blaming a pak.")
+            return
         if v != "ok":
-            say(f"ABORT: the game does not boot cleanly even with no mods "
-                f"({v}). That is not a mod problem, so bisecting would "
-                f"blame an innocent one.")
+            say(f"ABORT: the game does not boot cleanly even with no paks "
+                f"({v}), and it did not {word} either. Cannot bisect on a "
+                f"verdict this run never produced.")
             return
         suspects = list(enabled)
         while len(suspects) > 1:
@@ -431,7 +613,7 @@ def hunt(m, slug=None):
             say(f"trying {len(first)} of {len(suspects)}")
             apply_state(m, set(first), all_keys)
             v = boot_once(m, f"first-{len(first)}")
-            if v == "spin":
+            if v == fault:
                 suspects = first
                 continue
             if v in ("inconclusive", "error", "nostart"):
@@ -441,14 +623,14 @@ def hunt(m, slug=None):
             say(f"trying the other {len(second)}")
             apply_state(m, set(second), all_keys)
             v2 = boot_once(m, f"second-{len(second)}")
-            if v2 == "spin":
+            if v2 == fault:
                 suspects = second
                 continue
             if v2 in ("inconclusive", "error", "nostart"):
                 say(f"  cannot judge that half ({v2}); stopping with "
                     f"{len(suspects)} candidates")
                 break
-            say("  NEITHER half spins alone, so this is an INTERACTION "
+            say(f"  NEITHER half {word} alone, so this is an INTERACTION "
                 "between mods, not one bad mod. Stopping.")
             break
         if len(suspects) == 1:
@@ -467,6 +649,11 @@ def main():
     ap.add_argument("--hunt", action="store_true")
     ap.add_argument("--collection", metavar="SLUG")
     ap.add_argument("--restore-only", action="store_true")
+    ap.add_argument(
+        "--crash", action="store_true",
+        help="bisect a boot CRASH (process exits, Larian reporter) rather "
+             "than a hang. The default fault is a spin.",
+    )
     args = ap.parse_args()
     m = load_plugin()
     if args.restore_only:
@@ -485,7 +672,7 @@ def main():
         return 0 if check(m) else 1
     if not check(m):
         return 1
-    hunt(m, args.collection)
+    hunt(m, args.collection, fault="exit" if args.crash else "spin")
     return 0
 
 

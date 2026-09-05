@@ -6463,6 +6463,131 @@ def _bg3_stats_heal_pass(settings: dict, game_domain: str) -> list:
     return healed
 
 
+
+BG3_SE_DEPENDENT = (
+    "This mod needs {req}, which itself needs the BG3 Script Extender - "
+    "and that cannot run on the native Linux build of the game that "
+    "SteamOS installs. Without it this mod stops the game loading, so it "
+    "was left switched off."
+)
+
+
+def _bg3_se_parked_ids(settings: dict, game_domain: str) -> set:
+    """Nexus mod ids of the bg3 records parked for needing the Script
+    Extender."""
+    out = set()
+    for _key, rec in _bg3_records(settings, game_domain):
+        if rec.get("enabled", True):
+            continue
+        if "Script Extender" not in (rec.get("warning") or ""):
+            continue
+        try:
+            out.add(int(rec["mod_id"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _bg3_required_ids(reqs: dict) -> set:
+    """The mod ids a requirement block genuinely demands.
+
+    Optional requirements are not demands, and a mod manager is not a
+    dependency - this plugin is the manager. Both filters already exist in
+    the health check; this keeps the same rules so the two cannot disagree.
+    """
+    out = set()
+    for r in (reqs or {}).get("requirements") or []:
+        try:
+            mid = int(r.get("modId") or 0)
+        except (TypeError, ValueError):
+            continue
+        if mid <= 0:
+            continue
+        if re.search(r"optional", r.get("notes") or "", re.I):
+            continue
+        if _MANAGER_REQUIREMENT_RE.search(r.get("modName") or ""):
+            continue
+        out.add(mid)
+    return out
+
+
+async def _bg3_park_se_dependents(settings: dict, game_domain: str) -> list:
+    """Switch off every enabled bg3 mod that requires a mod parked for the
+    Script Extender, and everything that then requires THOSE. Returns
+    (name, reason) pairs.
+
+    Cascades to a fixed point: an overhaul requires a library, a patch
+    requires the overhaul. Stopping at one level would leave the patch
+    switched on with nothing under it.
+    """
+    unusable = _bg3_se_parked_ids(settings, game_domain)
+    if not unusable:
+        return []
+    live = {}
+    for key, rec in _bg3_records(settings, game_domain):
+        if not rec.get("enabled", True):
+            continue
+        try:
+            live[int(rec["mod_id"])] = (key, rec)
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not live:
+        return []
+    api_key = settings.get("api_key")
+    game_id = await _resolve_game_id(game_domain, api_key)
+    nodes = await _legacy_mods_in_batches(
+        game_id, sorted(live), REQUIREMENT_FIELDS, api_key
+    )
+    needs = {}
+    for n in nodes:
+        try:
+            needs[int(n["modId"])] = _bg3_required_ids(_split_requirements(n))
+        except (KeyError, TypeError, ValueError):
+            continue
+    # A mod the API did not answer for is left alone: silence is not a
+    # reason to switch somebody's mod off.
+    names = {mid: (rec.get("name") or key)
+             for mid, (key, rec) in live.items()}
+    for _key, rec in _bg3_records(settings, game_domain):
+        try:
+            names.setdefault(int(rec["mod_id"]), rec.get("name") or _key)
+        except (KeyError, TypeError, ValueError):
+            continue
+    changed = []
+    moving = True
+    while moving:
+        moving = False
+        for mid in sorted(live):
+            key, rec = live[mid]
+            if not rec.get("enabled", True):
+                continue
+            blocking = sorted(needs.get(mid, set()) & unusable)
+            if not blocking:
+                continue
+            req_name = names.get(blocking[0]) or f"mod {blocking[0]}"
+            os.makedirs(_bg3_disabled_dir(), exist_ok=True)
+            for fn in rec.get("files") or []:
+                if not _safe_rel_path(fn) or "/" in fn:
+                    continue
+                src = os.path.join(_bg3_mods_dir(), fn)
+                if os.path.isfile(src):
+                    dst = os.path.join(_bg3_disabled_dir(), fn)
+                    if os.path.isfile(dst):
+                        os.remove(dst)
+                    shutil.move(src, dst)
+            rec["enabled"] = False
+            reason = BG3_SE_DEPENDENT.format(req=req_name)
+            rec["warning"] = reason
+            changed.append((rec.get("name") or key, reason))
+            unusable.add(mid)
+            moving = True
+    if changed:
+        decky.logger.info(
+            f"bg3: parked {len(changed)} mod(s) that require a Script "
+            "Extender mod we cannot run"
+        )
+    return changed
+
 def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
     """Make every bg3 record agree with its paks on disk. Returns the names
     of the records repaired.
@@ -14741,7 +14866,20 @@ query Link($slug: String!, $domainName: String!) {
                       for k, r in _bg3_records(settings, game_domain)}
             healed = _bg3_stats_heal_pass(settings, game_domain)
             repaired = _bg3_record_heal_pass(settings, game_domain)
-            disabled = _bg3_broken_dep_pass(settings, game_domain)
+            # Before judging pak dependencies: a mod whose Nexus
+            # requirement is a Script Extender mod we parked cannot work
+            # here, and says so nowhere in its pak.
+            disabled = []
+            try:
+                disabled += await _bg3_park_se_dependents(
+                    settings, game_domain
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                    KeyError, ValueError) as e:
+                # Requirements are a network lookup. Losing it costs this
+                # one improvement, never the install.
+                decky.logger.warning(f"bg3 se-dependent pass skipped: {e!r}")
+            disabled += _bg3_broken_dep_pass(settings, game_domain)
             after = {k: r.get("enabled", True)
                      for k, r in _bg3_records(settings, game_domain)}
             if healed or repaired or disabled or before != after:

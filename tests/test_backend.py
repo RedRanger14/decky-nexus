@@ -17549,6 +17549,125 @@ class TestBg3Mode(unittest.TestCase):
         self.assertFalse(rec["enabled"])
         self.assertEqual(rec["warning"], main.BG3_SE_UNAVAILABLE)
 
+    # ---- mods that require a Script Extender mod we parked ------------------------
+    # The #1 collection crashed on boot and an unattended bisection convicted
+    # 20 mods one at a time, eight of them "Goon's <class> Overhaul". One
+    # cause: Goons Library needs the Script Extender, so it is parked, and
+    # every overhaul built on it stayed switched on and hung the game. That
+    # collection parks 14 such frameworks, so the culprits never ran out.
+    # The dependency appears NOWHERE in the pak - all eight declare zero
+    # deps in meta.lsx - only on the Nexus page.
+
+    def _se_dependent_setup(self, req_notes="", req_name="Goons Library"):
+        """A parked Script Extender library plus an enabled mod that the
+        Nexus API says requires it."""
+        s = main._load_settings()
+        s["api_key"] = "k"
+        s.setdefault("installed", {}).setdefault(self.DOMAIN, {})
+        s["installed"][self.DOMAIN]["Goons Library"] = {
+            "mode": "bg3", "mod_id": 12834, "name": req_name,
+            "enabled": False, "files": ["GoonsLibrary.pak"],
+            "warning": main.BG3_SE_UNAVAILABLE,
+            "bg3_mods": [{"uuid": "aaaa0001-0000-0000-0000-00000000ab01"}],
+        }
+        main._save_settings(s)
+        self._archive({"Fighter.pak": self._make_stats_pak(
+            "aaaa0002-0000-0000-0000-00000000ab02", "GoonsFighter",
+            self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Goons Fighter Overhaul").get("ok"))
+        s = main._load_settings()
+        s["installed"][self.DOMAIN]["Goons Fighter Overhaul"]["mod_id"] = 17926
+        main._save_settings(s)
+        nodes = [{
+            "modId": "17926",
+            "modRequirements": {
+                "nexusRequirements": {"nodes": [
+                    {"modName": req_name, "modId": "12834",
+                     "notes": req_notes, "url": ""},
+                ]},
+                "dlcRequirements": [],
+            },
+        }]
+
+        async def fake_batches(_game_id, _ids, _fields, _key=None):
+            return nodes
+
+        async def fake_game_id(_domain, _key=None):
+            return 3474
+
+        return fake_batches, fake_game_id
+
+    def _run_se_pass(self, fake_batches, fake_game_id):
+        real_b, real_g = main._legacy_mods_in_batches, main._resolve_game_id
+        main._legacy_mods_in_batches = fake_batches
+        main._resolve_game_id = fake_game_id
+        try:
+            return run(self.plugin.bg3_disable_broken_deps(
+                self.DOMAIN, self.GAME))
+        finally:
+            main._legacy_mods_in_batches = real_b
+            main._resolve_game_id = real_g
+
+    def test_a_mod_requiring_a_parked_se_mod_is_switched_off(self):
+        fb, fg = self._se_dependent_setup()
+        r = self._run_se_pass(fb, fg)
+        self.assertTrue(r.get("ok"), r)
+        names = [d["name"] for d in r["disabled"]]
+        self.assertIn("Goons Fighter Overhaul", names)
+        reason = next(d["reason"] for d in r["disabled"]
+                      if d["name"] == "Goons Fighter Overhaul")
+        self.assertIn("Goons Library", reason)
+        self.assertIn("Script Extender", reason)
+        rec = main._load_settings()["installed"][self.DOMAIN][
+            "Goons Fighter Overhaul"]
+        self.assertFalse(rec["enabled"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_disabled_dir(), "Fighter.pak")))
+        self.assertNotIn(
+            "aaaa0002-0000-0000-0000-00000000ab02",
+            self._uuids_in_modsettings(),
+            "its registration must go with it",
+        )
+
+    def test_an_optional_requirement_is_not_a_reason_to_switch_off(self):
+        fb, fg = self._se_dependent_setup(req_notes="Optional, for extra spells")
+        r = self._run_se_pass(fb, fg)
+        self.assertEqual(r["disabled"], [], r)
+        rec = main._load_settings()["installed"][self.DOMAIN][
+            "Goons Fighter Overhaul"]
+        self.assertTrue(rec.get("enabled", True))
+
+    def test_a_mod_manager_requirement_is_not_a_dependency(self):
+        # This plugin IS the mod manager; a page listing one as a
+        # requirement must not take the mod down with it.
+        fb, fg = self._se_dependent_setup(req_name="BG3 Mod Manager")
+        r = self._run_se_pass(fb, fg)
+        self.assertEqual(r["disabled"], [], r)
+
+    def test_the_network_failing_never_breaks_the_pass(self):
+        """Requirements are a network lookup. Losing it costs this one
+        improvement, never the install."""
+        fb, fg = self._se_dependent_setup()
+
+        async def boom(*_a, **_k):
+            raise RuntimeError("network down")
+
+        r = self._run_se_pass(boom, fg)
+        self.assertTrue(r.get("ok"), r)
+        rec = main._load_settings()["installed"][self.DOMAIN][
+            "Goons Fighter Overhaul"]
+        self.assertTrue(rec.get("enabled", True))
+
+    def test_a_mod_the_api_says_nothing_about_is_left_alone(self):
+        # Silence is not a reason to switch somebody's mod off.
+        fb, fg = self._se_dependent_setup()
+
+        async def empty(*_a, **_k):
+            return []
+
+        r = self._run_se_pass(empty, fg)
+        self.assertEqual(r["disabled"], [], r)
+
     # ---- records repaired from the paks on disk ----------------------------------
     # On device (2026-09-02) 35 load-order divider paks sat in Mods with no
     # modsettings entry: their record was written by the tokenizer that lost
@@ -17845,7 +17964,10 @@ class TestBg3BootHunt(unittest.TestCase):
 
     def _series(self, specs):
         """specs: list of (cpu_ticks_delta, rss_delta_mb, io_delta_mb),
-        turned into the cumulative samples the classifier reads."""
+        turned into the cumulative samples the classifier reads.
+
+        No gpu_ms key: these exercise the fallback path for hardware that
+        exposes no DRM engine counters."""
         out = [{"cpu_ticks": 0, "rss_mb": 1800, "io_mb": 1000}]
         for cpu, rss, io in specs:
             last = out[-1]
@@ -17855,6 +17977,79 @@ class TestBg3BootHunt(unittest.TestCase):
                 "io_mb": last["io_mb"] + io,
             })
         return out
+
+    def _gpu_series(self, specs):
+        """specs: list of (cpu_ticks_delta, rss_delta_mb, io_delta_mb,
+        gpu_ms_delta) - the full signal set, as read on device."""
+        out = [{"cpu_ticks": 0, "rss_mb": 1800, "io_mb": 1000, "gpu_ms": 0}]
+        for cpu, rss, io, gpu in specs:
+            last = out[-1]
+            out.append({
+                "cpu_ticks": last["cpu_ticks"] + cpu,
+                "rss_mb": last["rss_mb"] + rss,
+                "io_mb": last["io_mb"] + io,
+                "gpu_ms": last["gpu_ms"] + gpu,
+            })
+        return out
+
+    # ---- the measurement that settled it ---------------------------------
+    # Two boots traced on device 2026-09-04, per 10s sample. The stuck one
+    # burns MORE cpu than the healthy one, which is why cpu can never be
+    # the judge:
+    #   0 mods, menu drawn ..... cpu  820  rss 1995 flat  gpu 20000ms
+    #   303 mods, stuck ........ cpu 2105  rss 2259 flat  gpu  1835ms
+    def test_the_measured_menu_is_ok_by_its_gpu_time(self):
+        s = self._gpu_series([(820, 0, 0, 20000)] * 5)
+        self.assertEqual(self.h.classify(s, True, False), "ok")
+
+    def test_the_measured_stuck_boot_is_a_spin_despite_more_cpu(self):
+        s = self._gpu_series([(2105, 0, 0, 1835)] * 8)
+        self.assertEqual(self.h.classify(s, True, False), "spin")
+        # And the trap it was built to avoid: judging by cpu alone, the
+        # stuck boot is the busier one, so an "idle means done" rule would
+        # call the healthy boot stuck and this one fine.
+        self.assertGreater(2105, self.h.IDLE_TICKS_PER_SAMPLE)
+
+    def test_a_loading_screen_is_not_yet_the_menu(self):
+        # The transient during load measured 7,096ms, well under a drawn
+        # menu's 20,000. It must not be mistaken for success.
+        s = self._gpu_series([(3000, 300, 60, 7096)] * 4)
+        self.assertNotEqual(self.h.classify(s, True, False), "ok")
+
+    def test_a_stalled_boot_counts_even_without_pinned_cpu(self):
+        """The count search met a 303-mod boot that sat six minutes with
+        memory moving 6MB in total, no disk activity and no menu drawn,
+        and the spin rule refused it because CPU was not pinned - so the
+        search stopped having learned nothing. Not progressing and not
+        drawing a menu IS the failure, whatever the CPU is doing."""
+        s = self._gpu_series([(500, 0, 0, 1835)] * 13)
+        self.assertEqual(self.h.classify(s, True, False), "spin")
+        # Two minutes of it, not twenty seconds: a slow loading stretch
+        # must not be condemned.
+        brief = self._gpu_series([(500, 0, 0, 1835)] * 4)
+        self.assertNotEqual(self.h.classify(brief, True, False), "spin")
+
+    def test_slow_but_real_loading_is_never_called_stuck(self):
+        # Memory climbing, or the disk working, means it is still going.
+        climbing = self._gpu_series([(500, 40, 0, 1835)] * 15)
+        self.assertNotEqual(self.h.classify(climbing, True, False), "spin")
+        reading = self._gpu_series([(500, 0, 3, 1835)] * 15)
+        self.assertNotEqual(self.h.classify(reading, True, False), "spin")
+
+    def test_every_sample_is_logged_for_later_argument(self):
+        """Both misjudgements this session were argued from a one-line
+        summary. The raw series must reach the log."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def boot_once(")
+        body = src[i : i + 3000]
+        self.assertIn("gpu=", body)
+        self.assertIn("say(", body)
+
+    def test_gpu_counters_missing_falls_back_to_the_cpu_rules(self):
+        # Hardware that exposes no drm engine counters still gets a
+        # verdict rather than a crash.
+        s = self._series([(3180, 0, 0)] * 7)
+        self.assertEqual(self.h.classify(s, False, False), "spin")
 
     # ---- the measured spin ------------------------------------------------
     # 79% world load: ~3180 ticks per 10s (three cores), RSS 1975MB flat,
@@ -18016,7 +18211,74 @@ class TestBg3BootHunt(unittest.TestCase):
     def test_a_failing_control_run_aborts_instead_of_bisecting(self):
         src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
         i = src.index("control run")
-        self.assertIn("ABORT", src[i : i + 900])
+        self.assertIn("ABORT", src[i : i + 1400])
+
+    def test_the_crash_reporter_is_cleared_between_boots(self):
+        """When BG3 dies it leaves bin/LinuxCrashReporter on screen, and
+        while that lives Steam still counts app 1086940 as running - so the
+        next `steam -applaunch` is a silent no-op and the boot AFTER a
+        crash tests nothing. Seen on device 2026-09-04: a launch sat in the
+        wait loop while a reporter from a previous run held the session."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def kill_game(")
+        body = src[i : i + 1600]
+        self.assertIn("CRASH_REPORTER_RE", body)
+        self.assertIn("STEAM_SESSION_RE", body, "must wait for Steam to let go")
+        # A crash must also clean up where it is detected, not only on the
+        # next kill_game.
+        j = src.index("def boot_once(")
+        self.assertIn("kill_game", src[j : j + 2400])
+
+    def test_process_patterns_cannot_match_the_command_doing_the_killing(self):
+        """`pkill -f LinuxCrashReporter` also matches the shell running it.
+        That killed the session mid-cleanup on device. Bracket the first
+        character so the pattern cannot match itself."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        self.assertIn('"[L]inuxCrashReporter"', src)
+        self.assertNotIn('"LinuxCrashReporter"', src)
+
+    def test_every_boot_clears_the_crash_marker_before_launching(self):
+        """A crash (or our own mid-boot kill) leaves ModCrashSanityCheck
+        behind, and the next launch would then boot in safe mode with all
+        mods off - proving nothing. So it is deleted before every launch,
+        inside boot_once, before the process starts."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        self.assertIn("ModCrashSanityCheck", src)
+        i = src.index("def boot_once(")
+        body = src[i : i + 900]
+        self.assertIn("clear_crash_marker", body)
+        # ...and the clear happens before the launch, not after.
+        self.assertLess(
+            body.index("clear_crash_marker"), body.index("Popen"),
+            "the marker must be gone before the game starts",
+        )
+
+    def test_a_crash_is_bisected_on_process_exit_not_on_spin(self):
+        """A boot crash is the process exiting, a hang is a spin. The hunt
+        must be able to bisect on either; a tool that only knew 'spin'
+        walked straight past a collection that crashed."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        self.assertIn("--crash", src)
+        self.assertIn('fault="exit"', src)
+        # The bisection compares against the fault it was given, not a
+        # hardcoded "spin".
+        i = src.index("def hunt(")
+        body = src[i : i + 2600]
+        self.assertIn("v == fault", body)
+        self.assertNotIn('v == "spin"', body)
+
+    def test_a_control_run_that_still_faults_blames_the_loose_files(self):
+        """The loose-file texture mods cannot be toggled through the mod
+        list, so they are present on every boot including the control. If
+        the control still faults, the cause is those files, and the hunt
+        must say so rather than misreport an abort or blame a pak."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def hunt(")
+        body = src[i : i + 2600]
+        j = body.index("control run")
+        seg = body[j : j + 700]
+        self.assertIn("v == fault", seg)
+        self.assertIn("Data", seg)
 
 
 if __name__ == "__main__":
