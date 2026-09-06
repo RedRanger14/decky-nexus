@@ -672,12 +672,43 @@ def hunt(m, slug=None, fault="spin"):
         say("restored; done")
 
 
+def verify(m, times=2):
+    """Boot the CURRENT mod set, as it stands, `times` over, and report.
+
+    The step every hunt must end with. A hunt that applies its final state
+    and stops has verified the last thing it BOOTED, not the thing it left
+    behind: on 2026-09-06 the last boot passed as "base plus six", the final
+    state was assembled afterwards, and the first human launch of it died
+    before the menu. Twice, because a crash at the edge of a limit can be
+    intermittent and one pass proves little."""
+    enabled, _all = read_state(m)
+    say(f"verify: booting the current {len(enabled)}-mod set {times} time(s)")
+    verdicts = []
+    for i in range(1, times + 1):
+        clear_crash_marker(m)
+        v = boot_once(m, f"verify-{i}")
+        verdicts.append(v)
+        say(f"  verify {i}/{times}: {v.upper()}")
+    clear_crash_marker(m)
+    if all(v == "ok" for v in verdicts):
+        say("VERIFIED: the current set reaches the menu every time")
+    else:
+        say(f"NOT VERIFIED: {verdicts} - the current set is not a working "
+            f"game, whatever the hunt concluded")
+    return verdicts
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--hunt", action="store_true")
     ap.add_argument("--collection", metavar="SLUG")
     ap.add_argument("--restore-only", action="store_true")
+    ap.add_argument(
+        "--verify", type=int, metavar="N", nargs="?", const=2,
+        help="boot the current mod set N times (default 2) and report; "
+             "the last step of every hunt",
+    )
     ap.add_argument(
         "--crash", action="store_true",
         help="bisect a boot CRASH (process exits, Larian reporter) rather "
@@ -697,11 +728,17 @@ def main():
         apply_state(m, set(keys), all_keys)
         say("restored")
         return 0
+    if args.verify is not None:
+        if not check(m):
+            return 1
+        return 0 if all(v == "ok" for v in verify(m, args.verify)) else 1
     if args.check or not (args.hunt or args.collection):
         return 0 if check(m) else 1
     if not check(m):
         return 1
     hunt(m, args.collection, fault="exit" if args.crash else "spin")
+    # A hunt ends by booting what it leaves behind, not by applying it.
+    verify(m, 2)
     return 0
 
 

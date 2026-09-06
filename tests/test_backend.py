@@ -18244,6 +18244,24 @@ class TestBg3BootHunt(unittest.TestCase):
         j = src.index("def boot_once(")
         self.assertIn("shim_since", src[j : j + 2000])
 
+    def test_every_hunt_ends_by_booting_the_state_it_leaves_behind(self):
+        """Michael, 2026-09-06, after the first human launch of a hunt's
+        final state died before the menu: "one simple run of that should
+        have caught this". The hunt had verified its last BOOT, not the
+        state it applied afterwards. Every hunt now ends with verify()."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        self.assertIn("def verify(", src)
+        i = src.index("def main(")
+        body = src[i:]
+        self.assertIn("--verify", body)
+        # hunt() is followed by verify() in the same code path.
+        j = body.index("hunt(m, args.collection")
+        self.assertIn("verify(m, 2)", body[j : j + 300])
+        # And verify boots more than once: a crash at the edge of a limit is
+        # allowed to be intermittent, so one pass proves little.
+        k = src.index("def verify(")
+        self.assertIn("times=2", src[k : k + 120])
+
     def test_gpu_counters_missing_falls_back_to_the_cpu_rules(self):
         # Hardware that exposes no drm engine counters still gets a
         # verdict rather than a crash.
