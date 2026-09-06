@@ -18271,6 +18271,20 @@ class TestBg3BootHunt(unittest.TestCase):
         j = src.index("def boot_once(")
         self.assertIn("shim_since", src[j : j + 2000])
 
+    def test_an_exit_without_the_crash_reporter_is_not_a_crash(self):
+        """Every real crash leaves the Larian reporter up. A process that
+        vanished without it (Steam refusing a too-quick relaunch) convicted
+        an innocent mod on 2026-09-06: with it removed the state crashed
+        just the same. Such an exit is inconclusive, never a verdict."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def boot_once(")
+        body = src[i : i + 5200]
+        j = body.index("if not cur:")
+        seg = body[j : j + 900]
+        self.assertIn("crash_reporter_running()", seg)
+        self.assertIn('"inconclusive"', seg)
+        self.assertNotIn('return "exit"\n', seg.replace('return "exit" if', ""))
+
     def test_every_launch_rewrites_the_mod_list_from_the_records(self):
         """BG3 wipes modsettings.lsx to the bare game WHEN it crashes, at
         crash time. The second verification boot after a crash therefore

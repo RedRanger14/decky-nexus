@@ -488,14 +488,20 @@ def boot_once(m, label):
         time.sleep(SAMPLE_SECS)
         cur = sample(pid)
         if not cur:
-            why = ("the Larian crash reporter is up"
-                   if crash_reporter_running() else "no crash reporter")
-            say(f"  {label}: the process exited ({why})")
+            # Every real crash leaves the Larian reporter on screen. A
+            # process that vanishes WITHOUT it closed for some other reason
+            # - Steam refusing a launch that followed a kill too closely,
+            # most likely - and is not evidence against a mod. One such
+            # exit convicted an innocent mod on 2026-09-06; the state with
+            # it removed crashed just the same.
+            crashed = crash_reporter_running()
+            say(f"  {label}: the process exited "
+                f"({'the Larian crash reporter is up' if crashed else 'no crash reporter - not a crash verdict'})")
             # Clear it here as well as in kill_game: while it lives Steam
             # thinks the app is still running and the next launch is a
             # silent no-op.
             kill_game(m)
-            return "exit"
+            return "exit" if crashed else "inconclusive"
         samples.append(cur)
         # Log every sample. Twice now a verdict has been argued about with
         # only a one-line summary to go on; the raw series costs nothing
