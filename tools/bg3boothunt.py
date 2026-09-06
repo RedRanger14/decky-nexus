@@ -124,6 +124,10 @@ MENU_GPU_SAMPLES_NEEDED = 3
 # is the honest definition, and CPU load is beside the point.
 STUCK_RSS_TOLERANCE_MB = 10
 STUCK_SAMPLES_NEEDED = 12
+# Below this the process being watched is not a loading game at all. The
+# shim is ~95MB; the game passes 1GB inside 15 seconds. A flat sub-300MB
+# process is a phantom, never a verdict.
+MIN_GAME_RSS_MB = 300
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +156,10 @@ def classify(samples, profile_touched, budget_used):
     # that separates "sitting on a drawn menu" from "stuck loading" - and
     # the stuck boot is the one burning more CPU, so the CPU rule below
     # would call it the healthy one.
+    if samples[-1]["rss_mb"] < MIN_GAME_RSS_MB and len(samples) >= 3:
+        # Whatever this is, it is not the game loading. Do not let the
+        # stall rule below turn a phantom into a hang.
+        return "inconclusive" if budget_used else "watching"
     if have_gpu:
         recent = deltas[-MENU_GPU_SAMPLES_NEEDED:]
         if (
@@ -285,19 +293,23 @@ def bg3_pids():
 
 
 def game_pid():
-    """The real game, not the shim. The shim sits in do_wait on its child;
-    sampling the shim showed 93MB and 0% CPU and nearly sent me chasing a
-    phantom."""
-    pids = bg3_pids()
-    if not pids:
-        return None
-    shim = pids[0]
-    try:
-        with open(f"/proc/{shim}/task/{shim}/children") as f:
-            kids = [int(x) for x in f.read().split()]
-        return kids[0] if kids else shim
-    except (OSError, IndexError, ValueError):
-        return shim
+    """The real game, not the shim - and NEVER the shim as a stand-in.
+
+    The shim sits in do_wait on its child at ~95MB and 0% CPU. The first
+    version returned it when no child was found, and a game that died
+    before its first sample left the harness watching the shim: flat
+    memory, no CPU, no GPU, which the stall rule then called a hang. Six
+    convictions in one loop rested on that (2026-09-06) before the samples
+    gave it away. No child means no game."""
+    for shim in bg3_pids():
+        try:
+            with open(f"/proc/{shim}/task/{shim}/children") as f:
+                kids = [int(x) for x in f.read().split()]
+        except (OSError, ValueError):
+            continue
+        if kids:
+            return kids[0]
+    return None
 
 
 # bin/LinuxCrashReporter, the dialog the game leaves behind when it dies,
@@ -432,12 +444,29 @@ def boot_once(m, label):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     pid = None
+    shim_since = None
     while time.time() - launch_at < 120:
         time.sleep(3)
         pid = game_pid()
         if pid:
             break
+        # A shim with no child for this long is a game that died before it
+        # could be watched: the crash reporter is holding the shim open.
+        if bg3_pids():
+            shim_since = shim_since or time.time()
+            if time.time() - shim_since > 20:
+                say(f"  {label}: the game died before its first sample "
+                    f"(shim alive, no child; reporter up: "
+                    f"{crash_reporter_running()})")
+                kill_game(m)
+                return "exit"
+        else:
+            shim_since = None
     if not pid:
+        if crash_reporter_running():
+            say(f"  {label}: crash reporter up and no game process")
+            kill_game(m)
+            return "exit"
         say(f"  {label}: the game never started (Steam side, not a mod)")
         return "nostart"
     say(f"  {label}: pid {pid}, watching")

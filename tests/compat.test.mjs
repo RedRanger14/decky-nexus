@@ -268,6 +268,48 @@ test("unscoped rules still fire whatever the collection is", () => {
   assert.equal(collectionAutoOff("baldursgate3", [NO_PRESS_ANY_KEY]).length, 1);
 });
 
+// The bisection's other convictions in Difficulty, Immersion, Quality. Each
+// was decided by a boot that died with the crash reporter up while the other
+// half booted; none lists a requirement anywhere, so the mechanism is unknown
+// and the rule stays in the collection it was seen in.
+test("the bisection's crash convictions are scoped to the collection they were seen in", () => {
+  const CONVICTED = [19337, 18772, 15218, 18137, 2538, 3833, 16361, 16473, 13591, 18548, 15407];
+  const off = collectionAutoOff("baldursgate3", [1, ...CONVICTED, 2], DIQ);
+  assert.deepEqual(off.map((o) => o.modId).sort((a, b) => a - b), [...CONVICTED].sort((a, b) => a - b));
+  for (const o of off) assert.match(o.reason, /crashes before reaching the menu/);
+  assert.deepEqual(collectionAutoOff("baldursgate3", CONVICTED, "6vx9zi"), []);
+  assert.deepEqual(collectionAutoOff("baldursgate3", CONVICTED), []);
+});
+
+// Metamagic Compatibility Patch (5674) and Vessnelles Hair Collection (1420):
+// each half of the bisection booted alone, together they crashed. A pair is
+// a real finding the harness can only report as a pair, and the note must
+// say so rather than blame one of them.
+test("an interaction pair is switched off together with a note that says so", () => {
+  const off = collectionAutoOff("baldursgate3", [5674, 1420], DIQ);
+  assert.equal(off.length, 2);
+  for (const o of off) {
+    assert.match(o.reason, /each boots fine alone/);
+    assert.match(o.reason, /switching one back on/);
+  }
+  assert.deepEqual(collectionAutoOff("baldursgate3", [5674, 1420], "6vx9zi"), []);
+});
+
+// Goon's Monk Overhaul (17706). Every other Goon's overhaul is parked by the
+// dependency pass because its page lists Goons Library (Script Extender,
+// parked on Linux). This page lists nothing and the pak declares nothing, so
+// only a boot could find it: bisected 2026-09-06, the game dies 16s in.
+// Unscoped, because the library cannot run in ANY collection on this build.
+test("a dependency no page or pak declares is still a rule once a boot proved it", () => {
+  const GOONS_MONK = 17706;
+  for (const slug of [DIQ, "6vx9zi", undefined]) {
+    const off = collectionAutoOff("baldursgate3", [GOONS_MONK], slug);
+    assert.equal(off.length, 1, `must fire for slug ${slug}`);
+    assert.match(off[0].reason, /Goons Library/);
+    assert.match(off[0].reason, /does not list/);
+  }
+});
+
 test("the collection page passes its slug and carries the reason with the switch", () => {
   const coll = readFileSync("src/CollectionPage.tsx", "utf8");
   assert.match(coll, /collectionAutoOff\([\s\S]{0,120}collection\.slug/,

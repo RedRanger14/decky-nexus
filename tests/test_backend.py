@@ -18224,6 +18224,26 @@ class TestBg3BootHunt(unittest.TestCase):
         self.assertIn("gpu=", body)
         self.assertIn("say(", body)
 
+    def test_a_phantom_process_is_never_a_verdict(self):
+        """The launcher shim: ~95MB, no CPU, no GPU, forever. A game that
+        died before its first sample left the harness watching the shim,
+        and the stall rule called it a hang - six convictions in one loop
+        rested on that (2026-09-06). A flat sub-300MB process is not a
+        loading game and earns no verdict."""
+        shim = [{"cpu_ticks": 0, "rss_mb": 95, "io_mb": 0, "gpu_ms": 0}] * 14
+        self.assertNotEqual(self.h.classify(shim, True, False), "spin")
+        self.assertEqual(self.h.classify(shim, True, True), "inconclusive")
+
+    def test_the_shim_is_never_returned_as_the_game(self):
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def game_pid(")
+        body = src[i : i + 1400]
+        self.assertNotIn("else shim", body)
+        self.assertIn("return None", body)
+        # ...and a shim with no child for long enough is read as a crash.
+        j = src.index("def boot_once(")
+        self.assertIn("shim_since", src[j : j + 2000])
+
     def test_gpu_counters_missing_falls_back_to_the_cpu_rules(self):
         # Hardware that exposes no drm engine counters still gets a
         # verdict rather than a crash.
