@@ -6993,7 +6993,7 @@ def _write_bg3_modsettings(settings: dict, game_domain: str) -> str:
     # are refreshed in place (the game corrects PublishHandle and version
     # fields the same way), disabled ones and duplicates go, and anything
     # newly enabled is appended in install order.
-    seen = set()
+    seen, present = set(), {}
     for desc in list(mods_children.findall("node")):
         u = ""
         for a in desc.findall("attribute"):
@@ -7003,16 +7003,36 @@ def _write_bg3_modsettings(settings: dict, game_domain: str) -> str:
             continue
         if u in want and u not in seen:
             seen.add(u)
+            present[u] = desc
             _bg3_fill_desc(desc, want[u])
         else:
             mods_children.remove(desc)
+    # A mod coming back on returns to its PLACE, not to the end. Appending
+    # put a re-enabled mod after everything installed later, including the
+    # patches built on it, and a 522-mod load order crashed before the
+    # menu the first time eight mods were switched back on (2026-09-06).
+    # Its place is in front of the nearest entry that was installed after
+    # it and is still in the file; with none, the end is correct.
+    pos = {u: i for i, u in enumerate(order)}
     for u in order:
         if u in seen:
             continue
         desc = XmlNode("node")
         desc.attrib["id"] = "ModuleShortDesc"
         _bg3_fill_desc(desc, want[u])
-        mods_children.append(desc)
+        anchor = None
+        for later in order[pos[u] + 1:]:
+            if later in present:
+                anchor = present[later]
+                break
+        if anchor is None:
+            mods_children.append(desc)
+        else:
+            mods_children.children.insert(
+                mods_children.children.index(anchor), desc
+            )
+        present[u] = desc
+        seen.add(u)
     xml_write_file(path, save)
     return ""
 

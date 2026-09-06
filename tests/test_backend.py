@@ -17877,10 +17877,44 @@ class TestBg3Mode(unittest.TestCase):
             [gustav, foreign, ids["Charlie"], ids["Bravo"]])
         run(self.plugin.set_mod_enabled(
             self.GAME, "Mods", "Alpha", True, "bg3", self.DOMAIN))
+        # Alpha was installed before Bravo, so it returns to just in front
+        # of Bravo - not to the end. Appending it there put a mod after the
+        # patches built on it and crashed a real 522-mod load order before
+        # the menu (2026-09-06). The player's Charlie-first arrangement is
+        # untouched.
         self.assertEqual(
             self._uuids_in_modsettings(),
-            [gustav, foreign, ids["Charlie"], ids["Bravo"], ids["Alpha"]],
-            "a re-enabled mod goes to the end, it has no place to return to")
+            [gustav, foreign, ids["Charlie"], ids["Alpha"], ids["Bravo"]],
+            "a re-enabled mod returns to its place in the install order")
+
+    def test_a_re_enabled_base_lands_before_the_patch_built_on_it(self):
+        """The failure that found this: a base mod switched off and on
+        again was appended after its own patch, which then loaded first."""
+        ids = {}
+        for name in ("Base", "Patch"):
+            u = f"0000{name.lower()}-0000-0000-0000-00000000000{name[0].lower()}"
+            ids[name] = u
+            self._archive({f"{name}.pak": self._make_stats_pak(
+                u, name, self.HEALTHY_STATS)})
+            self.assertTrue(self._install(name).get("ok"))
+        gustav = "cb555efe-2d9e-131f-8195-a89329d218ea"
+        foreign = "11111111-2222-3333-4444-555555555555"
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Base", False, "bg3", self.DOMAIN))
+        self.assertEqual(self._uuids_in_modsettings(), [gustav, foreign, ids["Patch"]])
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Base", True, "bg3", self.DOMAIN))
+        self.assertEqual(
+            self._uuids_in_modsettings(),
+            [gustav, foreign, ids["Base"], ids["Patch"]],
+            "the base must load before the patch again")
+        # And a mod with nothing installed after it still goes to the end.
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Patch", False, "bg3", self.DOMAIN))
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Patch", True, "bg3", self.DOMAIN))
+        self.assertEqual(
+            self._uuids_in_modsettings(), [gustav, foreign, ids["Base"], ids["Patch"]])
 
     def test_home_relative_docs_check(self):
         real = main.HOME_ROOT
