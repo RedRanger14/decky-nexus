@@ -222,50 +222,28 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "that requirement, so nothing else can catch it, and with it on the " +
       "game crashes before the menu (isolated on this device).",
   },
-  // Convicted one at a time by unattended bisection of Difficulty,
-  // Immersion, Quality (slug pns4qv) on 2026-09-06, each by a boot that
-  // died with the Larian crash reporter up while the other half booted.
-  // None lists a requirement on Nexus or declares one in its pak, so the
-  // mechanism is unknown and the rule is scoped to the collection where it
-  // was seen rather than calling the mod broken everywhere.
-  ...([
-    [19337, "Immersive Character Lighting"],
-    [18772, "Circle of Witchcraft - A Druid subclass"],
-    [15218, "Goggles and Glasses Collection"],
-    [18137, "Minimal Main Menu"],
-    [2538, "Half-Tiefs Tiefling Horns and Tail for All"],
-    [3833, "Chromatic Dyes"],
-    [16361, "Way of the Windwalker Monk Subclass"],
-    [16473, "Way of the Brewmaster Monk Subclass"],
-    [13591, "Vest of Investiture"],
-    [18548, "Waterproof Shadowheart"],
-    [15407, "Ziphop - Teleport My Characters"],
-  ] as [number, string][]).map(([modId, name]) => ({
+  {
     nexusDomain: "baldursgate3",
-    modId,
-    name,
+    modId: 18772, // Circle of Witchcraft - A Druid subclass
+    name: "Circle of Witchcraft - A Druid subclass",
+    // Convicted 2026-09-05 on a healthy device: added alone to 113 mods
+    // that reached the menu, the game hung; its three alphabetical
+    // neighbours each booted in the same session. It lists no requirement
+    // anywhere, so the mechanism is unknown and the rule stays in the
+    // collection it was seen in.
+    //
+    // Eleven further "crash" convictions from 2026-09-06 were shipped in
+    // 1.6.4 and withdrawn in 1.6.9: they were made while the device had
+    // begun crashing at every size regardless of content (the same 522-mod
+    // set booted at 17:11 and 20:33 and crashed twice at 22:20), so a
+    // bisection on that base convicted whichever mod sat in the losing
+    // half. A verdict without a healthy base is noise with a name on it.
     collections: ["pns4qv"],
     reason:
-      "With this mod on, the game crashes before reaching the menu in this " +
+      "With this mod on, the game does not reach the menu in this " +
       "collection (isolated on this device by switching mods off and on). " +
       "It may work in other collections, so it is only switched off here.",
-  })),
-  // A pair. Each half of the bisection booted alone; together they crash.
-  // Neither can be blamed on its own, so both go off with the same note.
-  ...([
-    [5674, "Metamagic Compatibility Patch"],
-    [1420, "Vessnelles Hair Collection"],
-  ] as [number, string][]).map(([modId, name]) => ({
-    nexusDomain: "baldursgate3",
-    modId,
-    name,
-    collections: ["pns4qv"],
-    reason:
-      "Together with one other mod in this collection it crashes the game " +
-      "before the menu, though each boots fine alone (isolated on this " +
-      "device). Both are switched off here; switching one back on in My " +
-      "Mods is safe, both is not.",
-  })),
+  },
 ];
 
 /** Which of a collection's mods should be installed SWITCHED OFF, each
