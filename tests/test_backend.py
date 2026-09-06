@@ -18220,7 +18220,7 @@ class TestBg3BootHunt(unittest.TestCase):
         summary. The raw series must reach the log."""
         src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
         i = src.index("def boot_once(")
-        body = src[i : i + 3000]
+        body = src[i : i + 4800]
         self.assertIn("gpu=", body)
         self.assertIn("say(", body)
 
@@ -18243,6 +18243,19 @@ class TestBg3BootHunt(unittest.TestCase):
         # ...and a shim with no child for long enough is read as a crash.
         j = src.index("def boot_once(")
         self.assertIn("shim_since", src[j : j + 2000])
+
+    def test_every_launch_rewrites_the_mod_list_from_the_records(self):
+        """BG3 wipes modsettings.lsx to the bare game WHEN it crashes, at
+        crash time. The second verification boot after a crash therefore
+        ran a near-vanilla game and reported on that (2026-09-06). The
+        records are the truth, so the file is rebuilt before every launch."""
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def boot_once(")
+        body = src[i : i + 1200]
+        self.assertIn("_write_bg3_modsettings", body)
+        self.assertLess(
+            body.index("_write_bg3_modsettings"), body.index("Popen"),
+            "the rewrite must happen before the launch")
 
     def test_every_hunt_ends_by_booting_the_state_it_leaves_behind(self):
         """Michael, 2026-09-06, after the first human launch of a hunt's
@@ -18462,7 +18475,7 @@ class TestBg3BootHunt(unittest.TestCase):
         src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
         self.assertIn("ModCrashSanityCheck", src)
         i = src.index("def boot_once(")
-        body = src[i : i + 900]
+        body = src[i : i + 2200]
         self.assertIn("clear_crash_marker", body)
         # ...and the clear happens before the launch, not after.
         self.assertLess(

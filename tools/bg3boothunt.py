@@ -432,6 +432,15 @@ def boot_once(m, label):
         say(f"  {label}: cannot close a previous bg3; aborting this boot")
         return "error"
     clear_crash_marker(m)
+    # The game WIPES modsettings.lsx to the bare game when it crashes - at
+    # crash time, not at the next launch. A boot that follows a crash
+    # without this rewrite tests a near-vanilla game and calls it whatever
+    # it sees. The records are the truth; the file is derived from them
+    # before every single launch.
+    err = m._write_bg3_modsettings(m._load_settings(), DOMAIN)
+    if err:
+        say(f"  {label}: could not rewrite modsettings ({err})")
+        return "error"
     launch_at = time.time()
     before = {}
     for p in profile_files(m):
