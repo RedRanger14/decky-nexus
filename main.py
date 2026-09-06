@@ -6470,19 +6470,31 @@ BG3_SE_DEPENDENT = (
     "SteamOS installs. Without it this mod stops the game loading, so it "
     "was left switched off."
 )
+BG3_DEPENDENT = (
+    "This mod needs {req}, which is switched off here: {why} Without it "
+    "this mod breaks or stops the game loading, so it was left switched "
+    "off too."
+)
 
 
-def _bg3_se_parked_ids(settings: dict, game_domain: str) -> set:
-    """Nexus mod ids of the bg3 records parked for needing the Script
-    Extender."""
-    out = set()
+def _bg3_se_parked_ids(settings: dict, game_domain: str) -> dict:
+    """Nexus mod ids of the bg3 records the PLUGIN switched off, with why.
+
+    Anything carrying a warning was switched off by a rule - the Script
+    Extender, a dependency of its own, a curated collision - and not by
+    the user; a mod the user switched off by hand carries none. Every one
+    of these strands whatever requires it: when Glow Eyes was switched off
+    for colliding with another mod, Demon Eyes and Feywild Eyes still
+    required it and New Game crashed (2026-09-06)."""
+    out = {}
     for _key, rec in _bg3_records(settings, game_domain):
         if rec.get("enabled", True):
             continue
-        if "Script Extender" not in (rec.get("warning") or ""):
+        why = rec.get("warning") or ""
+        if not why:
             continue
         try:
-            out.add(int(rec["mod_id"]))
+            out[int(rec["mod_id"])] = why
         except (KeyError, TypeError, ValueError):
             continue
     return out
@@ -6520,7 +6532,8 @@ async def _bg3_park_se_dependents(settings: dict, game_domain: str) -> list:
     requires the overhaul. Stopping at one level would leave the patch
     switched on with nothing under it.
     """
-    unusable = _bg3_se_parked_ids(settings, game_domain)
+    whys = _bg3_se_parked_ids(settings, game_domain)
+    unusable = set(whys)
     if not unusable:
         return []
     live = {}
@@ -6576,10 +6589,17 @@ async def _bg3_park_se_dependents(settings: dict, game_domain: str) -> list:
                         os.remove(dst)
                     shutil.move(src, dst)
             rec["enabled"] = False
-            reason = BG3_SE_DEPENDENT.format(req=req_name)
+            why = whys.get(blocking[0], "")
+            if "Script Extender" in why and "which is switched off" not in why:
+                reason = BG3_SE_DEPENDENT.format(req=req_name)
+            else:
+                reason = BG3_DEPENDENT.format(
+                    req=req_name, why=(why.rstrip() + ".").replace("..", ".")
+                )
             rec["warning"] = reason
             changed.append((rec.get("name") or key, reason))
             unusable.add(mid)
+            whys[mid] = reason
             moving = True
     if changed:
         decky.logger.info(
@@ -20590,8 +20610,16 @@ query CollectionInstructions($slug: String!) {
         app_id: int = 0,
         plugins_subpath: str = "",
         plugins_style: str = "starred",
+        reason: str = "",
         hidden_folders: list = None,
     ) -> dict:
+        """Switch one mod on or off.
+
+        `reason` is why the PLUGIN is switching it off (a curated
+        collision, say) as opposed to the user. It is kept on the record so
+        My Mods can answer "why is this off?", and so the BG3 dependency
+        pass switches off whatever requires this mod too. Switching a mod
+        back on clears it: the user has overruled the rule."""
         if install_mode == "bg3":
             if _bg3_running():
                 return {"ok": False, "error": BG3_GAME_RUNNING}
@@ -20623,12 +20651,17 @@ query CollectionInstructions($slug: String!) {
                         os.remove(dst)
                     shutil.move(src, dst)
             rec["enabled"] = bool(enabled)
+            if enabled:
+                rec.pop("warning", None)
+            elif reason:
+                rec["warning"] = str(reason)
             err = _write_bg3_modsettings(settings, game_domain)
             if err:
                 return {"ok": False, "error": err}
             _save_settings(settings)
             decky.logger.info(
                 f"{'enabled' if enabled else 'disabled'} bg3 mod {folder!r}"
+                + (f" ({reason[:60]})" if reason and not enabled else "")
             )
             return {"ok": True}
 

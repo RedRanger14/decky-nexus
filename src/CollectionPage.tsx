@@ -493,7 +493,8 @@ export function CollectionPage() {
     try {
       const wanted = collectionAutoOff(
         game.nexusDomain,
-        (detail?.files ?? []).map((f) => f.modId)
+        (detail?.files ?? []).map((f) => f.modId),
+        collection.slug
       );
       const off: { name: string; reason: string }[] = [];
       // BG3: a curator can ship a mod whose pak depends on paks the
@@ -519,7 +520,13 @@ export function CollectionPage() {
         const reasonById = new Map(wanted.map((a) => [a.modId, a.reason]));
         for (const m of inst.mods ?? []) {
           if (!m.mod_id || !reasonById.has(m.mod_id) || !m.enabled) continue;
-          const r = await toggleMod(game, m.folder, false);
+          // The reason travels with the switch: the record keeps it for
+          // My Mods, and the backend switches off whatever requires this
+          // mod too (Demon Eyes and Feywild Eyes crashed New Game when
+          // Glow Eyes went off without them, 2026-09-06).
+          const r = await toggleMod(
+            game, m.folder, false, reasonById.get(m.mod_id)!
+          );
           if (r.ok) {
             off.push({
               name: m.name || m.folder,
@@ -1842,7 +1849,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
           // work out which of a hundred mods did it.
           const ids = (detail?.files ?? []).map((f) => f.modId);
           const stranding = collectionStrandingUi(game.nexusDomain, ids);
-          const willOff = collectionAutoOff(game.nexusDomain, ids)
+          const willOff = collectionAutoOff(game.nexusDomain, ids, collection.slug)
             .map((a) => ({
               name:
                 detail?.files.find((f) => f.modId === a.modId)?.modName ?? "",

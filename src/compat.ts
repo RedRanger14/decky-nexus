@@ -143,6 +143,11 @@ export interface CollectionOffMod {
   name: string;
   /** Why it goes in switched off, shown to the player with the note. */
   reason: string;
+  /** Only in these collections (slugs). A mod that works everywhere else
+   * and collides with one particular curator's load order must not be
+   * switched off for people installing something else. Absent means the
+   * rule applies to every collection carrying the mod. */
+  collections?: string[];
 }
 
 export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
@@ -180,6 +185,26 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "Mod Manager works, and the only difference is that you see the " +
       "press any key screen again.",
   },
+  {
+    nexusDomain: "baldursgate3",
+    modId: 4964, // Astralities' Glow Eyes
+    name: "Astralities' Glow Eyes",
+    // Scoped to one collection on purpose. This mod works in New Game
+    // Plus on the same device. In Difficulty, Immersion, Quality (866
+    // mods) its copy of the character visual bank - 4,620 references to
+    // humanoid body visuals inside an eye mod - collides with something
+    // else in that load order, and every custom character of a humanoid
+    // race loses its body while Dragonborn and premade companions are
+    // fine. Isolated 2026-09-06 by switching this one group off and on
+    // across the full collection. Demon Eyes and Feywild Eyes require it
+    // and go off with it (the backend cascades from the stored reason).
+    collections: ["pns4qv"],
+    reason:
+      "In this collection it collides with another mod over how custom " +
+      "characters' bodies are drawn, and every humanoid race loses its " +
+      "arms, hands and body (isolated on this device). The mod itself " +
+      "works in other collections, so it is only switched off here.",
+  },
 ];
 
 /** Which of a collection's mods should be installed SWITCHED OFF, each
@@ -189,12 +214,13 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
  * stranding window themselves, not the framework - Mod Config Menu sat
  * inert through a whole collection until Creative Menu registered with it,
  * so the framework alone is safe to leave on. And COLLECTION_OFF_MODS:
- * mods verified to fight the rest of a collection. Installing rather than
- * skipping keeps the collection complete - switching one on in My Mods is
- * one tap and loses nothing. */
+ * mods verified to fight the rest of a collection, some only in a named
+ * one. Installing rather than skipping keeps the collection complete -
+ * switching one on in My Mods is one tap and loses nothing. */
 export function collectionAutoOff(
   nexusDomain: string,
-  modIds: number[]
+  modIds: number[],
+  collectionSlug?: string
 ): { modId: number; reason: string }[] {
   const ids = new Set(modIds);
   const out: { modId: number; reason: string }[] = [];
@@ -205,9 +231,11 @@ export function collectionAutoOff(
     }
   }
   for (const m of COLLECTION_OFF_MODS) {
-    if (m.nexusDomain === nexusDomain && ids.has(m.modId)) {
-      out.push({ modId: m.modId, reason: m.reason });
+    if (m.nexusDomain !== nexusDomain || !ids.has(m.modId)) continue;
+    if (m.collections && !(collectionSlug && m.collections.includes(collectionSlug))) {
+      continue;
     }
+    out.push({ modId: m.modId, reason: m.reason });
   }
   return out;
 }

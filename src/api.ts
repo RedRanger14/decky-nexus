@@ -878,7 +878,11 @@ export const setModEnabled = callable<
     game_domain: string,
     app_id: number,
     plugins_subpath: string,
-    plugins_style: "starred" | "listed"
+    plugins_style: "starred" | "listed",
+    // Why it is being switched OFF, when the plugin decided rather than
+    // the user. Stored on the record so My Mods can say so, and so mods
+    // that require this one are switched off with it (BG3).
+    reason?: string
   ],
   { ok: boolean; error?: string }
 >("set_mod_enabled");

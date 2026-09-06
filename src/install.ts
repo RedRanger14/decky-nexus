@@ -339,7 +339,8 @@ export async function installLatest(
 export async function toggleMod(
   game: SupportedGame,
   folder: string,
-  enabled: boolean
+  enabled: boolean,
+  reason?: string
 ): Promise<{ ok: boolean; error?: string }> {
   if (game.frostbite) {
     return setFrostyModEnabled(
@@ -360,7 +361,8 @@ export async function toggleMod(
     game.nexusDomain,
     game.appId,
     game.pluginsTxtSubpath ?? "",
-    game.pluginsTxtStyle ?? "starred"
+    game.pluginsTxtStyle ?? "starred",
+    reason ?? ""
   );
 }
 

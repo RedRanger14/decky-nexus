@@ -176,7 +176,7 @@ test("the mod page and the collection page both consult the rule", () => {
   );
   assert.match(
     coll,
-    /toggleMod\(game, m\.folder, false\)/,
+    /toggleMod\(\s*game,\s*m\.folder,\s*false/,
     "CollectionPage must actually switch them off via the choke point"
   );
   assert.match(
@@ -238,6 +238,42 @@ test("the mod page renders each note's own heading, not a hardcoded one", () => 
   assert.match(mod, /compatHint\.hint/, "must render the hint text");
   assert.match(mod, /compatHint\.label \?\? "Linux note"/);
   assert.match(mod, /compatHint\.icon \?\? "🐧"/);
+});
+
+// Astralities' Glow Eyes (4964), Baldur's Gate 3. Works in New Game Plus on
+// the same device; in Difficulty, Immersion, Quality (slug pns4qv) its copy
+// of the character visual bank collides with something else and every
+// humanoid custom character loses its body. Isolated 2026-09-06 by switching
+// this one group off and on across the full 866-mod collection. So the rule
+// is scoped: it must not switch the mod off for people installing anything
+// else.
+const GLOW_EYES = 4964;
+const DIQ = "pns4qv";
+
+test("a collision that only happens in one collection is scoped to it", () => {
+  const off = collectionAutoOff("baldursgate3", [1, GLOW_EYES], DIQ);
+  assert.equal(off.length, 1);
+  assert.equal(off[0].modId, GLOW_EYES);
+  assert.match(off[0].reason, /other collections/);
+  // New Game Plus carries the same mod and it works there: untouched.
+  assert.deepEqual(collectionAutoOff("baldursgate3", [1, GLOW_EYES], "6vx9zi"), []);
+  // No slug known at all (a single-mod install) is not a match either.
+  assert.deepEqual(collectionAutoOff("baldursgate3", [GLOW_EYES]), []);
+});
+
+test("unscoped rules still fire whatever the collection is", () => {
+  const NO_PRESS_ANY_KEY = 745;
+  assert.equal(collectionAutoOff("baldursgate3", [NO_PRESS_ANY_KEY], DIQ).length, 1);
+  assert.equal(collectionAutoOff("baldursgate3", [NO_PRESS_ANY_KEY], "6vx9zi").length, 1);
+  assert.equal(collectionAutoOff("baldursgate3", [NO_PRESS_ANY_KEY]).length, 1);
+});
+
+test("the collection page passes its slug and carries the reason with the switch", () => {
+  const coll = readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(coll, /collectionAutoOff\([\s\S]{0,120}collection\.slug/,
+    "the scoped rule needs the slug to decide");
+  assert.match(coll, /toggleMod\([\s\S]{0,60}false,[\s\S]{0,40}reasonById\.get/,
+    "the reason must reach the backend so dependents go off with the mod");
 });
 
 // No em dashes in player-facing copy, wherever it lives.

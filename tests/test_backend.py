@@ -17558,16 +17558,18 @@ class TestBg3Mode(unittest.TestCase):
     # The dependency appears NOWHERE in the pak - all eight declare zero
     # deps in meta.lsx - only on the Nexus page.
 
-    def _se_dependent_setup(self, req_notes="", req_name="Goons Library"):
-        """A parked Script Extender library plus an enabled mod that the
-        Nexus API says requires it."""
+    def _se_dependent_setup(self, req_notes="", req_name="Goons Library",
+                            warning=None):
+        """A parked library plus an enabled mod that the Nexus API says
+        requires it. Parked for the Script Extender unless `warning` says
+        otherwise."""
         s = main._load_settings()
         s["api_key"] = "k"
         s.setdefault("installed", {}).setdefault(self.DOMAIN, {})
         s["installed"][self.DOMAIN]["Goons Library"] = {
             "mode": "bg3", "mod_id": 12834, "name": req_name,
             "enabled": False, "files": ["GoonsLibrary.pak"],
-            "warning": main.BG3_SE_UNAVAILABLE,
+            "warning": warning or main.BG3_SE_UNAVAILABLE,
             "bg3_mods": [{"uuid": "aaaa0001-0000-0000-0000-00000000ab01"}],
         }
         main._save_settings(s)
@@ -17657,6 +17659,61 @@ class TestBg3Mode(unittest.TestCase):
         rec = main._load_settings()["installed"][self.DOMAIN][
             "Goons Fighter Overhaul"]
         self.assertTrue(rec.get("enabled", True))
+
+    def test_a_mod_requiring_a_curated_off_mod_goes_off_with_it(self):
+        """Glow Eyes was switched off for colliding with another mod in one
+        collection; Demon Eyes and Feywild Eyes still required it and New
+        Game crashed (2026-09-06). Whatever the plugin switches off, for
+        any reason it can name, takes its dependents with it - and the
+        dependent's note says which mod and why."""
+        fb, fg = self._se_dependent_setup(
+            req_name="Astralities Glow Eyes",
+            warning="In this collection it collides with another mod over "
+                    "how custom characters' bodies are drawn.")
+        r = self._run_se_pass(fb, fg)
+        self.assertTrue(r.get("ok"), r)
+        names = [d["name"] for d in r["disabled"]]
+        self.assertIn("Goons Fighter Overhaul", names)
+        reason = next(d["reason"] for d in r["disabled"]
+                      if d["name"] == "Goons Fighter Overhaul")
+        self.assertIn("Astralities Glow Eyes", reason)
+        self.assertIn("switched off here", reason)
+        self.assertIn("collides", reason, "the requirement's own reason is quoted")
+        self.assertNotIn("Script Extender", reason)
+
+    def test_a_mod_the_user_switched_off_by_hand_strands_nothing(self):
+        # No warning means the user chose this; their choice is not a rule
+        # that cascades to other people's mods.
+        fb, fg = self._se_dependent_setup()
+        s = main._load_settings()
+        s["installed"][self.DOMAIN]["Goons Library"].pop("warning", None)
+        main._save_settings(s)
+        r = self._run_se_pass(fb, fg)
+        self.assertEqual(r["disabled"], [], r)
+
+    def test_switching_off_with_a_reason_keeps_it_and_switching_on_clears_it(self):
+        self._archive({"Fine.pak": self._make_stats_pak(
+            "aaaa1111-0000-0000-0000-0000000000f2", "Fine", self.HEALTHY_STATS)})
+        self.assertTrue(self._install("A Fine Mod").get("ok"))
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "A Fine Mod", False, "bg3", self.DOMAIN,
+            0, "", "starred", "It collides with another mod here."))
+        self.assertTrue(r.get("ok"), r)
+        rec = main._load_settings()["installed"][self.DOMAIN]["A Fine Mod"]
+        self.assertFalse(rec["enabled"])
+        self.assertEqual(rec["warning"], "It collides with another mod here.")
+        # The user overrules the rule by switching it back on.
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "A Fine Mod", True, "bg3", self.DOMAIN))
+        self.assertTrue(r.get("ok"), r)
+        rec = main._load_settings()["installed"][self.DOMAIN]["A Fine Mod"]
+        self.assertTrue(rec["enabled"])
+        self.assertNotIn("warning", rec)
+        # And switching off by hand records no reason at all.
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "A Fine Mod", False, "bg3", self.DOMAIN))
+        rec = main._load_settings()["installed"][self.DOMAIN]["A Fine Mod"]
+        self.assertNotIn("warning", rec)
 
     def test_a_mod_the_api_says_nothing_about_is_left_alone(self):
         # Silence is not a reason to switch somebody's mod off.
