@@ -6603,6 +6603,48 @@ def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
     truth for what it registers.
     """
     repaired = []
+    # Half-records first: a files-mode record whose file list names paks.
+    # One page, two archives, and the second install flipped the kind, so
+    # the paks went into Mods owned by nothing - loaded by the game and
+    # invisible to every switch (ABSolutely, Ripped Physique, a tattoo
+    # selector on device, 2026-09-06). Convert it to the pak kind from the
+    # paks themselves; the loose files become its loose_files.
+    domain_recs = settings.get("installed", {}).get(game_domain, {})
+    for key, rec in list(domain_recs.items()):
+        if rec.get("mode") != "files":
+            continue
+        all_files = [f for f in rec.get("files") or [] if _safe_rel_path(f)]
+        paks = [f for f in all_files if f.lower().endswith(".pak")]
+        if not paks:
+            continue
+        found, metas = [], []
+        for f in paks:
+            n = os.path.basename(f)
+            for base in (_bg3_mods_dir(), _bg3_disabled_dir()):
+                p = os.path.join(base, n)
+                if os.path.isfile(p):
+                    found.append((n, base))
+                    try:
+                        metas += _lspk_pak_metas_seeking(p)
+                    except (OSError, ValueError):
+                        pass
+                    break
+        rec["mode"] = "bg3"
+        rec["files"] = [n for n, _b in found] or [
+            os.path.basename(f) for f in paks
+        ]
+        loose = [f for f in all_files if not f.lower().endswith(".pak")]
+        if loose:
+            rec["loose_files"] = loose
+        rec["bg3_mods"] = metas
+        rec.pop("target", None)
+        if found:
+            rec["enabled"] = any(b == _bg3_mods_dir() for _n, b in found)
+        repaired.append(rec.get("name") or key)
+        decky.logger.info(
+            f"bg3 records: {key!r} listed {len(paks)} pak(s) as loose "
+            f"files; converted to a pak record ({len(metas)} registered)"
+        )
     for key, rec in _bg3_records(settings, game_domain):
         enabled = rec.get("enabled", True)
         want = _bg3_mods_dir() if enabled else _bg3_disabled_dir()
@@ -13435,6 +13477,32 @@ query Link($slug: String!, $domainName: String!) {
                 )
                 key = _safe_name(mod_name)
                 prev = installed.get(key)
+                if prev and prev.get("mode") == "bg3":
+                    # This page's pak archive is already installed. The
+                    # record stays the pak kind - the one with a switch and
+                    # a registration - and these loose files join it.
+                    # Flipping it to files-mode left the pak in Mods with
+                    # no owner: loaded by the game, untouchable from My Mods.
+                    merged_loose = [
+                        x for x in (prev.get("loose_files") or [])
+                        if x not in loose_rels
+                    ] + loose_rels
+                    installed[key] = _merge_install_record(prev, dict(
+                        prev,
+                        file_id=file_id,
+                        version=mod_version,
+                        file_name=file_name,
+                        installed_at=int(time.time()),
+                        page_version=page_version,
+                        loose_files=merged_loose,
+                    ))
+                    _save_settings(settings)
+                    decky.logger.info(
+                        f"installed bg3 loose files for {mod_name!r}: "
+                        f"{len(loose_rels)} into Data/, joined to its pak record"
+                    )
+                    await _emit_progress(mod_id, "done", 100)
+                    return {"ok": True, "folder": key}
                 if prev and prev.get("mode") == "files":
                     loose_rels = [
                         x for x in (prev.get("files") or [])
@@ -13501,6 +13569,19 @@ query Link($slug: String!, $domainName: String!) {
             )
             key = _safe_name(mod_name)
             prev = installed.get(key)
+            merge_base = prev
+            if prev and prev.get("mode") == "files":
+                # This page's loose-file archive came first. Its files stay
+                # where they are and become this pak record's loose_files;
+                # the record takes the pak kind. Left as it was, the merge
+                # below would have folded loose paths into the pak list and
+                # the paks would have gone into Mods with no owner.
+                loose_rels = [
+                    x for x in (prev.get("files") or [])
+                    if not x.lower().endswith(".pak") and x not in loose_rels
+                ] + loose_rels
+                merge_base = dict(prev, files=[])
+                merge_base.pop("target", None)
             if prev and prev.get("mode") == "bg3":
                 # A second FILE from the same mod page (collections pin
                 # several: hotbar variants, resolution options). Replacing
@@ -13517,10 +13598,14 @@ query Link($slug: String!, $domainName: String!) {
                     m for m in (prev.get("bg3_mods") or [])
                     if m.get("uuid") not in new_uuids
                 ] + all_metas
+                loose_rels = [
+                    x for x in (prev.get("loose_files") or [])
+                    if x not in loose_rels
+                ] + loose_rels
                 needs_se = needs_se or "Script Extender" in (
                     prev.get("warning") or ""
                 )
-            installed[key] = _merge_install_record(installed.get(key), {
+            installed[key] = _merge_install_record(merge_base, {
                 "mod_id": mod_id,
                 "file_id": file_id,
                 "name": mod_name,

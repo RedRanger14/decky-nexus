@@ -17668,6 +17668,94 @@ class TestBg3Mode(unittest.TestCase):
         r = self._run_se_pass(empty, fg)
         self.assertEqual(r["disabled"], [], r)
 
+    # ---- one page, two kinds of file, one record ----------------------------------
+    # Collections pin a loose texture archive AND a pak from the same page.
+    # The second install used to flip the record's kind, and the first
+    # file's payload fell outside every switch: ABSolutely's body paks sat
+    # in Mods owned by a files-mode record, loaded by the game, registered
+    # by nobody, and broke the body of every custom character (2026-09-06).
+
+    LOOSE_TEXTURE = "Generated/Public/Shared/Assets/Characters/skin.dds"
+
+    def _install_loose_then_pak(self, name):
+        self._archive({self.LOOSE_TEXTURE: b"dds"})
+        self.assertTrue(self._install(name).get("ok"))
+        rec = main._load_settings()["installed"][self.DOMAIN][name]
+        self.assertEqual(rec["mode"], "files", "a pure loose archive is files-mode")
+        self._archive({"Body.pak": self._make_stats_pak(
+            "cdcd0001-0000-0000-0000-00000000cd01", "Body", self.HEALTHY_STATS)})
+        self.assertTrue(self._install(name).get("ok"))
+        return main._load_settings()["installed"][self.DOMAIN][name]
+
+    def test_a_pak_after_a_loose_archive_makes_one_pak_record(self):
+        rec = self._install_loose_then_pak("ABSolutely")
+        self.assertEqual(rec["mode"], "bg3")
+        self.assertEqual(rec["files"], ["Body.pak"], "the pak list holds paks only")
+        self.assertEqual(rec["loose_files"], [self.LOOSE_TEXTURE])
+        self.assertIn("cdcd0001-0000-0000-0000-00000000cd01", self._uuids_in_modsettings(),
+                      "the pak is registered, which the files-mode record never did")
+        self.assertTrue(os.path.isfile(os.path.join(main._bg3_mods_dir(), "Body.pak")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.install, "Data", *self.LOOSE_TEXTURE.split("/"))))
+        # ...and it can be switched off, which is the whole point.
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "ABSolutely", False, "bg3", self.DOMAIN))
+        self.assertTrue(r.get("ok"), r)
+        self.assertNotIn("cdcd0001-0000-0000-0000-00000000cd01", self._uuids_in_modsettings())
+
+    def test_a_loose_archive_after_a_pak_joins_the_pak_record(self):
+        self._archive({"Body.pak": self._make_stats_pak(
+            "cdcd0002-0000-0000-0000-00000000cd02", "Body2", self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Ripped Physique").get("ok"))
+        self._archive({self.LOOSE_TEXTURE: b"dds"})
+        self.assertTrue(self._install("Ripped Physique").get("ok"))
+        rec = main._load_settings()["installed"][self.DOMAIN]["Ripped Physique"]
+        self.assertEqual(rec["mode"], "bg3", "the kind does not flip")
+        self.assertEqual(rec["files"], ["Body.pak"])
+        self.assertEqual(rec["loose_files"], [self.LOOSE_TEXTURE])
+        self.assertIn("cdcd0002-0000-0000-0000-00000000cd02", self._uuids_in_modsettings())
+
+    def test_an_existing_half_record_is_converted_from_its_paks(self):
+        """The shape already on devices: a files-mode record naming paks
+        that sit in Mods. The repair pass reads the paks and makes it a
+        pak record, so it registers and switches like any other."""
+        self._archive({"Half.pak": self._make_stats_pak(
+            "cdcd0003-0000-0000-0000-00000000cd03", "Half", self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Half Record").get("ok"))
+        s = main._load_settings()
+        rec = s["installed"][self.DOMAIN]["Half Record"]
+        # Rewrite it into the broken shape the old code produced.
+        rec.clear()
+        rec.update({"mode": "files", "target": "Data", "mod_id": 5, "file_id": 6,
+                    "name": "Half Record", "files": ["Half.pak", self.LOOSE_TEXTURE]})
+        main._save_settings(s)
+        # ...and its registration gone, as the game's own rewrites leave it
+        # (the writer never removes an entry it no longer owns).
+        ms_path = main._bg3_modsettings_path()
+        with open(ms_path, encoding="utf-8") as f:
+            ms = f.read()
+        ms = re.sub(
+            r'<node id="ModuleShortDesc">(?:(?!</node>).)*?cdcd0003-0000-0000'
+            r'-0000-00000000cd03(?:(?!</node>).)*?</node>\s*', "", ms, flags=re.S)
+        with open(ms_path, "w", encoding="utf-8") as f:
+            f.write(ms)
+        self.assertNotIn("cdcd0003-0000-0000-0000-00000000cd03", self._uuids_in_modsettings())
+        self.assertEqual(main._write_bg3_modsettings(s, self.DOMAIN), "")
+        self.assertNotIn("cdcd0003-0000-0000-0000-00000000cd03", self._uuids_in_modsettings(),
+                         "as a files-mode record it owns nothing to register")
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertIn("Half Record", r["repaired"])
+        rec = main._load_settings()["installed"][self.DOMAIN]["Half Record"]
+        self.assertEqual(rec["mode"], "bg3")
+        self.assertEqual(rec["files"], ["Half.pak"])
+        self.assertEqual(rec["loose_files"], [self.LOOSE_TEXTURE])
+        self.assertTrue(rec["enabled"], "its pak is in Mods, so it is on")
+        self.assertIn("cdcd0003-0000-0000-0000-00000000cd03", self._uuids_in_modsettings())
+        # Second pass has nothing left to do.
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertEqual(r["repaired"], [])
+
     # ---- records repaired from the paks on disk ----------------------------------
     # On device (2026-09-02) 35 load-order divider paks sat in Mods with no
     # modsettings entry: their record was written by the tokenizer that lost
