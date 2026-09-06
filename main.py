@@ -6665,6 +6665,26 @@ def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
             f"bg3 records: {key!r} listed {len(paks)} pak(s) as loose "
             f"files; converted to a pak record ({len(metas)} registered)"
         )
+    # The other half of the same merge bug: a pak record whose file list
+    # carries loose paths (a loose archive from the same page merged into
+    # it before 1.6.2). Toggling then moves nothing for those entries and
+    # uninstall would look for them in Mods. Loose paths belong in
+    # loose_files; the pak list holds paks. One record on device carried
+    # 2,504 texture paths this way (2026-09-06).
+    for key, rec in _bg3_records(settings, game_domain):
+        files = rec.get("files") or []
+        loose = [f for f in files if "/" in f.replace("\\", "/")]
+        if not loose:
+            continue
+        rec["files"] = [f for f in files if f not in loose]
+        rec["loose_files"] = [
+            f for f in (rec.get("loose_files") or []) if f not in loose
+        ] + loose
+        repaired.append(rec.get("name") or key)
+        decky.logger.info(
+            f"bg3 records: {key!r} carried {len(loose)} loose paths in its "
+            "pak list; moved them to loose_files"
+        )
     for key, rec in _bg3_records(settings, game_domain):
         enabled = rec.get("enabled", True)
         want = _bg3_mods_dir() if enabled else _bg3_disabled_dir()

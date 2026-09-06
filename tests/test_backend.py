@@ -17772,6 +17772,33 @@ class TestBg3Mode(unittest.TestCase):
         self.assertEqual(rec["loose_files"], [self.LOOSE_TEXTURE])
         self.assertIn("cdcd0002-0000-0000-0000-00000000cd02", self._uuids_in_modsettings())
 
+    def test_loose_paths_in_a_pak_records_file_list_move_to_loose_files(self):
+        """The other half of the merge bug: a pak record carrying 2,504
+        texture paths in its pak list. Toggling moved nothing for them and
+        uninstall would have looked in Mods. The repair pass sorts them."""
+        self._archive({"Real.pak": self._make_stats_pak(
+            "cdcd0004-0000-0000-0000-00000000cd04", "Real", self.HEALTHY_STATS)})
+        self.assertTrue(self._install("Mixed Record").get("ok"))
+        s = main._load_settings()
+        rec = s["installed"][self.DOMAIN]["Mixed Record"]
+        rec["files"] = ["Real.pak", self.LOOSE_TEXTURE,
+                        "Generated/Public/Shared/Assets/x/y.dds"]
+        main._save_settings(s)
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertIn("Mixed Record", r["repaired"])
+        rec = main._load_settings()["installed"][self.DOMAIN]["Mixed Record"]
+        self.assertEqual(rec["files"], ["Real.pak"])
+        self.assertEqual(sorted(rec["loose_files"]),
+                         sorted([self.LOOSE_TEXTURE, "Generated/Public/Shared/Assets/x/y.dds"]))
+        # Toggling still works on the pak alone.
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Mixed Record", False, "bg3", self.DOMAIN))
+        self.assertTrue(r.get("ok"), r)
+        self.assertTrue(os.path.isfile(os.path.join(main._bg3_disabled_dir(), "Real.pak")))
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertNotIn("Mixed Record", r["repaired"], "idempotent")
+
     def test_an_existing_half_record_is_converted_from_its_paks(self):
         """The shape already on devices: a files-mode record naming paks
         that sit in Mods. The repair pass reads the paks and makes it a
