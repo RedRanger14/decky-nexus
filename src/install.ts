@@ -166,7 +166,7 @@ export function installModWith(
     game.reshade?.subdir ?? "",
     game.processName ?? "",
     game.palSchema?.modsSubdir ?? "",
-    game.sowLayout ?? false
+    game.monolithArchiveExt ?? ""
   );
 }
 

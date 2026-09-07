@@ -428,9 +428,10 @@ export const installMod = callable<
     process_name?: string,
     /** PalSchema's mods dir (Palworld): json-schema mods route here. */
     palschema_subdir?: string,
-    /** Shadow of War: route by what the archive holds (packet tree, bare
-     * dll, loose .arch06) instead of by a single mods folder. */
-    sow_layout?: boolean
+    /** Monolith's Middle-earth games: the engine's archive extension,
+     * which also switches on routing by what the download holds rather
+     * than by a single mods folder. "" for every other game. */
+    monolith_ext?: string
   ],
   InstallResult
 >("install_mod");
