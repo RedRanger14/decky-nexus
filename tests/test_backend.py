@@ -18552,5 +18552,55 @@ class TestBg3BootHunt(unittest.TestCase):
         self.assertIn("Data", seg)
 
 
+class TestGamesOutsideTheMainLibrary(unittest.TestCase):
+    """A game on an SD card lives in a different steamapps directory.
+
+    _game_paths has known that from the start; twenty-four other call sites
+    did not, and built the game folder straight from STEAM_COMMON. The
+    visible symptom was Step 1: install_framework recorded the vanilla
+    baseline against the RIGHT path, then _install_framework_inner
+    recomputed the wrong one and returned "Game install folder not found" -
+    with no log line, so the log showed a baseline and then silence.
+
+    Found on a Steam Deck whose Shadow of War sits on the SD card, but it
+    was never about one game: every game outside the main library was
+    affected, on every one of those paths.
+    """
+
+    def test_the_resolver_finds_a_game_in_a_second_library(self):
+        sd = os.path.join(TEST_ROOT, "sdcard", "steamapps")
+        os.makedirs(os.path.join(sd, "common", "ShadowOfWar", "x64"), exist_ok=True)
+        with mock.patch.object(main, "_steam_libraries", return_value=[sd]):
+            install_path, mods_path, _d = main._game_paths(
+                "ShadowOfWar", "x64/plugins"
+            )
+        self.assertEqual(
+            install_path, os.path.join(sd, "common", "ShadowOfWar")
+        )
+        self.assertTrue(mods_path.endswith(os.path.join("x64", "plugins")))
+
+    def test_only_the_resolver_itself_builds_a_game_path_from_steam_common(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            lines = fh.readlines()
+        # A game folder is STEAM_COMMON joined with an install dir. Every
+        # one of those has to go through _game_paths instead - except the
+        # single fallback inside _game_paths itself.
+        offenders = [
+            (n, line.strip())
+            for n, line in enumerate(lines, 1)
+            if "STEAM_COMMON" in line
+            and ("install_dir" in line or 'state["install_dir"]' in line)
+        ]
+        self.assertEqual(
+            len(offenders), 1,
+            f"game paths built from STEAM_COMMON directly: {offenders}",
+        )
+        # And that one is the fallback, inside _game_paths.
+        line_no = offenders[0][0]
+        preceding = "".join(lines[max(0, line_no - 6):line_no])
+        self.assertIn("def _game_paths", preceding)
+
+
+
 if __name__ == "__main__":
     unittest.main()
