@@ -16290,6 +16290,37 @@ class TestReshadeInstall(unittest.TestCase):
         j = source.index("if is_reshade and reshade_subdir:")
         self.assertIn("anti_cheat=True", source[j:j + 600])
 
+    def test_a_preset_only_package_reports_no_injector(self):
+        """A preset is files for a ReShade that is already there.
+
+        Applying the game's dxgi override for one would switch on a dll the
+        package does not contain, and switch off whatever the player had
+        wired up themselves - which is exactly what happened on a device
+        carrying a hand-installed ReShade on d3d11.
+        """
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("async def _install_reshade_package(")
+        block = source[i:i + 5000]
+        self.assertIn("RESHADE_INJECTOR_DLLS", block)
+        self.assertIn('"injector": injector', block)
+        # And it says so rather than pretending it did something.
+        self.assertIn("Launch options were left alone", block)
+
+    def test_the_frontend_only_sets_options_when_there_is_an_injector(self):
+        page = os.path.join(
+            os.path.dirname(os.path.dirname(main.__file__)), "src",
+            "ModDetailPage.tsx",
+        )
+        if not os.path.isfile(page):
+            self.skipTest("frontend not present next to main.py")
+        with open(page, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("if (result.injector) {", text)
+        # Added to what is there, never assigned over it.
+        self.assertIn("addLaunchOptions(game.appId", text)
+        self.assertNotIn("setLaunchOptions(game.appId, game.reshade", text)
+
     def test_without_a_subdir_the_refusal_stands(self):
         # Games with no reshade config keep the honest refusal.
         with open(main.__file__, encoding="utf-8") as fh:

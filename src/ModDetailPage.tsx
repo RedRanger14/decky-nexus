@@ -59,7 +59,7 @@ import {
   setSelectedMod,
   markManagerReturn,
 } from "./state";
-import { isGameRunning, restartGame, setLaunchOptions } from "./steam";
+import { addLaunchOptions, isGameRunning, restartGame } from "./steam";
 import {
   ACCENT_DANGER,
   ACCENT_SUCCESS,
@@ -475,18 +475,26 @@ export function ModDetailPage() {
         return;
       }
       if (result.ok && result.reshade && game.reshade) {
-        // Injector installed beside the exe. Proton loads its builtin
-        // dxgi unless told otherwise, so the override is applied for the
-        // user rather than described to them - and the warning (anti-cheat
-        // risk, author's own words) stays on the page, not in a toast.
-        setLaunchOptions(game.appId, game.reshade.launchOptionsTemplate);
+        // Only when the package brought the injector. Proton loads its
+        // builtin dxgi unless told otherwise, so for a real ReShade the
+        // override is applied for the user rather than described to them -
+        // but a preset-only package has no injector to point at, and
+        // setting one would switch off whatever ReShade is already there.
+        //
+        // Added, not assigned: the line may carry a frame generator or a
+        // wrapper script, and a preset is not worth losing those.
+        if (result.injector) {
+          addLaunchOptions(game.appId, game.reshade.launchOptionsTemplate);
+        }
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
         await afterInstall(file);
         refreshInstalled(sel);
         setStale(result.warning);
         toaster.toast({
           title: `${mod.name} installed`,
-          body: "ReShade launch options set - see the note on this page",
+          body: result.injector
+            ? "ReShade launch options set - see the note on this page"
+            : "Preset installed - see the note on this page",
         });
         return;
       }

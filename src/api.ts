@@ -124,8 +124,13 @@ export interface InstallResult {
   needs_choice?: boolean;
   merge_allowed?: boolean;
   /** The install was a ReShade package: injector/preset files beside the
-   * exe. The caller applies the game's reshade launch options. */
+   * exe. */
   reshade?: boolean;
+  /** ...and it brought the injector itself, rather than being a preset for
+   * one already installed. Only then are the game's reshade launch options
+   * applied - an override for a dll the package does not contain switches
+   * on nothing and switches off whatever the player had. */
+  injector?: boolean;
   options?: string[];
   /** Display names for `options`, same order. The value handed back is still
    * the option itself, so only what the user reads changes. */
