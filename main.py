@@ -595,6 +595,34 @@ def _find_in_libraries(*parts: str) -> str:
     return ""
 
 
+def _proton_builds() -> list:
+    """Every installed Proton build, by name, from every Steam library.
+
+    Steam installs a Proton into whichever library it was pointed at, and a
+    Deck whose games are on the card usually has its Protons there too. This
+    listed the main library only, so a card-based setup was told it had no
+    usable Proton and every me3 game refused to launch - the same assumption
+    that made Witcher 3 on a microSD report "game not found", in a different
+    corner of the file.
+
+    Names, not paths: the caller offers them as a choice and matches on the
+    version prefix. A build present in two libraries is one choice.
+    """
+    names = set()
+    for lib in _steam_libraries():
+        common = os.path.join(lib, "common")
+        try:
+            entries = os.listdir(common)
+        except OSError:
+            continue
+        for name in entries:
+            if name.lower().startswith("proton") and os.path.isdir(
+                os.path.join(common, name)
+            ):
+                names.add(name)
+    return sorted(names)
+
+
 def _game_paths(install_dir: str, mods_subdir: str):
     install_path = _find_in_libraries("common", install_dir) or os.path.join(
         STEAM_COMMON, install_dir
@@ -15799,14 +15827,7 @@ query Link($slug: String!, $domainName: String!) {
         what the generated profile currently activates."""
         status = await self.get_me3_status()
         install_path = _game_paths(install_dir, "")[0]
-        protons = []
-        if os.path.isdir(STEAM_COMMON):
-            protons = sorted(
-                name
-                for name in os.listdir(STEAM_COMMON)
-                if name.lower().startswith("proton")
-                and os.path.isdir(os.path.join(STEAM_COMMON, name))
-            )
+        protons = _proton_builds()
         settings = _load_settings()
         records = _me3_records(settings, game_domain)
         profile = _me3_profile_path(game_domain)

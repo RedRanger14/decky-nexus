@@ -18579,26 +18579,71 @@ class TestGamesOutsideTheMainLibrary(unittest.TestCase):
         )
         self.assertTrue(mods_path.endswith(os.path.join("x64", "plugins")))
 
-    def test_only_the_resolver_itself_builds_a_game_path_from_steam_common(self):
+    RESOLVERS = {"_steam_libraries", "_game_paths", "_prefix_drive_c"}
+
+    def test_only_the_resolvers_may_name_steam_common(self):
+        """STEAM_COMMON is the MAIN library. Naming it anywhere else is the
+        bug, whatever the expression around it looks like.
+
+        The first version of this test matched on the spelling instead:
+        STEAM_COMMON on the same line as install_dir. It passed while
+        get_me3_state was still listing Proton builds out of
+        os.listdir(STEAM_COMMON) three lines from a shape it did match - a
+        guard that certified the file clean with an instance still in it.
+        So this one asks where the name is USED, not how.
+        """
         with open(main.__file__, encoding="utf-8") as fh:
-            lines = fh.readlines()
-        # A game folder is STEAM_COMMON joined with an install dir. Every
-        # one of those has to go through _game_paths instead - except the
-        # single fallback inside _game_paths itself.
-        offenders = [
-            (n, line.strip())
-            for n, line in enumerate(lines, 1)
-            if "STEAM_COMMON" in line
-            and ("install_dir" in line or 'state["install_dir"]' in line)
-        ]
+            tree = ast.parse(fh.read())
+        parents = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+
+        def enclosing_function(node):
+            cur = parents.get(node)
+            while cur is not None:
+                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    return cur.name
+                cur = parents.get(cur)
+            return None  # module level: the definition itself
+
+        offenders = sorted({
+            enclosing_function(node)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == "STEAM_COMMON"
+            and enclosing_function(node) is not None
+            and enclosing_function(node) not in self.RESOLVERS
+        })
         self.assertEqual(
-            len(offenders), 1,
-            f"game paths built from STEAM_COMMON directly: {offenders}",
+            offenders, [],
+            "these reach for the main library directly instead of asking "
+            f"the resolvers: {offenders}",
         )
-        # And that one is the fallback, inside _game_paths.
-        line_no = offenders[0][0]
-        preceding = "".join(lines[max(0, line_no - 6):line_no])
-        self.assertIn("def _game_paths", preceding)
+
+    def test_proton_builds_are_found_in_every_library(self):
+        # The instance the first guard could not see: me3 needs a Proton,
+        # and a Deck with its games on the card has its Protons there too.
+        sd = os.path.join(TEST_ROOT, "proton-sd", "steamapps")
+        os.makedirs(os.path.join(sd, "common", "Proton 9.0"), exist_ok=True)
+        main_lib = os.path.join(TEST_ROOT, "proton-main", "steamapps")
+        os.makedirs(os.path.join(main_lib, "common", "Proton 8.0"), exist_ok=True)
+        # A file, not a directory, and a non-Proton folder: neither counts.
+        open(os.path.join(sd, "common", "protonmail.txt"), "w").close()
+        os.makedirs(os.path.join(sd, "common", "SomeGame"), exist_ok=True)
+        with mock.patch.object(
+            main, "_steam_libraries", return_value=[main_lib, sd]
+        ):
+            self.assertEqual(
+                main._proton_builds(), ["Proton 8.0", "Proton 9.0"]
+            )
+
+    def test_a_build_present_in_two_libraries_is_one_choice(self):
+        a = os.path.join(TEST_ROOT, "proton-dup-a", "steamapps")
+        b = os.path.join(TEST_ROOT, "proton-dup-b", "steamapps")
+        for lib in (a, b):
+            os.makedirs(os.path.join(lib, "common", "Proton 9.0"), exist_ok=True)
+        with mock.patch.object(main, "_steam_libraries", return_value=[a, b]):
+            self.assertEqual(main._proton_builds(), ["Proton 9.0"])
 
 
 
