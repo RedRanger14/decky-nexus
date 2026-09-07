@@ -18579,7 +18579,7 @@ class TestGamesOutsideTheMainLibrary(unittest.TestCase):
         )
         self.assertTrue(mods_path.endswith(os.path.join("x64", "plugins")))
 
-    RESOLVERS = {"_steam_libraries", "_game_paths", "_prefix_drive_c"}
+    RESOLVERS = {"_steam_libraries", "_game_dir", "_prefix_drive_c"}
 
     def test_only_the_resolvers_may_name_steam_common(self):
         """STEAM_COMMON is the MAIN library. Naming it anywhere else is the
