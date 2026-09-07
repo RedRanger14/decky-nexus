@@ -16276,12 +16276,19 @@ class TestReshadeInstall(unittest.TestCase):
     def test_the_install_path_exists_and_warns(self):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
-        i = source.index("if is_reshade and reshade_subdir:")
+        # The install itself is one helper now, shared with Shadow of War,
+        # whose ReShade presets are a third of its catalogue. The callers
+        # only decide whether the anti-cheat sentence applies.
+        i = source.index("async def _install_reshade_package(")
         block = source[i:i + 4500]
         self.assertIn('"reshade": True', block)
         self.assertIn('"target": reshade_subdir', block)
         self.assertIn("use at", block)
         self.assertIn("own risk", block)
+        # Helldivers 2 ships GameGuard, so its caller is the one that asks
+        # for the warning; a single-player game must not inherit it.
+        j = source.index("if is_reshade and reshade_subdir:")
+        self.assertIn("anti_cheat=True", source[j:j + 600])
 
     def test_without_a_subdir_the_refusal_stands(self):
         # Games with no reshade config keep the honest refusal.
@@ -21230,6 +21237,190 @@ class TestBg3BootHunt(unittest.TestCase):
         self.assertIn("Data", seg)
 
 
+class TestShadowOfWarRouting(unittest.TestCase):
+    """Shadow of War archives: a PacketLoader/ tree, a bare dll, a loose
+    .arch06, a ReShade package, a trainer. Every shape below was taken
+    from the real download (2026-09-06), because this game's own wiki
+    documents a Loader/Loader.ini layout the current Packet Loader
+    stopped using two versions ago."""
+
+    def setUp(self):
+        self.scratch = os.path.join(TEST_ROOT, "sow-scratch")
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        os.makedirs(self.scratch)
+
+    def put(self, rel):
+        p = os.path.join(self.scratch, *rel.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("x")
+
+    def rels(self, files):
+        return sorted(rel for rel, _src in files)
+
+    def test_packet_mod_keeps_its_tree_under_plugins(self):
+        # Faceless Talion's real shape: the packet's own folder plus the
+        # signatures that belong beside it.
+        self.put("PacketLoader/PLG1Packets/Faceless/Config.ini")
+        self.put("PacketLoader/PLG1Packets/Faceless/Find/1.mesh")
+        self.put("PacketLoader/PLG1Packets/Faceless/Replace/1.mesh")
+        self.put("PacketLoader/Internal/PLG1/Signatures/123.sig")
+        files, err, archs = main._route_sow_payload(self.scratch, "Faceless")
+        self.assertIsNone(err)
+        self.assertEqual(archs, [])
+        self.assertEqual(
+            self.rels(files),
+            [
+                "x64/plugins/PacketLoader/Internal/PLG1/Signatures/123.sig",
+                "x64/plugins/PacketLoader/PLG1Packets/Faceless/Config.ini",
+                "x64/plugins/PacketLoader/PLG1Packets/Faceless/Find/1.mesh",
+                "x64/plugins/PacketLoader/PLG1Packets/Faceless/Replace/1.mesh",
+            ],
+        )
+
+    def test_a_wrapper_folder_does_not_move_the_packet(self):
+        # The loader finds Find/ and Replace/ by exact path: one directory
+        # off and the packet replaces nothing, silently.
+        self.put("Faceless v1.2/PacketLoader/PLG1Packets/F/Config.ini")
+        files, err, _a = main._route_sow_payload(self.scratch, "Faceless")
+        self.assertIsNone(err)
+        self.assertEqual(
+            self.rels(files),
+            ["x64/plugins/PacketLoader/PLG1Packets/F/Config.ini"],
+        )
+
+    def test_a_plugins_folder_takes_the_dll_beside_the_packet_tree(self):
+        # The Packet Loader's own download, and the shape any packet mod
+        # that ships a dll uses. Routing from PacketLoader/ down would
+        # take the asset tree and leave behind the dll that reads it -
+        # which is exactly what the first version of this did.
+        self.put("plugins/ShadowOfWarPacketLoader.dll")
+        self.put("plugins/PacketLoader/Internal/PacketLoader.ini")
+        self.put("plugins/PacketLoader/PLG1Packets/Splash/Config.ini")
+        files, err, _a = main._route_sow_payload(self.scratch, "Packet Loader")
+        self.assertIsNone(err)
+        self.assertEqual(
+            self.rels(files),
+            [
+                "x64/plugins/PacketLoader/Internal/PacketLoader.ini",
+                "x64/plugins/PacketLoader/PLG1Packets/Splash/Config.ini",
+                "x64/plugins/ShadowOfWarPacketLoader.dll",
+            ],
+        )
+
+    def test_the_dll_loader_is_sent_to_the_setup_step(self):
+        # Its archive is the game's own bink2w64.dll, patched. Dropped in
+        # plugins/ it does nothing while reporting success, and only the
+        # setup step keeps a backup of the file it replaces.
+        self.put("bink2w64.dll")
+        self.put("ShadowOfWarDllLoader.dll")
+        files, err, _a = main._route_sow_payload(self.scratch, "DLL Loader")
+        self.assertEqual(files, [])
+        self.assertEqual(err[0], "layout")
+        self.assertIn("setup step", err[1])
+
+    def test_a_bare_dll_goes_flat_into_plugins_with_its_config(self):
+        self.put("ModMenu.dll")
+        self.put("ModMenu.ini")
+        self.put("README.txt")
+        files, err, _a = main._route_sow_payload(self.scratch, "Mod Menu")
+        self.assertIsNone(err)
+        # The readme is not a mod file and does not belong in plugins/.
+        self.assertEqual(
+            self.rels(files),
+            ["x64/plugins/ModMenu.dll", "x64/plugins/ModMenu.ini"],
+        )
+
+    def test_a_reshade_package_is_not_mistaken_for_a_dll_mod(self):
+        # ReShade ships its injector AS dxgi.dll. Swept up as a loader
+        # plugin it would land in plugins/, do nothing, and look installed.
+        self.put("dxgi.dll")
+        self.put("ReShade/Shaders/CeeJay/Curves.fx")
+        self.put("ReShade.ini")
+        files, err, _a = main._route_sow_payload(self.scratch, "Tolkien")
+        self.assertEqual(files, [])
+        self.assertIsNotNone(err)
+        self.assertEqual(err[0], "reshade")
+
+    def test_a_loose_archive_lands_in_mods_and_asks_to_be_registered(self):
+        self.put("sauron_warform.arch06")
+        files, err, archs = main._route_sow_payload(self.scratch, "Sauron")
+        self.assertIsNone(err)
+        self.assertEqual(self.rels(files), ["Mods/sauron_warform.arch06"])
+        self.assertEqual(archs, ["sauron_warform.arch06"])
+
+    def test_a_trainer_is_refused_as_a_tool(self):
+        self.put("Shadow of War Trainer.exe")
+        files, err, _a = main._route_sow_payload(self.scratch, "Trainer")
+        self.assertEqual(files, [])
+        self.assertEqual(err[0], "tool")
+
+    def test_an_unrecognised_archive_says_what_was_missing(self):
+        self.put("savegame.sav")
+        files, err, _a = main._route_sow_payload(self.scratch, "Save")
+        self.assertEqual(files, [])
+        self.assertEqual(err[0], "layout")
+        self.assertIn("PacketLoader", err[1])
+
+
+class TestShadowOfWarArchcfg(unittest.TestCase):
+    """default.archcfg is a game file, so every write to it has to be
+    undoable per mod. Restoring the backup wholesale would deregister
+    every archive installed since the first one."""
+
+    ORIGINAL = "..\\Global.Arch06\r\n..\\HotChunk.Arch06\r\n"
+
+    def setUp(self):
+        self.game = os.path.join(TEST_ROOT, "sow-game")
+        shutil.rmtree(self.game, ignore_errors=True)
+        os.makedirs(os.path.join(self.game, "x64"))
+        self.cfg = os.path.join(self.game, "x64", "default.archcfg")
+        with open(self.cfg, "w", newline="") as f:
+            f.write(self.ORIGINAL)
+
+    def read(self):
+        with open(self.cfg, newline="") as f:
+            return f.read()
+
+    def test_both_line_forms_are_appended_and_backed_up_once(self):
+        err = main._sow_register_archcfg(self.game, ["a.arch06"])
+        self.assertEqual(err, "")
+        text = self.read()
+        self.assertIn("..\\Mods\\a.arch06", text)
+        self.assertIn("\r\nMods\\a.arch06", text)
+        # Appended, because the file's own comment says the search order
+        # is from the bottom up - a replacement archive has to win.
+        self.assertTrue(text.index("Global.Arch06") < text.index("a.arch06"))
+        self.assertTrue(os.path.isfile(self.cfg + ".decky-nexus.bak"))
+        with open(self.cfg + ".decky-nexus.bak", newline="") as f:
+            self.assertEqual(f.read(), self.ORIGINAL)
+
+    def test_registering_twice_does_not_duplicate(self):
+        main._sow_register_archcfg(self.game, ["a.arch06"])
+        main._sow_register_archcfg(self.game, ["a.arch06"])
+        self.assertEqual(self.read().count("..\\Mods\\a.arch06"), 1)
+
+    def test_the_backup_is_never_overwritten_by_a_later_install(self):
+        main._sow_register_archcfg(self.game, ["a.arch06"])
+        main._sow_register_archcfg(self.game, ["b.arch06"])
+        with open(self.cfg + ".decky-nexus.bak", newline="") as f:
+            self.assertEqual(f.read(), self.ORIGINAL)
+
+    def test_uninstall_removes_only_that_mods_lines(self):
+        main._sow_register_archcfg(self.game, ["a.arch06"])
+        main._sow_register_archcfg(self.game, ["b.arch06"])
+        main._sow_unregister_archcfg(self.game, ["a.arch06"])
+        text = self.read()
+        self.assertNotIn("a.arch06", text)
+        self.assertIn("..\\Mods\\b.arch06", text)
+        self.assertIn("..\\Global.Arch06", text)
+
+    def test_a_missing_config_is_reported_not_crashed(self):
+        os.remove(self.cfg)
+        err = main._sow_register_archcfg(self.game, ["a.arch06"])
+        self.assertIn("not found", err)
+        # And deregistering against a missing file is a no-op.
+        main._sow_unregister_archcfg(self.game, ["a.arch06"])
 class TestGamesOutsideTheMainLibrary(unittest.TestCase):
     """A game on an SD card lives in a different steamapps directory.
 

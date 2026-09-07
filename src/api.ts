@@ -422,7 +422,10 @@ export const installMod = callable<
      * equal choices, and the wrong one kills the game at boot. */
     process_name?: string,
     /** PalSchema's mods dir (Palworld): json-schema mods route here. */
-    palschema_subdir?: string
+    palschema_subdir?: string,
+    /** Shadow of War: route by what the archive holds (packet tree, bare
+     * dll, loose .arch06) instead of by a single mods folder. */
+    sow_layout?: boolean
   ],
   InstallResult
 >("install_mod");
@@ -731,7 +734,11 @@ export const installFramework = callable<
     /** The game's exe (e.g. SkyrimSE.exe): script extenders publish one
      * build per game binary, and the right one for a deliberately
      * downgraded game sits in OLD_VERSION. Empty skips the matching. */
-    process_name: string
+    process_name: string,
+    /** Game files this loader overwrites - copied once to
+     * <path>.decky-nexus.bak before it lands, so reset has something to
+     * put back. Shadow of War's loader replaces the game's bink2w64.dll. */
+    backup_files?: string[]
   ],
   {
     ok: boolean;

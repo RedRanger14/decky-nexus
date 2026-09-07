@@ -109,6 +109,19 @@ export interface GameFramework {
    * ships ConsoleCommands and SaveBackup). No install record exists for
    * them, so reset has to be told they belong to the loader. */
   frameworkModFolders?: string[];
+  /** Game files this framework OVERWRITES, game-root-relative.
+   *
+   * copyRoot deletes whatever it lands on, and for most loaders that is
+   * fine because the loader is a new file. Shadow of War's is not: its
+   * dll loader ships a patched copy of the game's own bink2w64.dll and
+   * writes it straight over the original, so without a backup the only
+   * way back to vanilla is a Steam file verification - a 100GB download
+   * on a handheld, for a 367KB file we had in our hands.
+   *
+   * Each is copied once to <path>.decky-nexus.bak before the framework
+   * lands, and reset puts it back through the same restore machinery the
+   * prefix tools use. */
+  backupFiles?: string[];
 }
 
 export interface SupportedGame {
@@ -253,6 +266,13 @@ export interface SupportedGame {
    * data/, renumbered per archive hash so two mods patching the same
    * archive coexist instead of the second silently overwriting the first. */
   hd2Layout?: boolean;
+  /** Shadow of War's three tiers, told apart by what the archive holds:
+   * a PacketLoader/ tree (asset swaps) merges into x64/plugins, a bare
+   * .dll is a dll-loader plugin and goes flat into the same folder, and a
+   * loose .arch06 is a whole game archive - it lands in Mods/ and is
+   * registered in x64/default.archcfg, which is the only tier that has to
+   * write to a game file to take effect. */
+  sowLayout?: boolean;
   /** Mods that must never take a hero slot: desktop tools with big
    * endorsement counts (mod managers) that a Gaming Mode plugin cannot run
    * and should not showcase. The install-time tool refusal still catches
@@ -1773,6 +1793,85 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       "is new and has had less testing than the rest.\n\n" +
       "Not supported: ASI plugins, and mods that only ship for the original " +
       "trilogy rather than Legendary Edition.",
+  },
+  356190: {
+    appId: 356190, // verified on device: appmanifest_356190.acf
+    displayName: "Shadow of War",
+    nexusDomain: "middleearthshadowofwar", // verified: game id 2506, 185 mods
+    installDirName: "ShadowOfWar", // verified on device (acf installdir)
+    // Everything that loads a mod lives beside the exe in x64/. The
+    // plugins folder does not ship with the game - the dll loader's own
+    // instructions are "create a plugins folder" - so our installer makes
+    // it, and both loaders and every mod land under it.
+    modsSubdir: "x64/plugins",
+    sowLayout: true,
+    // Saves are the game's own; nothing this installs touches them.
+    moddedSaveWarning: false,
+    // Game-root-relative: the exe is in x64/, not at the root, so the PE
+    // version read finds it.
+    processName: "x64/ShadowOfWar.exe", // verified on device
+    // survivalizeed's loader, not ReaperAnon's Middle Earth Mod Loader.
+    // Deliberate: the MEML build needs the game's bink2w64.dll renamed by
+    // hand, has known DirectX crashes when the options menu is opened,
+    // and draws its own ImGui UI over the game - none of which is
+    // reasonable to ask of someone on a controller. This one is a patched
+    // copy of the game's bink2w64.dll with one extra import, so it needs
+    // no renaming and no UI. Archive verified 2026-09-06: two files,
+    // bink2w64.dll (375808 B) and ShadowOfWarDllLoader.dll.
+    framework: {
+      name: "Shadow of War DLL Loader",
+      detectFile: "x64/ShadowOfWarDllLoader.dll",
+      url: "nexusmods.com/middleearthshadowofwar/mods/99",
+      nexusModId: 99,
+      installKind: "copyRoot",
+      installSubdir: "x64",
+      // It writes over the game's own bink2w64.dll. Backed up first, and
+      // put back by reset - see backupFiles.
+      backupFiles: ["x64/bink2w64.dll"],
+      // The loader's own file plus the folder it reads. bink2w64.dll is
+      // NOT here: it is a game file we overwrote, and reset restores it
+      // from the backup rather than deleting it.
+      cleanupPrefixes: ["x64/ShadowOfWarDllLoader.dll", "x64/plugins"],
+    },
+    extraFrameworks: [
+      {
+        // The asset-swap half. Its own page: "Get the Shadow of War Dll
+        // Loader and put the ShadowOfWarPacketLoader.dll and the
+        // PacketLoader folder into the plugins folder" - so the archive is
+        // already plugins-relative and merges into x64/ unflattened.
+        // Verified 2026-09-06: plugins/ShadowOfWarPacketLoader.dll plus
+        // plugins/PacketLoader/{Internal,PLG1Packets,PLG2Packets}.
+        name: "Packet Loader",
+        detectFile: "x64/plugins/ShadowOfWarPacketLoader.dll",
+        url: "nexusmods.com/middleearthshadowofwar/mods/49",
+        nexusModId: 49,
+        installKind: "copyRoot",
+        installSubdir: "x64",
+        cleanupPrefixes: [
+          "x64/plugins/ShadowOfWarPacketLoader.dll",
+          "x64/plugins/PacketLoader",
+        ],
+      },
+    ],
+    // A third of this game's Nexus catalogue is ReShade presets, and they
+    // ship the injector as dxgi.dll beside the exe - which is x64/ here,
+    // not the game root.
+    reshade: {
+      subdir: "x64",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dxgi=n,b" %command%',
+    },
+    heroExcludeModIds: [
+      125, // Mod Organizer 2 extension: a desktop mod manager's plugin
+      198, // trainer: a separate Windows exe run alongside the game
+    ],
+    incompatibleMods: {
+      125: "This is a support plugin for the desktop app Mod Organizer 2, not a mod for the game. There is nothing in it to install here.",
+      198: "This is a trainer - a separate Windows program you run alongside the game. It cannot be installed as a mod, and there is no way to run it from Gaming Mode.",
+    },
+    // Packet mods are the tier the loaders exist for, so the heroes are
+    // ones that exercise it rather than the ReShade presets that top the
+    // endorsement counts.
+    recommendedModIds: [127, 8, 2],
   },
 };
 
