@@ -8293,6 +8293,58 @@ async def _install_reshade_package(
     }
 
 
+# --- loader consoles ---------------------------------------------------------
+#
+# Shadow of War's Packet Loader calls AllocConsole, and under gamescope that
+# console is a second X window - which is the one the compositor presents.
+# The game runs perfectly behind it; the player just cannot see it, and
+# reasonably reports the game as broken. Verified on device 2026-09-07:
+# DISPLAY=:1 held two windows, "Middle-earth: Shadow of War" (1920x1080,
+# viewable) and "SoWPL:> Signatures: Generate ..." (1161x896), and
+# unmapping the second revealed the game.
+#
+# The loader's own `log = 0` does NOT suppress it - that was tried first and
+# the console came back, so this is not a config problem to document away.
+LOADER_CONSOLE_DISPLAYS = (":1", ":0")
+
+
+async def _run_xdotool(display: str, *args) -> str:
+    """xdotool on a given X display, stdout or "" on any failure."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "xdotool", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env={**os.environ, "DISPLAY": display},
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        return (out or b"").decode("utf-8", "replace")
+    except (OSError, asyncio.TimeoutError, ValueError):
+        return ""
+
+
+async def _unmap_windows_by_prefix(prefix: str) -> int:
+    """Unmap every window whose title starts with prefix. Returns how many.
+
+    Unmap rather than kill: the console belongs to the game's own process,
+    and closing it would take the loader - or the game - with it. Unmapped
+    it keeps running and keeps writing to its file log.
+    """
+    if not prefix or not re.fullmatch(r"[A-Za-z0-9_.:>-]{2,32}", prefix):
+        return 0
+    hidden = 0
+    for display in LOADER_CONSOLE_DISPLAYS:
+        for wid in (await _run_xdotool(
+            display, "search", "--name", f"^{prefix}"
+        )).split():
+            if not wid.isdigit():
+                continue
+            await _run_xdotool(display, "windowunmap", wid)
+            hidden += 1
+            decky.logger.info(f"loader console: unmapped {wid} on {display}")
+    return hidden
+
+
 # --- Middle-earth: Shadow of War -------------------------------------------
 #
 # Three tiers, told apart by what the archive HOLDS rather than by what its
@@ -23047,6 +23099,24 @@ query Link($slug: String!, $domainName: String!) {
             "target_name": str(want.get("name") or ""),
             "game_version": game_version,
         }
+
+    async def hide_loader_console(
+        self, title_prefix: str, timeout_sec: int = 120
+    ) -> dict:
+        """Watch for a mod loader's console window and unmap it.
+
+        Polled rather than fired once: the console appears when the loader
+        initialises, which is seconds into a launch that can take a minute
+        off an SD card. Gives up quietly when the game never opens one.
+        """
+        deadline = time.time() + max(5, min(int(timeout_sec or 0), 600))
+        hidden = 0
+        while time.time() < deadline:
+            hidden = await _unmap_windows_by_prefix(title_prefix)
+            if hidden:
+                break
+            await asyncio.sleep(2)
+        return {"ok": True, "hidden": hidden}
 
     async def install_framework(
         self,

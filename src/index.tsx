@@ -109,6 +109,7 @@ import {
   setBg3ModuleCap,
   buildReport,
   getPluginUpdate,
+  hideLoaderConsole,
 } from "./api";
 import type { PluginUpdate } from "./pluginUpdate";
 import {
@@ -4712,6 +4713,13 @@ export default definePlugin(() => {
         );
       }
       return;
+    }
+    // A loader that opens a console leaves the game invisible behind it
+    // under gamescope. Hung off the same notification and for the same
+    // reason as the notice below: the panel is not open when someone
+    // presses Play in the library.
+    if (game.loaderConsole) {
+      hideLoaderConsole(game.loaderConsole.titlePrefix, 120).catch(() => {});
     }
     getInstalledCount(game.nexusDomain).then((r) => {
       const wait = launchWaitNotice(r.ok ? r.mods ?? 0 : 0);

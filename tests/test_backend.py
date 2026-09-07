@@ -21268,6 +21268,68 @@ class TestBg3BootHunt(unittest.TestCase):
         self.assertIn("Data", seg)
 
 
+class TestLoaderConsole(unittest.TestCase):
+    """Shadow of War's Packet Loader calls AllocConsole, and under gamescope
+    that console is the window the compositor presents - the game runs
+    perfectly behind it and looks like it failed to start. Measured on
+    device 2026-09-07: DISPLAY=:1 held the game (1920x1080, viewable) and
+    "SoWPL:> Signatures: Generate ..." (1161x896); unmapping the second
+    revealed the first. The loader's own `log = 0` does not suppress it."""
+
+    def test_a_title_prefix_must_look_like_a_window_title(self):
+        # It reaches a command line, so it is validated rather than trusted.
+        for bad in ("", "a", "x" * 40, "SoWPL; rm -rf /", "$(id)", "a b"):
+            self.assertEqual(
+                run(main._unmap_windows_by_prefix(bad)), 0,
+                f"{bad!r} should have been refused",
+            )
+
+    def test_both_displays_are_tried(self):
+        # Gaming Mode's game display is :1, Desktop Mode's is :0.
+        self.assertEqual(main.LOADER_CONSOLE_DISPLAYS, (":1", ":0"))
+
+    def test_it_unmaps_rather_than_closes(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("async def _unmap_windows_by_prefix")
+        block = source[i:i + 1600]
+        self.assertIn("windowunmap", block)
+        # Closing it would take the loader - or the game - with it.
+        self.assertNotIn("windowkill", block)
+        self.assertNotIn("windowclose", block)
+
+    def test_it_hangs_off_the_real_launch_not_the_panel(self):
+        """The panel is not open when someone presses Play in the library.
+
+        The first version put this in the QAM section's effect, where it
+        would only ever have run for a player who happened to have the
+        panel open at launch - which is almost nobody. It belongs on the
+        app-lifetime notification, next to the wait notice that is there
+        for exactly the same reason.
+        """
+        page = os.path.join(
+            os.path.dirname(os.path.dirname(main.__file__)), "src",
+            "index.tsx",
+        )
+        if not os.path.isfile(page):
+            self.skipTest("frontend not present next to main.py")
+        with open(page, encoding="utf-8") as fh:
+            text = fh.read()
+        i = text.index("RegisterForAppLifetimeNotifications")
+        block = text[i:i + 3000]
+        self.assertIn("hideLoaderConsole(game.loaderConsole.titlePrefix", block)
+
+    def test_the_watch_gives_up_instead_of_spinning(self):
+        with open(main.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        i = source.index("async def hide_loader_console")
+        block = source[i:i + 1200]
+        self.assertIn("deadline", block)
+        self.assertIn("asyncio.sleep", block)
+        # A caller cannot ask it to poll forever.
+        self.assertIn("min(int(timeout_sec or 0), 600)", block)
+
+
 class TestShadowOfWarRouting(unittest.TestCase):
     """Shadow of War archives: a PacketLoader/ tree, a bare dll, a loose
     .arch06, a ReShade package, a trainer. Every shape below was taken

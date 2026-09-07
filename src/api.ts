@@ -719,6 +719,13 @@ export const checkFrameworkUpdate = callable<
   }
 >("check_framework_update");
 
+/** Watch for a mod loader's console window and unmap it, so gamescope
+ * presents the game instead. Returns once one is hidden or it times out. */
+export const hideLoaderConsole = callable<
+  [title_prefix: string, timeout_sec: number],
+  { ok: boolean; hidden?: number }
+>("hide_loader_console");
+
 export const installFramework = callable<
   [
     game_domain: string,
