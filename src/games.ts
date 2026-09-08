@@ -1206,10 +1206,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
   1716740: {
     appId: 1716740,
     displayName: "Starfield",
-    // TODO verify: Nexus's domain slug for this game.
+    // Verified on device: get_mods('starfield', ...) returned real results
+    // (12130 mods) and install_mod resolved SFSE's real page on it.
     nexusDomain: "starfield",
-    // TODO verify on device: Steam library folder name.
+    // Verified on device 2026-09-08 (game status log): install path really
+    // is steamapps/common/Starfield.
     installDirName: "Starfield",
+    // Verified on device: game status logged mods_dir_exists=True here.
     modsSubdir: "Data",
     installMode: "dataDir",
     // Bethesda-standard layout, same as SSE/FO4 - TODO verify Starfield
@@ -1221,7 +1224,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     pluginsTxtSubpath: "Starfield/Plugins.txt",
     pluginsTxtStyle: "starred",
     moddedSaveWarning: false,
-    // TODO verify comm name under Proton.
+    // Verified on device: `ps -o comm` on the running game reported exactly
+    // "Starfield.exe", untruncated.
     processName: "Starfield.exe",
     // Every other Bethesda-Steam game on this list needed this (ancient
     // CRT left by Steam's install script breaks dynamically-linked script
@@ -1230,9 +1234,11 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     prefixRuntimeFix: true,
     framework: {
       name: "SFSE",
-      // TODO verify: assumes the same "<prefix>_loader.exe" naming SKSE64/
-      // F4SE/xNVSE use (all from the same silverlock.org author) - the
-      // filename itself isn't confirmed yet, only the mod id is.
+      // Verified on device: this is really what SFSE's archive ships
+      // ("<prefix>_loader.exe", same as SKSE64/F4SE/xNVSE, all from the
+      // same silverlock.org author) - `ps aux` showed Steam launching it
+      // (AppId=1716740 -- .../sfse_loader.exe) and SFSE's own "Address
+      // Library" dialog came up, proving it actually ran under Proton.
       detectFile: "sfse_loader.exe",
       url: "sfse.silverlock.org",
       // Verified on device 2026-09-08: install_mod's own log line for a
@@ -1250,14 +1256,25 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // known rather than guessed.
       nexusModId: 106,
       installKind: "copyRoot",
-      // TODO verify: assumes Steam launches Starfield.exe directly (no
-      // separate *Launcher.exe the way SSE/FO4 have) so the loader swap
-      // targets the game exe itself.
+      // Verified on device: Starfield has no separate *Launcher.exe the way
+      // SSE/FO4 do, so the swap targets the game exe directly - confirmed
+      // by `ps aux`, which showed Proton launching sfse_loader.exe for
+      // AppId 1716740 instead of Starfield.exe, and the game itself came up
+      // (Starfield.exe running as a child process) with SFSE's dialog on
+      // top of it.
       launchOptionsTemplate:
         "bash -c 'exec \"$" +
         "{@/Starfield.exe/sfse_loader.exe}\"' -- %command%",
-      // TODO verify: files SFSE actually leaves in the game root.
-      cleanupPrefixes: ["sfse"],
+      // Verified on device: SFSE's archive drops sfse_loader.exe,
+      // sfse_1_16_244.dll, sfse_readme.txt and sfse_whatsnew.txt at the
+      // game root (all "sfse"-prefixed, covered by the bare prefix below)
+      // plus Data/SFSE (its plugins folder, listed explicitly the same way
+      // New Vegas lists Data/NVSE - a bare "sfse" prefix is top-level-only
+      // and would never reach it). It also drops a top-level src/ folder
+      // holding its own source tarball; left uncleaned deliberately - "src"
+      // is too generic a prefix to trust broadly, and stray source tarballs
+      // left behind by a reset are clutter, not a functional problem.
+      cleanupPrefixes: ["sfse", "Data/SFSE"],
     },
     // TODO verify: Starfield shares FO4's engine lineage, so loose files
     // are assumed to need the same archive-invalidation block - unconfirmed
@@ -1273,9 +1290,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       },
     ],
     underConstruction:
-      "Starfield support is untested on real hardware - every path and " +
-      "filename above is a best guess from the SSE/FO4 pattern, not a " +
-      "verified fact. Expect breakage until this has been run on device.",
+      "Starfield support is new: Step 1 (installing SFSE) is verified " +
+      "working on device, including the launch swap to sfse_loader.exe. " +
+      "Not yet confirmed: whether ordinary Data mods actually get picked " +
+      "up via Plugins.txt, and whether the archive-invalidation ini and " +
+      "runtime-repair steps are needed here the way they are on SSE/FO4. " +
+      "Expect rough edges past Step 1.",
   },
 };
 

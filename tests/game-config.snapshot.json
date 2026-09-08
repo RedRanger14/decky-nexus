@@ -349,7 +349,7 @@
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
     "cleanupPrefixes": [
-      "\"sfse\""
+      "\"sfse\", \"Data/SFSE\""
     ]
   },
   {
