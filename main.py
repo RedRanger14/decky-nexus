@@ -6608,6 +6608,99 @@ async def _bg3_park_se_dependents(settings: dict, game_domain: str) -> list:
         )
     return changed
 
+
+# How many mod modules the native Linux build will load before it dies.
+#
+# Measured on the Legion Go 2 on 2026-09-08 with the #1 collection, the same
+# mods and only the count varying: 625 registered modules booted four times
+# out of four, 636 crashed, 682 crashed, 735 crashed twice. The crash comes
+# 13-26 seconds into loading with the Larian reporter up, survives a
+# reboot, fresh shader and pipeline caches, and is not the file-descriptor
+# limit. It is a property of the device, not of any mod - and a bisection
+# run near it convicts innocent mods at random, which is how eleven wrong
+# rules got shipped and withdrawn the day before. 600 leaves a margin under
+# the last count that always loaded.
+BG3_MODULE_CAP = 600
+BG3_OVER_CAP = (
+    "Baldur's Gate 3 on this device crashes while loading once more than "
+    f"about {BG3_MODULE_CAP} mod modules are switched on at once (measured "
+    "here: 625 loaded every time, 636 crashed). This collection has more, "
+    "so the mods at the end of its list were left switched off to stay "
+    "under the limit. Switch one of them on in My Mods and switch another "
+    "off, and it will load."
+)
+
+
+def _bg3_module_count(rec: dict) -> int:
+    return sum(1 for m in rec.get("bg3_mods") or [] if m.get("uuid"))
+
+
+def _bg3_move_paks(rec: dict, to_disabled: bool) -> None:
+    src_dir = _bg3_mods_dir() if to_disabled else _bg3_disabled_dir()
+    dst_dir = _bg3_disabled_dir() if to_disabled else _bg3_mods_dir()
+    os.makedirs(dst_dir, exist_ok=True)
+    for n in rec.get("files") or []:
+        if not _safe_rel_path(n) or "/" in n:
+            continue
+        src = os.path.join(src_dir, n)
+        if os.path.isfile(src):
+            dst = os.path.join(dst_dir, n)
+            if os.path.isfile(dst):
+                os.remove(dst)
+            shutil.move(src, dst)
+
+
+def _bg3_capacity_pass(settings: dict, game_domain: str) -> list:
+    """Keep the registered module count under BG3_MODULE_CAP.
+
+    Over the cap: switch off mods from the END of the install order (a
+    collection lists its frameworks and essentials first) until it fits,
+    each with the reason on its record. Under the cap: bring back, in
+    install order, mods this pass parked earlier while they still fit -
+    the user switching something off makes room, and it should be used.
+    Returns (name, reason) pairs for the mods switched off."""
+    recs = _bg3_records(settings, game_domain)
+
+    def seq(kr):
+        return (kr[1].get("install_seq") or 0, kr[1].get("installed_at") or 0)
+
+    ordered = sorted(recs, key=seq)
+    total = sum(_bg3_module_count(r) for _k, r in ordered if r.get("enabled", True))
+    # Room first: capped mods return in install order while they fit.
+    for key, rec in ordered:
+        if rec.get("enabled", True) or rec.get("warning") != BG3_OVER_CAP:
+            continue
+        n = _bg3_module_count(rec)
+        if total + n > BG3_MODULE_CAP:
+            break
+        _bg3_move_paks(rec, to_disabled=False)
+        rec["enabled"] = True
+        rec.pop("warning", None)
+        total += n
+        decky.logger.info(f"bg3 cap: room for {key!r} again ({total} modules)")
+    changed = []
+    if total <= BG3_MODULE_CAP:
+        return changed
+    for key, rec in reversed(ordered):
+        if total <= BG3_MODULE_CAP:
+            break
+        if not rec.get("enabled", True):
+            continue
+        n = _bg3_module_count(rec)
+        if n == 0:
+            continue  # registers nothing; parking it frees nothing
+        _bg3_move_paks(rec, to_disabled=True)
+        rec["enabled"] = False
+        rec["warning"] = BG3_OVER_CAP
+        total -= n
+        changed.append((rec.get("name") or key, BG3_OVER_CAP))
+    if changed:
+        decky.logger.info(
+            f"bg3 cap: {len(changed)} mod(s) switched off to stay under "
+            f"{BG3_MODULE_CAP} modules ({total} registered)"
+        )
+    return changed
+
 def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
     """Make every bg3 record agree with its paks on disk. Returns the names
     of the records repaired.
@@ -15025,6 +15118,10 @@ query Link($slug: String!, $domainName: String!) {
                 # one improvement, never the install.
                 decky.logger.warning(f"bg3 se-dependent pass skipped: {e!r}")
             disabled += _bg3_broken_dep_pass(settings, game_domain)
+            # Last, once everything that cannot run is off: does what is
+            # left fit in the device? Counted after the other passes so the
+            # cap judges only modules that would actually load.
+            disabled += _bg3_capacity_pass(settings, game_domain)
             after = {k: r.get("enabled", True)
                      for k, r in _bg3_records(settings, game_domain)}
             if healed or repaired or disabled or before != after:

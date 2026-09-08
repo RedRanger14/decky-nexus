@@ -17725,6 +17725,101 @@ class TestBg3Mode(unittest.TestCase):
         r = self._run_se_pass(empty, fg)
         self.assertEqual(r["disabled"], [], r)
 
+    # ---- the module cap ---------------------------------------------------------------
+    # Measured on the Legion Go 2, 2026-09-08, same mods and only the count
+    # varying: 625 registered modules booted four times out of four, 636
+    # crashed, 735 crashed twice. Not a mod, not the session (a reboot
+    # changed nothing), not the file-descriptor limit. A bisection run near
+    # that line convicted eleven innocent mods the day before. So very large
+    # collections are capped, from the end of their order, with the reason.
+
+    def _install_n(self, n, prefix="Cap"):
+        for i in range(n):
+            self._archive({f"{prefix}{i}.pak": self._make_stats_pak(
+                f"cafe{i:04d}-0000-0000-0000-000000000c{i:02d}", f"{prefix}{i}",
+                self.HEALTHY_STATS)})
+            self.assertTrue(self._install(f"{prefix} Mod {i}").get("ok"))
+
+    def _with_cap(self, cap):
+        real = main.BG3_MODULE_CAP
+        main.BG3_MODULE_CAP = cap
+        return real
+
+    def test_a_collection_over_the_cap_is_trimmed_from_the_end(self):
+        real = self._with_cap(3)
+        try:
+            self._install_n(5)
+            r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            self.assertTrue(r.get("ok"), r)
+            off = [d["name"] for d in r["disabled"]]
+            self.assertEqual(sorted(off), ["Cap Mod 3", "Cap Mod 4"],
+                             "the last two installed go, the first three stay")
+            for d in r["disabled"]:
+                self.assertIn("switched off to stay under the limit", d["reason"])
+            recs = main._load_settings()["installed"][self.DOMAIN]
+            self.assertFalse(recs["Cap Mod 4"]["enabled"])
+            self.assertTrue(recs["Cap Mod 0"]["enabled"])
+            self.assertTrue(os.path.isfile(
+                os.path.join(main._bg3_disabled_dir(), "Cap4.pak")))
+            uuids = self._uuids_in_modsettings()
+            self.assertIn("cafe0000-0000-0000-0000-000000000c00", uuids)
+            self.assertNotIn("cafe0004-0000-0000-0000-000000000c04", uuids)
+            # Idempotent: nothing more to trim.
+            r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            self.assertEqual(r["disabled"], [])
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_room_under_the_cap_brings_capped_mods_back_in_order(self):
+        real = self._with_cap(3)
+        try:
+            self._install_n(5)
+            run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            # The user switches an early mod off by hand: room for one.
+            run(self.plugin.set_mod_enabled(
+                self.GAME, "Mods", "Cap Mod 1", False, "bg3", self.DOMAIN))
+            r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            self.assertTrue(r.get("ok"), r)
+            recs = main._load_settings()["installed"][self.DOMAIN]
+            self.assertTrue(recs["Cap Mod 3"]["enabled"], "the earliest capped one returns")
+            self.assertNotIn("warning", recs["Cap Mod 3"])
+            self.assertFalse(recs["Cap Mod 4"]["enabled"], "no room for a second")
+            self.assertFalse(recs["Cap Mod 1"]["enabled"], "the user's choice is respected")
+            self.assertEqual(r["disabled"], [], "nothing new switched off")
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_the_cap_counts_modules_not_records_and_skips_empty_ones(self):
+        real = self._with_cap(2)
+        try:
+            self._install_n(2)
+            # A record that registers nothing: parking it would free nothing,
+            # so it is never the one chosen.
+            s = main._load_settings()
+            s["installed"][self.DOMAIN]["Empty"] = {
+                "mode": "bg3", "name": "Empty", "enabled": True, "files": [],
+                "bg3_mods": [], "install_seq": 10 ** 9,
+            }
+            main._save_settings(s)
+            r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            self.assertEqual(r["disabled"], [], "two modules fit a cap of two")
+            self._install_n(1, prefix="Extra")
+            r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            self.assertEqual([d["name"] for d in r["disabled"]], ["Extra Mod 0"])
+            self.assertTrue(main._load_settings()["installed"][self.DOMAIN]["Empty"]["enabled"])
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_the_cap_runs_after_the_other_passes(self):
+        # The cap must judge only what would actually load, so it comes
+        # after Script Extender parking and the dependency pass.
+        with open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        i = src.index("async def bg3_disable_broken_deps(")
+        body = src[i : i + 3500]
+        self.assertLess(body.index("_bg3_broken_dep_pass"), body.index("_bg3_capacity_pass"))
+        self.assertLess(body.index("_bg3_park_se_dependents"), body.index("_bg3_capacity_pass"))
+
     # ---- one page, two kinds of file, one record ----------------------------------
     # Collections pin a loose texture archive AND a pak from the same page.
     # The second install used to flip the record's kind, and the first
