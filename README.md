@@ -40,6 +40,7 @@ entry for it, but that someone finished a session with mods running.
 Groundwork exists for these and they are NOT ready. They may appear in the
 plugin; treat anything you do with them as untested.
 
+- Baldur's Gate 3
 - Fallout 3
 - Hollow Knight: Silksong
 
@@ -48,14 +49,17 @@ plugin; treat anything you do with them as untested.
 Asked for and on the list. No code exists for these yet, so they will not
 appear in the plugin until they do.
 
-- Baldur's Gate 3
-- Final Fantasy XII: The Zodiac Age
-- Mass Effect Legendary Edition
+- Crimson Desert
 - Dragon's Dogma 2
+- Final Fantasy XII: The Zodiac Age
 - Horizon Forbidden West
+- Mass Effect Legendary Edition
+- Middle-earth: Shadow of Mordor
+- Middle-earth: Shadow of War
 - Nier: Automata
 - Skyrim VR
 - Subnautica
+- The Blood of Dawnwalker
 
 Want one moved up, or a new one added? Open a [game request][issues] and say
 which. Adding a game means installing it, modding it and playing it on

@@ -406,12 +406,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         "Loader, and neither can run on the native Linux build of the " +
         "game that SteamOS installs.",
     },
-    underConstruction:
-      "Baldur's Gate 3 support is new: pak mods install and register, " +
-      "but Script Extender mods cannot run on the native Linux build, " +
-      "and load-order editing is not here yet. The first time you boot " +
-      "with mods, the game's own Mods menu may ask you to confirm " +
-      "third-party mods once - that is the game, and one tap.",
+    // No under-construction banner. It said Script Extender mods cannot
+    // run and load order is not editable yet, both of which the plugin now
+    // handles by itself: SE mods and everything requiring them arrive
+    // switched off with the reason, and the install order is written for
+    // you. Michael, 2026-09-08, with the #1 collection booting clean: "we
+    // need to remove the underconstruction flag." Same call as Helldivers
+    // 2 below - the field stays available for the next rough edge.
   },
   2868840: {
     appId: 2868840,
