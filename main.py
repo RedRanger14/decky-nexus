@@ -6666,6 +6666,115 @@ BG3_OVER_CAP = (
 )
 
 
+BG3_WINDOWS_ONLY = {
+    "loader": (
+        "This mod is a Windows loader (.dll) - the Script Extender family "
+        "- and the native Linux build of the game has no way to load it."
+    ),
+    "settings": (
+        "This download is settings files for the Script Extender or the "
+        "Native Mod Loader, neither of which can run on the native Linux "
+        "build, so there is nothing in it for this device."
+    ),
+    "cursors": (
+        "This download is Windows mouse cursor files (.cur), which only "
+        "Windows itself can use, so there is nothing in it for this device."
+    ),
+}
+
+
+def _bg3_windows_only_kind(names: list) -> str:
+    """What a BG3 download with no pak and no game-data folder IS, when it
+    is a Windows-only thing: "loader" (a .dll, the Script Extender family),
+    "settings" (Script Extender or Native Mod Loader config files: the #1
+    collection's Misc Files mod pins ScriptExtenderSettings.json and
+    BG3WASD.toml), "cursors" (Windows .cur/.ani mouse cursors, sixty per
+    pack in that collection), or "" for anything else.
+
+    Takes lower-cased base names. Nothing here is a failure to install -
+    there is simply nothing in it for the Linux build - and the seven such
+    files in the #1 collection were the whole of what "did not install".
+    """
+    names = [n for n in names if n and not n.startswith(".")]
+    if any(n.endswith(".dll") for n in names):
+        return "loader"
+    payload = [
+        n for n in names
+        if not n.endswith((".txt", ".md", ".pdf", ".url", ".png", ".jpg",
+                           ".jpeg", ".gif"))
+    ]
+    if not payload:
+        return ""
+    if all(n.endswith((".cur", ".ani")) for n in payload):
+        return "cursors"
+    if all(n.endswith((".json", ".toml", ".ini", ".cfg")) for n in payload):
+        return "settings"
+    return ""
+
+
+def _pak_edition_from_listing(files: list, file_id: int):
+    """The "(Pak)" edition of a file among its mod page's current files:
+    the same name with "(Pak)" appended, any case, not archived. None when
+    the pinned file is already the pak edition or none is published.
+    BG2 Mouse Cursors -> BG2 Mouse Cursors (Pak), and NOT BG2 Mouse Cursors
+    Smaller (Pak), which is a different choice."""
+    def norm(s):
+        return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+    pinned = None
+    for f in files:
+        try:
+            if int(f.get("file_id") or 0) == int(file_id):
+                pinned = f
+                break
+        except (TypeError, ValueError):
+            continue
+    if not pinned:
+        return None
+    want = norm(pinned.get("name"))
+    if not want or want.endswith("(pak)"):
+        return None
+    for f in files:
+        try:
+            fid = int(f.get("file_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if fid == int(file_id) or fid <= 0:
+            continue
+        if (f.get("category_name") or "").upper() in (
+            "ARCHIVED", "OLD_VERSION", "DELETED"
+        ):
+            continue
+        if re.fullmatch(re.escape(want) + r"\s*\(pak\)", norm(f.get("name"))):
+            return {
+                "file_id": fid,
+                "file_name": f.get("file_name") or "",
+                "name": f.get("name") or "",
+                "version": f.get("version") or "",
+            }
+    return None
+
+
+async def _bg3_pak_edition(game_domain: str, mod_id: int, file_id: int):
+    """Look up the "(Pak)" edition of a pinned file on its mod page. A
+    courtesy lookup: any failure is None, never a broken install."""
+    settings = _load_settings()
+    headers = _api_headers(settings.get("api_key"))
+    url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}/files.json"
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=25)
+        ) as session:
+            async with session.get(url, headers=headers, ssl=SSL_CONTEXT) as r:
+                if r.status != 200:
+                    return None
+                body = await r.json()
+    except Exception as e:  # noqa: BLE001 - a courtesy lookup must not break installs
+        decky.logger.debug(f"pak edition lookup failed: {e}")
+        return None
+    return _pak_edition_from_listing(body.get("files") or [], file_id)
+
+
 def _bg3_module_count(rec: dict) -> int:
     return sum(1 for m in rec.get("bg3_mods") or [] if m.get("uuid"))
 
@@ -13628,20 +13737,54 @@ query Link($slug: String!, $domainName: String!) {
                 for r2, _d3, n2 in os.walk(scratch):
                     lower += [x.lower() for x in n2]
                 _force_rmtree(scratch)
+                kind = _bg3_windows_only_kind(lower)
+                if kind == "cursors" and not repair_only:
+                    # Both cursor packs in the #1 collection pin their
+                    # Windows .cur file and publish a "(Pak)" edition of
+                    # the same thing beside it. That one the game loads on
+                    # every platform, so it is what gets installed.
+                    edition = await _bg3_pak_edition(game_domain, mod_id, file_id)
+                    if edition and int(edition["file_id"]) != int(file_id):
+                        decky.logger.info(
+                            f"{mod_name!r}: file {file_id} is Windows cursor "
+                            f"files; installing its pak edition "
+                            f"{edition['name']!r} (file {edition['file_id']}) "
+                            "instead"
+                        )
+                        got = await self._install_mod_inner(
+                            game_domain, mod_id, edition["file_id"],
+                            edition["file_name"] or file_name, mod_name,
+                            edition["version"] or mod_version, install_dir,
+                            mods_subdir, "", "", install_mode, app_id,
+                            plugins_subpath, plugins_style, payload_choice,
+                            ue4ss_subdir, logicmods_subdir,
+                            launcher_xml_subpath, flat_extensions,
+                            page_version, record_source, witcher_layout,
+                            collection_slug, cp77_layout, pakpatch_layout,
+                            repair_only, hd2_layout, reshade_subdir,
+                            process_name, palschema_subdir,
+                        )
+                        if got.get("ok"):
+                            got["pak_edition"] = edition["name"]
+                            return got
                 await _emit_progress(mod_id, "error", 0, "no pak")
-                if any(x.endswith(".dll") for x in lower):
-                    msg = (
-                        "This mod is a Windows loader (.dll) - the Script "
-                        "Extender family - and the native Linux build of "
-                        "the game has no way to load it."
-                    )
-                else:
-                    msg = (
+                if kind:
+                    # Not a failure: there is nothing in it for this
+                    # device, and the collection page says so instead of
+                    # counting it against the install.
+                    return {
+                        "ok": False,
+                        "windows_only": True,
+                        "error": BG3_WINDOWS_ONLY[kind],
+                    }
+                return {
+                    "ok": False,
+                    "error": (
                         "No .pak file and no game-data folder in this "
                         "download, so there is nothing the game could "
                         "load from it."
-                    )
-                return {"ok": False, "error": msg}
+                    ),
+                }
 
             # Merge any loose tree into the game's Data dir. Runs for
             # pakless mods (the record is files-mode and the existing

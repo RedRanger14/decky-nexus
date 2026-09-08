@@ -99,6 +99,13 @@ export interface InstallResult {
   /** Archive layout we can't recognize - parked as skipped so it stops
    * counting as remaining (retrying can't change the layout). */
   unsupported_layout?: boolean;
+  /** Nothing in the download is for this device: a Script Extender family
+   * loader, its settings files, or Windows mouse cursors (BG3 on the native
+   * Linux build). A named skip, not a failure. */
+  windows_only?: boolean;
+  /** The install swapped to the mod page's "(Pak)" edition of the pinned
+   * file, because the pinned one was Windows cursor files. */
+  pak_edition?: string;
   /** Option-style archive: the user must pick one of `options` and retry
    * with payload_choice set. */
   needs_choice?: boolean;

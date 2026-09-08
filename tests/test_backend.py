@@ -17725,6 +17725,120 @@ class TestBg3Mode(unittest.TestCase):
         r = self._run_se_pass(empty, fg)
         self.assertEqual(r["disabled"], [], r)
 
+    # ---- Windows-only downloads -----------------------------------------------------------
+    # The fresh install of the #1 collection (2026-09-08) left seven files
+    # "not installed": three Script Extender family loaders, two settings
+    # downloads (ScriptExtenderSettings.json, BG3WASD.toml) and two Windows
+    # cursor packs. None is a failure - there is nothing in them for the
+    # Linux build - and both cursor packs publish a "(Pak)" edition.
+
+    def test_windows_only_kinds(self):
+        k = main._bg3_windows_only_kind
+        self.assertEqual(k(["dwrite.dll", "readme.txt"]), "loader")
+        self.assertEqual(k(["scriptextendersettings.json",
+                            "scriptextenderupdaterconfig.json"]), "settings")
+        self.assertEqual(k(["bg3wasd.toml"]), "settings")
+        self.assertEqual(k(["cursor_arrow_1.cur", "cursor_talk_2.cur",
+                            "readme_bg2cursors.txt"]), "cursors")
+        self.assertEqual(k(["readme.txt"]), "", "documents alone decide nothing")
+        self.assertEqual(k(["something.bin", "cursor_arrow_1.cur"]), "",
+                         "a mixed download is not called Windows-only")
+        self.assertEqual(k([]), "")
+
+    def test_se_settings_files_are_a_windows_only_skip_not_a_failure(self):
+        self._archive({
+            "bin/ScriptExtenderSettings.json": "{}",
+            "bin/ScriptExtenderUpdaterConfig.json": "{}",
+        })
+        r = self._install("DIQ Misc Files")
+        self.assertFalse(r.get("ok"))
+        self.assertTrue(r.get("windows_only"), r)
+        self.assertIn("Script Extender", r["error"])
+        self.assertNotIn(
+            "DIQ Misc Files",
+            main._load_settings().get("installed", {}).get(self.DOMAIN, {}),
+        )
+
+    def test_a_loader_dll_is_a_windows_only_skip(self):
+        self._archive({"bin/DWrite.dll": "MZ", "README.md": "x"})
+        r = self._install("Native Mod Loader")
+        self.assertFalse(r.get("ok"))
+        self.assertTrue(r.get("windows_only"), r)
+        self.assertIn("Windows loader", r["error"])
+
+    def test_cursor_files_without_a_pak_edition_are_a_windows_only_skip(self):
+        self._archive({"Data/Cursors/Cursor_Arrow_1.cur": "x",
+                       "Data/Cursors/Cursor_Talk_2.cur": "x"})
+        real = main._bg3_pak_edition
+
+        async def none(*_a, **_k):
+            return None
+
+        main._bg3_pak_edition = none
+        try:
+            r = self._install("Bigger Mouse Cursors")
+        finally:
+            main._bg3_pak_edition = real
+        self.assertFalse(r.get("ok"))
+        self.assertTrue(r.get("windows_only"), r)
+        self.assertIn("cursor", r["error"])
+
+    def test_cursor_files_install_the_pages_pak_edition_instead(self):
+        self._archive({"Data/Cursors/Cursor_Arrow_1.cur": "x"})
+        sib_id = self.FILE + 1
+        sib = main._archive_cache_path(self.MOD, sib_id, "cursors-pak.zip")
+        with zipfile.ZipFile(sib, "w") as z:
+            z.writestr("BG2Cursors.pak", self._make_stats_pak(
+                "cafe0099-0000-0000-0000-0000000000c9", "BG2Cursors",
+                self.HEALTHY_STATS))
+        real = main._bg3_pak_edition
+        asked = []
+
+        async def edition(game_domain, mod_id, file_id):
+            asked.append((game_domain, mod_id, file_id))
+            return {"file_id": sib_id, "file_name": "cursors-pak.zip",
+                    "name": "BG2 Mouse Cursors (Pak)", "version": "1.2p"}
+
+        main._bg3_pak_edition = edition
+        try:
+            r = self._install("BG2 Mouse Cursors")
+        finally:
+            main._bg3_pak_edition = real
+        self.assertTrue(r.get("ok"), r)
+        self.assertEqual(r.get("pak_edition"), "BG2 Mouse Cursors (Pak)")
+        self.assertEqual(asked, [(self.DOMAIN, self.MOD, self.FILE)])
+        rec = main._load_settings()["installed"][self.DOMAIN]["BG2 Mouse Cursors"]
+        self.assertEqual(rec["file_id"], sib_id, "the record is the pak edition's")
+        self.assertEqual(rec["version"], "1.2p")
+        self.assertTrue(os.path.isfile(
+            os.path.join(main._bg3_mods_dir(), "BG2Cursors.pak")))
+        self.assertIn("cafe0099-0000-0000-0000-0000000000c9",
+                      self._uuids_in_modsettings())
+
+    def test_pak_edition_is_the_same_name_with_pak_appended(self):
+        listing = [
+            {"file_id": 14782, "name": "BG2 Mouse Cursors", "category_name": "MAIN",
+             "file_name": "a.zip", "version": "1.2"},
+            {"file_id": 20639, "name": "Smaller Hand Cursors",
+             "category_name": "OPTIONAL", "file_name": "b.zip", "version": "1.0"},
+            {"file_id": 70177, "name": "BG2 Mouse Cursors Smaller (Pak)",
+             "category_name": "OPTIONAL", "file_name": "d.zip", "version": "1.2p"},
+            {"file_id": 70176, "name": "BG2 Mouse Cursors (Pak)",
+             "category_name": "MAIN", "file_name": "c.zip", "version": "1.2p"},
+        ]
+        got = main._pak_edition_from_listing(listing, 14782)
+        self.assertEqual(got["file_id"], 70176, "the same name, not the Smaller one")
+        self.assertEqual(got["file_name"], "c.zip")
+        self.assertIsNone(main._pak_edition_from_listing(listing, 70176),
+                          "already the pak edition")
+        self.assertIsNone(main._pak_edition_from_listing(listing, 20639),
+                          "no pak edition published")
+        archived = [dict(f, category_name="ARCHIVED") if f["file_id"] == 70176 else f
+                    for f in listing]
+        self.assertIsNone(main._pak_edition_from_listing(archived, 14782),
+                          "an archived edition is not offered")
+        self.assertIsNone(main._pak_edition_from_listing(listing, 99999))
+
     # ---- the module cap ---------------------------------------------------------------
     # Measured on the Legion Go 2, 2026-09-08, same mods and only the count
     # varying: 625 registered modules booted four times out of four, 636

@@ -497,25 +497,19 @@ export function CollectionPage() {
         collection.slug
       );
       const off: { name: string; reason: string }[] = [];
-      // BG3: a curator can ship a mod whose pak depends on paks the
-      // collection never included, and the game hangs mid-load around the
-      // missing pieces (Goon+, device, 2026-09-01). The backend reads
-      // every pak's declared dependencies and switches off what cannot
-      // stand; the note below tells the user what and why.
-      if ((game.installMode ?? "folder") === "bg3") {
-        const broken = await bg3DisableBrokenDeps(
-          game.nexusDomain,
-          game.installDirName
-        );
-        for (const b of broken.disabled ?? []) off.push(b);
-      }
-      const inst = await getInstalledMods(
+      let inst = await getInstalledMods(
         game.nexusDomain,
         game.installDirName,
         game.modsSubdir,
         ...modeParams(game),
         game.protectedModFolders ?? []
       );
+      // The rule mods go off FIRST, then the backend pass runs. The other
+      // way round, the pass never saw them: Glow Eyes went off after the
+      // cascade had run, so Demon Eyes and Feywild Eyes stayed on (the
+      // New Game crash of 2026-09-06, found again on the fresh install of
+      // 2026-09-08), and the capacity cap had already counted, and in one
+      // case parked and labelled, mods a rule was about to switch off.
       if (wanted.length > 0) {
         const reasonById = new Map(wanted.map((a) => [a.modId, a.reason]));
         for (const m of inst.mods ?? []) {
@@ -534,6 +528,28 @@ export function CollectionPage() {
             });
           }
         }
+      }
+      // BG3: a curator can ship a mod whose pak depends on paks the
+      // collection never included, and the game hangs mid-load around the
+      // missing pieces (Goon+, device, 2026-09-01). The backend reads
+      // every pak's declared dependencies, cascades from every stored
+      // reason (the rule mods above included), keeps the module count
+      // under what the device can load, and switches off what cannot
+      // stand; the note below tells the user what and why.
+      if ((game.installMode ?? "folder") === "bg3") {
+        const broken = await bg3DisableBrokenDeps(
+          game.nexusDomain,
+          game.installDirName
+        );
+        for (const b of broken.disabled ?? []) off.push(b);
+        // Re-read: the pass changed switches and reasons.
+        inst = await getInstalledMods(
+          game.nexusDomain,
+          game.installDirName,
+          game.modsSubdir,
+          ...modeParams(game),
+          game.protectedModFolders ?? []
+        );
       }
       // Mods the BACKEND installed switched off (BG3's Script Extender
       // mods: they can never run on the native build). The record carries
@@ -663,6 +679,7 @@ export function CollectionPage() {
   const brokenSkips = attention.filter((a) => a.reason === "incompatible");
   const conflictSkips = attention.filter((a) => a.reason === "conflict");
   const layoutSkips = attention.filter((a) => a.reason === "layout");
+  const windowsSkips = attention.filter((a) => a.reason === "windows");
 
   // Entries, to match every other number on this page - see
   // collectionOwnedCount for why the record count read as 92 missing.
@@ -1080,6 +1097,24 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               options: [],
             });
             // (no per-mod toast: the summary counts skips and the row shows why)
+          } else if (result.windows_only) {
+            // Script Extender loaders, their settings files, Windows mouse
+            // cursors: nothing in the download is for this device, so it
+            // is not a failure and not the user's to fix. The seven such
+            // files in the #1 BG3 collection were the whole of what read
+            // as "not installed" on 2026-09-08.
+            dropDownload(f.modId);
+            setCollectionRow(f.fileId, "skipped");
+            freshAttention.push({
+              file_id: f.fileId,
+              mod_id: f.modId,
+              mod_name: f.modName,
+              file_name: f.fileName,
+              version: f.version,
+              reason: "windows",
+              options: [],
+              detail: result.error ?? "",
+            });
           } else if (result.stale_skip) {
             // Built before the game's current patch: it would install and
             // then hang the game on a "Could not find signature!" box. Not
@@ -2034,6 +2069,21 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             scripts, or layouts we don't support yet).
           </div>
         )}
+        {windowsSkips.length > 0 && !installing && (
+          <div
+            style={{
+              fontSize: "12.5px",
+              opacity: 0.7,
+              margin: "-6px 0 12px",
+            }}
+          >
+            ⏭ {windowsSkips.length} Windows-only file
+            {windowsSkips.length === 1 ? "" : "s"} skipped (
+            {windowsSkips.map((t) => t.mod_name).join(", ")}) - Script
+            Extender parts, its settings, or Windows mouse cursors. The game
+            on this device cannot use them and they don't count as missing.
+          </div>
+        )}
         {conflictSkips.length > 0 && !installing && (
           <div
             style={{
@@ -2159,6 +2209,13 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                             · not installable
                           </span>
                         )}
+                      {parkedReason === "windows" &&
+                        !installedIds.has(f.modId) && (
+                          <span style={{ opacity: 0.55 }}>
+                            {" "}
+                            · Windows only
+                          </span>
+                        )}
                       {isConflict && (
                         <span style={{ color: "#ffc83c" }}>
                           {" "}
@@ -2282,7 +2339,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               <div
                 style={{ fontSize: "12px", opacity: 0.65, margin: "8px 0 2px" }}
               >
-                Optional ({optional.length}) — not installed automatically:
+                Optional ({optional.length}), not installed automatically:
               </div>
             )}
             {optional.map((f) => {

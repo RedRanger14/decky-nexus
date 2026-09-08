@@ -318,6 +318,35 @@ test("the collection page passes its slug and carries the reason with the switch
     "the reason must reach the backend so dependents go off with the mod");
 });
 
+// Order matters. The backend cascades from every reason stored on a record
+// and then counts what is left against the device's capacity - so the rule
+// mods must be switched off BEFORE it runs. With the order reversed on the
+// fresh install of 2026-09-08, Glow Eyes went off after the cascade and
+// Demon Eyes and Feywild Eyes stayed on (the New Game crash of 09-06), and
+// Goon's Monk carried the cap's reason instead of its rule's.
+test("the collection page switches rule mods off before the backend pass", () => {
+  const coll = readFileSync("src/CollectionPage.tsx", "utf8");
+  const toggles = coll.search(/toggleMod\([\s\S]{0,60}false,[\s\S]{0,40}reasonById\.get/);
+  const pass = coll.indexOf("await bg3DisableBrokenDeps(");
+  assert.ok(toggles > 0 && pass > 0, "both steps must exist");
+  assert.ok(toggles < pass, "rule toggles must come before the backend pass");
+  // And the page re-reads the records after the pass, or it reports the
+  // switches and reasons as they were before it ran.
+  const reread = coll.indexOf("await getInstalledMods(", pass);
+  assert.ok(reread > pass, "records must be re-read after the pass");
+});
+
+// Nothing Windows-only counts as a failure. Script Extender loaders, their
+// settings files and Windows mouse cursors have nothing in them for this
+// device; they are skipped, named and explained, like PC tools are.
+test("a Windows-only download is a named skip, not a failure", () => {
+  const coll = readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(coll, /result\.windows_only/, "the backend's flag must be read");
+  assert.match(coll, /reason: "windows"/, "and recorded as its own kind of skip");
+  assert.match(coll, /Windows-only file/, "and counted in the summary");
+  assert.match(coll, /· Windows only/, "and named on the row");
+});
+
 // No em dashes in player-facing copy, wherever it lives.
 test("the warning copy carries no em dashes", () => {
   for (const m of STRANDING_UI_MODS) {
