@@ -339,7 +339,9 @@
     "installMode": "dataDir",
     "frameworkName": "SFSE",
     "launchOptionsTemplate": "bash -c 'exec \"${@/Starfield.exe/sfse_loader.exe}\"' -- %command%",
-    "prefixTools": [],
+    "prefixTools": [
+      "106"
+    ],
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": true,

@@ -1231,15 +1231,24 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     framework: {
       name: "SFSE",
       // TODO verify: assumes the same "<prefix>_loader.exe" naming SKSE64/
-      // F4SE/xNVSE use (all from the same silverlock.org author).
+      // F4SE/xNVSE use (all from the same silverlock.org author) - the
+      // filename itself isn't confirmed yet, only the mod id is.
       detectFile: "sfse_loader.exe",
       url: "sfse.silverlock.org",
-      // Deliberately omitted: shipping a guessed Nexus mod id risks
-      // routing the one-tap install at the wrong file. Leaving this unset
-      // disables just that button (see index.tsx's
-      // `disabled={... || !game.framework.nexusModId}`) instead of
-      // silently downloading something wrong - fill in once looked up on
-      // nexusmods.com/starfield.
+      // Verified on device 2026-09-08: install_mod's own log line for a
+      // real Nexus download - "starfield/106 file 67782 ('Starfield
+      // Script Extender (SFSE)' v'0.2.21')" - straight from trying to
+      // install SFSE off its mod page before this was set (Matt: "the
+      // button cannot be clicked... If I try to install SFSE from the
+      // mod list, it errors out"). That attempt failed correctly - a
+      // bare loader.exe archive routes through install_mod's generic
+      // Data-folder installer and gets refused as a "PC modding tool",
+      // same as SKSE64/F4SE would if installed that way. Framework
+      // installs are supposed to go through install_framework's copyRoot
+      // path instead (the Step 1 button), which nexusModId is what
+      // enables - it was left blank on purpose until the real id was
+      // known rather than guessed.
+      nexusModId: 106,
       installKind: "copyRoot",
       // TODO verify: assumes Steam launches Starfield.exe directly (no
       // separate *Launcher.exe the way SSE/FO4 have) so the loader swap
