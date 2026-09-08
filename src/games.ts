@@ -1203,6 +1203,71 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       installKind: "copyRoot",
     },
   },
+  1716740: {
+    appId: 1716740,
+    displayName: "Starfield",
+    // TODO verify: Nexus's domain slug for this game.
+    nexusDomain: "starfield",
+    // TODO verify on device: Steam library folder name.
+    installDirName: "Starfield",
+    modsSubdir: "Data",
+    installMode: "dataDir",
+    // Bethesda-standard layout, same as SSE/FO4 - TODO verify Starfield
+    // actually writes Plugins.txt here without extra config. Community
+    // history on this game is that plugin activation sometimes needs an
+    // ini-based workaround (StarfieldCustom.ini file-selection entries)
+    // rather than reading Plugins.txt directly like SSE/FO4 do; this has
+    // not been confirmed on this device and may need a follow-up fix.
+    pluginsTxtSubpath: "Starfield/Plugins.txt",
+    pluginsTxtStyle: "starred",
+    moddedSaveWarning: false,
+    // TODO verify comm name under Proton.
+    processName: "Starfield.exe",
+    // Every other Bethesda-Steam game on this list needed this (ancient
+    // CRT left by Steam's install script breaks dynamically-linked script
+    // extender plugins) - carried over on the same assumption, unverified
+    // for Starfield specifically.
+    prefixRuntimeFix: true,
+    framework: {
+      name: "SFSE",
+      // TODO verify: assumes the same "<prefix>_loader.exe" naming SKSE64/
+      // F4SE/xNVSE use (all from the same silverlock.org author).
+      detectFile: "sfse_loader.exe",
+      url: "sfse.silverlock.org",
+      // Deliberately omitted: shipping a guessed Nexus mod id risks
+      // routing the one-tap install at the wrong file. Leaving this unset
+      // disables just that button (see index.tsx's
+      // `disabled={... || !game.framework.nexusModId}`) instead of
+      // silently downloading something wrong - fill in once looked up on
+      // nexusmods.com/starfield.
+      installKind: "copyRoot",
+      // TODO verify: assumes Steam launches Starfield.exe directly (no
+      // separate *Launcher.exe the way SSE/FO4 have) so the loader swap
+      // targets the game exe itself.
+      launchOptionsTemplate:
+        "bash -c 'exec \"$" +
+        "{@/Starfield.exe/sfse_loader.exe}\"' -- %command%",
+      // TODO verify: files SFSE actually leaves in the game root.
+      cleanupPrefixes: ["sfse"],
+    },
+    // TODO verify: Starfield shares FO4's engine lineage, so loose files
+    // are assumed to need the same archive-invalidation block - unconfirmed
+    // for this game.
+    setupInis: [
+      {
+        prefsSubpath: "Starfield/StarfieldCustom.ini",
+        section: "Archive",
+        settings: {
+          bInvalidateOlderFiles: "1",
+          sResourceDataDirsFinal: "",
+        },
+      },
+    ],
+    underConstruction:
+      "Starfield support is untested on real hardware - every path and " +
+      "filename above is a best guess from the SSE/FO4 pattern, not a " +
+      "verified fact. Expect breakage until this has been run on device.",
+  },
 };
 
 /** Positional params several backend calls need for install-mode dispatch. */
