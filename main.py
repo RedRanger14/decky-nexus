@@ -1717,6 +1717,12 @@ DATA_MARKER_DIRS = {
     "distributedmods", "netscriptframework", "dialogueviews", "lodsettings",
     "planetdata", "calientetools", "tools", "source", "facegendata",
     "actors", "effects", "misc", "dyndolod",
+    # Starfield (2026-09-08): Address Library for SFSE Plugins ships
+    # SFSE/Plugins/<file> at the archive root, same shape as SKSE/F4SE/NVSE
+    # plugin archives - failed with "no recognizable Data payload" until
+    # "sfse" joined its siblings here (Matt, on device: "I'm getting errors
+    # trying to install the Address Library for SFSE Plugins").
+    "sfse",
 }
 
 # Junk some archives carry that must never reach the game folder: macOS
