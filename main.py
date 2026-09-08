@@ -6523,7 +6523,40 @@ def _bg3_required_ids(reqs: dict) -> set:
     return out
 
 
-async def _bg3_park_se_dependents(settings: dict, game_domain: str) -> list:
+async def _bg3_enabled_requirements(settings: dict, game_domain: str) -> dict:
+    """{mod id: the mod ids it requires} for every ENABLED bg3 record.
+
+    One network lookup, shared by both passes that need it - the dependent
+    cascade and the capacity cap. For an 866-mod collection it is 44
+    batched queries, so it is fetched once and handed round.
+    """
+    live = set()
+    for _key, rec in _bg3_records(settings, game_domain):
+        if not rec.get("enabled", True):
+            continue
+        try:
+            live.add(int(rec["mod_id"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not live:
+        return {}
+    api_key = settings.get("api_key")
+    game_id = await _resolve_game_id(game_domain, api_key)
+    nodes = await _legacy_mods_in_batches(
+        game_id, sorted(live), REQUIREMENT_FIELDS, api_key
+    )
+    needs = {}
+    for n in nodes:
+        try:
+            needs[int(n["modId"])] = _bg3_required_ids(_split_requirements(n))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return needs
+
+
+async def _bg3_park_se_dependents(
+    settings: dict, game_domain: str, needs: dict = None
+) -> list:
     """Switch off every enabled bg3 mod that requires a mod parked for the
     Script Extender, and everything that then requires THOSE. Returns
     (name, reason) pairs.
@@ -6532,6 +6565,19 @@ async def _bg3_park_se_dependents(settings: dict, game_domain: str) -> list:
     requires the overhaul. Stopping at one level would leave the patch
     switched on with nothing under it.
     """
+    if not _bg3_se_parked_ids(settings, game_domain):
+        return []
+    if needs is None:
+        needs = await _bg3_enabled_requirements(settings, game_domain)
+    return _bg3_cascade_dependents(settings, game_domain, needs)
+
+
+def _bg3_cascade_dependents(
+    settings: dict, game_domain: str, needs: dict
+) -> list:
+    """The cascade itself, with the lookup already done. It reads the
+    reasons off the records, so it cascades from ANY park the plugin made -
+    the Script Extender, a collision, or the capacity cap."""
     whys = _bg3_se_parked_ids(settings, game_domain)
     unusable = set(whys)
     if not unusable:
@@ -6546,17 +6592,6 @@ async def _bg3_park_se_dependents(settings: dict, game_domain: str) -> list:
             continue
     if not live:
         return []
-    api_key = settings.get("api_key")
-    game_id = await _resolve_game_id(game_domain, api_key)
-    nodes = await _legacy_mods_in_batches(
-        game_id, sorted(live), REQUIREMENT_FIELDS, api_key
-    )
-    needs = {}
-    for n in nodes:
-        try:
-            needs[int(n["modId"])] = _bg3_required_ids(_split_requirements(n))
-        except (KeyError, TypeError, ValueError):
-            continue
     # A mod the API did not answer for is left alone: silence is not a
     # reason to switch somebody's mod off.
     names = {mid: (rec.get("name") or key)
@@ -6603,8 +6638,8 @@ async def _bg3_park_se_dependents(settings: dict, game_domain: str) -> list:
             moving = True
     if changed:
         decky.logger.info(
-            f"bg3: parked {len(changed)} mod(s) that require a Script "
-            "Extender mod we cannot run"
+            f"bg3: parked {len(changed)} mod(s) that require a mod this "
+            "device had to switch off"
         )
     return changed
 
@@ -6650,13 +6685,42 @@ def _bg3_move_paks(rec: dict, to_disabled: bool) -> None:
             shutil.move(src, dst)
 
 
-def _bg3_capacity_pass(settings: dict, game_domain: str) -> list:
+def _bg3_module_total(settings: dict, game_domain: str) -> int:
+    """Modules the game would register right now - what the cap judges."""
+    return sum(_bg3_module_count(rec)
+               for _key, rec in _bg3_records(settings, game_domain)
+               if rec.get("enabled", True))
+
+
+def _bg3_demanded_ids(settings: dict, game_domain: str, needs: dict) -> set:
+    """Mod ids that something still switched ON requires.
+
+    The cap must not take one of these while a leaf is still available:
+    switching off a mod another mod needs leaves that one broken, which is
+    the exact fault the dependency cascade exists to prevent."""
+    out = set()
+    for _key, rec in _bg3_records(settings, game_domain):
+        if not rec.get("enabled", True):
+            continue
+        try:
+            out |= set(needs.get(int(rec["mod_id"])) or ())
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _bg3_capacity_pass(
+    settings: dict, game_domain: str, needs: dict = None
+) -> list:
     """Keep the registered module count under BG3_MODULE_CAP.
 
     Over the cap: switch off mods from the END of the install order (a
     collection lists its frameworks and essentials first) until it fits,
-    each with the reason on its record. Under the cap: bring back, in
-    install order, mods this pass parked earlier while they still fit -
+    each with the reason on its record. Mods that another switched-on mod
+    requires are passed over while a leaf is still available, and anything
+    left needing a capped mod is cascaded off after - a mod switched off to
+    save room must not break the ones that stay. Under the cap: bring back,
+    in install order, mods this pass parked earlier while they still fit -
     the user switching something off makes room, and it should be used.
     Returns (name, reason) pairs for the mods switched off."""
     recs = _bg3_records(settings, game_domain)
@@ -6665,7 +6729,7 @@ def _bg3_capacity_pass(settings: dict, game_domain: str) -> list:
         return (kr[1].get("install_seq") or 0, kr[1].get("installed_at") or 0)
 
     ordered = sorted(recs, key=seq)
-    total = sum(_bg3_module_count(r) for _k, r in ordered if r.get("enabled", True))
+    total = _bg3_module_total(settings, game_domain)
     # Room first: capped mods return in install order while they fit.
     for key, rec in ordered:
         if rec.get("enabled", True) or rec.get("warning") != BG3_OVER_CAP:
@@ -6681,25 +6745,43 @@ def _bg3_capacity_pass(settings: dict, game_domain: str) -> list:
     changed = []
     if total <= BG3_MODULE_CAP:
         return changed
-    for key, rec in reversed(ordered):
+    # Two rounds: leaves first, then whatever is left. The second round
+    # only runs on a collection so dependency-heavy that its frameworks
+    # alone overflow the device, and the cascade below cleans up after it.
+    demanded = _bg3_demanded_ids(settings, game_domain, needs or {})
+    for leaves_only in (True, False):
+        for key, rec in reversed(ordered):
+            if total <= BG3_MODULE_CAP:
+                break
+            if not rec.get("enabled", True):
+                continue
+            n = _bg3_module_count(rec)
+            if n == 0:
+                continue  # registers nothing; parking it frees nothing
+            if leaves_only:
+                try:
+                    if int(rec.get("mod_id") or 0) in demanded:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            _bg3_move_paks(rec, to_disabled=True)
+            rec["enabled"] = False
+            rec["warning"] = BG3_OVER_CAP
+            total -= n
+            changed.append((rec.get("name") or key, BG3_OVER_CAP))
+            # Parking a dependent can free its requirement to be parked.
+            demanded = _bg3_demanded_ids(settings, game_domain, needs or {})
         if total <= BG3_MODULE_CAP:
             break
-        if not rec.get("enabled", True):
-            continue
-        n = _bg3_module_count(rec)
-        if n == 0:
-            continue  # registers nothing; parking it frees nothing
-        _bg3_move_paks(rec, to_disabled=True)
-        rec["enabled"] = False
-        rec["warning"] = BG3_OVER_CAP
-        total -= n
-        changed.append((rec.get("name") or key, BG3_OVER_CAP))
     if changed:
         decky.logger.info(
             f"bg3 cap: {len(changed)} mod(s) switched off to stay under "
             f"{BG3_MODULE_CAP} modules ({total} registered)"
         )
+        if needs:
+            changed += _bg3_cascade_dependents(settings, game_domain, needs)
     return changed
+
 
 def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
     """Make every bg3 record agree with its paks on disk. Returns the names
@@ -15108,9 +15190,21 @@ query Link($slug: String!, $domainName: String!) {
             # requirement is a Script Extender mod we parked cannot work
             # here, and says so nowhere in its pak.
             disabled = []
+            needs = None
             try:
+                # The requirement graph is 44 queries for an 866-mod
+                # collection, so it is fetched only when something will
+                # actually use it: a park to cascade from, or a count over
+                # the cap. A collection that fits and parks nothing - most
+                # of them - costs no lookup at all.
+                if (_bg3_se_parked_ids(settings, game_domain)
+                        or _bg3_module_total(settings, game_domain)
+                        > BG3_MODULE_CAP):
+                    needs = await _bg3_enabled_requirements(
+                        settings, game_domain
+                    )
                 disabled += await _bg3_park_se_dependents(
-                    settings, game_domain
+                    settings, game_domain, needs
                 )
             except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
                     KeyError, ValueError) as e:
@@ -15120,8 +15214,9 @@ query Link($slug: String!, $domainName: String!) {
             disabled += _bg3_broken_dep_pass(settings, game_domain)
             # Last, once everything that cannot run is off: does what is
             # left fit in the device? Counted after the other passes so the
-            # cap judges only modules that would actually load.
-            disabled += _bg3_capacity_pass(settings, game_domain)
+            # cap judges only modules that would actually load, and given
+            # the same requirement map so it can pick leaves.
+            disabled += _bg3_capacity_pass(settings, game_domain, needs)
             after = {k: r.get("enabled", True)
                      for k, r in _bg3_records(settings, game_domain)}
             if healed or repaired or disabled or before != after:

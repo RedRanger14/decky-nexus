@@ -17810,6 +17810,120 @@ class TestBg3Mode(unittest.TestCase):
         finally:
             main.BG3_MODULE_CAP = real
 
+    def _run_pass_with_reqs(self, reqs):
+        """Run the post-install pass with `reqs` ({mod id: [required mod
+        id]}) standing in for the Nexus requirement graph. Records the
+        number of requirement lookups on self.req_calls."""
+        nodes = [
+            {"modId": str(mid),
+             "modRequirements": {
+                 "nexusRequirements": {"nodes": [
+                     {"modName": f"mod {r}", "modId": str(r),
+                      "notes": "", "url": ""} for r in rs
+                 ]},
+                 "dlcRequirements": [],
+             }}
+            for mid, rs in reqs.items()
+        ]
+        self.req_calls = 0
+
+        async def fake_batches(_game_id, _ids, _fields, _key=None):
+            self.req_calls += 1
+            return nodes
+
+        async def fake_game_id(_domain, _key=None):
+            return 3474
+
+        real_b, real_g = main._legacy_mods_in_batches, main._resolve_game_id
+        main._legacy_mods_in_batches = fake_batches
+        main._resolve_game_id = fake_game_id
+        try:
+            return run(self.plugin.bg3_disable_broken_deps(
+                self.DOMAIN, self.GAME))
+        finally:
+            main._legacy_mods_in_batches = real_b
+            main._resolve_game_id = real_g
+
+    def _set_mod_ids(self, names, base=100):
+        s = main._load_settings()
+        for i, n in enumerate(names):
+            s["installed"][self.DOMAIN][n]["mod_id"] = base + i
+        main._save_settings(s)
+
+    def test_the_cap_passes_over_a_mod_another_mod_needs(self):
+        # Switching off a mod to save room must not break the mods that
+        # stay, so the cap takes leaves and leaves requirements alone -
+        # even when the requirement is the last thing in the collection.
+        real = self._with_cap(3)
+        try:
+            self._install_n(5)
+            names = [f"Cap Mod {i}" for i in range(5)]
+            self._set_mod_ids(names)
+            r = self._run_pass_with_reqs({100: [104]})
+            self.assertTrue(r.get("ok"), r)
+            self.assertEqual(sorted(d["name"] for d in r["disabled"]),
+                             ["Cap Mod 2", "Cap Mod 3"])
+            recs = main._load_settings()["installed"][self.DOMAIN]
+            self.assertTrue(recs["Cap Mod 4"]["enabled"],
+                            "the tail mod is needed by Cap Mod 0")
+            self.assertTrue(recs["Cap Mod 0"]["enabled"])
+            self.assertEqual(self.req_calls, 1,
+                             "one requirement lookup, shared by both passes")
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_anything_still_needing_a_capped_mod_goes_off_too(self):
+        # When the collection is so heavy that only a requirement is left
+        # to take, whatever needed it has to go as well - a mod registering
+        # nothing of its own is not spared, because it is not the count
+        # that breaks it, it is the missing framework.
+        real = self._with_cap(1)
+        try:
+            self._archive({
+                "Heavy1.pak": self._make_stats_pak(
+                    "beef0001-0000-0000-0000-0000000000b1", "Heavy1",
+                    self.HEALTHY_STATS),
+                "Heavy2.pak": self._make_stats_pak(
+                    "beef0002-0000-0000-0000-0000000000b2", "Heavy2",
+                    self.HEALTHY_STATS),
+            })
+            self.assertTrue(self._install("Framework").get("ok"))
+            s = main._load_settings()
+            s["installed"][self.DOMAIN]["Framework"]["mod_id"] = 100
+            s["installed"][self.DOMAIN]["Asset Pack"] = {
+                "mode": "bg3", "name": "Asset Pack", "mod_id": 200,
+                "enabled": True, "files": [], "bg3_mods": [],
+                "install_seq": 10 ** 9,
+            }
+            main._save_settings(s)
+            r = self._run_pass_with_reqs({200: [100]})
+            self.assertTrue(r.get("ok"), r)
+            off = {d["name"]: d["reason"] for d in r["disabled"]}
+            self.assertIn("Framework", off)
+            self.assertIn("Asset Pack", off)
+            self.assertIn("Framework", off["Asset Pack"],
+                          "it should name what it was waiting on")
+            self.assertIn("crashes while loading", off["Asset Pack"],
+                          "and pass on why that mod went")
+            recs = main._load_settings()["installed"][self.DOMAIN]
+            self.assertFalse(recs["Asset Pack"]["enabled"])
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_a_collection_that_fits_costs_no_requirement_lookup(self):
+        # The graph is 44 queries for the #1 collection. A collection that
+        # fits and parks nothing has no use for it, and most do.
+        real = self._with_cap(50)
+        try:
+            self._install_n(2)
+            self._set_mod_ids(["Cap Mod 0", "Cap Mod 1"])
+            r = self._run_pass_with_reqs({100: [101]})
+            self.assertTrue(r.get("ok"), r)
+            self.assertEqual(r["disabled"], [])
+            self.assertEqual(self.req_calls, 0)
+        finally:
+            main.BG3_MODULE_CAP = real
+
     def test_the_cap_runs_after_the_other_passes(self):
         # The cap must judge only what would actually load, so it comes
         # after Script Extender parking and the dependency pass.
