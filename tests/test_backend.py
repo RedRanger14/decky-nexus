@@ -104,6 +104,83 @@ def make_file(file_id, category, name, primary=False, version="1.0"):
     }
 
 
+class TestSettingsAtomicity(unittest.TestCase):
+    """settings.json is every record the plugin has. It was written with
+    open("w") and a streaming json.dump, so a reader in that window saw a
+    truncated file, and _load_settings turned the parse error into {}: the
+    collection page read 866 records as "Install remaining (951 of 953)"
+    on 2026-09-08, and a writer loading {} in that window would have erased
+    everything. Whole file or nothing, and a torn file is never "empty"."""
+
+    def setUp(self):
+        self.before = main._load_settings()
+        self.tmp = main.SETTINGS_PATH + ".tmp"
+
+    def tearDown(self):
+        for p in (self.tmp,):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        main._save_settings(self.before)
+
+    def test_a_save_that_dies_halfway_leaves_the_old_file_intact(self):
+        main._save_settings({"records": "the old truth"})
+        real = main.json.dump
+
+        def dies(obj, f, **kw):
+            f.write('{"records": "half of the n')
+            raise OSError("disk went away")
+
+        main.json.dump = dies
+        try:
+            with self.assertRaises(OSError):
+                main._save_settings({"records": "never landed"})
+        finally:
+            main.json.dump = real
+        self.assertEqual(main._load_settings(), {"records": "the old truth"})
+
+    def test_a_good_save_leaves_one_whole_file(self):
+        main._save_settings({"k": list(range(2000))})
+        self.assertFalse(os.path.exists(self.tmp), "the temp file is renamed away")
+        self.assertEqual(main._load_settings()["k"][-1], 1999)
+        if os.name != "nt":
+            self.assertEqual(os.stat(main.SETTINGS_PATH).st_mode & 0o777, 0o600)
+
+    def test_a_torn_file_is_never_an_empty_configuration(self):
+        with open(main.SETTINGS_PATH, "w", encoding="utf-8") as f:
+            f.write('{"installed": {"baldursgate3": {"A Mod": {"mo')
+        real_sleep = main.time.sleep
+        naps = []
+        main.time.sleep = lambda s: naps.append(s)
+        try:
+            with self.assertRaises(RuntimeError):
+                main._load_settings()
+        finally:
+            main.time.sleep = real_sleep
+        self.assertEqual(len(naps), 4, "it waits and re-reads before giving up")
+
+    def test_a_torn_read_recovers_once_the_write_lands(self):
+        with open(main.SETTINGS_PATH, "w", encoding="utf-8") as f:
+            f.write('{"installed": {"bal')
+        real_sleep = main.time.sleep
+
+        def land(_s):
+            with open(main.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                f.write('{"installed": {"whole": true}}')
+
+        main.time.sleep = land
+        try:
+            got = main._load_settings()
+        finally:
+            main.time.sleep = real_sleep
+        self.assertEqual(got, {"installed": {"whole": True}})
+
+    def test_a_missing_file_is_an_empty_configuration(self):
+        os.remove(main.SETTINGS_PATH)
+        self.assertEqual(main._load_settings(), {})
+
+
 class TestFileSelection(unittest.TestCase):
     """Regression: SMAPI's Nexus file list had is_primary stuck on a 2020
     OLD_VERSION file, which made the framework installer download a

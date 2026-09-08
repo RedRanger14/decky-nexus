@@ -21,6 +21,8 @@ import {
   lastRunSummary,
   preDisabledNote,
   autoOffNote,
+  autoOffSummary,
+  autoOffGroups,
   storeHeaderPlan,
   storeHeaderMinWidth,
   repairedNote,
@@ -973,6 +975,48 @@ test("several mods left off each keep their own reason", () => {
   assert.match(msg, /A: Reason one\./);
   assert.match(msg, /B: Reason two\./);
   assert.match(msg, /My Mods can switch them back on/);
+});
+
+// The collection page shows one line and keeps the list behind it. With 304
+// mods switched off on the #1 BG3 collection, the paragraph naming each
+// mod and its reason filled the screen - Michael: "the text box explaining
+// is absolutely massive... It definitely needs putting in an accordion
+// which defaults to closed... maybe number lists the mods that are
+// disabled and why".
+test("the summary line counts, invites, and says how to undo", () => {
+  const many = autoOffSummary([
+    { name: "A", reason: "r1" },
+    { name: "B", reason: "r1" },
+    { name: "C", reason: "r2" },
+  ]);
+  assert.match(many, /^3 mods were installed but left switched off\./);
+  assert.match(many, /Select this note to see which and why/);
+  assert.match(many, /My Mods can switch them back on/);
+  assert.doesNotMatch(many, /r1|r2/, "no reasons on the closed line");
+  const one = autoOffSummary([{ name: "A", reason: "r1" }]);
+  assert.match(one, /^One mod was installed but left switched off\./);
+  assert.match(one, /to see why\./);
+  assert.match(one, /switch it back on/);
+  assert.equal(autoOffSummary([]), "");
+  assert.doesNotMatch(many + one, /—/, "no em dashes in player-facing copy");
+});
+
+test("the opened list groups by reason, biggest first, numbered right through", () => {
+  const groups = autoOffGroups([
+    { name: "Zeta", reason: "needs the Script Extender" },
+    { name: "Solo", reason: "collides with another mod" },
+    { name: "Alpha", reason: "needs the Script Extender" },
+    { name: "Mid", reason: "needs the Script Extender" },
+    { name: "", reason: "ignored: no name" },
+  ]);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].reason, "needs the Script Extender");
+  assert.deepEqual(groups[0].names, ["Alpha", "Mid", "Zeta"], "alphabetical inside a group");
+  assert.equal(groups[0].start, 1);
+  assert.equal(groups[1].reason, "collides with another mod");
+  assert.deepEqual(groups[1].names, ["Solo"]);
+  assert.equal(groups[1].start, 4, "numbering continues across groups");
+  assert.deepEqual(autoOffGroups([]), []);
 });
 
 test("the mod page names the version it watched fail", () => {

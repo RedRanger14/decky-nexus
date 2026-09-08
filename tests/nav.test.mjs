@@ -597,10 +597,9 @@ test("a stale installed-mods read cannot overwrite a newer one", () => {
   // "Install required (5)", and leaving and reopening the page fixed it -
   // the records were right, the newest read just lost the race.
   const page = read("CollectionPage.tsx");
-  const fn = page.slice(
-    page.indexOf("const refreshInstalled = () => {"),
-    page.indexOf("const refreshInstalled = () => {") + 1400
-  );
+  const start = page.indexOf("const refreshInstalled = (");
+  assert.ok(start > 0, "refreshInstalled must exist");
+  const fn = page.slice(start, start + 2600);
   assert.ok(
     /\+\+refreshSeq\.current/.test(fn),
     "refreshInstalled does not stamp its reads, so it cannot tell which " +
@@ -610,6 +609,21 @@ test("a stale installed-mods read cannot overwrite a newer one", () => {
     /if \(stale\(\)\) return;/.test(fn),
     "nothing discards a superseded read, so an old picture can overwrite " +
       "a current one"
+  );
+  // And a read that FAILS is not a picture at all. One that came back
+  // empty put "Install remaining (951 of 953)" on a finished collection
+  // (2026-09-08); a failed read retries, then says so, never pretends.
+  assert.ok(
+    /if \(!r\.ok\) throw/.test(fn),
+    "a not-ok result must be treated as a failure, not as nothing installed"
+  );
+  assert.ok(
+    /\.catch\([\s\S]{0,400}refreshInstalled\(attempt \+ 1\)/.test(fn),
+    "a failed read must retry"
+  );
+  assert.ok(
+    /Could not read installed mods/.test(fn),
+    "and a read that keeps failing must be said out loud"
   );
 });
 

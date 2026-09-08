@@ -22,7 +22,8 @@ import {
   isRemaining,
 
   preDisabledNote,
-  autoOffNote,
+  autoOffSummary,
+  autoOffGroups,
   directNote,
   isGoneFromNexus,
   isNetworkError,
@@ -171,6 +172,9 @@ export function CollectionPage() {
   // Mods switched off before the first launch because this game build has
   // already been seen to fail on them.
   const [preDisabled, setPreDisabled] = useState<string[]>([]);
+  // The switched-off list is behind one line until opened: 304 entries
+  // with their reasons filled the screen on the #1 BG3 collection.
+  const [autoOffOpen, setAutoOffOpen] = useState(false);
   // Mods installed but left off, with the reason each was: a setup window
   // that traps the player in Gaming Mode, or a mod that fights the rest of
   // the collection.
@@ -211,7 +215,7 @@ export function CollectionPage() {
   // lost a race. Only the latest read may write state.
   const refreshSeq = useRef(0);
 
-  const refreshInstalled = () => {
+  const refreshInstalled = (attempt = 0) => {
     if (!sel) return;
     const seq = ++refreshSeq.current;
     const stale = () => seq !== refreshSeq.current;
@@ -223,6 +227,11 @@ export function CollectionPage() {
       sel.game.protectedModFolders ?? []
     ).then((r) => {
       if (stale()) return;
+      // A read that fails must never be mistaken for "nothing installed":
+      // a finished 866-record collection read as "Install remaining (951
+      // of 953)" when one refresh came back empty (2026-09-08). Retry a
+      // few times, and if it still fails, say so instead of pretending.
+      if (!r.ok) throw new Error(r.error ?? "Could not read installed mods");
       // Framework pins (REFramework, CET...) count as installed: Step 1
       // owns them, and their archives don't fit the mod pipeline anyway.
       const fwIds = [
@@ -252,6 +261,16 @@ export function CollectionPage() {
             .filter((id): id is number => id !== undefined)
         )
       );
+    }).catch((e) => {
+      if (stale()) return;
+      if (attempt < 3) {
+        setTimeout(() => refreshInstalled(attempt + 1), 1500 * (attempt + 1));
+        return;
+      }
+      toaster.toast({
+        title: "Could not read installed mods",
+        body: `${String(e)}. The counts on this page may be wrong until it is reopened.`,
+      });
     });
   };
 
@@ -1863,7 +1882,8 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
           </div>
         )}
         {autoOff.length > 0 && !installing && (
-          <div
+          <Focusable
+            onActivate={() => setAutoOffOpen((o) => !o)}
             style={{
               fontSize: "12.5px",
               margin: "-6px 0 12px",
@@ -1874,8 +1894,29 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               lineHeight: 1.45,
             }}
           >
-            🎮 {autoOffNote(autoOff)}
-          </div>
+            <div>
+              {autoOffOpen ? "▾ " : "▸ "}🎮 {autoOffSummary(autoOff)}
+            </div>
+            {autoOffOpen && (
+              <div style={{ marginTop: "10px" }}>
+                {autoOffGroups(autoOff).map((g, gi) => (
+                  <div key={gi} style={{ marginTop: gi === 0 ? 0 : "14px" }}>
+                    <div style={{ opacity: 0.85, marginBottom: "6px" }}>
+                      {g.reason}
+                    </div>
+                    {g.names.map((n, i) => (
+                      <div
+                        key={`${gi}-${i}`}
+                        style={{ paddingLeft: "14px", lineHeight: 1.6 }}
+                      >
+                        {g.start + i}. {n}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Focusable>
         )}
         {(() => {
           // Mods this collection carries that will be installed switched

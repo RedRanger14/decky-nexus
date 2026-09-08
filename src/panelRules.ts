@@ -636,6 +636,54 @@ export function autoOffNote(
   );
 }
 
+/** The one line the collection page shows before the list is opened. The
+ * full list is behind it: with 304 mods switched off on the #1 BG3
+ * collection, one paragraph naming every mod and its reason filled the
+ * screen (Michael: "the text box explaining is absolutely massive"). */
+export function autoOffSummary(
+  items: { name: string; reason: string }[]
+): string {
+  const off = items.filter((i) => i.name);
+  if (!off.length) return "";
+  const one = off.length === 1;
+  return (
+    `${one ? "One mod was" : `${off.length} mods were`} installed but ` +
+    `left switched off. Select this note to see ` +
+    `${one ? "why" : "which and why"}. My Mods can switch ` +
+    `${one ? "it" : "them"} back on.`
+  );
+}
+
+/** The switched-off mods grouped by reason for the opened list: the
+ * biggest group first, names alphabetical inside a group, and one running
+ * number across all groups so it reads as one numbered list. 220 mods
+ * that all need the Script Extender are one heading and 220 lines, not
+ * 220 copies of the same paragraph. */
+export function autoOffGroups(
+  items: { name: string; reason: string }[]
+): { reason: string; names: string[]; start: number }[] {
+  const byReason = new Map<string, string[]>();
+  for (const i of items) {
+    if (!i.name) continue;
+    const r = i.reason || "No reason was recorded.";
+    const list = byReason.get(r);
+    if (list) list.push(i.name);
+    else byReason.set(r, [i.name]);
+  }
+  const groups = [...byReason.entries()]
+    .map(([reason, names]) => ({
+      reason,
+      names: [...names].sort((a, b) => a.localeCompare(b)),
+    }))
+    .sort((a, b) => b.names.length - a.names.length);
+  let n = 1;
+  return groups.map((g) => {
+    const start = n;
+    n += g.names.length;
+    return { ...g, start };
+  });
+}
+
 /** What the panel says about mods it switched off without being asked.
  *
  * Silence would be worse than a button. Somebody who installed a

@@ -205,19 +205,43 @@ def _load_settings() -> dict:
     # next reader. That is a subtle, state-corrupting class of bug in
     # exchange for the smallest of the available speedups; the merge and
     # threading work is where the time actually was.
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    # A file that does not parse is NOT an empty configuration. Returning {}
+    # for one told the collection page that nothing was installed (866
+    # records read as "Install remaining (951 of 953)", 2026-09-08), and a
+    # writer that loaded {} and saved would have erased every record. The
+    # save below is atomic now, so a torn read should not happen; if it
+    # ever does, it is a write in flight from another process, so wait a
+    # moment and read again rather than believe it.
+    for attempt in range(4):
+        try:
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+        except json.JSONDecodeError as e:
+            decky.logger.warning(
+                f"settings.json did not parse (attempt {attempt + 1}): {e}"
+            )
+            time.sleep(0.05 * (attempt + 1))
+    raise RuntimeError(
+        "settings.json is not valid JSON; refusing to treat it as empty"
+    )
 
 
 def _save_settings(settings: dict) -> None:
+    """Write the settings atomically: whole file or nothing, never a
+    half-written one. json.dump streams a two-megabyte document in small
+    writes, and a reader in that window saw a truncated file."""
     os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
-    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+    tmp = SETTINGS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
-    # The settings file holds the API key - keep it owner-only.
-    os.chmod(SETTINGS_PATH, 0o600)
+        f.flush()
+        os.fsync(f.fileno())
+    # The settings file holds the API key - keep it owner-only, and set it
+    # on the temp file so the permission is there from the first instant.
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, SETTINGS_PATH)
 
 
 _INSTALL_SEQ = None

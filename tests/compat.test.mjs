@@ -181,8 +181,13 @@ test("the mod page and the collection page both consult the rule", () => {
   );
   assert.match(
     coll,
-    /autoOffNote\(/,
+    /autoOffSummary\(/,
     "CollectionPage must tell the user what it switched off"
+  );
+  assert.match(
+    coll,
+    /autoOffGroups\(/,
+    "and list which and why, grouped, behind that one line"
   );
 });
 
