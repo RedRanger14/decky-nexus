@@ -221,6 +221,14 @@ export interface GameStatus {
    * Live-service games break their mods with every update; a fresh number
    * here means "mods may be inert until authors re-release". */
   updated_days_ago?: number;
+  /** Baldur's Gate 3 only: what a crash had done to the mod setup, and was
+   * put back when this panel opened. The game unregisters every mod when it
+   * dies while loading, and arms its own mod-free safe mode for the next
+   * launch, so the player sees mods that are switched on doing nothing. */
+  bg3_crash_repair?: {
+    marker_cleared: boolean;
+    registrations_restored: number;
+  };
 }
 
 export const getMods = callable<

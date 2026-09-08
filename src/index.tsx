@@ -1118,6 +1118,29 @@ function CurrentGameSection() {
             </Field>
           </PanelSectionRow>
         )}
+      {/* The game unregisters every mod when it crashes while loading and
+          arms its own safe mode for the next launch. Both are undone when
+          this panel opens, and saying so beats the player finding a
+          vanilla game with their mods still showing as on. */}
+      {status?.bg3_crash_repair && (
+        <PanelSectionRow>
+          <Field label="🔧 Put your mods back">
+            {`${game.displayName} crashed the last time it ran, which ` +
+              `switches every mod off in the game's own list. ` +
+              (status.bg3_crash_repair.registrations_restored > 0
+                ? `${status.bg3_crash_repair.registrations_restored} mod ` +
+                  `registrations were put back. `
+                : "") +
+              (status.bg3_crash_repair.marker_cleared
+                ? "The game had also armed its mod-free safe mode for the " +
+                  "next launch, which is cleared. "
+                : "") +
+              "If it keeps crashing while loading, switch some mods off in " +
+              "My Mods: this device runs out of graphics memory with very " +
+              "large mod lists."}
+          </Field>
+        </PanelSectionRow>
+      )}
       {game.protonRequired && status?.installed && nativeBuild && (
         <PanelSectionRow>
           <ButtonItem

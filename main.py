@@ -6211,6 +6211,7 @@ HOME_ROOT = os.path.expanduser("~")
 BG3_PROFILE_ROOT = os.path.join(
     HOME_ROOT, ".local", "share", "Larian Studios", "Baldur's Gate 3"
 )
+BG3_APP_ID = 1086940
 
 
 def _bg3_mods_dir() -> str:
@@ -6668,25 +6669,42 @@ def _bg3_cascade_dependents(
     return changed
 
 
-# How many mod modules the native Linux build will load before it dies.
+# How many mod modules the native Linux build will load before it starts
+# dying part-way through the loading screen.
 #
-# Measured on the Legion Go 2 on 2026-09-08 with the #1 collection, the same
-# mods and only the count varying: 625 registered modules booted four times
-# out of four, 636 crashed, 682 crashed, 735 crashed twice. The crash comes
-# 13-26 seconds into loading with the Larian reporter up, survives a
-# reboot, fresh shader and pipeline caches, and is not the file-descriptor
-# limit. It is a property of the device, not of any mod - and a bisection
-# run near it convicts innocent mods at random, which is how eleven wrong
-# rules got shipped and withdrawn the day before. 600 leaves a margin under
-# the last count that always loaded.
-BG3_MODULE_CAP = 600
+# The fault is one bug, not a bad mod. All 136 minidumps the Larian crash
+# reporter kept between 2026-09-05 and 09-08 are the same SIGSEGV on a null
+# read at bg3+0x25fa37a, in a GPU resource job, and one boot's own log named
+# VK_ERROR_OUT_OF_DEVICE_MEMORY. It is a probability, not a threshold: the
+# same set boots or dies depending on what else holds graphics memory at
+# that moment, which is why a bisection near the line convicts innocent
+# mods (eleven wrong rules shipped and withdrawn on 09-06) and why a single
+# passing boot proves nothing.
+#
+# Measured on the Legion Go 2 on 2026-09-08, boots driven by
+# tools/bg3boothunt.py with the page cache dropped before every launch (the
+# harshest case, and the one a player meets right after a big install):
+#
+#     registered mods    boots    died while loading
+#         2 (vanilla)      6              0
+#       300                6              0
+#       450                6              0
+#       600               10              4
+#
+# Video memory sat at 490-497MB of this device's 512MB carve-out in every
+# boot, vanilla included, and GPU transfer memory was the same at 450 as at
+# 600 - so neither number predicts the crash, and 450 is where it stops
+# happening. Raising the device's BIOS video-memory carve-out may lift this
+# limit; until that is measured, this is the honest number.
+BG3_MODULE_CAP = 450
 BG3_OVER_CAP = (
-    "Baldur's Gate 3 on this device crashes while loading once more than "
-    f"about {BG3_MODULE_CAP} mod modules are switched on at once (measured "
-    "here: 625 loaded every time, 636 crashed). This collection has more, "
-    "so the mods at the end of its list were left switched off to stay "
-    "under the limit. Switch one of them on in My Mods and switch another "
-    "off, and it will load."
+    "Baldur's Gate 3 runs out of graphics memory on this device when too "
+    "many mods load at once, and dies part-way through the loading screen. "
+    f"Measured here: with {BG3_MODULE_CAP} mods switched on it reached the "
+    "menu every time, with 600 it failed four times in ten. This collection "
+    "has more than that, so the mods at the end of its list were switched "
+    "off to stay under the limit. If you want one of them, switch it on in "
+    "My Mods and switch another off."
 )
 
 
@@ -6816,6 +6834,83 @@ def _bg3_move_paks(rec: dict, to_disabled: bool) -> None:
             if os.path.isfile(dst):
                 os.remove(dst)
             shutil.move(src, dst)
+
+
+def _bg3_crash_marker() -> str:
+    return os.path.join(BG3_PROFILE_ROOT, "ModCrashSanityCheck")
+
+
+def _bg3_registered_uuids() -> set:
+    """The mod UUIDs currently in modsettings.lsx, lower-cased."""
+    out = set()
+    try:
+        doc = xml_parse_file(_bg3_modsettings_path())
+    except (OSError, ValueError):
+        return out
+    for node in doc.iter("node"):
+        if node.get("id") != "ModuleShortDesc":
+            continue
+        for a in node.findall("attribute"):
+            if a.get("id") == "UUID" and a.get("value"):
+                out.add(a.get("value").lower())
+    return out
+
+
+def _bg3_crash_recovery(game_domain: str = "baldursgate3") -> dict:
+    """Undo what a crash does to the mod setup, without being asked.
+
+    Baldur's Gate 3 does two things when it dies during loading, and both
+    of them look to the player like the plugin broke:
+
+    1. It WIPES modsettings.lsx back to the bare game, so every mod is
+       unregistered. My Mods still shows them switched on, because the
+       records are unchanged, and the next launch is a vanilla game with
+       608 paks sitting unused in the Mods folder.
+    2. It leaves a ModCrashSanityCheck folder behind. With that present the
+       NEXT launch is deliberately mod-free safe mode - so the launch after
+       a crash proves nothing and looks like a second failure.
+
+    Michael's launch on 2026-09-08 hit exactly this. Repaired here rather
+    than on a health page for the same reason the Skyrim catalog fix lives
+    in get_game_status: nobody opens a health page when the game will not
+    start. Never touches anything while the game is running - the marker is
+    supposed to exist mid-load, and the list is read while it boots.
+    """
+    out = {"marker_cleared": False, "registrations_restored": 0}
+    if not os.path.isdir(BG3_PROFILE_ROOT) or _bg3_running():
+        return out
+    marker = _bg3_crash_marker()
+    if os.path.isdir(marker):
+        shutil.rmtree(marker, ignore_errors=True)
+        out["marker_cleared"] = not os.path.isdir(marker)
+    if not os.path.isfile(_bg3_modsettings_path()):
+        return out
+    settings = _load_settings()
+    have = _bg3_registered_uuids()
+    missing = 0
+    for _key, rec in _bg3_records(settings, game_domain):
+        if not rec.get("enabled", True):
+            continue
+        for mod in rec.get("bg3_mods") or []:
+            u = (mod.get("uuid") or "").lower()
+            if u and u not in have:
+                missing += 1
+    if missing:
+        err = _write_bg3_modsettings(settings, game_domain)
+        if err:
+            decky.logger.warning(f"bg3 crash recovery could not rewrite: {err}")
+            return out
+        _save_settings(settings)
+        out["registrations_restored"] = missing
+    if out["marker_cleared"] or out["registrations_restored"]:
+        decky.logger.info(
+            "bg3 crash recovery: "
+            + (f"put {out['registrations_restored']} mod registration(s) back"
+               if out["registrations_restored"] else "nothing to re-register")
+            + ("; cleared the safe-mode marker the crash left"
+               if out["marker_cleared"] else "")
+        )
+    return out
 
 
 def _bg3_module_total(settings: dict, game_domain: str) -> int:
@@ -22135,6 +22230,14 @@ query CollectionInstructions($slug: String!) {
         # the path to substitute into the template.
         if "Bannerlord" in install_dir:
             status["blse_script"] = _ensure_blse_launch_script()
+        # A BG3 crash unregisters every mod and arms the game's safe mode.
+        # Same reasoning as the Skyrim catalog fix above: repaired when the
+        # panel opens, because the player's next move after a crash is to
+        # open this panel and wonder where their mods went.
+        if int(app_id or 0) == BG3_APP_ID:
+            fixed = _bg3_crash_recovery()
+            if fixed["marker_cleared"] or fixed["registrations_restored"]:
+                status["bg3_crash_repair"] = fixed
         decky.logger.info(f"game status for {install_dir!r}: {status}")
         return status
 

@@ -17802,6 +17802,111 @@ class TestBg3Mode(unittest.TestCase):
         r = self._run_se_pass(empty, fg)
         self.assertEqual(r["disabled"], [], r)
 
+    # ---- what a crash leaves behind -------------------------------------------------------
+    # Michael's launch on 2026-09-08 crashed while loading. The game does
+    # two things when that happens, and both look like the plugin broke:
+    # it WIPES modsettings.lsx back to the bare game, so every mod is
+    # unregistered while My Mods still shows them on; and it leaves a
+    # ModCrashSanityCheck folder, which makes the NEXT launch a deliberately
+    # mod-free safe mode. Repaired when the panel opens, for the same reason
+    # the Skyrim catalog fix lives there: nobody opens a health page when
+    # the game will not start.
+
+    def _crash_the_game(self, wipe=True, marker=True):
+        """What BG3 leaves behind after dying during a load."""
+        if wipe:
+            with open(main._bg3_modsettings_path(), "w", encoding="utf-8") as f:
+                f.write(self.BASELINE)
+        if marker:
+            os.makedirs(main._bg3_crash_marker(), exist_ok=True)
+
+    def _status(self, app_id=1086940):
+        return run(self.plugin.get_game_status(self.GAME, "Mods", "", app_id))
+
+    def test_a_crash_unregisters_every_mod_and_the_panel_puts_them_back(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        self.assertIn("aaaa1111-0000-0000-0000-000000000001",
+                      self._uuids_in_modsettings())
+        self._crash_the_game()
+        self.assertNotIn("aaaa1111-0000-0000-0000-000000000001",
+                         self._uuids_in_modsettings(), "the crash wiped it")
+        s = self._status()
+        self.assertEqual(s["bg3_crash_repair"]["registrations_restored"], 1)
+        self.assertTrue(s["bg3_crash_repair"]["marker_cleared"])
+        self.assertIn("aaaa1111-0000-0000-0000-000000000001",
+                      self._uuids_in_modsettings(), "and the panel put it back")
+        self.assertFalse(os.path.isdir(main._bg3_crash_marker()))
+        # The game's own entries are still there, untouched.
+        self.assertIn("cb555efe-2d9e-131f-8195-a89329d218ea",
+                      self._uuids_in_modsettings())
+        # Idempotent: nothing to say the second time.
+        self.assertNotIn("bg3_crash_repair", self._status())
+
+    def test_a_mod_the_user_switched_off_is_not_re_registered(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", "Test Mod", False, "bg3", self.DOMAIN))
+        self._crash_the_game(marker=False)
+        s = self._status()
+        self.assertNotIn("bg3_crash_repair", s,
+                         "nothing was owed to the game's list")
+        self.assertNotIn("aaaa1111-0000-0000-0000-000000000001",
+                         self._uuids_in_modsettings())
+
+    def test_the_safe_mode_marker_alone_is_still_cleared(self):
+        # A crash that did not wipe the list still arms safe mode, and a
+        # launch in safe mode looks like a second failure.
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        self._crash_the_game(wipe=False)
+        s = self._status()
+        self.assertTrue(s["bg3_crash_repair"]["marker_cleared"])
+        self.assertEqual(s["bg3_crash_repair"]["registrations_restored"], 0)
+        self.assertFalse(os.path.isdir(main._bg3_crash_marker()))
+
+    def test_the_repair_never_touches_anything_while_the_game_runs(self):
+        # The marker is SUPPOSED to exist while the game loads, and the
+        # list is read as it boots. Same rule as every other mutation.
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        self._crash_the_game()
+        real = main._bg3_running
+        main._bg3_running = lambda: True
+        try:
+            s = self._status()
+        finally:
+            main._bg3_running = real
+        self.assertNotIn("bg3_crash_repair", s)
+        self.assertTrue(os.path.isdir(main._bg3_crash_marker()),
+                        "the marker belongs to the running game")
+        self.assertNotIn("aaaa1111-0000-0000-0000-000000000001",
+                         self._uuids_in_modsettings())
+        # With the game closed, the same panel open repairs it.
+        self.assertEqual(
+            self._status()["bg3_crash_repair"]["registrations_restored"], 1)
+
+    def test_another_games_panel_does_not_run_the_bg3_repair(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        self._crash_the_game()
+        self.assertNotIn("bg3_crash_repair", self._status(app_id=489830))
+        self.assertTrue(os.path.isdir(main._bg3_crash_marker()))
+
+    def test_the_repair_is_wired_into_the_panel_not_a_health_page(self):
+        with open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8") as f:
+            src = f.read()
+        i = src.index("async def get_game_status(")
+        body = src[i : i + 5000]
+        self.assertIn("_bg3_crash_recovery()", body)
+        self.assertIn("BG3_APP_ID", body)
+
     # ---- Windows-only downloads -----------------------------------------------------------
     # The fresh install of the #1 collection (2026-09-08) left seven files
     # "not installed": three Script Extender family loaders, two settings
@@ -18094,7 +18199,7 @@ class TestBg3Mode(unittest.TestCase):
             self.assertIn("Asset Pack", off)
             self.assertIn("Framework", off["Asset Pack"],
                           "it should name what it was waiting on")
-            self.assertIn("crashes while loading", off["Asset Pack"],
+            self.assertIn("graphics memory", off["Asset Pack"],
                           "and pass on why that mod went")
             recs = main._load_settings()["installed"][self.DOMAIN]
             self.assertFalse(recs["Asset Pack"]["enabled"])
