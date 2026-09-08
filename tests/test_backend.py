@@ -18672,18 +18672,64 @@ class TestBg3BootHunt(unittest.TestCase):
         self.assertIn("shim_since", src[j : j + 2000])
 
     def test_an_exit_without_the_crash_reporter_is_not_a_crash(self):
-        """Every real crash leaves the Larian reporter up. A process that
-        vanished without it (Steam refusing a too-quick relaunch) convicted
-        an innocent mod on 2026-09-06: with it removed the state crashed
-        just the same. Such an exit is inconclusive, never a verdict."""
+        """A process that vanished without the reporter (Steam refusing a
+        too-quick relaunch) convicted an innocent mod on 2026-09-06: with
+        it removed the state crashed just the same. Such an exit is
+        inconclusive - UNLESS the game's own log shows it had got as far as
+        loading modules, which two no-dump crashes did on 2026-09-08."""
         src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
         i = src.index("def boot_once(")
-        body = src[i : i + 5200]
+        body = src[i : i + 5600]
         j = body.index("if not cur:")
-        seg = body[j : j + 900]
+        seg = body[j : j + 1400]
         self.assertIn("crash_reporter_running()", seg)
+        self.assertIn("game_started_loading(launch_at)", seg)
         self.assertIn('"inconclusive"', seg)
         self.assertNotIn('return "exit"\n', seg.replace('return "exit" if', ""))
+
+    def test_reaching_loadmodule_makes_a_silent_exit_a_crash(self):
+        """The game logs its client state machine per boot. An exit after
+        LoadModule is a crash whatever the reporter did; one before it is
+        Steam declining the launch."""
+        d = tempfile.mkdtemp(prefix="bg3logs-")
+        real = self.h.BG3_STATE_LOGS
+        self.h.BG3_STATE_LOGS = d
+        try:
+            since = time.time() - 60
+            self.assertFalse(self.h.game_started_loading(since), "no logs at all")
+            old = os.path.join(d, "network.2026-09-08T10-00-00-1.log")
+            with open(old, "w") as f:
+                f.write("CLIENT STATE SWAP - from: LoadPsoCache, to: LoadModule\n")
+            os.utime(old, (since - 600, since - 600))
+            self.assertFalse(self.h.game_started_loading(since),
+                             "an older boot's log is not this boot")
+            new = os.path.join(d, "network.2026-09-08T15-57-00-1.log")
+            with open(new, "w") as f:
+                f.write("CLIENT STATE SWAP - from: InitMenu, to: StartLoading\n")
+            self.assertFalse(self.h.game_started_loading(since),
+                             "never reached LoadModule: Steam-side exit")
+            with open(new, "a") as f:
+                f.write("CLIENT STATE SWAP - from: LoadPsoCache, to: LoadModule\n")
+            self.assertTrue(self.h.game_started_loading(since))
+            with open(os.path.join(d, "gold.2026-09-08T15-57-00-1.log"), "w") as f:
+                f.write("to: LoadModule\n")
+            self.h.BG3_STATE_LOGS = os.path.join(d, "missing")
+            self.assertFalse(self.h.game_started_loading(since), "no dir, no claim")
+        finally:
+            self.h.BG3_STATE_LOGS = real
+
+    def test_gpu_memory_is_sampled_and_logged(self):
+        """The crash is a device-memory allocation failing (136 dumps, one
+        site, 2026-09-08). Every sample carries VRAM and GTT so the next
+        argument has the numbers."""
+        vram, gtt = self.h.gpu_mem_mb()
+        self.assertIsInstance(vram, int)
+        self.assertIsInstance(gtt, int)
+        src = self._code(os.path.join(REPO_ROOT, "tools", "bg3boothunt.py"))
+        i = src.index("def boot_once(")
+        self.assertIn("vram=", src[i : i + 5600])
+        j = src.index("def sample(")
+        self.assertIn('"vram_mb"', src[j : j + 900])
 
     def test_every_launch_rewrites_the_mod_list_from_the_records(self):
         """BG3 wipes modsettings.lsx to the bare game WHEN it crashes, at

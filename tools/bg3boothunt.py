@@ -89,6 +89,14 @@ GAME_DIR = "Baldurs Gate 3"
 PLUGIN_DIR = "/home/deck/homebrew/plugins/Nexus Mods"
 LOG_PATH = "/tmp/bg3-boot-hunt.log"
 WANTED_PATH = "/tmp/bg3-boot-hunt-wanted.json"
+# The game's own per-boot logs. network.*.log carries the client state
+# machine (InitMenu -> StartLoading -> Init -> LoadPsoCache -> LoadModule
+# -> LoadMenu); gold.*.log carries the renderer, including VK_ERROR lines.
+BG3_STATE_LOGS = "/home/deck/.local/state/Larian Studios/Baldur's Gate 3/logs"
+# amdgpu's global memory counters. Not per process, but the game is the
+# only thing that moves them by gigabytes, and the crash they explain
+# (2026-09-08) is a device-memory allocation failing in a resource job.
+DRM_DEVICE = "/sys/class/drm/card0/device"
 
 SAMPLE_SECS = 10
 # A boot that has neither settled nor spun by here is reported as
@@ -381,6 +389,45 @@ def gpu_ms(pid):
     return total // 1_000_000
 
 
+def gpu_mem_mb():
+    """(VRAM used, GTT used) in MB from amdgpu, or (0, 0) where absent."""
+    out = []
+    for name in ("mem_info_vram_used", "mem_info_gtt_used"):
+        try:
+            with open(os.path.join(DRM_DEVICE, name)) as f:
+                out.append(int(f.read().strip()) // (1024 * 1024))
+        except (OSError, ValueError):
+            out.append(0)
+    return tuple(out)
+
+
+def game_started_loading(since):
+    """Did a boot launched at `since` get as far as loading modules?
+
+    The game writes network.<timestamp>.log per boot and logs every client
+    state swap into it. A process that reached LoadModule and then vanished
+    without the crash reporter is still a crash - the 15:25 launch and the
+    15:57 cold boot on 2026-09-08 both did exactly that and left no dump -
+    where one that never got there is Steam refusing the launch."""
+    try:
+        names = os.listdir(BG3_STATE_LOGS)
+    except OSError:
+        return False
+    for n in names:
+        if not (n.startswith("network.") and n.endswith(".log")):
+            continue
+        p = os.path.join(BG3_STATE_LOGS, n)
+        try:
+            if os.path.getmtime(p) < since - 5:
+                continue
+            with open(p, errors="replace") as f:
+                if "to: LoadModule" in f.read():
+                    return True
+        except OSError:
+            continue
+    return False
+
+
 def sample(pid):
     try:
         with open(f"/proc/{pid}/stat") as f:
@@ -390,10 +437,13 @@ def sample(pid):
             for line in f:
                 if line.startswith(("read_bytes", "write_bytes")):
                     io_total += int(line.split()[1])
+        vram, gtt = gpu_mem_mb()
         return {
             "cpu_ticks": int(p[13]) + int(p[14]),
             "rss_mb": int(p[23]) * 4096 // (1024 * 1024),
             "io_mb": io_total // (1024 * 1024),
+            "vram_mb": vram,
+            "gtt_mb": gtt,
             "gpu_ms": gpu_ms(pid),
         }
     except (OSError, IndexError, ValueError):
@@ -488,15 +538,23 @@ def boot_once(m, label):
         time.sleep(SAMPLE_SECS)
         cur = sample(pid)
         if not cur:
-            # Every real crash leaves the Larian reporter on screen. A
-            # process that vanishes WITHOUT it closed for some other reason
-            # - Steam refusing a launch that followed a kill too closely,
-            # most likely - and is not evidence against a mod. One such
-            # exit convicted an innocent mod on 2026-09-06; the state with
-            # it removed crashed just the same.
-            crashed = crash_reporter_running()
-            say(f"  {label}: the process exited "
-                f"({'the Larian crash reporter is up' if crashed else 'no crash reporter - not a crash verdict'})")
+            # A crash usually leaves the Larian reporter on screen, but not
+            # always: on 2026-09-08 two boots reached LoadModule, vanished
+            # with no reporter and no dump. The game's own network log says
+            # whether it got as far as loading modules. A process that
+            # vanished before that closed for some other reason - Steam
+            # refusing a launch that followed a kill too closely - and is
+            # not evidence against anything. One such exit convicted an
+            # innocent mod on 2026-09-06; the state with it removed crashed
+            # just the same.
+            reporter = crash_reporter_running()
+            loaded = game_started_loading(launch_at)
+            crashed = reporter or loaded
+            why = ("the Larian crash reporter is up" if reporter
+                   else "no reporter, but the game had reached LoadModule"
+                   if loaded else "no crash reporter and it never began "
+                   "loading - not a crash verdict")
+            say(f"  {label}: the process exited ({why})")
             # Clear it here as well as in kill_game: while it lives Steam
             # thinks the app is still running and the next launch is a
             # silent no-op.
@@ -508,12 +566,13 @@ def boot_once(m, label):
         # and makes every judgement auditable after the fact.
         prev = samples[-2]
         say(
-            "    %s t=%3.0f rss=%5d cpu=%5d gpu=%6d io=%+4d"
+            "    %s t=%3.0f rss=%5d cpu=%5d gpu=%6d io=%+4d vram=%3d gtt=%5d"
             % (
                 label, time.time() - launch_at, cur["rss_mb"],
                 cur["cpu_ticks"] - prev["cpu_ticks"],
                 cur.get("gpu_ms", 0) - prev.get("gpu_ms", 0),
                 cur["io_mb"] - prev["io_mb"],
+                cur.get("vram_mb", 0), cur.get("gtt_mb", 0),
             )
         )
         touched = any(
