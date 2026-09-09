@@ -6697,6 +6697,40 @@ def _bg3_cascade_dependents(
 # happening. Raising the device's BIOS video-memory carve-out may lift this
 # limit; until that is measured, this is the honest number.
 BG3_MODULE_CAP = 450
+# The dedicated pool is a firmware carve-out (UMA frame buffer), not the
+# shared memory the driver borrows on demand. The obvious theory - a bigger
+# pool lifts the cap - was tested on 2026-09-09 and is WRONG: with the
+# Legion's BIOS moved from 512MB to 8GB, every one of 13 cold boots died at
+# 16-38 seconds with VK_ERROR_OUT_OF_DEVICE_MEMORY on the swapchain and
+# the same null-pointer crash, eleven of them with ONE registered mod and
+# one with every shader and pipeline cache cleared. The game did not boot
+# at all. So the pool size is reported to the panel and logged, and the
+# cap does not depend on it until a size other than 512MB is measured to
+# work. A Steam Deck ships 1GB and is unmeasured.
+BG3_LARGE_POOL_MB = 2048
+
+
+def _device_vram_total_mb() -> int:
+    """Dedicated video memory in MB from amdgpu's sysfs, the largest card
+    if there are several; 0 when it cannot be read (not Linux, no amdgpu)."""
+    best = 0
+    for p in glob.glob("/sys/class/drm/card*/device/mem_info_vram_total"):
+        try:
+            with open(p) as f:
+                best = max(best, int(f.read().strip()) // (1024 * 1024))
+        except (OSError, ValueError):
+            continue
+    return best
+
+
+def _bg3_module_cap() -> int:
+    """The module cap that applies to THIS device: 0 would mean none.
+
+    One number for every pool size, on purpose - see the note above
+    BG3_LARGE_POOL_MB for the measurement that killed the alternative."""
+    return BG3_MODULE_CAP
+
+
 BG3_OVER_CAP = (
     "Baldur's Gate 3 runs out of graphics memory on this device when too "
     "many mods load at once, and dies part-way through the loading screen. "
@@ -6937,6 +6971,22 @@ def _bg3_demanded_ids(settings: dict, game_domain: str, needs: dict) -> set:
     return out
 
 
+def _bg3_cap_parked(rec: dict) -> bool:
+    """Was this record switched off by the capacity cap?
+
+    Judged by a stable flag, and failing that by the one phrase every
+    wording of the reason has carried. The text was rewritten once (1.7.6,
+    when the cap moved from 600 to 450) and the room-return matched the
+    exact string, so 25 records parked under the old wording were never
+    brought back - they sat off, with a reason nothing recognised, until a
+    hand-run script retagged them (2026-09-09)."""
+    if rec.get("enabled", True):
+        return False
+    if rec.get("parked_by") == "cap":
+        return True
+    return "stay under the limit" in (rec.get("warning") or "")
+
+
 def _bg3_capacity_pass(
     settings: dict, game_domain: str, needs: dict = None
 ) -> list:
@@ -6958,20 +7008,25 @@ def _bg3_capacity_pass(
 
     ordered = sorted(recs, key=seq)
     total = _bg3_module_total(settings, game_domain)
-    # Room first: capped mods return in install order while they fit.
+    cap = _bg3_module_cap()
+    # Room first: capped mods return in install order while they fit. With
+    # no cap (a device whose video-memory pool is large enough) everything
+    # the cap ever parked comes back here - which is how raising the BIOS
+    # setting lifts the limit without anyone touching My Mods.
     for key, rec in ordered:
-        if rec.get("enabled", True) or rec.get("warning") != BG3_OVER_CAP:
+        if not _bg3_cap_parked(rec):
             continue
         n = _bg3_module_count(rec)
-        if total + n > BG3_MODULE_CAP:
+        if cap and total + n > cap:
             break
         _bg3_move_paks(rec, to_disabled=False)
         rec["enabled"] = True
         rec.pop("warning", None)
+        rec.pop("parked_by", None)
         total += n
         decky.logger.info(f"bg3 cap: room for {key!r} again ({total} modules)")
     changed = []
-    if total <= BG3_MODULE_CAP:
+    if not cap or total <= cap:
         return changed
     # Two rounds: leaves first, then whatever is left. The second round
     # only runs on a collection so dependency-heavy that its frameworks
@@ -6979,7 +7034,7 @@ def _bg3_capacity_pass(
     demanded = _bg3_demanded_ids(settings, game_domain, needs or {})
     for leaves_only in (True, False):
         for key, rec in reversed(ordered):
-            if total <= BG3_MODULE_CAP:
+            if total <= cap:
                 break
             if not rec.get("enabled", True):
                 continue
@@ -6995,16 +7050,18 @@ def _bg3_capacity_pass(
             _bg3_move_paks(rec, to_disabled=True)
             rec["enabled"] = False
             rec["warning"] = BG3_OVER_CAP
+            rec["parked_by"] = "cap"
             total -= n
             changed.append((rec.get("name") or key, BG3_OVER_CAP))
             # Parking a dependent can free its requirement to be parked.
             demanded = _bg3_demanded_ids(settings, game_domain, needs or {})
-        if total <= BG3_MODULE_CAP:
+        if total <= cap:
             break
     if changed:
         decky.logger.info(
             f"bg3 cap: {len(changed)} mod(s) switched off to stay under "
-            f"{BG3_MODULE_CAP} modules ({total} registered)"
+            f"{cap} modules ({total} registered; video memory pool "
+            f"{_device_vram_total_mb()}MB)"
         )
         if needs:
             changed += _bg3_cascade_dependents(settings, game_domain, needs)
@@ -15459,9 +15516,10 @@ query Link($slug: String!, $domainName: String!) {
                 # actually use it: a park to cascade from, or a count over
                 # the cap. A collection that fits and parks nothing - most
                 # of them - costs no lookup at all.
+                cap = _bg3_module_cap()
                 if (_bg3_se_parked_ids(settings, game_domain)
-                        or _bg3_module_total(settings, game_domain)
-                        > BG3_MODULE_CAP):
+                        or (cap and _bg3_module_total(settings, game_domain)
+                            > cap)):
                     needs = await _bg3_enabled_requirements(
                         settings, game_domain
                     )
@@ -21127,6 +21185,7 @@ query CollectionInstructions($slug: String!) {
             rec["enabled"] = bool(enabled)
             if enabled:
                 rec.pop("warning", None)
+                rec.pop("parked_by", None)
             elif reason:
                 rec["warning"] = str(reason)
             err = _write_bg3_modsettings(settings, game_domain)
@@ -22238,6 +22297,10 @@ query CollectionInstructions($slug: String!) {
             fixed = _bg3_crash_recovery()
             if fixed["marker_cleared"] or fixed["registrations_restored"]:
                 status["bg3_crash_repair"] = fixed
+            # The panel says whether this device's video-memory pool is the
+            # small kind that caps very large collections, and what to do.
+            status["bg3_vram_mb"] = _device_vram_total_mb()
+            status["bg3_module_cap"] = _bg3_module_cap()
         decky.logger.info(f"game status for {install_dir!r}: {status}")
         return status
 

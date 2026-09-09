@@ -16407,6 +16407,11 @@ class TestBg3Mode(unittest.TestCase):
         # stubs this True deliberately.
         self._real_running = main._bg3_running
         main._bg3_running = lambda: False
+        # The cap depends on the device's video-memory pool. The suite runs
+        # on the Legion too, where the pool is now 8GB and no cap would
+        # apply - so every test here sees the small pool unless it says so.
+        self._real_vram = main._device_vram_total_mb
+        main._device_vram_total_mb = lambda: 512
         self._real_root = main.BG3_PROFILE_ROOT
         main.BG3_PROFILE_ROOT = os.path.join(TEST_ROOT, "bg3-profile")
         shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
@@ -16427,6 +16432,7 @@ class TestBg3Mode(unittest.TestCase):
         shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
         main.BG3_PROFILE_ROOT = self._real_root
         main._bg3_running = self._real_running
+        main._device_vram_total_mb = self._real_vram
         shutil.rmtree(self.install, ignore_errors=True)
 
     def _archive(self, entries: dict):
@@ -18082,6 +18088,97 @@ class TestBg3Mode(unittest.TestCase):
             self.assertFalse(recs["Cap Mod 4"]["enabled"], "no room for a second")
             self.assertFalse(recs["Cap Mod 1"]["enabled"], "the user's choice is respected")
             self.assertEqual(r["disabled"], [], "nothing new switched off")
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    # ---- the cap and the device's video-memory pool ----------------------------------------
+    # 2026-09-09: the obvious theory - a bigger pool lifts the cap - was
+    # tested by moving the Legion's BIOS carve-out from 512MB to 8GB. Every
+    # one of 13 cold boots then died at 16-38s with the Vulkan
+    # out-of-device-memory error, eleven of them with ONE registered mod.
+    # So the pool size is reported, and the cap does not depend on it.
+
+    def test_a_bigger_pool_does_not_lift_the_cap(self):
+        for mb in (0, 512, 1024, 8192):
+            main._device_vram_total_mb = lambda mb=mb: mb
+            self.assertEqual(main._bg3_module_cap(), main.BG3_MODULE_CAP,
+                             f"{mb}MB: the cap is one number until measured otherwise")
+        main._device_vram_total_mb = lambda: 8192
+        real = self._with_cap(2)
+        try:
+            self._install_n(4)
+            r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            self.assertTrue(r.get("ok"), r)
+            self.assertEqual(len(r["disabled"]), 2, "the cap still applies at 8GB")
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_the_pool_size_and_cap_reach_the_panel(self):
+        s = run(self.plugin.get_game_status(self.GAME, "Mods", "", 1086940))
+        self.assertEqual(s["bg3_vram_mb"], 512)
+        self.assertEqual(s["bg3_module_cap"], main.BG3_MODULE_CAP)
+        main._device_vram_total_mb = lambda: 8192
+        s = run(self.plugin.get_game_status(self.GAME, "Mods", "", 1086940))
+        self.assertEqual(s["bg3_vram_mb"], 8192)
+        # Other games' panels do not carry BG3 numbers.
+        self.assertNotIn("bg3_vram_mb",
+                         run(self.plugin.get_game_status(self.GAME, "Mods", "", 489830)))
+
+    def test_an_unreadable_pool_reads_as_zero(self):
+        # No sysfs (Windows, a container): 0, never an exception.
+        main._device_vram_total_mb = self._real_vram
+        if os.name == "nt":
+            self.assertEqual(main._device_vram_total_mb(), 0)
+        self.assertIsInstance(main._device_vram_total_mb(), int)
+
+    def test_a_mod_parked_under_an_older_cap_wording_still_comes_back(self):
+        # The reason text changed when the cap moved (1.7.6). Matching the
+        # exact string left 25 records on the device parked forever under
+        # the old wording. The flag and the one stable phrase both count.
+        real = self._with_cap(1)
+        try:
+            self._install_n(3)
+            run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            s = main._load_settings()
+            recs = s["installed"][self.DOMAIN]
+            self.assertFalse(recs["Cap Mod 2"]["enabled"])
+            self.assertEqual(recs["Cap Mod 2"].get("parked_by"), "cap",
+                             "a cap park is flagged, not only worded")
+            # One record as an older build left it: old wording, no flag.
+            recs["Cap Mod 1"]["warning"] = (
+                "Baldur's Gate 3 on this device crashes while loading once "
+                "more than about 600 mod modules are switched on at once. "
+                "This collection has more, so the mods at the end of its "
+                "list were left switched off to stay under the limit."
+            )
+            recs["Cap Mod 1"].pop("parked_by", None)
+            # And one the USER switched off, which must stay off.
+            recs["Cap Mod 2"]["warning"] = ""
+            recs["Cap Mod 2"].pop("parked_by", None)
+            main._save_settings(s)
+            main.BG3_MODULE_CAP = 50
+            r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            self.assertTrue(r.get("ok"), r)
+            recs = main._load_settings()["installed"][self.DOMAIN]
+            self.assertTrue(recs["Cap Mod 1"]["enabled"], "old wording is still the cap's")
+            self.assertNotIn("parked_by", recs["Cap Mod 1"])
+            self.assertFalse(recs["Cap Mod 2"]["enabled"], "no reason means the user's choice")
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_switching_a_capped_mod_on_by_hand_clears_the_flag(self):
+        real = self._with_cap(1)
+        try:
+            self._install_n(2)
+            run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            recs = main._load_settings()["installed"][self.DOMAIN]
+            self.assertEqual(recs["Cap Mod 1"].get("parked_by"), "cap")
+            r = run(self.plugin.set_mod_enabled(
+                self.GAME, "Mods", "Cap Mod 1", True, "bg3", self.DOMAIN))
+            self.assertTrue(r.get("ok"), r)
+            recs = main._load_settings()["installed"][self.DOMAIN]
+            self.assertNotIn("parked_by", recs["Cap Mod 1"])
+            self.assertNotIn("warning", recs["Cap Mod 1"])
         finally:
             main.BG3_MODULE_CAP = real
 
