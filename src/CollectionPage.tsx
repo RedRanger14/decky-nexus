@@ -24,6 +24,7 @@ import {
   preDisabledNote,
   autoOffSummary,
   autoOffGroups,
+  collectionCapacityWarning,
   directNote,
   isGoneFromNexus,
   isNetworkError,
@@ -50,6 +51,7 @@ import {
   NexusMod,
   getCollection,
   getCollectionAttention,
+  getGameStatus,
   getUserPrefs,
   getCollectionManifest,
   getInstalledMods,
@@ -175,6 +177,10 @@ export function CollectionPage() {
   // The switched-off list is behind one line until opened: 304 entries
   // with their reasons filled the screen on the #1 BG3 collection.
   const [autoOffOpen, setAutoOffOpen] = useState(false);
+  // How many mods this device can load at once, 0 for no limit. Read from
+  // the backend rather than hardcoded, because it is a property of the
+  // hardware, and used to warn BEFORE a large download.
+  const [moduleCap, setModuleCap] = useState(0);
   // Mods installed but left off, with the reason each was: a setup window
   // that traps the player in Gaming Mode, or a mod that fights the rest of
   // the collection.
@@ -665,6 +671,19 @@ export function CollectionPage() {
         setAttention(r.items ?? []);
       }
     );
+    // What this device can load, for the pre-install warning. Only BG3
+    // reports a cap, and this call is also what repairs a crashed mod
+    // list, so opening a collection page after a crash fixes it too.
+    if ((sel.game.installMode ?? "folder") === "bg3") {
+      getGameStatus(
+        sel.game.installDirName,
+        sel.game.modsSubdir,
+        "",
+        sel.game.appId
+      )
+        .then((s) => setModuleCap(s.bg3_module_cap ?? 0))
+        .catch(() => undefined);
+    }
     refreshInstalled();
   }, []);
 
@@ -1674,6 +1693,34 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
           </div>
         </Focusable>
 
+        {/* How much of this collection this device can actually load, ABOVE
+            the install button rather than below it with the other notes.
+            The #2 BG3 collection is 1,298 mods and 53GB against a device
+            that loads about 450, and the only way to learn that was to
+            spend the hour. Hidden once the run is over, when the note
+            further down names what actually went off. */}
+        {(() => {
+          const modCount = new Set(
+            (detail?.files ?? []).filter((f) => !f.optional).map((f) => f.modId)
+          ).size;
+          const warning = collectionCapacityWarning(modCount, moduleCap);
+          if (!warning || installing || autoOff.length > 0) return null;
+          return (
+            <div
+              style={{
+                fontSize: "12.5px",
+                margin: "0 0 12px",
+                padding: "8px 10px",
+                borderRadius: "4px",
+                background: "rgba(255, 200, 60, 0.10)",
+                border: "1px solid rgba(255, 200, 60, 0.35)",
+                lineHeight: 1.45,
+              }}
+            >
+              📏 {warning}
+            </div>
+          );
+        })()}
         {/* Install spans exactly the buttons beneath it - the column sets
             one width and both rows fill it. While a run is live it is
             also the progress bar, same fill language as the mod rows. */}

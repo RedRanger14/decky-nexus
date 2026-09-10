@@ -636,6 +636,35 @@ export function autoOffNote(
   );
 }
 
+/** What the collection page says BEFORE the download, when a collection
+ * lists more mods than this device can load at once.
+ *
+ * Michael downloaded 53GB of the #2 BG3 collection (1,298 mods) to a device
+ * that loads about 450, so two thirds of it arrived switched off and he
+ * found out afterwards. The numbers were knowable from the collection's own
+ * file list before a single byte moved. Undefined when there is no cap or
+ * the collection fits, because a warning that always fires is furniture.
+ *
+ * Counted in MODS against a cap measured in modules: most mods register
+ * one, some register several (866 mods came to 768 modules on the #1
+ * collection), so this is an estimate and says so. */
+export function collectionCapacityWarning(
+  mods: number,
+  cap: number
+): string | undefined {
+  if (!cap || !mods || mods <= cap) return undefined;
+  return (
+    `This collection lists ${mods} mods, and this device can load about ` +
+    `${cap} at once before the game runs out of graphics memory while it ` +
+    `starts. Roughly ${mods - cap} of them will be installed switched off, ` +
+    `taken from the end of the collection's own order, and mods needing ` +
+    `the BG3 Script Extender arrive switched off as well because it cannot ` +
+    `run on the Linux build of the game. Everything still downloads and ` +
+    `installs: to use one that is off, switch it on in My Mods and switch ` +
+    `another off.`
+  );
+}
+
 /** The one line the collection page shows before the list is opened. The
  * full list is behind it: with 304 mods switched off on the #1 BG3
  * collection, one paragraph naming every mod and its reason filled the

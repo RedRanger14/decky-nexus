@@ -244,6 +244,38 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "collection (isolated on this device by switching mods off and on). " +
       "It may work in other collections, so it is only switched off here.",
   },
+  // The two below are the strongest evidence in this file, and the method
+  // is worth copying. Both were found on 2026-09-10 by a group hunt over
+  // the 450 registered mods of the #2 collection (DUNGEON), 37 boots: a
+  // group of 32 boots and everyone in it is cleared, a group that hangs is
+  // halved, and a single mod is only ever convicted after booting it ALONE
+  // with nothing else registered. Both of these hang there, stuck at the
+  // game's LoadModule stage, while their neighbours reach the menu in the
+  // same session. Nothing scoped, because "alone" is not a collection
+  // context: the mod does this wherever it is.
+  {
+    nexusDomain: "baldursgate3",
+    modId: 11862, // Yogurt's Wearable Dyes
+    name: "Yogurt's Wearable Dyes",
+    // Also the mod the prefix bisection pointed at independently, before
+    // the alone-test confirmed it. Declares no dependencies in its pak and
+    // none on its page, so no dependency rule can see whatever it needs.
+    reason:
+      "With this mod on, the game stops part-way through loading and never " +
+      "reaches the menu. Isolated on this device by starting the game with " +
+      "this as the only mod switched on, twice. It declares no " +
+      "requirements anywhere, so nothing else can catch it.",
+  },
+  {
+    nexusDomain: "baldursgate3",
+    modId: 11331, // Vestments of The Apostate
+    name: "Vestments of The Apostate",
+    reason:
+      "With this mod on, the game stops part-way through loading and never " +
+      "reaches the menu. Isolated on this device by starting the game with " +
+      "this as the only mod switched on. It declares no requirements " +
+      "anywhere, so nothing else can catch it.",
+  },
 ];
 
 /** Which of a collection's mods should be installed SWITCHED OFF, each

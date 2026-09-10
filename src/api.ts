@@ -230,6 +230,13 @@ export interface GameStatus {
     marker_cleared: boolean;
     registrations_restored: number;
   };
+  /** Baldur's Gate 3 only: this device's dedicated video memory in MB (the
+   * firmware carve-out, not the memory the driver borrows on demand). */
+  bg3_vram_mb?: number;
+  /** Baldur's Gate 3 only: how many mods this device can load at once
+   * before the game runs out of graphics memory while starting, 0 for no
+   * limit. The collection page warns against this BEFORE a download. */
+  bg3_module_cap?: number;
 }
 
 export const getMods = callable<

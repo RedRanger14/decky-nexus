@@ -23,6 +23,7 @@ import {
   autoOffNote,
   autoOffSummary,
   autoOffGroups,
+  collectionCapacityWarning,
   storeHeaderPlan,
   storeHeaderMinWidth,
   repairedNote,
@@ -1017,6 +1018,28 @@ test("the opened list groups by reason, biggest first, numbered right through", 
   assert.deepEqual(groups[1].names, ["Solo"]);
   assert.equal(groups[1].start, 4, "numbering continues across groups");
   assert.deepEqual(autoOffGroups([]), []);
+});
+
+// Before the download, not after. Michael spent an hour and 53GB on a
+// 1,298-mod collection to find out that a device loading about 450 would
+// arrive with two thirds of it switched off.
+test("a collection bigger than the device warns before the download", () => {
+  const w = collectionCapacityWarning(1298, 450);
+  assert.ok(w);
+  assert.match(w, /lists 1298 mods/);
+  assert.match(w, /about 450 at once/);
+  assert.match(w, /848 of them will be installed switched off/);
+  assert.match(w, /end of the collection's own order/);
+  assert.match(w, /Script Extender/, "the other reason mods arrive off");
+  assert.match(w, /switch it on in My Mods and switch another off/);
+  assert.doesNotMatch(w, /—/, "no em dashes in player-facing copy");
+});
+
+test("a collection that fits, or a device with no cap, says nothing", () => {
+  assert.equal(collectionCapacityWarning(450, 450), undefined, "exactly fits");
+  assert.equal(collectionCapacityWarning(31, 450), undefined);
+  assert.equal(collectionCapacityWarning(1298, 0), undefined, "no cap");
+  assert.equal(collectionCapacityWarning(0, 450), undefined, "nothing loaded yet");
 });
 
 test("the mod page names the version it watched fail", () => {

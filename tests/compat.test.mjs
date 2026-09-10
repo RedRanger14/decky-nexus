@@ -315,6 +315,24 @@ test("a dependency no page or pak declares is still a rule once a boot proved it
   }
 });
 
+// The #2 collection (DUNGEON) hung mid-load. A group hunt over its 450
+// registered mods, 37 boots, convicted exactly two - and only after booting
+// each ALONE with nothing else registered, which is the evidence the
+// withdrawn eleven never had. Unscoped: a mod that hangs the game by itself
+// does it in any collection.
+test("a mod that hangs the game alone is a rule everywhere", () => {
+  const DUNGEON = "f3iqts";
+  for (const modId of [11862, 11331]) {
+    for (const slug of [DUNGEON, DIQ, undefined]) {
+      const off = collectionAutoOff("baldursgate3", [modId], slug);
+      assert.equal(off.length, 1, `mod ${modId} must fire for slug ${slug}`);
+      assert.match(off[0].reason, /never reaches the menu|part-way through loading/);
+      assert.match(off[0].reason, /only mod switched on/,
+        "the reason must carry the evidence that convicted it");
+    }
+  }
+});
+
 test("the collection page passes its slug and carries the reason with the switch", () => {
   const coll = readFileSync("src/CollectionPage.tsx", "utf8");
   assert.match(coll, /collectionAutoOff\([\s\S]{0,120}collection\.slug/,
@@ -352,6 +370,18 @@ test("a download with nothing to install is a named skip, not a failure", () => 
   assert.match(coll, /reason: "nothing"/, "and recorded as its own kind of skip");
   assert.match(coll, /had nothing to install/, "and counted in the summary");
   assert.match(coll, /· nothing to install/, "and named on the row");
+});
+
+// The capacity warning has to reach the page, and reach it BEFORE the
+// install button rather than after the run.
+test("the collection page warns about capacity before installing", () => {
+  const coll = readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(coll, /collectionCapacityWarning\(/, "the page must compute it");
+  assert.match(coll, /bg3_module_cap/, "from the device's own cap");
+  const warn = coll.indexOf("collectionCapacityWarning(");
+  const install = coll.indexOf("onClick={() => installAll(false)}");
+  assert.ok(warn > 0 && install > 0, "both must exist");
+  assert.ok(warn < install, "the warning renders above the install button");
 });
 
 // No em dashes in player-facing copy, wherever it lives.
