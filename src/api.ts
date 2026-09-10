@@ -229,6 +229,10 @@ export interface GameStatus {
   bg3_crash_repair?: {
     marker_cleared: boolean;
     registrations_restored: number;
+    /** Mods that were switched on while carrying the Script Extender
+     * warning, switched off here. One of them (KAVT) crashed every new
+     * game in character creation while it was on. */
+    se_parked?: string[];
   };
   /** Baldur's Gate 3 only: this device's dedicated video memory in MB (the
    * firmware carve-out, not the memory the driver borrows on demand). */

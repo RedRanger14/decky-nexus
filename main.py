@@ -6913,6 +6913,32 @@ def _bg3_registered_uuids() -> set:
     return out
 
 
+def _bg3_se_switch_pass(settings: dict, game_domain: str) -> list:
+    """Switch off every bg3 record that is ON while carrying the Script
+    Extender warning, and move its paks to match. Returns the names.
+
+    The two cannot both be true: the warning says the mod can never run
+    here. KAVT sat like that on the device (its main pak installed second
+    and re-enabled the record the EotB patch had parked) and every new
+    game crashed in character creation (2026-09-10). Run from the
+    post-install pass and from the panel-open hook, so an install made
+    before the fix is put right the next time the panel opens."""
+    parked = []
+    for key, rec in _bg3_records(settings, game_domain):
+        if not rec.get("enabled", True):
+            continue
+        if "Script Extender" not in (rec.get("warning") or ""):
+            continue
+        _bg3_move_paks(rec, to_disabled=True)
+        rec["enabled"] = False
+        parked.append(rec.get("name") or key)
+        decky.logger.info(
+            f"bg3 records: {key!r} was switched on with the Script Extender "
+            "warning on it; switched off to match"
+        )
+    return parked
+
+
 def _bg3_crash_recovery(game_domain: str = "baldursgate3") -> dict:
     """Undo what a crash does to the mod setup, without being asked.
 
@@ -6933,7 +6959,7 @@ def _bg3_crash_recovery(game_domain: str = "baldursgate3") -> dict:
     start. Never touches anything while the game is running - the marker is
     supposed to exist mid-load, and the list is read while it boots.
     """
-    out = {"marker_cleared": False, "registrations_restored": 0}
+    out = {"marker_cleared": False, "registrations_restored": 0, "se_parked": []}
     if not os.path.isdir(BG3_PROFILE_ROOT) or _bg3_running():
         return out
     marker = _bg3_crash_marker()
@@ -6943,6 +6969,11 @@ def _bg3_crash_recovery(game_domain: str = "baldursgate3") -> dict:
     if not os.path.isfile(_bg3_modsettings_path()):
         return out
     settings = _load_settings()
+    # A mod switched on with the Script Extender warning on it is the
+    # other thing that makes the game die, in character creation rather
+    # than at load. Same hook, same reason: the player's next move is to
+    # open this panel.
+    out["se_parked"] = _bg3_se_switch_pass(settings, game_domain)
     have = _bg3_registered_uuids()
     missing = 0
     for _key, rec in _bg3_records(settings, game_domain):
@@ -6952,20 +6983,22 @@ def _bg3_crash_recovery(game_domain: str = "baldursgate3") -> dict:
             u = (mod.get("uuid") or "").lower()
             if u and u not in have:
                 missing += 1
-    if missing:
+    if missing or out["se_parked"]:
         err = _write_bg3_modsettings(settings, game_domain)
         if err:
             decky.logger.warning(f"bg3 crash recovery could not rewrite: {err}")
             return out
         _save_settings(settings)
         out["registrations_restored"] = missing
-    if out["marker_cleared"] or out["registrations_restored"]:
+    if out["marker_cleared"] or out["registrations_restored"] or out["se_parked"]:
         decky.logger.info(
             "bg3 crash recovery: "
             + (f"put {out['registrations_restored']} mod registration(s) back"
                if out["registrations_restored"] else "nothing to re-register")
             + ("; cleared the safe-mode marker the crash left"
                if out["marker_cleared"] else "")
+            + (f"; switched off {len(out['se_parked'])} mod(s) that were on "
+               "with the Script Extender warning" if out["se_parked"] else "")
         )
     return out
 
@@ -7105,24 +7138,7 @@ def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
     their paks in Mods. The record is the truth for on/off; the pak is the
     truth for what it registers.
     """
-    repaired = []
-    # A record switched ON while carrying the Script Extender warning is a
-    # contradiction, and a dangerous one: KAVT sat like that on the device
-    # (its main pak installed second and re-enabled it) and every new game
-    # crashed in character creation (2026-09-10). The warning is the
-    # truth; the switch follows it.
-    for key, rec in list(settings.get("installed", {}).get(game_domain, {}).items()):
-        if rec.get("mode") != "bg3" or not rec.get("enabled", True):
-            continue
-        if "Script Extender" not in (rec.get("warning") or ""):
-            continue
-        _bg3_move_paks(rec, to_disabled=True)
-        rec["enabled"] = False
-        repaired.append(rec.get("name") or key)
-        decky.logger.info(
-            f"bg3 records: {key!r} was switched on with the Script Extender "
-            "warning on it; switched off to match"
-        )
+    repaired = _bg3_se_switch_pass(settings, game_domain)
     # Half-records first: a files-mode record whose file list names paks.
     # One page, two archives, and the second install flipped the kind, so
     # the paks went into Mods owned by nothing - loaded by the game and
@@ -22351,7 +22367,8 @@ query CollectionInstructions($slug: String!) {
         # open this panel and wonder where their mods went.
         if int(app_id or 0) == BG3_APP_ID:
             fixed = _bg3_crash_recovery()
-            if fixed["marker_cleared"] or fixed["registrations_restored"]:
+            if (fixed["marker_cleared"] or fixed["registrations_restored"]
+                    or fixed["se_parked"]):
                 status["bg3_crash_repair"] = fixed
             # The panel says whether this device's video-memory pool is the
             # small kind that caps very large collections, and what to do.

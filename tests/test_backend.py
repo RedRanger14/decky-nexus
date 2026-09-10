@@ -17905,6 +17905,36 @@ class TestBg3Mode(unittest.TestCase):
         self.assertNotIn("bg3_crash_repair", self._status(app_id=489830))
         self.assertTrue(os.path.isdir(main._bg3_crash_marker()))
 
+    def test_the_panel_switches_off_a_mod_that_is_on_with_the_se_warning(self):
+        # KAVT's state on the device before 1.7.10: switched on, Script
+        # Extender warning on the record, and every new game crashed in
+        # character creation. An install made before the fix is put right
+        # the next time the panel opens, not the next time a collection
+        # is installed.
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        s = main._load_settings()
+        s["installed"][self.DOMAIN]["Test Mod"]["warning"] = main.BG3_SE_UNAVAILABLE
+        main._save_settings(s)
+        real = main._bg3_running
+        main._bg3_running = lambda: True
+        try:
+            self.assertNotIn("bg3_crash_repair", self._status(),
+                             "never while the game reads its list")
+        finally:
+            main._bg3_running = real
+        st = self._status()
+        self.assertEqual(st["bg3_crash_repair"]["se_parked"], ["Test Mod"])
+        rec = main._load_settings()["installed"][self.DOMAIN]["Test Mod"]
+        self.assertFalse(rec["enabled"])
+        self.assertTrue(os.path.isfile(os.path.join(main._bg3_disabled_dir(), "TestMod.pak")))
+        self.assertFalse(os.path.isfile(os.path.join(main._bg3_mods_dir(), "TestMod.pak")))
+        self.assertNotIn("aaaa1111-0000-0000-0000-000000000001",
+                         self._uuids_in_modsettings())
+        # Said once. The record is off now, so there is nothing to repeat.
+        self.assertNotIn("bg3_crash_repair", self._status())
+
     def test_the_repair_is_wired_into_the_panel_not_a_health_page(self):
         with open(os.path.join(REPO_ROOT, "main.py"), encoding="utf-8") as f:
             src = f.read()

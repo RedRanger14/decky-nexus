@@ -1124,20 +1124,42 @@ function CurrentGameSection() {
           vanilla game with their mods still showing as on. */}
       {status?.bg3_crash_repair && (
         <PanelSectionRow>
-          <Field label="🔧 Put your mods back">
-            {`${game.displayName} crashed the last time it ran, which ` +
-              `switches every mod off in the game's own list. ` +
-              (status.bg3_crash_repair.registrations_restored > 0
-                ? `${status.bg3_crash_repair.registrations_restored} mod ` +
-                  `registrations were put back. `
-                : "") +
-              (status.bg3_crash_repair.marker_cleared
-                ? "The game had also armed its mod-free safe mode for the " +
-                  "next launch, which is cleared. "
-                : "") +
-              "If it keeps crashing while loading, switch some mods off in " +
-              "My Mods: this device runs out of graphics memory with very " +
-              "large mod lists."}
+          <Field
+            label={
+              status.bg3_crash_repair.marker_cleared ||
+              status.bg3_crash_repair.registrations_restored > 0
+                ? "🔧 Put your mods back"
+                : "🔧 Mods switched off"
+            }
+          >
+            {(status.bg3_crash_repair.marker_cleared ||
+            status.bg3_crash_repair.registrations_restored > 0
+              ? `${game.displayName} crashed the last time it ran, which ` +
+                `switches every mod off in the game's own list. ` +
+                (status.bg3_crash_repair.registrations_restored > 0
+                  ? `${status.bg3_crash_repair.registrations_restored} mod ` +
+                    `registrations were put back. `
+                  : "") +
+                (status.bg3_crash_repair.marker_cleared
+                  ? "The game had also armed its mod-free safe mode for the " +
+                    "next launch, which is cleared. "
+                  : "") +
+                "If it keeps crashing while loading, switch some mods off in " +
+                "My Mods: this device runs out of graphics memory with very " +
+                "large mod lists. "
+              : "") +
+              // A mod that needs the Script Extender was switched on. It can
+              // never run here, and left on, KAVT crashed every new game in
+              // character creation.
+              ((status.bg3_crash_repair.se_parked?.length ?? 0) > 0
+                ? `${status.bg3_crash_repair.se_parked!.length} mod` +
+                  `${status.bg3_crash_repair.se_parked!.length === 1 ? "" : "s"} ` +
+                  `that need${status.bg3_crash_repair.se_parked!.length === 1 ? "s" : ""} ` +
+                  `the Script Extender ${status.bg3_crash_repair.se_parked!.length === 1 ? "was" : "were"} ` +
+                  `switched off: ${status.bg3_crash_repair.se_parked!.join(", ")}. ` +
+                  "The Script Extender cannot run on this build of the game, " +
+                  "and with such a mod on, starting a new game crashes."
+                : "")}
           </Field>
         </PanelSectionRow>
       )}
