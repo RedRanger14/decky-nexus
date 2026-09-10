@@ -333,6 +333,22 @@ test("a mod that hangs the game alone is a rule everywhere", () => {
   }
 });
 
+// KAVT (16325): the appearance framework the #2 collection stands on. It
+// builds its textures through a Script Extender patcher that cannot exist
+// on the Linux build, so character creation crashes as soon as it opens.
+// A character-creation hunt driven through the game's own menu (27 runs,
+// vanilla control loaded fine) convicted it alone. Unscoped for the same
+// reason as the two above.
+test("the appearance framework that crashes character creation is a rule everywhere", () => {
+  for (const slug of ["f3iqts", DIQ, undefined]) {
+    const off = collectionAutoOff("baldursgate3", [16325], slug);
+    assert.equal(off.length, 1, `must fire for slug ${slug}`);
+    assert.match(off[0].reason, /character creation crashes/);
+    assert.match(off[0].reason, /Script Extender/);
+    assert.match(off[0].reason, /only mod switched on/);
+  }
+});
+
 test("the collection page passes its slug and carries the reason with the switch", () => {
   const coll = readFileSync("src/CollectionPage.tsx", "utf8");
   assert.match(coll, /collectionAutoOff\([\s\S]{0,120}collection\.slug/,

@@ -276,6 +276,28 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "this as the only mod switched on. It declares no requirements " +
       "anywhere, so nothing else can catch it.",
   },
+  {
+    nexusDomain: "baldursgate3",
+    modId: 16325, // KAVT - Kazstra's Virtual Tav x Tattoo, Makeup & Scar Extender
+    name: "KAVT - Kazstra's Virtual Tav x Tattoo, Makeup & Scar Extender",
+    // The appearance framework half of the #2 collection stands on. It
+    // builds its textures through a Script Extender patcher (UAP) that
+    // cannot exist on the native Linux build, so character creation reaches
+    // for a texture slot that was never filled and dies: a null read in a
+    // GPU resource job (bg3+0x23b2cc4), the same fault Michael's New Game
+    // hit. Found 2026-09-10 by a character-creation hunt driven through
+    // the game's own menu: 13 groups of 32 loaded character creation, the
+    // group holding this did not, and KAVT ALONE - nothing else registered
+    // - crashes it every time, while vanilla loads it fine. Its EotB patch
+    // pak carries the Script Extender config and the main pak does not, so
+    // a collection pinning only the main pak would install it switched on.
+    reason:
+      "It builds the tattoos, makeup and scars it adds through a Script " +
+      "Extender patcher, which cannot run on the Linux build of the game. " +
+      "Without that, character creation crashes the moment it opens " +
+      "(isolated on this device with this as the only mod switched on). " +
+      "Mods that need it are switched off with it.",
+  },
 ];
 
 /** Which of a collection's mods should be installed SWITCHED OFF, each

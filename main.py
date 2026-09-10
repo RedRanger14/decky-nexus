@@ -7106,6 +7106,23 @@ def _bg3_record_heal_pass(settings: dict, game_domain: str) -> list:
     truth for what it registers.
     """
     repaired = []
+    # A record switched ON while carrying the Script Extender warning is a
+    # contradiction, and a dangerous one: KAVT sat like that on the device
+    # (its main pak installed second and re-enabled it) and every new game
+    # crashed in character creation (2026-09-10). The warning is the
+    # truth; the switch follows it.
+    for key, rec in list(settings.get("installed", {}).get(game_domain, {}).items()):
+        if rec.get("mode") != "bg3" or not rec.get("enabled", True):
+            continue
+        if "Script Extender" not in (rec.get("warning") or ""):
+            continue
+        _bg3_move_paks(rec, to_disabled=True)
+        rec["enabled"] = False
+        repaired.append(rec.get("name") or key)
+        decky.logger.info(
+            f"bg3 records: {key!r} was switched on with the Script Extender "
+            "warning on it; switched off to match"
+        )
     # Half-records first: a files-mode record whose file list names paks.
     # One page, two archives, and the second install flipped the kind, so
     # the paks went into Mods owned by nothing - loaded by the game and
@@ -14165,6 +14182,15 @@ query Link($slug: String!, $domainName: String!) {
                 needs_se = needs_se or "Script Extender" in (
                     prev.get("warning") or ""
                 )
+                # The switch was decided above from THIS file's paks alone.
+                # When an earlier file of the same mod was parked for the
+                # Script Extender, the mod stays parked: KAVT's EotB patch
+                # carries the SE config and its main pak does not, and
+                # installing the main pak second re-enabled the record with
+                # the SE warning still on it. Character creation then
+                # crashed on every new game (2026-09-10).
+                if needs_se and record_source == "collection":
+                    install_off = True
             installed[key] = _merge_install_record(merge_base, {
                 "mod_id": mod_id,
                 "file_id": file_id,
@@ -14188,6 +14214,10 @@ query Link($slug: String!, $domainName: String!) {
                 # they installed does nothing.
                 **({"warning": BG3_SE_UNAVAILABLE} if needs_se else {}),
             })
+            # Every pak the record owns lives where its switch says. A
+            # two-file mod can arrive in either order, and the earlier
+            # file's pak was copied under the earlier decision.
+            _bg3_move_paks(installed[key], to_disabled=install_off)
             err = _write_bg3_modsettings(settings, game_domain)
             if err:
                 # Roll the copy back: paks in place but unregistered is

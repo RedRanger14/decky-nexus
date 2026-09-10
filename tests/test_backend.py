@@ -17913,6 +17913,66 @@ class TestBg3Mode(unittest.TestCase):
         self.assertIn("_bg3_crash_recovery()", body)
         self.assertIn("BG3_APP_ID", body)
 
+    # ---- two files, one mod, one switch -----------------------------------------------------
+    # KAVT ships its Script Extender config in the EotB patch pak and not in
+    # the main pak. Installed patch-first from a collection, the record was
+    # parked; the main pak then re-enabled it with the SE warning still on
+    # it, and every new game crashed in character creation (2026-09-10).
+    # The switch must follow the warning whatever order the files arrive.
+
+    def _install_two_files(self, se_first):
+        se_pak = self._make_se_pak("aaaa5e00-0000-0000-0000-000000000001", "KavtPatch")
+        plain = self._make_stats_pak("aaaa5e00-0000-0000-0000-000000000002",
+                                     "KavtMain", self.HEALTHY_STATS)
+        order = [("Patch.pak", se_pak, 1), ("Main.pak", plain, 2)]
+        if not se_first:
+            order.reverse()
+        for name, blob, fid in order:
+            archive = main._archive_cache_path(self.MOD, self.FILE + fid, "m.zip")
+            with zipfile.ZipFile(archive, "w") as z:
+                z.writestr(name, blob)
+            r = run(self.plugin.install_mod(
+                self.DOMAIN, self.MOD, self.FILE + fid, "m.zip", "KAVT", "1.0",
+                self.GAME, "Data", "", "", "bg3", 1086940,
+                record_source="collection",
+            ))
+            self.assertTrue(r.get("ok"), r)
+        return main._load_settings()["installed"][self.DOMAIN]["KAVT"]
+
+    def _assert_two_file_mod_parked(self, rec):
+        self.assertFalse(rec["enabled"], "the SE warning decides the switch")
+        self.assertIn("Script Extender", rec.get("warning", ""))
+        self.assertEqual(sorted(rec["files"]), ["Main.pak", "Patch.pak"])
+        for n in rec["files"]:
+            self.assertTrue(os.path.isfile(os.path.join(main._bg3_disabled_dir(), n)),
+                            f"{n} belongs with the switch, in Mods-disabled")
+            self.assertFalse(os.path.isfile(os.path.join(main._bg3_mods_dir(), n)))
+        self.assertNotIn("aaaa5e00-0000-0000-0000-000000000002",
+                         self._uuids_in_modsettings())
+
+    def test_a_script_extender_mod_stays_off_when_its_plain_pak_comes_second(self):
+        # The device's order: EotB patch (SE config) first, main pak second.
+        self._assert_two_file_mod_parked(self._install_two_files(se_first=True))
+
+    def test_a_script_extender_mod_is_parked_when_its_se_pak_comes_second(self):
+        self._assert_two_file_mod_parked(self._install_two_files(se_first=False))
+
+    def test_the_heal_pass_parks_a_record_switched_on_with_the_se_warning(self):
+        self._archive({"TestMod.pak": self._make_pak(
+            "aaaa1111-0000-0000-0000-000000000001")})
+        self.assertTrue(self._install().get("ok"))
+        s = main._load_settings()
+        s["installed"][self.DOMAIN]["Test Mod"]["warning"] = main.BG3_SE_UNAVAILABLE
+        main._save_settings(s)  # enabled, warned: the device's KAVT state
+        r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+        self.assertTrue(r.get("ok"), r)
+        self.assertIn("Test Mod", r["repaired"])
+        rec = main._load_settings()["installed"][self.DOMAIN]["Test Mod"]
+        self.assertFalse(rec["enabled"])
+        self.assertTrue(os.path.isfile(os.path.join(main._bg3_disabled_dir(), "TestMod.pak")))
+        self.assertNotIn("aaaa1111-0000-0000-0000-000000000001",
+                         self._uuids_in_modsettings())
+
     # ---- Windows-only downloads -----------------------------------------------------------
     # The fresh install of the #1 collection (2026-09-08) left seven files
     # "not installed": three Script Extender family loaders, two settings
