@@ -17920,18 +17920,55 @@ class TestBg3Mode(unittest.TestCase):
     # cursor packs. None is a failure - there is nothing in them for the
     # Linux build - and both cursor packs publish a "(Pak)" edition.
 
-    def test_windows_only_kinds(self):
-        k = main._bg3_windows_only_kind
+    def test_no_payload_kinds(self):
+        k = main._bg3_no_payload_kind
         self.assertEqual(k(["dwrite.dll", "readme.txt"]), "loader")
         self.assertEqual(k(["scriptextendersettings.json",
                             "scriptextenderupdaterconfig.json"]), "settings")
         self.assertEqual(k(["bg3wasd.toml"]), "settings")
         self.assertEqual(k(["cursor_arrow_1.cur", "cursor_talk_2.cur",
                             "readme_bg2cursors.txt"]), "cursors")
+        # Mazzle's Music Hub, #2 collection: python plus a .bat launcher.
+        self.assertEqual(k(["mazzle_music_hub.py", "launch_mazzle_music_hub.bat",
+                            "music_gui.py", "lotr_soundtrack.jsonc"]), "tool")
+        self.assertEqual(k(["patcher.exe"]), "tool")
+        # DUNGEON load orders, #2 collection: one .lsx export.
+        self.assertEqual(k(["dungeon revision 44+ loadorder ultra mega.lsx"]),
+                         "loadorder")
         self.assertEqual(k(["readme.txt"]), "", "documents alone decide nothing")
         self.assertEqual(k(["something.bin", "cursor_arrow_1.cur"]), "",
-                         "a mixed download is not called Windows-only")
+                         "a mixed download stays a real failure")
         self.assertEqual(k([]), "")
+        # A tool beats the others: an installer script next to configs is
+        # still a program, not settings.
+        self.assertEqual(k(["setup.py", "config.json"]), "tool")
+
+    def test_a_desktop_program_is_a_named_skip_not_a_failure(self):
+        # Mazzle's Music Hub, pinned by the #2 collection: 51 entries of
+        # Python, a .bat launcher and playlists. One of the two entries
+        # that read as "remaining" after a 1,411-entry install.
+        self._archive({
+            "Mazzle_Music_Hub/Mazzle_Music_Hub.py": "import sys",
+            "Mazzle_Music_Hub/Launch_Mazzle_Music_Hub.bat": "py .",
+            "Mazzle_Music_Hub/Playlists/LOTR.jsonc": "{}",
+        })
+        r = self._install("Mazzle's Music Hub")
+        self.assertFalse(r.get("ok"))
+        self.assertTrue(r.get("nothing_to_install"), r)
+        self.assertIn("desktop computer", r["error"])
+
+    def test_a_mod_managers_load_order_file_is_a_named_skip(self):
+        # DUNGEON load orders: one .lsx export. The plugin writes the load
+        # order itself from the collection's install order.
+        self._archive({
+            "dungeon revision 44+ loadorder ultra mega superduper.lsx":
+                '<?xml version="1.0"?><save/>',
+        })
+        r = self._install("DUNGEON load orders")
+        self.assertFalse(r.get("ok"))
+        self.assertTrue(r.get("nothing_to_install"), r)
+        self.assertIn("load order file", r["error"])
+        self.assertIn("writes the load order itself", r["error"])
 
     def test_se_settings_files_are_a_windows_only_skip_not_a_failure(self):
         self._archive({
@@ -17940,7 +17977,7 @@ class TestBg3Mode(unittest.TestCase):
         })
         r = self._install("DIQ Misc Files")
         self.assertFalse(r.get("ok"))
-        self.assertTrue(r.get("windows_only"), r)
+        self.assertTrue(r.get("nothing_to_install"), r)
         self.assertIn("Script Extender", r["error"])
         self.assertNotIn(
             "DIQ Misc Files",
@@ -17951,7 +17988,7 @@ class TestBg3Mode(unittest.TestCase):
         self._archive({"bin/DWrite.dll": "MZ", "README.md": "x"})
         r = self._install("Native Mod Loader")
         self.assertFalse(r.get("ok"))
-        self.assertTrue(r.get("windows_only"), r)
+        self.assertTrue(r.get("nothing_to_install"), r)
         self.assertIn("Windows loader", r["error"])
 
     def test_cursor_files_without_a_pak_edition_are_a_windows_only_skip(self):
@@ -17968,7 +18005,7 @@ class TestBg3Mode(unittest.TestCase):
         finally:
             main._bg3_pak_edition = real
         self.assertFalse(r.get("ok"))
-        self.assertTrue(r.get("windows_only"), r)
+        self.assertTrue(r.get("nothing_to_install"), r)
         self.assertIn("cursor", r["error"])
 
     def test_cursor_files_install_the_pages_pak_edition_instead(self):

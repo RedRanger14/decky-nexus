@@ -698,7 +698,7 @@ export function CollectionPage() {
   const brokenSkips = attention.filter((a) => a.reason === "incompatible");
   const conflictSkips = attention.filter((a) => a.reason === "conflict");
   const layoutSkips = attention.filter((a) => a.reason === "layout");
-  const windowsSkips = attention.filter((a) => a.reason === "windows");
+  const nothingSkips = attention.filter((a) => a.reason === "nothing");
 
   // Entries, to match every other number on this page - see
   // collectionOwnedCount for why the record count read as 92 missing.
@@ -1116,12 +1116,13 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               options: [],
             });
             // (no per-mod toast: the summary counts skips and the row shows why)
-          } else if (result.windows_only) {
-            // Script Extender loaders, their settings files, Windows mouse
-            // cursors: nothing in the download is for this device, so it
-            // is not a failure and not the user's to fix. The seven such
-            // files in the #1 BG3 collection were the whole of what read
-            // as "not installed" on 2026-09-08.
+          } else if (result.nothing_to_install) {
+            // Script Extender loaders and their settings, Windows mouse
+            // cursors, desktop programs, a mod manager's load-order
+            // export: nothing in the download is for this device, so it is
+            // not a failure and not the user's to fix. The seven such files
+            // in the #1 BG3 collection, and the two in the #2, were the
+            // whole of what read as "not installed" in both.
             dropDownload(f.modId);
             setCollectionRow(f.fileId, "skipped");
             freshAttention.push({
@@ -1130,7 +1131,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               mod_name: f.modName,
               file_name: f.fileName,
               version: f.version,
-              reason: "windows",
+              reason: "nothing",
               options: [],
               detail: result.error ?? "",
             });
@@ -2110,7 +2111,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             scripts, or layouts we don't support yet).
           </div>
         )}
-        {windowsSkips.length > 0 && !installing && (
+        {nothingSkips.length > 0 && !installing && (
           <div
             style={{
               fontSize: "12.5px",
@@ -2118,11 +2119,12 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               margin: "-6px 0 12px",
             }}
           >
-            ⏭ {windowsSkips.length} Windows-only file
-            {windowsSkips.length === 1 ? "" : "s"} skipped (
-            {windowsSkips.map((t) => t.mod_name).join(", ")}) - Script
-            Extender parts, its settings, or Windows mouse cursors. The game
-            on this device cannot use them and they don't count as missing.
+            ⏭ {nothingSkips.length} download
+            {nothingSkips.length === 1 ? "" : "s"} had nothing to install (
+            {nothingSkips.map((t) => t.mod_name).join(", ")}) - Script
+            Extender parts, its settings, Windows mouse cursors, desktop
+            programs or a mod manager's load order file. The game on this
+            device cannot use them and they don't count as missing.
           </div>
         )}
         {conflictSkips.length > 0 && !installing && (
@@ -2250,11 +2252,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                             · not installable
                           </span>
                         )}
-                      {parkedReason === "windows" &&
+                      {parkedReason === "nothing" &&
                         !installedIds.has(f.modId) && (
                           <span style={{ opacity: 0.55 }}>
                             {" "}
-                            · Windows only
+                            · nothing to install
                           </span>
                         )}
                       {isConflict && (

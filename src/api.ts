@@ -100,9 +100,10 @@ export interface InstallResult {
    * counting as remaining (retrying can't change the layout). */
   unsupported_layout?: boolean;
   /** Nothing in the download is for this device: a Script Extender family
-   * loader, its settings files, or Windows mouse cursors (BG3 on the native
-   * Linux build). A named skip, not a failure. */
-  windows_only?: boolean;
+   * loader, its settings files, Windows mouse cursors, a desktop program,
+   * or a mod manager's load-order export (BG3 on the native Linux build).
+   * A named skip, not a failure; `error` says which. */
+  nothing_to_install?: boolean;
   /** The install swapped to the mod page's "(Pak)" edition of the pinned
    * file, because the pinned one was Windows cursor files. */
   pak_edition?: string;

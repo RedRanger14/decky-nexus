@@ -6742,7 +6742,7 @@ BG3_OVER_CAP = (
 )
 
 
-BG3_WINDOWS_ONLY = {
+BG3_NOTHING_TO_INSTALL = {
     "loader": (
         "This mod is a Windows loader (.dll) - the Script Extender family "
         "- and the native Linux build of the game has no way to load it."
@@ -6756,34 +6756,57 @@ BG3_WINDOWS_ONLY = {
         "This download is Windows mouse cursor files (.cur), which only "
         "Windows itself can use, so there is nothing in it for this device."
     ),
+    "tool": (
+        "This download is a program that runs on a desktop computer, not "
+        "a mod the game loads, so there is nothing to install here."
+    ),
+    "loadorder": (
+        "This download is a load order file for a desktop mod manager. "
+        "This plugin writes the load order itself, in the order the "
+        "collection installs its mods, so there is nothing to install."
+    ),
 }
+# Extensions that make a download a desktop program rather than a mod.
+_BG3_TOOL_EXTS = (".py", ".bat", ".cmd", ".ps1", ".sh", ".exe", ".jar", ".msi")
+_BG3_DOC_EXTS = (".txt", ".md", ".pdf", ".url", ".png", ".jpg", ".jpeg",
+                 ".gif", ".webp", ".rtf", ".doc", ".docx")
 
 
-def _bg3_windows_only_kind(names: list) -> str:
+def _bg3_no_payload_kind(names: list) -> str:
     """What a BG3 download with no pak and no game-data folder IS, when it
-    is a Windows-only thing: "loader" (a .dll, the Script Extender family),
-    "settings" (Script Extender or Native Mod Loader config files: the #1
-    collection's Misc Files mod pins ScriptExtenderSettings.json and
-    BG3WASD.toml), "cursors" (Windows .cur/.ani mouse cursors, sixty per
-    pack in that collection), or "" for anything else.
+    is something the game could never load anyway:
 
-    Takes lower-cased base names. Nothing here is a failure to install -
-    there is simply nothing in it for the Linux build - and the seven such
-    files in the #1 collection were the whole of what "did not install".
+      "loader"    a .dll, the Script Extender family
+      "settings"  Script Extender / Native Mod Loader config (the #1
+                  collection pins ScriptExtenderSettings.json, BG3WASD.toml)
+      "cursors"   Windows .cur/.ani mouse cursors, sixty per pack
+      "tool"      a desktop program - Mazzle's Music Hub in the #2
+                  collection is Python plus a .bat launcher
+      "loadorder" a mod manager's load-order export - DUNGEON load orders
+                  is one .lsx file, and the plugin writes the order itself
+
+    or "" for anything else, which stays a real failure worth looking at.
+
+    Takes lower-cased base names. None of these is a failure to install:
+    the seven such files in the #1 collection and the two in the #2 were
+    the whole of what "did not install" in both.
     """
     names = [n for n in names if n and not n.startswith(".")]
     if any(n.endswith(".dll") for n in names):
         return "loader"
-    payload = [
-        n for n in names
-        if not n.endswith((".txt", ".md", ".pdf", ".url", ".png", ".jpg",
-                           ".jpeg", ".gif"))
-    ]
+    if any(n.endswith(_BG3_TOOL_EXTS) for n in names):
+        return "tool"
+    payload = [n for n in names if not n.endswith(_BG3_DOC_EXTS)]
     if not payload:
         return ""
     if all(n.endswith((".cur", ".ani")) for n in payload):
         return "cursors"
-    if all(n.endswith((".json", ".toml", ".ini", ".cfg")) for n in payload):
+    if all(n.endswith(".lsx") for n in payload):
+        # An .lsx here is a settings document, not game data: a pak's own
+        # meta.lsx lives inside the pak, and a loose game-data tree would
+        # have been found as a payload dir before this ever ran.
+        return "loadorder"
+    if all(n.endswith((".json", ".jsonc", ".toml", ".ini", ".cfg")) for n in payload):
         return "settings"
     return ""
 
@@ -13913,7 +13936,7 @@ query Link($slug: String!, $domainName: String!) {
                 for r2, _d3, n2 in os.walk(scratch):
                     lower += [x.lower() for x in n2]
                 _force_rmtree(scratch)
-                kind = _bg3_windows_only_kind(lower)
+                kind = _bg3_no_payload_kind(lower)
                 if kind == "cursors" and not repair_only:
                     # Both cursor packs in the #1 collection pin their
                     # Windows .cur file and publish a "(Pak)" edition of
@@ -13948,10 +13971,13 @@ query Link($slug: String!, $domainName: String!) {
                     # Not a failure: there is nothing in it for this
                     # device, and the collection page says so instead of
                     # counting it against the install.
+                    decky.logger.info(
+                        f"{mod_name!r}: nothing to install ({kind})"
+                    )
                     return {
                         "ok": False,
-                        "windows_only": True,
-                        "error": BG3_WINDOWS_ONLY[kind],
+                        "nothing_to_install": True,
+                        "error": BG3_NOTHING_TO_INSTALL[kind],
                     }
                 return {
                     "ok": False,

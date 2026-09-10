@@ -341,15 +341,17 @@ test("the collection page switches rule mods off before the backend pass", () =>
   assert.ok(reread > pass, "records must be re-read after the pass");
 });
 
-// Nothing Windows-only counts as a failure. Script Extender loaders, their
-// settings files and Windows mouse cursors have nothing in them for this
-// device; they are skipped, named and explained, like PC tools are.
-test("a Windows-only download is a named skip, not a failure", () => {
+// A download with nothing in it for this device is not a failure. Script
+// Extender loaders and their settings, Windows mouse cursors, desktop
+// programs, a mod manager's load-order export: skipped, named and
+// explained, like PC tools are. Seven such files in the #1 BG3 collection
+// and two in the #2 were the whole of what read as "not installed".
+test("a download with nothing to install is a named skip, not a failure", () => {
   const coll = readFileSync("src/CollectionPage.tsx", "utf8");
-  assert.match(coll, /result\.windows_only/, "the backend's flag must be read");
-  assert.match(coll, /reason: "windows"/, "and recorded as its own kind of skip");
-  assert.match(coll, /Windows-only file/, "and counted in the summary");
-  assert.match(coll, /· Windows only/, "and named on the row");
+  assert.match(coll, /result\.nothing_to_install/, "the backend's flag must be read");
+  assert.match(coll, /reason: "nothing"/, "and recorded as its own kind of skip");
+  assert.match(coll, /had nothing to install/, "and counted in the summary");
+  assert.match(coll, /· nothing to install/, "and named on the row");
 });
 
 // No em dashes in player-facing copy, wherever it lives.
