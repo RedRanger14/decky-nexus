@@ -4951,6 +4951,56 @@ def _looks_like_ue4ss_mod(scratch: str) -> bool:
     return False
 
 
+def _is_ue4ss_mod_dir(path: str) -> bool:
+    """Does this folder look like a UE4SS mod in its own right?
+
+    The loader reads <Mods>/<name>/Scripts/main.lua, <name>/dlls/main.dll
+    and <name>/enabled.txt, so a folder carrying any of those IS the mod.
+    """
+    try:
+        names = {n.lower() for n in os.listdir(path)}
+    except OSError:
+        return False
+    if "enabled.txt" in names or "manifest.json" in names:
+        return True
+    return any(
+        n in names and os.path.isdir(os.path.join(path, n))
+        for n in ("scripts", "dlls")
+    )
+
+
+def _ue4ss_mod_root(scratch: str, folder: str) -> tuple:
+    """Look past a folder that only WRAPS the mod, and return the real
+    (source path, folder name).
+
+    Too Many Divers ships "Install-TooManyDivers/" holding a README, a
+    "How to download.mp4" and the actual "TooManyDivers/" mod beside them.
+    Installed as-is, UE4SS saw Mods/Install-TooManyDivers with no
+    enabled.txt and no Scripts, so the mod never loaded and nothing said
+    why (found 2026-09-11 in the Subnautica 2 collection). The wrapper
+    carries files, so the author-namespace rule does not catch it: what
+    settles it is that the wrapper is not a mod and exactly one thing
+    inside it is.
+    """
+    src = os.path.join(scratch, folder)
+    for _depth in range(3):
+        if _is_ue4ss_mod_dir(src):
+            return src, folder
+        try:
+            inner = sorted(os.listdir(src))
+        except OSError:
+            return src, folder
+        mods = [
+            n for n in inner
+            if os.path.isdir(os.path.join(src, n))
+            and _is_ue4ss_mod_dir(os.path.join(src, n))
+        ]
+        if len(mods) != 1:
+            return src, folder
+        folder = mods[0]
+        src = os.path.join(src, folder)
+    return src, folder
+
 def _route_ue4ss_payload(
     scratch: str,
     install_path: str,
@@ -4987,7 +5037,7 @@ def _route_ue4ss_payload(
     # Lua / native mods: the folder containing Scripts/ or dlls/ IS the mod.
     entries = _peel_subdir_wrappers(scratch, ue4ss_subdir)
     if len(entries) == 1 and os.path.isdir(os.path.join(scratch, entries[0])):
-        src, folder = os.path.join(scratch, entries[0]), entries[0]
+        src, folder = _ue4ss_mod_root(scratch, entries[0])
     else:
         folder = _safe_name(mod_name)
         src = os.path.join(scratch, folder)

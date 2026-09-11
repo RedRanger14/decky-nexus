@@ -19821,6 +19821,34 @@ class TestUe4ssWrapperPeel(unittest.TestCase):
         d = self._scratch(["ue4ss/mods/X/main.lua"])
         self.assertEqual(main._peel_subdir_wrappers(d, ""), ["ue4ss"])
 
+    def test_a_wrapper_holding_the_real_mod_is_looked_past(self):
+        """Too Many Divers ships Install-TooManyDivers/ holding a README, a
+        How to download.mp4 and the actual TooManyDivers/ mod. Installed as
+        the wrapper, UE4SS saw no enabled.txt and no Scripts, so the mod
+        silently never loaded (2026-09-11, Subnautica 2 collection)."""
+        d = self._scratch([
+            "Install-TooManyDivers/README.md",
+            "Install-TooManyDivers/How to download.mp4",
+            "Install-TooManyDivers/TooManyDivers/Scripts/main.lua",
+            "Install-TooManyDivers/TooManyDivers/enabled.txt",
+        ])
+        src, folder = main._ue4ss_mod_root(d, "Install-TooManyDivers")
+        self.assertEqual(folder, "TooManyDivers")
+        self.assertTrue(os.path.isfile(os.path.join(src, "Scripts", "main.lua")))
+
+    def test_a_real_mod_folder_is_never_descended_into(self):
+        d = self._scratch(["CoolMod/Scripts/main.lua",
+                           "CoolMod/Extras/More/thing.lua"])
+        src, folder = main._ue4ss_mod_root(d, "CoolMod")
+        self.assertEqual(folder, "CoolMod")
+        self.assertTrue(src.endswith("CoolMod"))
+
+    def test_a_wrapper_with_two_mods_inside_is_left_alone(self):
+        # Ambiguous: picking one would silently drop the other.
+        d = self._scratch(["Pack/ModA/enabled.txt", "Pack/ModB/enabled.txt"])
+        _src, folder = main._ue4ss_mod_root(d, "Pack")
+        self.assertEqual(folder, "Pack")
+
 
 if __name__ == "__main__":
     unittest.main()
