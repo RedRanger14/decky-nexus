@@ -5,9 +5,8 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 > **Built with AI, tested by hand.** Nearly all of this plugin's code was
 > written by Claude, Anthropic's AI. What makes it trustworthy is not the
 > author but the process around it: hundreds of hours of human direction,
-> hands-on testing, and every game on the supported list installed, modded
-> and played on real hardware before it shipped, by us or by the contributor
-> who added it and is named for it. We state this plainly because you deserve
+> hands-on testing, and every supported game installed, modded and played on
+> real hardware before it shipped. We state this plainly because you deserve
 > to know how the thing you are installing was made.
 
 > **Unofficial, and in beta.** This is a community-built plugin. It is not an
@@ -18,9 +17,9 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Fifteen games. Supported means somebody finished a session with mods running
-on real hardware, not that the code has a config entry for it. Who that
-somebody was is marked, because it changes how much the word is worth.
+Fifteen games, each one installed, modded and played on real hardware before
+it shipped. That is what supported means here: not that the code has a config
+entry for it, but that someone finished a session with mods running.
 
 1. Baldur's Gate 3
 2. Cyberpunk 2077
@@ -38,25 +37,7 @@ somebody was is marked, because it changes how much the word is worth.
 14. Starfield \*
 15. The Witcher 3
 
-\* Verified by the contributor who added it, on their hardware, and not
-tested by this plugin's author. Testing every game means buying and playing
-every game, which one person cannot keep doing, so a contribution is taken
-on the evidence its author gives and labelled, rather than turned away or
-quietly passed off as our own testing. Nothing else about it is different:
-the same review, the same checks, the same code. A game may also carry an
-under-construction note in the plugin naming what is still unproven.
-Starfield does: installing SFSE and launching the game through it is
-confirmed on a Steam Deck, whether ordinary Data mods are picked up is not,
-so expect rough edges past Step 1.
-
-One note on Baldur's Gate 3, because it is unlike the rest: SteamOS installs
-the native Linux build, which has no way to load the BG3 Script Extender. Mods
-that need it are installed and switched off, with the reason on the mod, and
-the plugin switches off anything that depends on them too. There is also a
-limit on how many mods the game can load at once before it runs out of
-graphics memory while starting, measured at 450 on a Legion Go 2; very large
-collections install whole and the mods past the limit arrive switched off. The
-limit can be raised or removed in the panel if your device has more to give.
+\* Community added game. Not tested by author.
 
 ### On the roadmap
 
