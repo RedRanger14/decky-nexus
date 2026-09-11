@@ -417,6 +417,27 @@ test("the Subnautica mod that kills all input is a rule everywhere", () => {
   assert.equal(collectionAutoOff("palworld", [984], undefined).length, 0);
 });
 
+// The Below Zero port, same author, carried by both top BZ collections.
+// Not isolated on that game, and the copy has to admit it rather than
+// claim evidence we do not have.
+test("the Below Zero port of it is switched off, and says it is unproven there", () => {
+  const off = collectionAutoOff("subnauticabelowzero", [306], "uu1sc4");
+  assert.equal(off.length, 1);
+  assert.match(off[0].reason, /has not been confirmed on Below Zero/);
+  assert.match(off[0].reason, /Switch it on in My Mods/);
+  // And it is not claimed for the game it was actually proven on.
+  assert.equal(collectionAutoOff("subnautica", [306], undefined).length, 0);
+});
+
+// The first draft of the Subnautica rule blamed the mod. The fault is the
+// two-year-old build the collection pins; the current one claims a fix.
+test("the reason names the pinned version rather than condemning the mod", () => {
+  const off = collectionAutoOff("subnautica", [984], "tdtzfi");
+  assert.equal(off.length, 1);
+  assert.match(off[0].reason, /version this collection pins/);
+  assert.match(off[0].reason, /newer build/);
+});
+
 // No em dashes in player-facing copy, wherever it lives.
 test("the warning copy carries no em dashes", () => {
   for (const m of STRANDING_UI_MODS) {

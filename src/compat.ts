@@ -321,17 +321,52 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
     // cosmetic: BepInEx's chainloader runs inside InputSystem's STATIC
     // constructor, and an exception there faults the type permanently, so
     // every later input call fails. Switching this one mod off restored
-    // the controller. Unscoped: the fault is the game version, not the
-    // collection.
+    // the controller.
+    //
+    // The VERSION matters and the first draft of this rule got it wrong.
+    // The collection pins file 5717, v2.1.1, uploaded January 2024 and
+    // long since archived. The mod's current build is v3.0.0, whose own
+    // summary reads "Now with controller support!", so the author has
+    // very likely fixed exactly this. v3.0.0 has NOT been tested here.
+    // The rule stays because it only ever applies to collection installs,
+    // where the pin is the old build, and because being locked out of a
+    // game with no way to quit from inside it is far worse than one tap
+    // in My Mods. Installing it straight from its mod page is untouched.
     reason:
-      "It patches the game's input handler, and the method it looks for " +
-      "no longer exists in the current version of the game, so it throws " +
-      "while the mod loader is still starting. That happens inside the " +
-      "engine's input setup, which leaves the whole input system dead: " +
-      "controller, keyboard and trackpad all stop responding at the menu, " +
-      "with no way to quit the game from inside it. Isolated on this " +
-      "device from the game's own log, and switching it off brought the " +
-      "controller straight back.",
+      "The version this collection pins is from January 2024 and patches " +
+      "the game's input handler at a place that no longer exists, so it " +
+      "throws while the mod loader is still starting. That happens inside " +
+      "the engine's input setup, which leaves the whole input system " +
+      "dead: controller, keyboard and trackpad all stop responding at the " +
+      "menu, with no way to quit the game from inside it. Isolated on " +
+      "this device from the game's own log. The mod has a newer build " +
+      "that says it fixes controller support, so installing it from its " +
+      "own mod page instead is worth a try.",
+  },
+  {
+    nexusDomain: "subnauticabelowzero",
+    modId: 306, // Quick Slots Plus BZ
+    name: "Quick Slots Plus BZ",
+    // The Below Zero port of 984 above, same author (celvro), and it is
+    // carried by both of the top two Below Zero collections. Its current
+    // build is v2.2.1, which is BEHIND the v3.0.0 that carries the fix on
+    // the Subnautica side, so the version that locked Michael out has no
+    // fixed counterpart here yet.
+    //
+    // Not isolated on Below Zero itself, and the reason says so. It is
+    // switched off anyway because the failure it would cause cannot be
+    // escaped from inside the game: no controller, no keyboard, no
+    // trackpad, no quit. One tap in My Mods turns it back on, which is
+    // also how to test whether Below Zero is affected at all.
+    reason:
+      "This is the Below Zero build of a mod that, on Subnautica, patches " +
+      "the game's input handler and takes the whole input system down " +
+      "with it: controller, keyboard and trackpad all stop responding at " +
+      "the menu, with no way to quit from inside the game. That was " +
+      "confirmed on this device from the game's own log. It has not been " +
+      "confirmed on Below Zero, so it may well be fine here, but being " +
+      "locked out of a game is a bad way to find out. Switch it on in My " +
+      "Mods if you want it.",
   },
 ];
 
