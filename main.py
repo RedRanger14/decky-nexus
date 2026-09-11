@@ -6709,6 +6709,32 @@ BG3_MODULE_CAP = 450
 # work. A Steam Deck ships 1GB and is unmeasured.
 BG3_LARGE_POOL_MB = 2048
 
+# Caps MEASURED on real devices, keyed by the firmware product name
+# (/sys/class/dmi/id/product_name, the string that tells the two bench
+# handhelds apart). A device not in this table gets BG3_MODULE_CAP as a
+# safe default - a Steam Deck has a smaller pool than a desktop card and
+# an unmeasured handheld crashing at load is worse than a desktop being
+# held to 450 - plus the panel's Mod limit control to raise or remove it.
+# The pool size cannot pick the number: on the Legion a bigger carve-out
+# made the game die, and amdgpu's sysfs cannot tell a carve-out from a
+# discrete card's memory. Add a device here only with a measured boot
+# series behind it (tools/bg3boothunt.py --verify).
+BG3_MEASURED_CAPS = {
+    # Lenovo Legion Go 2, 2026-09-08: 450 booted 6/6, 600 died 4/10.
+    "83N0": 450,
+}
+BG3_CAP_OVERRIDE_KEY = "bg3_module_cap_override"
+
+
+def _device_product_name() -> str:
+    """The firmware's product name ("83N0", "Jupiter", "Galileo"); "" when
+    unreadable (not Linux, a VM without DMI)."""
+    try:
+        with open("/sys/class/dmi/id/product_name", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
 
 def _device_vram_total_mb() -> int:
     """Dedicated video memory in MB from amdgpu's sysfs, the largest card
@@ -6723,22 +6749,54 @@ def _device_vram_total_mb() -> int:
     return best
 
 
-def _bg3_module_cap() -> int:
-    """The module cap that applies to THIS device: 0 would mean none.
+def _bg3_cap_override(settings: dict = None):
+    """The user's own Mod limit: None for automatic, 0 for no limit, else
+    the module count. Anything unreadable counts as automatic."""
+    if settings is None:
+        settings = _load_settings()
+    v = settings.get(BG3_CAP_OVERRIDE_KEY)
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return None
+    return v if v >= 0 else None
 
-    One number for every pool size, on purpose - see the note above
-    BG3_LARGE_POOL_MB for the measurement that killed the alternative."""
-    return BG3_MODULE_CAP
+
+def _bg3_module_cap(settings: dict = None) -> int:
+    """The module cap that applies to THIS device: 0 means none.
+
+    The user's Mod limit wins; otherwise the number measured for this
+    device, otherwise the default. Never the pool size - see the note
+    above BG3_LARGE_POOL_MB for the measurement that killed that."""
+    override = _bg3_cap_override(settings)
+    if override is not None:
+        return override
+    return BG3_MEASURED_CAPS.get(_device_product_name(), BG3_MODULE_CAP)
+
+
+def _bg3_module_cap_source(settings: dict = None) -> str:
+    """Where the cap comes from, for the panel: "custom" (the user set a
+    number), "off" (the user removed it), "measured" (this device's own
+    boot series) or "default" (an unmeasured device)."""
+    override = _bg3_cap_override(settings)
+    if override is not None:
+        return "off" if override == 0 else "custom"
+    return ("measured" if _device_product_name() in BG3_MEASURED_CAPS
+            else "default")
 
 
 BG3_OVER_CAP = (
-    "Baldur's Gate 3 runs out of graphics memory on this device when too "
-    "many mods load at once, and dies part-way through the loading screen. "
-    f"Measured here: with {BG3_MODULE_CAP} mods switched on it reached the "
-    "menu every time, with 600 it failed four times in ten. This collection "
-    "has more than that, so the mods at the end of its list were switched "
-    "off to stay under the limit. If you want one of them, switch it on in "
-    "My Mods and switch another off."
+    "Baldur's Gate 3 runs out of graphics memory when too many mods load "
+    "at once, and dies part-way through the loading screen. Measured on a "
+    f"Legion Go 2 running SteamOS: with {BG3_MODULE_CAP} mods switched on "
+    "it reached the menu every time, with 600 it failed four times in ten. "
+    "This collection has more than this device's limit, so the mods at the "
+    "end of its list were switched off to stay under the limit. If you "
+    "want one of them, switch it on in My Mods and switch another off. A "
+    "device with more graphics memory may load more: the limit can be "
+    "raised or removed in the Nexus Mods panel, under Mod limit."
 )
 
 
@@ -7064,11 +7122,11 @@ def _bg3_capacity_pass(
 
     ordered = sorted(recs, key=seq)
     total = _bg3_module_total(settings, game_domain)
-    cap = _bg3_module_cap()
+    cap = _bg3_module_cap(settings)
     # Room first: capped mods return in install order while they fit. With
-    # no cap (a device whose video-memory pool is large enough) everything
-    # the cap ever parked comes back here - which is how raising the BIOS
-    # setting lifts the limit without anyone touching My Mods.
+    # no cap (the user removed it in the panel) everything the cap ever
+    # parked comes back here - which is how raising the limit lifts it
+    # without anyone touching My Mods.
     for key, rec in ordered:
         if not _bg3_cap_parked(rec):
             continue
@@ -15588,7 +15646,7 @@ query Link($slug: String!, $domainName: String!) {
                 # actually use it: a park to cascade from, or a count over
                 # the cap. A collection that fits and parks nothing - most
                 # of them - costs no lookup at all.
-                cap = _bg3_module_cap()
+                cap = _bg3_module_cap(settings)
                 if (_bg3_se_parked_ids(settings, game_domain)
                         or (cap and _bg3_module_total(settings, game_domain)
                             > cap)):
@@ -15634,6 +15692,66 @@ query Link($slug: String!, $domainName: String!) {
             }
         except Exception as e:
             decky.logger.error(f"bg3_disable_broken_deps: {e!r}")
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def set_bg3_module_cap(
+        self, game_domain: str, install_dir: str, value=None
+    ) -> dict:
+        """The panel's Mod limit control. None puts the limit back on
+        automatic (this device's measured number, or the default), 0
+        removes it, any other count becomes the limit.
+
+        The 450 default was measured on ONE handheld with a 512MB pool. A
+        desktop card with 16GB is a different machine, and the plugin has
+        no honest way to tell the two apart from sysfs, so the person who
+        owns the device gets the number. The change lands at once: the
+        post-install pass runs, a higher limit brings capped mods back in
+        install order, a lower one parks from the end. Returns what came
+        back and what was parked, and the cap now in force."""
+        try:
+            if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+                return {"ok": False, "error": "Invalid game domain"}
+            if value is not None:
+                if isinstance(value, bool):
+                    return {"ok": False, "error": "Invalid limit"}
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    return {"ok": False, "error": "Invalid limit"}
+                if value < 0 or value > 100000:
+                    return {"ok": False, "error": "Invalid limit"}
+            if _bg3_running():
+                return {"ok": False, "error": BG3_GAME_RUNNING}
+            settings = _load_settings()
+            before = {k for k, r in _bg3_records(settings, game_domain)
+                      if r.get("enabled", True)}
+            if value is None:
+                settings.pop(BG3_CAP_OVERRIDE_KEY, None)
+            else:
+                settings[BG3_CAP_OVERRIDE_KEY] = value
+            _save_settings(settings)
+            res = await self.bg3_disable_broken_deps(game_domain, install_dir)
+            if not res.get("ok"):
+                return res
+            settings = _load_settings()
+            after = {k: r for k, r in _bg3_records(settings, game_domain)}
+            res["returned"] = [
+                after[k].get("name") or k
+                for k in after
+                if after[k].get("enabled", True) and k not in before
+            ]
+            res["cap"] = _bg3_module_cap(settings)
+            res["cap_source"] = _bg3_module_cap_source(settings)
+            res["module_total"] = _bg3_module_total(settings, game_domain)
+            decky.logger.info(
+                f"bg3 mod limit set to {value!r}: cap {res['cap']} "
+                f"({res['cap_source']}), {len(res['returned'])} back on, "
+                f"{len(res.get('disabled') or [])} parked, "
+                f"{res['module_total']} modules"
+            )
+            return res
+        except Exception as e:
+            decky.logger.error(f"set_bg3_module_cap: {e!r}")
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     async def get_game_binary_version(
@@ -22370,10 +22488,16 @@ query CollectionInstructions($slug: String!) {
             if (fixed["marker_cleared"] or fixed["registrations_restored"]
                     or fixed["se_parked"]):
                 status["bg3_crash_repair"] = fixed
-            # The panel says whether this device's video-memory pool is the
-            # small kind that caps very large collections, and what to do.
+            # The panel shows the mod limit in force, where it came from
+            # (measured here, the default, or the user's own), and how much
+            # of it is in use, and offers the control to change it.
             status["bg3_vram_mb"] = _device_vram_total_mb()
-            status["bg3_module_cap"] = _bg3_module_cap()
+            cap_settings = _load_settings()
+            status["bg3_module_cap"] = _bg3_module_cap(cap_settings)
+            status["bg3_module_cap_source"] = _bg3_module_cap_source(cap_settings)
+            status["bg3_module_total"] = _bg3_module_total(
+                cap_settings, "baldursgate3"
+            )
         decky.logger.info(f"game status for {install_dir!r}: {status}")
         return status
 

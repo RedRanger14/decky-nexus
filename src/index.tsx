@@ -2,6 +2,7 @@ import {
   ButtonItem,
   ConfirmModal,
   DialogButton,
+  DropdownItem,
   Focusable,
   ModalRoot,
   PanelSection,
@@ -98,6 +99,7 @@ import {
   setAllModsEnabled,
   setFrameworkEnabled,
   setApiKey,
+  setBg3ModuleCap,
   buildReport,
 } from "./api";
 import {
@@ -121,6 +123,9 @@ import {
   troubleshootingCount,
 
   frameworkStepNumbers,
+  bg3ModLimitOptions,
+  bg3ModLimitSelected,
+  bg3ModLimitNote,
   installedDepsNote, fitReportBody } from "./panelRules";
 import {
   ALL_GAMES,
@@ -522,6 +527,8 @@ function CurrentGameSection() {
 
   const [status, setStatus] = useState<GameStatus | undefined>();
   const [frameworkBusy, setFrameworkBusy] = useState(false);
+  // The BG3 Mod limit menu, while the backend re-settles the mod list.
+  const [capBusy, setCapBusy] = useState(false);
   const [launchOptionsSet, setLaunchOptionsSet] = useState(false);
   const [nativeBuild, setNativeBuild] = useState(false);
   const [firstRunNeeded, setFirstRunNeeded] = useState(false);
@@ -1161,6 +1168,70 @@ function CurrentGameSection() {
                   "and with such a mod on, starting a new game crashes."
                 : "")}
           </Field>
+        </PanelSectionRow>
+      )}
+      {/* The 450 default was measured on one handheld with a 512MB pool.
+          A desktop card is a different machine and sysfs cannot tell the
+          two apart, so the number is shown with its provenance and the
+          owner of the device can change it. The backend re-settles the mod
+          list at once: a higher limit brings capped mods back, a lower one
+          parks from the end of the install order. */}
+      {status?.bg3_module_cap !== undefined && (
+        <PanelSectionRow>
+          <DropdownItem
+            label="Mod limit"
+            description={bg3ModLimitNote(
+              status.bg3_module_cap,
+              status.bg3_module_cap_source,
+              status.bg3_module_total ?? 0
+            )}
+            menuLabel="Mod limit"
+            rgOptions={bg3ModLimitOptions(
+              status.bg3_module_cap,
+              status.bg3_module_cap_source
+            )}
+            selectedOption={bg3ModLimitSelected(
+              status.bg3_module_cap,
+              status.bg3_module_cap_source
+            )}
+            disabled={capBusy || gameIsRunning}
+            onChange={(opt: { data: number }) => {
+              const current = bg3ModLimitSelected(
+                status.bg3_module_cap!,
+                status.bg3_module_cap_source
+              );
+              if (opt.data === current || !game) return;
+              setCapBusy(true);
+              setBg3ModuleCap(
+                game.nexusDomain,
+                game.installDirName,
+                opt.data < 0 ? null : opt.data
+              )
+                .then((r) => {
+                  if (!r.ok) {
+                    toaster.toast({ title: "Mod limit not changed", body: r.error ?? "" });
+                    return;
+                  }
+                  const back = r.returned?.length ?? 0;
+                  const off = r.disabled?.length ?? 0;
+                  toaster.toast({
+                    title: r.cap ? `Mod limit: ${r.cap}` : "Mod limit removed",
+                    body:
+                      `${r.module_total ?? 0} mods switched on` +
+                      (back ? `, ${back} switched back on` : "") +
+                      (off ? `, ${off} switched off to fit` : "") +
+                      ".",
+                  });
+                })
+                .catch((e) =>
+                  toaster.toast({ title: "Mod limit not changed", body: String(e) })
+                )
+                .finally(() => {
+                  setCapBusy(false);
+                  refreshStatus();
+                });
+            }}
+          />
         </PanelSectionRow>
       )}
       {game.protonRequired && status?.installed && nativeBuild && (

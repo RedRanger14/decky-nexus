@@ -24,6 +24,10 @@ import {
   autoOffSummary,
   autoOffGroups,
   collectionCapacityWarning,
+  bg3ModLimitOptions,
+  bg3ModLimitSelected,
+  bg3ModLimitNote,
+  BG3_MOD_LIMIT_STEPS,
   storeHeaderPlan,
   storeHeaderMinWidth,
   repairedNote,
@@ -1032,6 +1036,8 @@ test("a collection bigger than the device warns before the download", () => {
   assert.match(w, /end of the collection's own order/);
   assert.match(w, /Script Extender/, "the other reason mods arrive off");
   assert.match(w, /switch it on in My Mods and switch another off/);
+  assert.match(w, /measured on a Legion Go 2/, "honest about where the number came from");
+  assert.match(w, /Mod limit control/, "and where to change it");
   assert.doesNotMatch(w, /—/, "no em dashes in player-facing copy");
 });
 
@@ -1040,6 +1046,58 @@ test("a collection that fits, or a device with no cap, says nothing", () => {
   assert.equal(collectionCapacityWarning(31, 450), undefined);
   assert.equal(collectionCapacityWarning(1298, 0), undefined, "no cap");
   assert.equal(collectionCapacityWarning(0, 450), undefined, "nothing loaded yet");
+});
+
+// The 450 was measured on one handheld. Michael, 2026-09-11: "other devices
+// that have both system and video ram will have more. What happens on
+// those devices? Are we limiting them?" The panel now says where the
+// number came from and lets the owner change it.
+test("the Mod limit menu leads with Automatic, ends with No limit, and names the source", () => {
+  const measured = bg3ModLimitOptions(450, "measured");
+  assert.equal(measured[0].data, -1);
+  assert.match(measured[0].label, /Automatic \(450, measured on this device\)/);
+  assert.equal(measured[measured.length - 1].data, 0);
+  assert.equal(measured[measured.length - 1].label, "No limit");
+  const dflt = bg3ModLimitOptions(450, "default");
+  assert.match(dflt[0].label, /Automatic \(450, measured on a Legion Go 2\)/);
+  for (const n of BG3_MOD_LIMIT_STEPS) {
+    assert.ok(dflt.some((o) => o.data === n && o.label === `${n} mods`), `${n}`);
+  }
+  for (const o of [...measured, ...dflt]) assert.doesNotMatch(o.label, /—/);
+});
+
+test("a custom number that is not a step still appears, selected", () => {
+  const opts = bg3ModLimitOptions(800, "custom");
+  assert.ok(opts.some((o) => o.data === 800 && o.label === "800 mods"));
+  const data = opts.map((o) => o.data);
+  assert.deepEqual(data.slice(1, -1), [...data.slice(1, -1)].sort((a, b) => a - b),
+    "steps stay in order with the custom one slotted in");
+  assert.equal(opts[0].label, "Automatic", "the automatic number is unknown while a custom one is set");
+  assert.equal(bg3ModLimitSelected(800, "custom"), 800);
+  assert.equal(bg3ModLimitSelected(0, "off"), 0);
+  assert.equal(bg3ModLimitSelected(450, "measured"), -1);
+  assert.equal(bg3ModLimitSelected(450, "default"), -1);
+  assert.equal(bg3ModLimitOptions(450, "custom").filter((o) => o.data === 450).length, 1,
+    "a custom value equal to a step is not doubled");
+});
+
+test("the Mod limit note reports use against the limit and is honest about provenance", () => {
+  const m = bg3ModLimitNote(450, "measured", 450);
+  assert.match(m, /450 mods switched on, room for 0 more/);
+  assert.match(m, /measured on this device/);
+  const d = bg3ModLimitNote(450, "default", 120);
+  assert.match(d, /120 mods switched on, room for 330 more/);
+  assert.match(d, /measured on a Legion Go 2/);
+  assert.match(d, /not on this device/);
+  assert.match(d, /puts your mods back/, "the crash repair is the safety net for trying more");
+  const c = bg3ModLimitNote(900, "custom", 700);
+  assert.match(c, /room for 200 more/);
+  assert.match(c, /You set this limit/);
+  const off = bg3ModLimitNote(0, "off", 1300);
+  assert.match(off, /1300 mods switched on, no limit/);
+  assert.match(off, /pick a limit/);
+  assert.match(bg3ModLimitNote(450, "default", 1), /^1 mod switched on/);
+  for (const s of [m, d, c, off]) assert.doesNotMatch(s, /—/);
 });
 
 test("the mod page names the version it watched fail", () => {

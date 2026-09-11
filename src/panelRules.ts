@@ -661,7 +661,86 @@ export function collectionCapacityWarning(
     `the BG3 Script Extender arrive switched off as well because it cannot ` +
     `run on the Linux build of the game. Everything still downloads and ` +
     `installs: to use one that is off, switch it on in My Mods and switch ` +
-    `another off.`
+    `another off. The limit was measured on a Legion Go 2; a device with ` +
+    `more graphics memory may load more, and the Nexus Mods panel has a ` +
+    `Mod limit control to raise or remove it.`
+  );
+}
+
+/** The BG3 panel's Mod limit menu. Automatic first, carrying the number it
+ * resolves to and where that came from; a few steps up from the default
+ * for a device with more graphics memory; no limit last. A custom number
+ * that is not one of the steps still appears, selected, so the menu never
+ * shows a choice the user did not make. `data` is what the backend takes:
+ * -1 for automatic, 0 for none, else the count. */
+export const BG3_MOD_LIMIT_STEPS = [450, 600, 750, 900, 1200, 1500];
+
+export function bg3ModLimitOptions(
+  cap: number,
+  source: "measured" | "default" | "custom" | "off" | undefined
+): { data: number; label: string }[] {
+  const auto = source === "custom" || source === "off" ? undefined : cap;
+  const autoLabel =
+    auto === undefined
+      ? "Automatic"
+      : `Automatic (${auto}, ${
+          source === "measured"
+            ? "measured on this device"
+            : "measured on a Legion Go 2"
+        })`;
+  const steps = [...BG3_MOD_LIMIT_STEPS];
+  if (source === "custom" && cap > 0 && !steps.includes(cap)) {
+    steps.push(cap);
+    steps.sort((a, b) => a - b);
+  }
+  return [
+    { data: -1, label: autoLabel },
+    ...steps.map((n) => ({ data: n, label: `${n} mods` })),
+    { data: 0, label: "No limit" },
+  ];
+}
+
+/** Which menu entry is selected for the limit in force. */
+export function bg3ModLimitSelected(
+  cap: number,
+  source: "measured" | "default" | "custom" | "off" | undefined
+): number {
+  if (source === "off") return 0;
+  if (source === "custom") return cap;
+  return -1;
+}
+
+/** The line under the Mod limit menu: what is loaded against what is
+ * allowed, and the honest provenance of the number. */
+export function bg3ModLimitNote(
+  cap: number,
+  source: "measured" | "default" | "custom" | "off" | undefined,
+  total: number
+): string {
+  const loaded = `${total} mod${total === 1 ? "" : "s"} switched on`;
+  if (source === "off" || !cap) {
+    return (
+      `${loaded}, no limit. If the game dies part-way through its loading ` +
+      `screen, that is the graphics memory running out: pick a limit and ` +
+      `the mods at the end of the install order are switched off to fit.`
+    );
+  }
+  const room = Math.max(0, cap - total);
+  const fit = `${loaded}, room for ${room} more.`;
+  if (source === "custom") {
+    return `${fit} You set this limit. Automatic puts the device's own number back.`;
+  }
+  if (source === "measured") {
+    return (
+      `${fit} ${cap} was measured on this device: every launch reached ` +
+      `the menu at ${cap}, and 600 failed four times in ten.`
+    );
+  }
+  return (
+    `${fit} ${cap} was measured on a Legion Go 2 with 512MB of graphics ` +
+    `memory, not on this device. A device with more may load more: raise ` +
+    `the limit and launch. If the game then dies while loading, this panel ` +
+    `puts your mods back and you can lower it again.`
   );
 }
 

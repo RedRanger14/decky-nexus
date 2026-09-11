@@ -16412,6 +16412,12 @@ class TestBg3Mode(unittest.TestCase):
         # apply - so every test here sees the small pool unless it says so.
         self._real_vram = main._device_vram_total_mb
         main._device_vram_total_mb = lambda: 512
+        # The cap is per device, keyed by the firmware product name. On the
+        # Legion the suite would read "83N0" and get the measured 450 no
+        # matter what a test set BG3_MODULE_CAP to; every test here is an
+        # unmeasured device unless it says otherwise.
+        self._real_product = main._device_product_name
+        main._device_product_name = lambda: ""
         self._real_root = main.BG3_PROFILE_ROOT
         main.BG3_PROFILE_ROOT = os.path.join(TEST_ROOT, "bg3-profile")
         shutil.rmtree(main.BG3_PROFILE_ROOT, ignore_errors=True)
@@ -16433,6 +16439,7 @@ class TestBg3Mode(unittest.TestCase):
         main.BG3_PROFILE_ROOT = self._real_root
         main._bg3_running = self._real_running
         main._device_vram_total_mb = self._real_vram
+        main._device_product_name = self._real_product
         shutil.rmtree(self.install, ignore_errors=True)
 
     def _archive(self, entries: dict):
@@ -18250,6 +18257,108 @@ class TestBg3Mode(unittest.TestCase):
         # Other games' panels do not carry BG3 numbers.
         self.assertNotIn("bg3_vram_mb",
                          run(self.plugin.get_game_status(self.GAME, "Mods", "", 489830)))
+
+    # ---- the limit is per device, and the owner has the last word --------------------------
+    # 450 was measured on ONE handheld with a 512MB pool. Michael, 2026-09-11:
+    # "I assume other devices that have both system and video ram will have
+    # more. What happens on those devices? Are we limiting them?" We were.
+    # sysfs cannot tell a carve-out from a discrete card, so: the measured
+    # number where we have one, the default elsewhere, and a Mod limit
+    # control in the panel for the person who owns the device.
+
+    def test_a_measured_device_uses_its_own_number_and_others_the_default(self):
+        real = self._with_cap(7)
+        try:
+            main._device_product_name = lambda: "83N0"
+            self.assertEqual(main._bg3_module_cap(), 450, "the Legion's measured cap")
+            self.assertEqual(main._bg3_module_cap_source(), "measured")
+            main._device_product_name = lambda: "Galileo"
+            self.assertEqual(main._bg3_module_cap(), 7, "an unmeasured device: the default")
+            self.assertEqual(main._bg3_module_cap_source(), "default")
+            main._device_product_name = lambda: ""
+            self.assertEqual(main._bg3_module_cap(), 7)
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_removing_the_limit_brings_every_capped_mod_back(self):
+        real = self._with_cap(3)
+        try:
+            self._install_n(5)
+            r = run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            self.assertEqual(len(r["disabled"]), 2)
+            r = run(self.plugin.set_bg3_module_cap(self.DOMAIN, self.GAME, 0))
+            self.assertTrue(r.get("ok"), r)
+            self.assertEqual(r["cap"], 0)
+            self.assertEqual(r["cap_source"], "off")
+            self.assertEqual(sorted(r["returned"]), ["Cap Mod 3", "Cap Mod 4"])
+            self.assertEqual(r["disabled"], [])
+            self.assertEqual(r["module_total"], 5)
+            recs = main._load_settings()["installed"][self.DOMAIN]
+            self.assertTrue(all(recs[f"Cap Mod {i}"]["enabled"] for i in range(5)))
+            self.assertNotIn("parked_by", recs["Cap Mod 4"])
+            uuids = self._uuids_in_modsettings()
+            self.assertIn("cafe0004-0000-0000-0000-000000000c04", uuids)
+            self.assertTrue(os.path.isfile(
+                os.path.join(main._bg3_mods_dir(), "Cap4.pak")))
+            s = self._status()
+            self.assertEqual(s["bg3_module_cap"], 0)
+            self.assertEqual(s["bg3_module_cap_source"], "off")
+            self.assertEqual(s["bg3_module_total"], 5)
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_a_custom_limit_applies_at_once_and_automatic_restores_the_default(self):
+        real = self._with_cap(3)
+        try:
+            self._install_n(5)
+            run(self.plugin.bg3_disable_broken_deps(self.DOMAIN, self.GAME))
+            r = run(self.plugin.set_bg3_module_cap(self.DOMAIN, self.GAME, 4))
+            self.assertTrue(r.get("ok"), r)
+            self.assertEqual(r["cap"], 4)
+            self.assertEqual(r["cap_source"], "custom")
+            self.assertEqual(r["returned"], ["Cap Mod 3"], "room for one, in install order")
+            self.assertEqual(self._status()["bg3_module_cap_source"], "custom")
+            # Lower than what is loaded: parks from the end again.
+            r = run(self.plugin.set_bg3_module_cap(self.DOMAIN, self.GAME, 2))
+            self.assertTrue(r.get("ok"), r)
+            self.assertEqual(sorted(d["name"] for d in r["disabled"]),
+                             ["Cap Mod 2", "Cap Mod 3"])
+            self.assertEqual(r["module_total"], 2)
+            # Back to automatic: the default cap (3) is in force again.
+            r = run(self.plugin.set_bg3_module_cap(self.DOMAIN, self.GAME, None))
+            self.assertTrue(r.get("ok"), r)
+            self.assertEqual(r["cap"], 3)
+            self.assertEqual(r["cap_source"], "default")
+            self.assertEqual(r["returned"], ["Cap Mod 2"])
+            self.assertNotIn(main.BG3_CAP_OVERRIDE_KEY, main._load_settings())
+        finally:
+            main.BG3_MODULE_CAP = real
+
+    def test_the_limit_control_refuses_bad_values_and_a_running_game(self):
+        self._install_n(1)
+        for bad in ("abc", -1, True, 100001):
+            r = run(self.plugin.set_bg3_module_cap(self.DOMAIN, self.GAME, bad))
+            self.assertFalse(r.get("ok"), bad)
+            self.assertIn("Invalid limit", r["error"])
+        self.assertNotIn(main.BG3_CAP_OVERRIDE_KEY, main._load_settings())
+        real = main._bg3_running
+        main._bg3_running = lambda: True
+        try:
+            r = run(self.plugin.set_bg3_module_cap(self.DOMAIN, self.GAME, 0))
+        finally:
+            main._bg3_running = real
+        self.assertFalse(r.get("ok"))
+        self.assertEqual(r["error"], main.BG3_GAME_RUNNING)
+        self.assertNotIn(main.BG3_CAP_OVERRIDE_KEY, main._load_settings(),
+                         "nothing saved while the game reads its list")
+
+    def test_the_cap_reason_no_longer_claims_it_was_measured_here(self):
+        # The same record text is shown on a Steam Deck and a desktop.
+        self.assertNotIn("Measured here", main.BG3_OVER_CAP)
+        self.assertIn("Legion Go 2", main.BG3_OVER_CAP)
+        self.assertIn("Mod limit", main.BG3_OVER_CAP)
+        self.assertIn("switched off to stay under the limit", main.BG3_OVER_CAP)
+        self.assertNotIn("—", main.BG3_OVER_CAP)
 
     def test_an_unreadable_pool_reads_as_zero(self):
         # No sysfs (Windows, a container): 0, never an exception.

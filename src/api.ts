@@ -237,6 +237,14 @@ export interface GameStatus {
   /** Baldur's Gate 3 only: this device's dedicated video memory in MB (the
    * firmware carve-out, not the memory the driver borrows on demand). */
   bg3_vram_mb?: number;
+  /** Baldur's Gate 3 only: where the mod limit comes from. "measured" is
+   * this device's own boot series, "default" the Legion Go 2 number
+   * applied to an unmeasured device, "custom" and "off" the user's own
+   * choice from the panel's Mod limit control. */
+  bg3_module_cap_source?: "measured" | "default" | "custom" | "off";
+  /** Baldur's Gate 3 only: modules switched on right now, what the limit
+   * counts. */
+  bg3_module_total?: number;
   /** Baldur's Gate 3 only: how many mods this device can load at once
    * before the game runs out of graphics memory while starting, 0 for no
    * limit. The collection page warns against this BEFORE a download. */
@@ -420,6 +428,23 @@ export const bg3DisableBrokenDeps = callable<
   [game_domain: string, install_dir: string],
   { ok: boolean; disabled?: { name: string; reason: string }[]; error?: string }
 >("bg3_disable_broken_deps");
+
+/** BG3: the panel's Mod limit. null = automatic (this device's measured
+ * number or the default), 0 = no limit, otherwise the module count. The
+ * post-install pass runs at once: a higher limit brings capped mods back,
+ * a lower one parks from the end of the install order. */
+export const setBg3ModuleCap = callable<
+  [game_domain: string, install_dir: string, value: number | null],
+  {
+    ok: boolean;
+    cap?: number;
+    cap_source?: "measured" | "default" | "custom" | "off";
+    module_total?: number;
+    returned?: string[];
+    disabled?: { name: string; reason: string }[];
+    error?: string;
+  }
+>("set_bg3_module_cap");
 
 export const getCollectionManifest = callable<
   [slug: string, game_domain: string],
