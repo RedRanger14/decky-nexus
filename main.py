@@ -4758,6 +4758,55 @@ def _peel_mods_path_wrappers(scratch: str, mods_subdir: str) -> list:
     return entries
 
 
+def _mod_folders_in(wrapper: str) -> list:
+    """The real mod folders inside an unwrapped mods directory, as
+    (source path, folder name) pairs.
+
+    A directory holding only more directories is an AUTHOR'S NAMESPACE,
+    not a mod. Tobey ships three separate Subnautica mods as
+    plugins/Tobey/BepInEx Tweaks, plugins/Tobey/SnapBuilder and
+    plugins/Tobey/Fast Loading Screen. Treating "Tobey" as the mod folder
+    made all three the same folder, so each install deleted the one before
+    it and the collection then reported two mods as never installed. That
+    is exactly what a 72-mod collection did on 2026-09-11: three installs
+    logged "unwrapped plugins/ -> ['Tobey']" and only the last survived.
+
+    A folder with any file directly inside it is a mod (Stardew's
+    manifest.json, Bannerlord's SubModule.xml, a plugin's .dll), so this
+    only ever descends past a directory that could not be one.
+    """
+    out = []
+    for name in sorted(os.listdir(wrapper)):
+        path = os.path.join(wrapper, name)
+        if not os.path.isdir(path):
+            continue
+        inner = os.listdir(path)
+        has_file = any(os.path.isfile(os.path.join(path, e)) for e in inner)
+        subdirs = sorted(e for e in inner if os.path.isdir(os.path.join(path, e)))
+        if not has_file and subdirs:
+            out.extend((os.path.join(path, sub), sub) for sub in subdirs)
+        else:
+            out.append((path, name))
+    return out
+
+
+def _lift_wrapper_contents(scratch: str, wrapper: str) -> list:
+    """Move everything out of `wrapper` into `scratch` and drop it.
+
+    For a wrapper holding loose files rather than mod folders: the legacy
+    Configuration Manager ships plugins/<six loose files>, and with no
+    child directory to install the installer kept the wrapper itself and
+    created a mod called "plugins" at BepInEx/plugins/plugins (found
+    2026-09-11). Lifting the files leaves the caller's own loose-file
+    path to wrap them in a folder named after the mod.
+    """
+    holding = os.path.join(scratch, ".lift")
+    os.rename(wrapper, holding)
+    for name in os.listdir(holding):
+        shutil.move(os.path.join(holding, name), os.path.join(scratch, name))
+    os.rmdir(holding)
+    return os.listdir(scratch)
+
 def _looks_like_data(dir_path: str) -> bool:
     try:
         names = os.listdir(dir_path)
@@ -15293,13 +15342,14 @@ query Link($slug: String!, $domainName: String!) {
             and os.path.isdir(os.path.join(scratch, entries[0]))
         ):
             wrapper = os.path.join(scratch, entries[0])
-            scratch_entries = os.listdir(wrapper)
-            children = [
-                e
-                for e in scratch_entries
-                if os.path.isdir(os.path.join(wrapper, e))
-            ]
-            if children:
+            folders = _mod_folders_in(wrapper)
+            children = [name for _src, name in folders]
+            if not folders and os.listdir(wrapper):
+                # Loose files in the wrapper, no mod folder at all: lift
+                # them out and let the loose-file path below name the
+                # folder after the mod.
+                entries = _lift_wrapper_contents(scratch, wrapper)
+            if folders:
                 # Install every child as its own mod folder (multi-module
                 # archives are common on Bannerlord).
                 settings = _load_settings()  # re-read: parallel installs
@@ -15307,10 +15357,28 @@ query Link($slug: String!, $domainName: String!) {
                     game_domain, {}
                 )
                 skipped_children = []
-                for child in children:
+                for src_path, child in folders:
                     dst = os.path.join(mods_path, child)
+                    # Deleting a folder another mod's record owns is how
+                    # two mods vanished without a word. Still replaced,
+                    # because a reinstall must be able to, but never
+                    # silently.
+                    owner = next(
+                        (
+                            r for k, r in installed_rec.items()
+                            if k == child and r.get("mod_id")
+                            and int(r.get("mod_id") or 0) != int(mod_id or 0)
+                        ),
+                        None,
+                    )
+                    if owner is not None and os.path.isdir(dst):
+                        decky.logger.warning(
+                            f"installing {mod_name!r} replaces folder "
+                            f"{child!r}, which belongs to "
+                            f"{owner.get('name') or child!r}"
+                        )
                     _force_rmtree(dst)
-                    shutil.move(os.path.join(wrapper, child), dst)
+                    shutil.move(src_path, dst)
                     # The same era gate as the single-module path. Its
                     # absence HERE is how seven v1.2-era code mods from
                     # Eagle Rising installed enabled while thirty-eight

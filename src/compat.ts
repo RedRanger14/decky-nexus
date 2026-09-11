@@ -298,6 +298,41 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "(isolated on this device with this as the only mod switched on). " +
       "Mods that need it are switched off with it.",
   },
+  {
+    nexusDomain: "subnautica",
+    modId: 984, // Quick Slots Plus (BepInEx)
+    name: "Quick Slots Plus (BepInEx)",
+    // Michael, 2026-09-11, after installing a 72-mod collection: "when I
+    // booted the game, the controller is no longer working in the menu so
+    // i cant verify if the mods have loaded. Even my keyboard and trackpad
+    // no longer work." The game's own log named it outright:
+    //
+    //   [Info : BepInEx] Loading [Quick Slots Plus 2.1.1]
+    //   [Warning: HarmonyX] Could not find method for type GameInput and
+    //                       name Awake
+    //   [Error : Unity Log] ArgumentException: Undefined target method for
+    //     patch QuickSlotsPlus.Patches.GameInput_Awake_Patch::Postfix()
+    //   Rethrow as HarmonyException
+    //     QuickSlotsPlus.Mod.Awake ()
+    //     BepInEx.Bootstrap.Chainloader:Start()
+    //     UnityEngine.InputSystem.InputSystem:.cctor()
+    //
+    // The bottom of that stack is what makes it total rather than
+    // cosmetic: BepInEx's chainloader runs inside InputSystem's STATIC
+    // constructor, and an exception there faults the type permanently, so
+    // every later input call fails. Switching this one mod off restored
+    // the controller. Unscoped: the fault is the game version, not the
+    // collection.
+    reason:
+      "It patches the game's input handler, and the method it looks for " +
+      "no longer exists in the current version of the game, so it throws " +
+      "while the mod loader is still starting. That happens inside the " +
+      "engine's input setup, which leaves the whole input system dead: " +
+      "controller, keyboard and trackpad all stop responding at the menu, " +
+      "with no way to quit the game from inside it. Isolated on this " +
+      "device from the game's own log, and switching it off brought the " +
+      "controller straight back.",
+  },
 ];
 
 /** Which of a collection's mods should be installed SWITCHED OFF, each

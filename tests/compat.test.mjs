@@ -400,6 +400,23 @@ test("the collection page warns about capacity before installing", () => {
   assert.ok(warn < install, "the warning renders above the install button");
 });
 
+// Michael, 2026-09-11: "when I booted the game, the controller is no longer
+// working in the menu... Even my keyboard and trackpad no longer work."
+// Named by the game's own log: the mod's Harmony patch on GameInput.Awake
+// throws inside InputSystem's static constructor, which faults the type and
+// kills every input device at once. Disabling it restored the controller.
+test("the Subnautica mod that kills all input is a rule everywhere", () => {
+  for (const slug of ["tdtzfi", undefined]) {
+    const off = collectionAutoOff("subnautica", [984], slug);
+    assert.equal(off.length, 1, `must fire for slug ${slug}`);
+    assert.match(off[0].reason, /input/);
+    assert.match(off[0].reason, /controller, keyboard and trackpad/);
+    assert.doesNotMatch(off[0].reason, /touchscreen/i);
+  }
+  // A different game's mod 984 is not this mod.
+  assert.equal(collectionAutoOff("palworld", [984], undefined).length, 0);
+});
+
 // No em dashes in player-facing copy, wherever it lives.
 test("the warning copy carries no em dashes", () => {
   for (const m of STRANDING_UI_MODS) {

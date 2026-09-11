@@ -19660,5 +19660,67 @@ class TestNestedModsFolder(unittest.TestCase):
         self.assertFalse(os.path.exists(
             os.path.join(self.install, "BepInEx", "plugins", "plugins")))
 
+    # ---- an author's folder is not a mod folder --------------------------------------------
+    # Three Tobey mods ship plugins/Tobey/<Mod Name>/, and treating "Tobey"
+    # as the mod made all three the same folder: each install deleted the
+    # one before it, and the 72-mod collection reported two mods as never
+    # installed because nothing owned their ids (2026-09-11).
+
+    def test_an_author_namespace_yields_one_folder_per_mod(self):
+        shapes = [
+            (["BepInEx/plugins/Tobey/BepInEx Tweaks/t.dll"], "BepInEx Tweaks",
+             ("Tobey", "BepInEx Tweaks")),
+            (["plugins/Tobey/SnapBuilder/s.dll"], "SnapBuilder",
+             ("Tobey", "SnapBuilder")),
+            (["BepInEx/plugins/Tobey/Fast Loading Screen/f.dll"],
+             "Fast Loading Screen", ("Tobey", "Fast Loading Screen")),
+        ]
+        for i, (members, name, _ns) in enumerate(shapes):
+            r = self._install(members, name, self.FILE + 30 + i)
+            self.assertTrue(r.get("ok"), f"{name}: {r}")
+        base = os.path.join(self.install, "BepInEx", "plugins")
+        # Each mod kept its own folder, and none of them is called "Tobey".
+        for folder, dll in (("BepInEx Tweaks", "t.dll"),
+                            ("SnapBuilder", "s.dll"),
+                            ("Fast Loading Screen", "f.dll")):
+            self.assertTrue(os.path.isfile(os.path.join(base, folder, dll)),
+                            f"{folder} was overwritten by a later install")
+        self.assertFalse(os.path.exists(os.path.join(base, "Tobey")))
+        # And every one of them owns a record, so a collection can tell
+        # they are installed.
+        recs = main._load_settings()["installed"][self.DOMAIN]
+        self.assertEqual(
+            sorted(k for k in recs), ["BepInEx Tweaks", "Fast Loading Screen", "SnapBuilder"]
+        )
+
+    def test_a_folder_holding_a_file_is_a_mod_not_a_namespace(self):
+        # The guard that stops this descending through real mods: Stardew's
+        # manifest.json and Bannerlord's SubModule.xml sit beside folders.
+        r = self._install(
+            ["plugins/CoolMod/manifest.json", "plugins/CoolMod/assets/x.png"],
+            "Cool Mod", self.FILE + 40)
+        self.assertTrue(r.get("ok"), r)
+        base = os.path.join(self.install, "BepInEx", "plugins")
+        self.assertTrue(os.path.isfile(os.path.join(base, "CoolMod", "manifest.json")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(base, "CoolMod", "assets", "x.png")))
+        self.assertFalse(os.path.exists(os.path.join(base, "assets")))
+
+    def test_loose_files_in_the_wrapper_are_named_after_the_mod(self):
+        # The legacy Configuration Manager ships plugins/<six loose files>.
+        # With no child folder the installer kept the wrapper and made a
+        # mod called "plugins" at BepInEx/plugins/plugins.
+        r = self._install(
+            ["plugins/ConfigurationManager.dll", "plugins/ConfigurationManager.xml"],
+            "Configuration Manager for BepInEx", self.FILE + 50)
+        self.assertTrue(r.get("ok"), r)
+        base = os.path.join(self.install, "BepInEx", "plugins")
+        self.assertFalse(os.path.exists(os.path.join(base, "plugins")),
+                         "the wrapper must never become the mod folder")
+        folder = main._safe_name("Configuration Manager for BepInEx")
+        self.assertTrue(os.path.isfile(
+            os.path.join(base, folder, "ConfigurationManager.dll")))
+        self.assertIn(folder, main._load_settings()["installed"][self.DOMAIN])
+
 if __name__ == "__main__":
     unittest.main()
