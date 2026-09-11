@@ -433,7 +433,7 @@ _GAME_VERSION_READERS = {
 
 def _bl_installed_game_version() -> str:
     """Bannerlord's version, from Native/SubModule.xml. "" when unknown."""
-    install_path = _game_paths("Mount & Blade II Bannerlord", "Modules")[0]
+    install_path = _game_dir("Mount & Blade II Bannerlord")
     manifest = os.path.join(
         install_path, "Modules", "Native", "SubModule.xml"
     )
@@ -619,10 +619,58 @@ def _find_in_libraries(*parts: str) -> str:
     return ""
 
 
-def _game_paths(install_dir: str, mods_subdir: str):
-    install_path = _find_in_libraries("common", install_dir) or os.path.join(
+def _proton_builds() -> list:
+    """Every installed Proton build, by name, from every Steam library.
+
+    Steam installs a Proton into whichever library it was pointed at, and a
+    Deck whose games are on the card usually has its Protons there too. This
+    listed the main library only, so a card-based setup was told it had no
+    usable Proton and every me3 game refused to launch - the same assumption
+    that made Witcher 3 on a microSD report "game not found", in a different
+    corner of the file.
+
+    Names, not paths: the caller offers them as a choice and matches on the
+    version prefix. A build present in two libraries is one choice.
+    """
+    names = set()
+    for lib in _steam_libraries():
+        common = os.path.join(lib, "common")
+        try:
+            entries = os.listdir(common)
+        except OSError:
+            continue
+        for name in entries:
+            if name.lower().startswith("proton") and os.path.isdir(
+                os.path.join(common, name)
+            ):
+                names.add(name)
+    return sorted(names)
+
+
+def _game_dir(install_dir: str) -> str:
+    """The game's own folder, from whichever library holds it.
+
+    The main library is the fallback here, not the assumption anywhere
+    else: this is the one place allowed to name STEAM_COMMON for a game.
+    """
+    return _find_in_libraries("common", install_dir) or os.path.join(
         STEAM_COMMON, install_dir
     )
+
+
+def _mods_dir(install_dir: str, mods_subdir: str) -> str:
+    """The game's mods folder, from whichever library holds the game."""
+    return os.path.join(_game_dir(install_dir), mods_subdir)
+
+
+def _game_paths(install_dir: str, mods_subdir: str):
+    """Game folder, mods folder, and the disabled-mods folder beside it.
+
+    Callers that only want the game folder ask _game_dir for it - indexing
+    a tuple to reach past two values you did not ask for is how a caller
+    ends up depending on the shape of an answer instead of the answer.
+    """
+    install_path = _game_dir(install_dir)
     mods_path = os.path.join(install_path, mods_subdir)
     disabled_path = os.path.join(install_path, f"{mods_subdir}-disabled")
     return install_path, mods_path, disabled_path
@@ -13199,7 +13247,7 @@ query Link($slug: String!, $domainName: String!) {
                 try:
                     stripped = _bl_strip_outdated_shader_caches(
                         game_domain,
-                        _game_paths(install_dir, mods_subdir)[0],
+                        _game_dir(install_dir),
                         int(app_id or 0),
                     )
                 except Exception as e:  # noqa: BLE001 - never fail an install
@@ -15993,7 +16041,7 @@ query Link($slug: String!, $domainName: String!) {
         dst = _game_prefs_path(app_id, prefs_subpath)
         if os.path.isfile(dst):
             return {"ok": True, "seeded": False}
-        src = os.path.join(STEAM_COMMON, install_dir, *source_rel.split("/"))
+        src = os.path.join(_game_dir(install_dir), *source_rel.split("/"))
         if not os.path.isfile(src):
             return {"ok": False, "error": f"{source_rel} not found in game dir"}
         _makedirs_for(dst)
@@ -16047,7 +16095,7 @@ query Link($slug: String!, $domainName: String!) {
         api_key = _load_settings().get("api_key")
         if not api_key:
             return _fail("auth", "Not signed in")
-        install_path = os.path.join(STEAM_COMMON, install_dir)
+        install_path = _game_dir(install_dir)
         if not os.path.isdir(install_path):
             return _fail("game", "Game install folder not found")
         proton, compat, steam_root, perr = _proton_binary_for(app_id)
@@ -16500,15 +16548,8 @@ query Link($slug: String!, $domainName: String!) {
         me3 copy is there, whether a Proton it can use is installed, and
         what the generated profile currently activates."""
         status = await self.get_me3_status()
-        install_path = os.path.join(STEAM_COMMON, install_dir)
-        protons = []
-        if os.path.isdir(STEAM_COMMON):
-            protons = sorted(
-                name
-                for name in os.listdir(STEAM_COMMON)
-                if name.lower().startswith("proton")
-                and os.path.isdir(os.path.join(STEAM_COMMON, name))
-            )
+        install_path = _game_dir(install_dir)
+        protons = _proton_builds()
         settings = _load_settings()
         records = _me3_records(settings, game_domain)
         profile = _me3_profile_path(game_domain)
@@ -16711,7 +16752,7 @@ query Link($slug: String!, $domainName: String!) {
             api_key = _load_settings().get("api_key")
             if not api_key:
                 return {"ok": False, "error": "Not signed in"}
-            install_path = os.path.join(STEAM_COMMON, install_dir)
+            install_path = _game_dir(install_dir)
             if not os.path.isdir(install_path):
                 return {"ok": False, "error": "Game install folder not found"}
 
@@ -16966,7 +17007,7 @@ query Link($slug: String!, $domainName: String!) {
         ('X.esm is missing required files') - the #1 "game won't start"
         cause after a collection that assumes DLC or external
         prerequisites (e.g. TTW). Returns [{plugin, missing:[...]}]."""
-        data_dir = os.path.join(STEAM_COMMON, install_dir, mods_subdir)
+        data_dir = _mods_dir(install_dir, mods_subdir)
         if not os.path.isdir(data_dir):
             return {"ok": False, "error": "Game data folder not found"}
         if not plugins_subpath:
@@ -17014,7 +17055,7 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": True, "available": False}
         log_path = _game_prefs_path(app_id, log_subpath)
         plugins_dir = os.path.join(
-            STEAM_COMMON, install_dir, *SE_PLUGIN_DIRS.get(
+            _game_dir(install_dir), *SE_PLUGIN_DIRS.get(
                 log_subpath.split("/")[0], ("Data", "SKSE", "Plugins")
             )
         )
@@ -17098,7 +17139,7 @@ query Link($slug: String!, $domainName: String!) {
         is never deleted - the extender only scans *.dll, so a suffix is
         enough to take it out of the game, and the user can always have
         it back."""
-        base = os.path.abspath(os.path.join(STEAM_COMMON, install_dir))
+        base = os.path.abspath(_game_dir(install_dir))
         target_dir = os.path.abspath(plugins_dir or "")
         # The directory comes from the frontend; never touch anything
         # outside the game it names.
@@ -17161,7 +17202,7 @@ query Link($slug: String!, $domainName: String!) {
         hook."""
         if not _safe_rel_path(rel_path or ""):
             return {"ok": False, "error": "Invalid path"}
-        path = os.path.join(STEAM_COMMON, install_dir, *rel_path.split("/"))
+        path = os.path.join(_game_dir(install_dir), *rel_path.split("/"))
         return {"ok": True, "exists": os.path.exists(path)}
 
     async def get_show_adult(self) -> dict:
@@ -18374,7 +18415,7 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": True, "supported": False}
         timestamp_ordered = plugins_style == "listed"
         path = _plugins_txt_path(app_id, plugins_subpath)
-        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        data_path = os.path.join(_game_dir(install_dir), "Data")
         if not os.path.isfile(path) or not os.path.isdir(data_path):
             return {"ok": True, "supported": False}
         implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())
@@ -19077,7 +19118,7 @@ query CollectionInstructions($slug: String!) {
             if install_dir:
                 runtime = await asyncio.to_thread(
                     _script_extender_runtime,
-                    os.path.join(STEAM_COMMON, install_dir),
+                    _game_dir(install_dir),
                 )
                 detail = await self.get_collection(slug, game_domain)
                 target = _address_library_target(
@@ -19649,7 +19690,7 @@ query CollectionInstructions($slug: String!) {
             if rec.get("mod_id") and rec.get("enabled") is not False
         }
         install_path, _mods_path, _dis = _game_paths(install_dir, mods_subdir)
-        data_path = _game_paths(install_dir, mods_subdir)[1]
+        data_path = _mods_dir(install_dir, mods_subdir)
         build = _steam_build_id(app_id)
         # Asked of every record, not just the enabled ones: a failing script
         # belonging to a mod already switched off is exactly what we must
@@ -19729,7 +19770,7 @@ query CollectionInstructions($slug: String!) {
             # dependency and may still be repairable, so those are
             # reported and left alone.
             se_dir = os.path.join(
-                STEAM_COMMON, install_dir, *SE_PLUGIN_DIRS.get(
+                _game_dir(install_dir), *SE_PLUGIN_DIRS.get(
                     se_log_subpath.split("/")[0], ("Data", "SKSE", "Plugins")
                 )
             )
@@ -20521,7 +20562,7 @@ query CollectionInstructions($slug: String!) {
         if not table:
             return {"ok": True, "supported": True, "bad": [], "extra": 0}
         path = _plugins_txt_path(app_id, plugins_subpath)
-        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        data_path = os.path.join(_game_dir(install_dir), "Data")
         entries = _plugin_entries(_read_plugins_txt(path), plugins_style)
         listed = [n for n, _ in entries]
         on = {n.lower() for n, enabled in entries if enabled}
@@ -20547,7 +20588,7 @@ query CollectionInstructions($slug: String!) {
             return {"ok": False, "error": "This game has no plugin list"}
         table = KNOWN_BAD_PLUGINS.get(game_domain) or {}
         path = _plugins_txt_path(app_id, plugins_subpath)
-        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        data_path = os.path.join(_game_dir(install_dir), "Data")
         lines = _read_plugins_txt(path)
         header = [l for l in lines if l.strip().startswith("#")]
         entries = _plugin_entries(lines, plugins_style)
@@ -20608,7 +20649,7 @@ query CollectionInstructions($slug: String!) {
         path = _plugins_txt_path(app_id, plugins_subpath)
         if not os.path.isfile(path):
             return {"ok": True, "changed": 0}
-        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        data_path = os.path.join(_game_dir(install_dir), "Data")
         skips = _load_skips(game_domain)
         if not skips:
             return {"ok": True, "changed": 0}
@@ -20656,7 +20697,7 @@ query CollectionInstructions($slug: String!) {
         if not plugins_subpath:
             return {"ok": False, "error": "This game has no plugin list"}
         path = _plugins_txt_path(app_id, plugins_subpath)
-        data_path = os.path.join(STEAM_COMMON, install_dir, "Data")
+        data_path = os.path.join(_game_dir(install_dir), "Data")
         r = _rewrite_load_order(
             data_path, path, plugins_style,
             IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset()),
@@ -20759,7 +20800,7 @@ query CollectionInstructions($slug: String!) {
         # instead of politely declining to learn from it.
         parked = []
         se_dir = os.path.join(
-            STEAM_COMMON, install_dir,
+            _game_dir(install_dir),
             *SE_PLUGIN_DIRS.get(log_subpath.split("/")[0],
                                 ("Data", "SKSE", "Plugins"))
         )
@@ -20824,7 +20865,7 @@ query CollectionInstructions($slug: String!) {
         # Pull in the masters the prefix needs and put it in load order -
         # skipping this is how a "clean" test ends up crashing on missing
         # content instead of on the thing being tested.
-        data_path = os.path.join(STEAM_COMMON, state["install_dir"], "Data")
+        data_path = os.path.join(_game_dir(state["install_dir"]), "Data")
         _rewrite_load_order(
             data_path, path, state["plugins_style"],
             IMPLICIT_MASTERS_BY_DOMAIN.get(state["game_domain"], frozenset()),
@@ -20846,7 +20887,7 @@ query CollectionInstructions($slug: String!) {
         state = _bisect_advance(state, bool(crashed))
         collateral = []
         if state.get("found"):
-            data_path = os.path.join(STEAM_COMMON, state["install_dir"], "Data")
+            data_path = os.path.join(_game_dir(state["install_dir"]), "Data")
             collateral = await asyncio.to_thread(
                 _dependents_closure, data_path, state["order"],
                 set(state["skipped"]),
@@ -20881,7 +20922,7 @@ query CollectionInstructions($slug: String!) {
         _write_plugins_txt(path, header + [
             ("*" + n if n.lower() in on else n) for n, _ in entries
         ])
-        data_path = os.path.join(STEAM_COMMON, state["install_dir"], "Data")
+        data_path = os.path.join(_game_dir(state["install_dir"]), "Data")
         _rewrite_load_order(
             data_path, path, state["plugins_style"],
             IMPLICIT_MASTERS_BY_DOMAIN.get(state["game_domain"], frozenset()),
@@ -21262,7 +21303,7 @@ query CollectionInstructions($slug: String!) {
         scan(disabled_path, False)
         # Mods routed to alternate targets (UE4SS dirs, LogicMods) don't
         # live in the scanned dirs - list them from their records.
-        install_path = os.path.join(STEAM_COMMON, install_dir)
+        install_path = _game_dir(install_dir)
         for key, rec in records.items():
             target = rec.get("target")
             if not target:
@@ -21527,7 +21568,7 @@ query CollectionInstructions($slug: String!) {
             settings = _load_settings()
             records = settings.get("installed", {}).get(game_domain, {})
             rec = records.get(folder) or rec
-            install_path = os.path.join(STEAM_COMMON, install_dir)
+            install_path = _game_dir(install_dir)
             park = _parked_files_dir(game_domain, folder)
             shared = _shared_paths(records, folder, modes=("files",))
             movable = [
@@ -21556,7 +21597,7 @@ query CollectionInstructions($slug: String!) {
             )
             return {"ok": True, "moved": moved, "shared": len(shared)}
         if rec and rec.get("target"):
-            install_path = os.path.join(STEAM_COMMON, install_dir)
+            install_path = _game_dir(install_dir)
             base = os.path.join(install_path, *rec["target"].split("/"))
             real = rec.get("folder") or folder
             if rec["target"] == "dlc" and _w3_official_dlc(real):
@@ -21776,7 +21817,7 @@ query CollectionInstructions($slug: String!) {
         settings = _load_settings()
         rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
         if rec and rec.get("target"):
-            install_path = os.path.join(STEAM_COMMON, install_dir)
+            install_path = _game_dir(install_dir)
             base = os.path.join(install_path, *rec["target"].split("/"))
             if rec.get("mode") == "files":
                 for name in rec.get("files") or []:
@@ -21828,12 +21869,12 @@ query CollectionInstructions($slug: String!) {
         # A merge participant leaving: recompute its merged scripts from
         # the remaining participants.
         _w3_unmerge(
-            game_domain, os.path.join(STEAM_COMMON, install_dir),
+            game_domain, _game_dir(install_dir),
             mods_path, folder, settings,
         )
         _save_settings(settings)
         if dropped:
-            install_root = os.path.join(STEAM_COMMON, install_dir)
+            install_root = _game_dir(install_dir)
             _w3_remove_menu_xmls(install_root, dropped)
             pc_dir = os.path.join(install_root, *W3_MENU_DIR.split("/"))
             if os.path.isdir(pc_dir):

@@ -19436,5 +19436,106 @@ class TestBg3BootHunt(unittest.TestCase):
         self.assertIn("Data", seg)
 
 
+class TestGamesOutsideTheMainLibrary(unittest.TestCase):
+    """A game on an SD card lives in a different steamapps directory.
+
+    _game_paths has known that from the start; twenty-four other call sites
+    did not, and built the game folder straight from STEAM_COMMON. The
+    visible symptom was Step 1: install_framework recorded the vanilla
+    baseline against the RIGHT path, then _install_framework_inner
+    recomputed the wrong one and returned "Game install folder not found" -
+    with no log line, so the log showed a baseline and then silence.
+
+    Found on a Steam Deck whose Shadow of War sits on the SD card, but it
+    was never about one game: every game outside the main library was
+    affected, on every one of those paths.
+    """
+
+    def test_the_resolver_finds_a_game_in_a_second_library(self):
+        sd = os.path.join(TEST_ROOT, "sdcard", "steamapps")
+        os.makedirs(os.path.join(sd, "common", "ShadowOfWar", "x64"), exist_ok=True)
+        with mock.patch.object(main, "_steam_libraries", return_value=[sd]):
+            install_path, mods_path, _d = main._game_paths(
+                "ShadowOfWar", "x64/plugins"
+            )
+        self.assertEqual(
+            install_path, os.path.join(sd, "common", "ShadowOfWar")
+        )
+        # normpath first: the subdir arrives with a forward slash and
+        # os.path.join keeps it, so on Windows the raw string ends
+        # "x64/plugins" while os.path.join("x64", "plugins") is "x64\plugins".
+        # The suite runs on the author's Windows laptop as well as the device.
+        self.assertTrue(
+            os.path.normpath(mods_path).endswith(os.path.join("x64", "plugins"))
+        )
+
+    RESOLVERS = {"_steam_libraries", "_game_dir", "_prefix_drive_c"}
+
+    def test_only_the_resolvers_may_name_steam_common(self):
+        """STEAM_COMMON is the MAIN library. Naming it anywhere else is the
+        bug, whatever the expression around it looks like.
+
+        The first version of this test matched on the spelling instead:
+        STEAM_COMMON on the same line as install_dir. It passed while
+        get_me3_state was still listing Proton builds out of
+        os.listdir(STEAM_COMMON) three lines from a shape it did match - a
+        guard that certified the file clean with an instance still in it.
+        So this one asks where the name is USED, not how.
+        """
+        with open(main.__file__, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        parents = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+
+        def enclosing_function(node):
+            cur = parents.get(node)
+            while cur is not None:
+                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    return cur.name
+                cur = parents.get(cur)
+            return None  # module level: the definition itself
+
+        offenders = sorted({
+            enclosing_function(node)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id == "STEAM_COMMON"
+            and enclosing_function(node) is not None
+            and enclosing_function(node) not in self.RESOLVERS
+        })
+        self.assertEqual(
+            offenders, [],
+            "these reach for the main library directly instead of asking "
+            f"the resolvers: {offenders}",
+        )
+
+    def test_proton_builds_are_found_in_every_library(self):
+        # The instance the first guard could not see: me3 needs a Proton,
+        # and a Deck with its games on the card has its Protons there too.
+        sd = os.path.join(TEST_ROOT, "proton-sd", "steamapps")
+        os.makedirs(os.path.join(sd, "common", "Proton 9.0"), exist_ok=True)
+        main_lib = os.path.join(TEST_ROOT, "proton-main", "steamapps")
+        os.makedirs(os.path.join(main_lib, "common", "Proton 8.0"), exist_ok=True)
+        # A file, not a directory, and a non-Proton folder: neither counts.
+        open(os.path.join(sd, "common", "protonmail.txt"), "w").close()
+        os.makedirs(os.path.join(sd, "common", "SomeGame"), exist_ok=True)
+        with mock.patch.object(
+            main, "_steam_libraries", return_value=[main_lib, sd]
+        ):
+            self.assertEqual(
+                main._proton_builds(), ["Proton 8.0", "Proton 9.0"]
+            )
+
+    def test_a_build_present_in_two_libraries_is_one_choice(self):
+        a = os.path.join(TEST_ROOT, "proton-dup-a", "steamapps")
+        b = os.path.join(TEST_ROOT, "proton-dup-b", "steamapps")
+        for lib in (a, b):
+            os.makedirs(os.path.join(lib, "common", "Proton 9.0"), exist_ok=True)
+        with mock.patch.object(main, "_steam_libraries", return_value=[a, b]):
+            self.assertEqual(main._proton_builds(), ["Proton 9.0"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
