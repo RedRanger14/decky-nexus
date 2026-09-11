@@ -128,6 +128,7 @@ vanilla from the plugin.
   account you can browse here, but nothing will download.
 - **Decky Loader**, installed on the Deck already.
 - **The game installed through Steam.** Mods are applied to the Steam copy.
+  Any Steam library works, including an SD card or a second drive.
 
 ## Crediting mod authors
 
