@@ -18,7 +18,13 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 const GAMES = new URL("../src/games.ts", import.meta.url);
 const SNAP = new URL("./game-config.snapshot.json", import.meta.url);
-const src = readFileSync(GAMES, "utf8");
+// Line endings normalised before anything is captured. Some of these values
+// span lines, and git hands a Windows checkout CRLF and a Linux one LF for
+// the identical commit, so without this the snapshot says a game changed
+// when all that changed was the machine reading it. It cost a real PR
+// review: every check passed on the contributor's Linux box and Helldivers
+// 2 came up modified here (2026-09-11).
+const src = readFileSync(GAMES, "utf8").replace(/\r\n/g, "\n");
 
 /** Recover a concatenated string-literal expression's text. */
 function joinLiterals(chunk, stopAt) {
