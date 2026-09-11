@@ -1203,6 +1203,100 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       installKind: "copyRoot",
     },
   },
+  1716740: {
+    appId: 1716740,
+    displayName: "Starfield",
+    // Verified on device: get_mods('starfield', ...) returned real results
+    // (12130 mods) and install_mod resolved SFSE's real page on it.
+    nexusDomain: "starfield",
+    // Verified on device 2026-09-08 (game status log): install path really
+    // is steamapps/common/Starfield.
+    installDirName: "Starfield",
+    // Verified on device: game status logged mods_dir_exists=True here.
+    modsSubdir: "Data",
+    installMode: "dataDir",
+    // Bethesda-standard layout, same as SSE/FO4 - TODO verify Starfield
+    // actually writes Plugins.txt here without extra config. Community
+    // history on this game is that plugin activation sometimes needs an
+    // ini-based workaround (StarfieldCustom.ini file-selection entries)
+    // rather than reading Plugins.txt directly like SSE/FO4 do; this has
+    // not been confirmed on this device and may need a follow-up fix.
+    pluginsTxtSubpath: "Starfield/Plugins.txt",
+    pluginsTxtStyle: "starred",
+    moddedSaveWarning: false,
+    // Verified on device: `ps -o comm` on the running game reported exactly
+    // "Starfield.exe", untruncated.
+    processName: "Starfield.exe",
+    // Every other Bethesda-Steam game on this list needed this (ancient
+    // CRT left by Steam's install script breaks dynamically-linked script
+    // extender plugins) - carried over on the same assumption, unverified
+    // for Starfield specifically.
+    prefixRuntimeFix: true,
+    framework: {
+      name: "SFSE",
+      // Verified on device: this is really what SFSE's archive ships
+      // ("<prefix>_loader.exe", same as SKSE64/F4SE/xNVSE, all from the
+      // same silverlock.org author) - `ps aux` showed Steam launching it
+      // (AppId=1716740 -- .../sfse_loader.exe) and SFSE's own "Address
+      // Library" dialog came up, proving it actually ran under Proton.
+      detectFile: "sfse_loader.exe",
+      url: "sfse.silverlock.org",
+      // Verified on device 2026-09-08: install_mod's own log line for a
+      // real Nexus download - "starfield/106 file 67782 ('Starfield
+      // Script Extender (SFSE)' v'0.2.21')" - straight from trying to
+      // install SFSE off its mod page before this was set (Matt: "the
+      // button cannot be clicked... If I try to install SFSE from the
+      // mod list, it errors out"). That attempt failed correctly - a
+      // bare loader.exe archive routes through install_mod's generic
+      // Data-folder installer and gets refused as a "PC modding tool",
+      // same as SKSE64/F4SE would if installed that way. Framework
+      // installs are supposed to go through install_framework's copyRoot
+      // path instead (the Step 1 button), which nexusModId is what
+      // enables - it was left blank on purpose until the real id was
+      // known rather than guessed.
+      nexusModId: 106,
+      installKind: "copyRoot",
+      // Verified on device: Starfield has no separate *Launcher.exe the way
+      // SSE/FO4 do, so the swap targets the game exe directly - confirmed
+      // by `ps aux`, which showed Proton launching sfse_loader.exe for
+      // AppId 1716740 instead of Starfield.exe, and the game itself came up
+      // (Starfield.exe running as a child process) with SFSE's dialog on
+      // top of it.
+      launchOptionsTemplate:
+        "bash -c 'exec \"$" +
+        "{@/Starfield.exe/sfse_loader.exe}\"' -- %command%",
+      // Verified on device: SFSE's archive drops sfse_loader.exe,
+      // sfse_1_16_244.dll, sfse_readme.txt and sfse_whatsnew.txt at the
+      // game root (all "sfse"-prefixed, covered by the bare prefix below)
+      // plus Data/SFSE (its plugins folder, listed explicitly the same way
+      // New Vegas lists Data/NVSE - a bare "sfse" prefix is top-level-only
+      // and would never reach it). It also drops a top-level src/ folder
+      // holding its own source tarball; left uncleaned deliberately - "src"
+      // is too generic a prefix to trust broadly, and stray source tarballs
+      // left behind by a reset are clutter, not a functional problem.
+      cleanupPrefixes: ["sfse", "Data/SFSE"],
+    },
+    // TODO verify: Starfield shares FO4's engine lineage, so loose files
+    // are assumed to need the same archive-invalidation block - unconfirmed
+    // for this game.
+    setupInis: [
+      {
+        prefsSubpath: "Starfield/StarfieldCustom.ini",
+        section: "Archive",
+        settings: {
+          bInvalidateOlderFiles: "1",
+          sResourceDataDirsFinal: "",
+        },
+      },
+    ],
+    underConstruction:
+      "Starfield support is new: Step 1 (installing SFSE) is verified " +
+      "working on device, including the launch swap to sfse_loader.exe. " +
+      "Not yet confirmed: whether ordinary Data mods actually get picked " +
+      "up via Plugins.txt, and whether the archive-invalidation ini and " +
+      "runtime-repair steps are needed here the way they are on SSE/FO4. " +
+      "Expect rough edges past Step 1.",
+  },
 };
 
 /** Positional params several backend calls need for install-mode dispatch. */

@@ -17,9 +17,10 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Fourteen games, each one installed, modded and played on real hardware before
-it shipped. That is what supported means here: not that the code has a config
-entry for it, but that someone finished a session with mods running.
+Fifteen games. Fourteen of them were installed, modded and played on real
+hardware by this plugin's author before they shipped. That is what supported
+means here: not that the code has a config entry for it, but that someone
+finished a session with mods running.
 
 1. Baldur's Gate 3
 2. Cyberpunk 2077
@@ -34,7 +35,15 @@ entry for it, but that someone finished a session with mods running.
 11. Slay the Spire 2
 12. STAR WARS Battlefront II (2017)
 13. Stardew Valley
-14. The Witcher 3
+14. Starfield \*
+15. The Witcher 3
+
+\* Starfield is the exception, and the asterisk is the whole of it: it was
+contributed and verified on a Steam Deck by a user, not tested by this
+plugin's author. Installing SFSE and launching the game through it is
+confirmed working. Whether ordinary Data mods are picked up is not, so the
+plugin shows an under-construction note on it and you should expect rough
+edges past Step 1.
 
 One note on Baldur's Gate 3, because it is unlike the rest: SteamOS installs
 the native Linux build, which has no way to load the BG3 Script Extender. Mods

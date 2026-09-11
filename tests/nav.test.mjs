@@ -1450,28 +1450,113 @@ test("a game newer than its script extender is explained, not offered", () => {
   );
 });
 
+/** games.ts with every comment and string literal blanked out, character
+ * for character so indices still line up with the original.
+ *
+ * Brace matching on raw text is fooled by both: Stardew's comment splits
+ * `StardewModdingAPI{,.dll,` and `.xml}` across two lines, and every
+ * launcher swap carries a `${@/X.exe/Y.exe}` inside a string. Blanking them
+ * also stops a comment that merely MENTIONS a field from counting as the
+ * field being present. */
+function codeOnly(text) {
+  const blank = (s) => s.replace(/[^\n]/g, " ");
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const two = text.slice(i, i + 2);
+    if (two === "//") {
+      const nl = text.indexOf("\n", i);
+      const stop = nl === -1 ? text.length : nl;
+      out += blank(text.slice(i, stop));
+      i = stop;
+      continue;
+    }
+    if (two === "/*") {
+      const end = text.indexOf("*/", i + 2);
+      const stop = end === -1 ? text.length : end + 2;
+      out += blank(text.slice(i, stop));
+      i = stop;
+      continue;
+    }
+    const q = text[i];
+    if (q === '"' || q === "'" || q === "`") {
+      let j = i + 1;
+      while (j < text.length) {
+        if (text[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        if (text[j] === q) {
+          j++;
+          break;
+        }
+        j++;
+      }
+      out += blank(text.slice(i, j));
+      i = j;
+      continue;
+    }
+    out += q;
+    i++;
+  }
+  return out;
+}
+
+/** [start, end) of the object literal enclosing `index`. */
+function enclosingObject(code, index) {
+  let depth = 0;
+  let start = -1;
+  for (let i = index; i >= 0; i--) {
+    if (code[i] === "}") depth++;
+    else if (code[i] === "{") {
+      if (depth === 0) {
+        start = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (start < 0) return undefined;
+  depth = 0;
+  for (let i = start; i < code.length; i++) {
+    if (code[i] === "{") depth++;
+    else if (code[i] === "}") {
+      depth--;
+      if (depth === 0) return [start, i + 1];
+    }
+  }
+  return undefined;
+}
+
 test("every declared framework can be undone by a reset", () => {
   // copyRoot files have no manifest, so cleanupPrefixes IS the manifest.
   // Without them a reset leaves the loader in place, Step 1 keeps claiming
   // it is installed, and the setup cannot honestly be redone. Palworld
   // shipped with none on either framework.
   const games = read("games.ts");
+  const code = codeOnly(games);
   const missing = [];
   // Every framework/extraFramework object that installs copyRoot files
   // must declare how to remove them.
   const blocks = [...games.matchAll(/installKind:\s*"copyRoot"/g)];
   assert.ok(blocks.length >= 5, "copyRoot frameworks not found - parser drift");
   for (const m of blocks) {
-    // Look within the enclosing object literal, bounded generously.
-    const around = games.slice(Math.max(0, m.index - 1200), m.index + 1200);
+    // The object this sits in, exactly. A fixed window around the match was
+    // wrong in both directions: it read a NEIGHBOUR's fields where entries
+    // are short, and missed this entry's own where the comments are long.
+    // Starfield's framework carries about 1,100 characters of commentary
+    // between installKind and cleanupPrefixes and failed a 1,200 window,
+    // reporting a framework that cannot be reset when it declares them fine.
+    const bounds = enclosingObject(code, m.index);
+    assert.ok(bounds, "no object literal around a copyRoot framework");
+    const [from, to] = bounds;
+    const block = code.slice(from, to);
     // nexusModId 0 means it is not a Nexus mod installed into the game
     // folder at all - Battlefront II's compiler is our own binary in the
     // plugin's runtime dir, and reset_frosty removes that wholesale.
-    const isOurOwnTool = /nexusModId:\s*0\s*,/.test(
-      games.slice(Math.max(0, m.index - 400), m.index + 200)
-    );
-    if (!/cleanupPrefixes:/.test(around) && !isOurOwnTool) {
-      missing.push(games.slice(m.index - 300, m.index + 60).trim().slice(-160));
+    const isOurOwnTool = /nexusModId:\s*0\s*,/.test(block);
+    if (!/cleanupPrefixes:/.test(block) && !isOurOwnTool) {
+      missing.push(games.slice(from, to).trim().slice(0, 200));
     }
   }
   assert.deepEqual(

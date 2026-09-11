@@ -329,6 +329,30 @@
     ]
   },
   {
+    "appId": "1716740",
+    "displayName": "Starfield",
+    "nexusDomain": "starfield",
+    "installDirName": "Starfield",
+    "modsSubdir": "Data",
+    "pluginsTxtSubpath": "Starfield/Plugins.txt",
+    "pluginsTxtStyle": "starred",
+    "installMode": "dataDir",
+    "frameworkName": "SFSE",
+    "launchOptionsTemplate": "bash -c 'exec \"${@/Starfield.exe/sfse_loader.exe}\"' -- %command%",
+    "prefixTools": [
+      "106"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": true,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"sfse\", \"Data/SFSE\""
+    ]
+  },
+  {
     "appId": "2050650",
     "displayName": "Resident Evil 4",
     "nexusDomain": "residentevil42023",
