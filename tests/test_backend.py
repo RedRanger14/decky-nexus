@@ -19537,5 +19537,128 @@ class TestGamesOutsideTheMainLibrary(unittest.TestCase):
 
 
 
+
+class TestNestedModsFolder(unittest.TestCase):
+    """A mods folder more than one level deep ("BepInEx/plugins").
+
+    Subnautica and Silksong both put mods in BepInEx/plugins, and their
+    authors zip from whichever level they happened to be standing in. All
+    three of these were read off real Nexus archives on 2026-09-11:
+
+        EasyCraft/EasyCraft.dll                       (mod 24)
+        plugins/ECCLibrary/ECCLibrary.dll             (mod 1457)
+        BepInEx/plugins/ConfigurationManager/...      (mod 1112)
+
+    They mean the same destination. The installer already unwrapped the
+    last segment; the ones above it are what _peel_mods_path_wrappers
+    removes, and without it the third shape installed to
+    BepInEx/plugins/BepInEx/plugins/ConfigurationManager, loaded by
+    nothing.
+    """
+
+    DOMAIN = "subnautica"
+    GAME = "Subnautica Test"
+    SUB = "BepInEx/plugins"
+    MOD, FILE = 4242, 99001
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        os.makedirs(self.install)
+        os.makedirs(main.DOWNLOADS_DIR, exist_ok=True)
+        settings = main._load_settings()
+        settings["api_key"] = "k"
+        main._save_settings(settings)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    # ---- the helper on its own -------------------------------------------------------------
+
+    def _scratch(self, rels):
+        d = os.path.join(TEST_ROOT, "peel-scratch")
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+        for rel in rels:
+            path = os.path.join(d, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("x")
+        return d
+
+    def test_the_whole_mods_path_is_peeled_down_to_the_last_segment(self):
+        d = self._scratch(["BepInEx/plugins/ConfigurationManager/cm.dll"])
+        self.assertEqual(main._peel_mods_path_wrappers(d, self.SUB), ["plugins"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(d, "plugins", "ConfigurationManager", "cm.dll")))
+
+    def test_the_last_segment_is_left_for_the_installer_to_unwrap(self):
+        d = self._scratch(["plugins/ECCLibrary/ECCLibrary.dll"])
+        self.assertEqual(main._peel_mods_path_wrappers(d, self.SUB), ["plugins"])
+
+    def test_a_bare_mod_folder_is_untouched(self):
+        d = self._scratch(["EasyCraft/EasyCraft.dll"])
+        self.assertEqual(main._peel_mods_path_wrappers(d, self.SUB), ["EasyCraft"])
+
+    def test_a_single_segment_mods_folder_has_nothing_to_peel(self):
+        # Stardew ("Mods") and Bannerlord ("Modules") must behave exactly as
+        # they did: the installer's own unwrap is the only step for them.
+        for sub in ("Mods", "Modules", "BepInEx/plugins", ""):
+            d = self._scratch(["Mods/CoolMod/manifest.json"])
+            self.assertEqual(main._peel_mods_path_wrappers(d, sub), ["Mods"], sub)
+            self.assertTrue(os.path.isfile(
+                os.path.join(d, "Mods", "CoolMod", "manifest.json")), sub)
+
+    def test_a_wrapper_holding_a_child_of_the_same_name_keeps_the_child(self):
+        # Moving "BepInEx" out of "BepInEx" onto its own parent would lose
+        # it, which is why the wrapper is renamed out of the way first.
+        d = self._scratch(["BepInEx/BepInEx/marker.txt", "BepInEx/plugins/M/m.dll"])
+        left = sorted(main._peel_mods_path_wrappers(d, self.SUB))
+        self.assertEqual(left, ["BepInEx", "plugins"])
+        self.assertTrue(os.path.isfile(os.path.join(d, "BepInEx", "marker.txt")))
+        self.assertTrue(os.path.isfile(os.path.join(d, "plugins", "M", "m.dll")))
+
+    def test_a_wrapper_with_a_sibling_is_not_a_wrapper(self):
+        # Real payload beside it means the archive is not merely wrapped.
+        d = self._scratch(["BepInEx/plugins/M/m.dll", "README.txt"])
+        self.assertEqual(sorted(main._peel_mods_path_wrappers(d, self.SUB)),
+                         ["BepInEx", "README.txt"])
+
+    # ---- and through a real install ---------------------------------------------------------
+
+    def _install(self, members, mod_name, file_id):
+        archive = main._archive_cache_path(self.MOD, file_id, "m.zip")
+        with zipfile.ZipFile(archive, "w") as z:
+            for rel in members:
+                z.writestr(rel, "x")
+        return run(self.plugin.install_mod(
+            self.DOMAIN, self.MOD, file_id, "m.zip", mod_name, "1.0",
+            self.GAME, self.SUB,
+        ))
+
+    def _landed(self, *rel):
+        return os.path.isfile(os.path.join(self.install, "BepInEx", "plugins", *rel))
+
+    def test_all_three_archive_shapes_land_in_the_same_place(self):
+        shapes = [
+            (["EasyCraft/EasyCraft.dll"], "EasyCraft", ("EasyCraft", "EasyCraft.dll")),
+            (["plugins/ECCLibrary/ECCLibrary.dll"], "ECC Library",
+             ("ECCLibrary", "ECCLibrary.dll")),
+            (["BepInEx/plugins/ConfigurationManager/cm.dll"], "Configuration Manager",
+             ("ConfigurationManager", "cm.dll")),
+        ]
+        for i, (members, name, landed) in enumerate(shapes):
+            r = self._install(members, name, self.FILE + i)
+            self.assertTrue(r.get("ok"), f"{name}: {r}")
+            self.assertTrue(self._landed(*landed), f"{name} -> {landed}")
+        # And nothing nested itself inside the mods folder on the way.
+        self.assertFalse(os.path.exists(
+            os.path.join(self.install, "BepInEx", "plugins", "BepInEx")))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.install, "BepInEx", "plugins", "plugins")))
+
 if __name__ == "__main__":
     unittest.main()

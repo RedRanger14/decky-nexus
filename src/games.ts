@@ -1297,6 +1297,71 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       "runtime-repair steps are needed here the way they are on SSE/FO4. " +
       "Expect rough edges past Step 1.",
   },
+  264710: {
+    appId: 264710,
+    displayName: "Subnautica",
+    // verified against the Nexus API: 2,193 mods, 11,434 files
+    nexusDomain: "subnautica",
+    // Verified on device 2026-09-11: steamapps/common/Subnautica, 6.7GB.
+    installDirName: "Subnautica",
+    // BepInEx's plugin folder, two levels deep, which is why mods arrive
+    // rooted at three different depths: "EasyCraft/EasyCraft.dll",
+    // "plugins/ECCLibrary/..." and "BepInEx/plugins/ConfigurationManager/..."
+    // are all the same destination (all three read off the real archives).
+    // _peel_mods_path_wrappers strips the segments above the last one and
+    // the installer's own unwrap handles the last.
+    modsSubdir: "BepInEx/plugins",
+    // Saves are shared between modded and vanilla play.
+    moddedSaveWarning: false,
+    // Verified on device: this depot is the WINDOWS build run through
+    // Proton (Subnautica.exe, UnityPlayer.dll, and a prefix already at
+    // compatdata/264710), so BepInEx's winhttp proxy is the right loader
+    // and needs the dll override below. There is no native Linux build to
+    // confuse it with.
+    processName: "Subnautica.exe",
+    framework: {
+      name: "BepInEx",
+      // The pack drops this at the game root and Subnautica ships no
+      // winhttp.dll of its own, so its presence is the loader's presence.
+      // A file rather than the BepInEx/ directory on purpose: the update
+      // check reads the loader's PE version, which needs a real file.
+      detectFile: "winhttp.dll",
+      url: "github.com/toebeann/BepInEx.Subnautica",
+      // Tobey's BepInEx Pack for Subnautica, the build the whole current
+      // mod scene targets (1.79M downloads).
+      nexusModId: 1108,
+      installKind: "copyRoot",
+      // Unity + Proton: the loader is a proxy DLL, so Wine has to prefer
+      // the local copy over its own builtin. Same shape as Helldivers 2's
+      // reshade override.
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="winhttp=n,b" %command%',
+      // Every top-level name the pack's archive contains, read from the
+      // real file listing. None of them exist in a vanilla Subnautica
+      // install (MonoBleedingEdge, SNAppData, Subnautica.exe,
+      // Subnautica32.exe, Subnautica_Data, UnityCrashHandler64.exe,
+      // UnityPlayer.dll), so reset can take all of them. BepInEx/ holds
+      // the plugins folder, and removing the mods with the loader is what
+      // a reset to vanilla means.
+      cleanupPrefixes: [
+        "BepInEx",
+        "winhttp.dll",
+        "doorstop_config.ini",
+        ".doorstop_version",
+        "libdoorstop.dylib",
+        "run_bepinex.sh",
+        "steam_appid.txt",
+        "changelog.txt",
+      ],
+    },
+    // BepInEx itself, then Nautilus: the library the modern mods build on,
+    // the way Content Patcher sits under Stardew's list.
+    recommendedModIds: [1108, 1262],
+    underConstruction:
+      "Subnautica support is new. Step 1 installs BepInEx and sets the " +
+      "launch option it needs, and mods install into its plugins folder. " +
+      "Not yet played through on hardware with mods running, so expect " +
+      "rough edges until this note goes away.",
+  },
 };
 
 /** Positional params several backend calls need for install-mode dispatch. */

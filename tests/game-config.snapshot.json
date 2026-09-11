@@ -73,6 +73,30 @@
     ]
   },
   {
+    "appId": "264710",
+    "displayName": "Subnautica",
+    "nexusDomain": "subnautica",
+    "installDirName": "Subnautica",
+    "modsSubdir": "BepInEx/plugins",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "BepInEx",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"winhttp=n,b\" %command%",
+    "prefixTools": [
+      "1108"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"BepInEx\", \"winhttp.dll\", \"doorstop_config.ini\", \".doorstop_version\", \"libdoorstop.dylib\", \"run_bepinex.sh\", \"steam_appid.txt\", \"changelog.txt\","
+    ]
+  },
+  {
     "appId": "292030",
     "displayName": "The Witcher 3",
     "nexusDomain": "witcher3",
@@ -126,7 +150,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "SMAPI",
-    "launchOptionsTemplate": "{install_path}/StardewModdingAPIStardewModdingAPIsmapi-internalSaveBackupConsoleCommandsErrorHandleruninstall allSaveBackupConsoleCommandsErrorHandlersmapiStardewValley",
+    "launchOptionsTemplate": "\"{install_path}/StardewModdingAPI\" %command%",
     "prefixTools": [
       "2400"
     ],
@@ -174,7 +198,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": null,
-    "launchOptionsTemplate": "dxgi=n,bRemove the under construction bit please as it takes up way too\n    // much space and I am hopeful this will work as more updated mods get\n    // added.helldivers2.exe",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dxgi=n,b\" %command%",
     "prefixTools": [],
     "manualTools": 0,
     "hasLauncherBypass": false,
@@ -194,7 +218,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "BepInEx",
-    "launchOptionsTemplate": "winhttp=n,bwinhttp.dllBepInExdoorstop_config.inichangelog.txtUnityPlayer.soproton_experimental",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"winhttp=n,b\" %command%",
     "prefixTools": [
       "26"
     ],
@@ -238,7 +262,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "Cyber Engine Tweaks",
-    "launchOptionsTemplate": "version=n,b;winmm=n,bRED4extred4extbin/x64/winmm.dllred4ext/RED4ext.dlldocs.red4ext.comcopyRootArchiveXLred4ext/plugins/ArchiveXLred4ext/plugins/ArchiveXL/ArchiveXL.dllgithub.com/psiberx/cp2077-archive-xlcopyRootTweakXLred4ext/plugins/TweakXLred4ext/plugins/TweakXL/TweakXL.dllgithub.com/psiberx/cp2077-tweak-xlcopyRootredscript",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"version=n,b;winmm=n,b\" %command%",
     "prefixTools": [
       "107",
       "2380",
@@ -312,7 +336,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "UE4SS",
-    "launchOptionsTemplate": "dwmapi=n,bPal/Binaries/Win64/dwmapi.dllPal/Binaries/Win64/ue4ssPalSchemaPal/Binaries/Win64/ue4ss/Mods/PalSchema/dlls/main.dllokaetsu.github.io/PalSchemacopyRootPal/Binaries/Win64/ue4ss/Mods",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dwmapi=n,b\" %command%",
     "prefixTools": [
       "2237",
       "2361"
@@ -362,7 +386,7 @@
     "pluginsTxtStyle": null,
     "installMode": null,
     "frameworkName": "REFramework",
-    "launchOptionsTemplate": "dinput8=n,bdinput8",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dinput8=n,b\" %command%",
     "prefixTools": [
       "12"
     ],

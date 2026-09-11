@@ -26,17 +26,65 @@ const SNAP = new URL("./game-config.snapshot.json", import.meta.url);
 // 2 came up modified here (2026-09-11).
 const src = readFileSync(GAMES, "utf8").replace(/\r\n/g, "\n");
 
-/** Recover a concatenated string-literal expression's text. */
-function joinLiterals(chunk, stopAt) {
+/** The string expression assigned to `key`, concatenations included.
+ *
+ * Reads the literals actually written after the colon and stops where the
+ * expression stops. The previous version scanned a fixed 1,200-character
+ * window for a `%command%` marker and joined every double-quoted run it
+ * passed, which is wrong twice over: these templates are single-quoted TS
+ * strings holding double-quoted shell fragments, so the real opening quote
+ * was skipped, and a template with no marker ran on through the comments
+ * into the next field. Helldivers 2 froze 300 characters of prose as its
+ * launch template that way, and Subnautica's first capture swallowed its
+ * whole cleanup list and under-construction note (2026-09-11). */
+function stringExpr(body, key) {
+  const at = body.indexOf(key + ":");
+  if (at < 0) return null;
+  let i = body.indexOf(":", at) + 1;
   const pieces = [];
-  const re = /"((?:[^"\\]|\\.)*)"/g;
-  let m;
-  while ((m = re.exec(chunk))) {
-    const text = m[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-    pieces.push(text);
-    if (stopAt && text.includes(stopAt)) break;
+  const skipGaps = () => {
+    for (;;) {
+      const before = i;
+      while (i < body.length && /\s/.test(body[i])) i++;
+      if (body.startsWith("//", i)) {
+        const nl = body.indexOf("\n", i);
+        i = nl === -1 ? body.length : nl;
+      } else if (body.startsWith("/*", i)) {
+        const end = body.indexOf("*/", i + 2);
+        i = end === -1 ? body.length : end + 2;
+      }
+      if (i === before) return;
+    }
+  };
+  for (;;) {
+    // Whitespace and comments may sit between the parts of a `+` chain.
+    skipGaps();
+    const quote = body[i];
+    if (quote !== '"' && quote !== "'" && quote !== "`") break;
+    let out = "";
+    i++;
+    while (i < body.length && body[i] !== quote) {
+      if (body[i] === "\\") {
+        const c = body[i + 1];
+        out += c === "n" ? "\n" : c === "t" ? "\t" : c;
+        i += 2;
+      } else {
+        out += body[i];
+        i++;
+      }
+    }
+    i++; // past the closing quote
+    pieces.push(out);
+    // Another literal only follows a `+`. Anything else ends the value.
+    const save = i;
+    skipGaps();
+    if (body[i] !== "+") {
+      i = save;
+      break;
+    }
+    i++;
   }
-  return pieces.join("");
+  return pieces.length ? pieces.join("") : null;
 }
 
 function capture() {
@@ -58,7 +106,6 @@ function capture() {
       const mm = body.match(new RegExp(`\\b${key}:\\s*(\\d+)`));
       return mm ? Number(mm[1]) : null;
     };
-    const li = body.indexOf("launchOptionsTemplate:");
     return {
       appId: s.appId,
       displayName: str("displayName"),
@@ -69,8 +116,7 @@ function capture() {
       pluginsTxtStyle: str("pluginsTxtStyle"),
       installMode: str("installMode"),
       frameworkName: has("framework") ? str("name") : null,
-      launchOptionsTemplate:
-        li >= 0 ? joinLiterals(body.slice(li, li + 1200), "%command%") : null,
+      launchOptionsTemplate: stringExpr(body, "launchOptionsTemplate"),
       prefixTools: [...body.matchAll(/nexusModId: (\d+)/g)].map((t) => t[1]),
       manualTools: (body.match(/needsDesktopMode: true/g) || []).length,
       hasLauncherBypass: has("launcherBypass"),

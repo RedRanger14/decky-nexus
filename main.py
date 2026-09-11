@@ -4722,6 +4722,42 @@ def _makedirs_for(dst: str) -> None:
     os.makedirs(parent, exist_ok=True)
 
 
+def _peel_mods_path_wrappers(scratch: str, mods_subdir: str) -> list:
+    """Strip leading directories that only repeat the mods path, and
+    return the archive's entries afterwards.
+
+    A mods folder nested more than one level deep gets archives rooted at
+    every level of it. Subnautica ships the same kind of mod three ways:
+    "EasyCraft/", "plugins/ECCLibrary/" and
+    "BepInEx/plugins/ConfigurationManager/", all three meaning the same
+    destination. Only the deeper two are wrappers, and only when the
+    archive holds nothing else beside them.
+
+    Peeling the leading segments here leaves the single-level unwrap in
+    the installer to do exactly what it always did, so a one-segment mods
+    folder ("Mods", "Modules") is untouched: there is nothing to peel.
+    """
+    segments = [s for s in (mods_subdir or "").replace("\\", "/").split("/") if s]
+    entries = os.listdir(scratch)
+    # The LAST segment is the one the installer itself unwraps; only the
+    # ones above it are ours to remove.
+    for depth, want in enumerate(segments[:-1]):
+        if len(entries) != 1 or entries[0].lower() != want.lower():
+            break
+        inner = os.path.join(scratch, entries[0])
+        if not os.path.isdir(inner):
+            break
+        # Out of the way first: the wrapper and one of its children can
+        # share a name, and moving a child onto its own parent loses it.
+        holding = os.path.join(scratch, f".peel{depth}")
+        os.rename(inner, holding)
+        for name in os.listdir(holding):
+            shutil.move(os.path.join(holding, name), os.path.join(scratch, name))
+        os.rmdir(holding)
+        entries = os.listdir(scratch)
+    return entries
+
+
 def _looks_like_data(dir_path: str) -> bool:
     try:
         names = os.listdir(dir_path)
@@ -15249,6 +15285,7 @@ query Link($slug: String!, $domainName: String!) {
             game_domain, mods_path, app_id, None, install_path
         )
         os.makedirs(mods_path, exist_ok=True)
+        entries = _peel_mods_path_wrappers(scratch, mods_subdir)
         target_name = os.path.basename(mods_subdir.rstrip("/")).lower()
         if (
             len(entries) == 1
