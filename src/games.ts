@@ -1395,11 +1395,6 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // BepInEx, then Nautilus BZ: Below Zero's own build of the library,
     // not Subnautica's 1262.
     recommendedModIds: [344, 373],
-    underConstruction:
-      "Below Zero support is new. It is the same loader and the same mod " +
-      "folder as Subnautica, which is played and working, but this game " +
-      "has not been played with mods running yet. Expect rough edges " +
-      "until this note goes away.",
   },
 };
 

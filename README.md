@@ -17,9 +17,10 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Sixteen games, each one installed, modded and played on real hardware before
-it shipped. That is what supported means here: not that the code has a config
-entry for it, but that someone finished a session with mods running.
+Seventeen games, each one installed, modded and played on real hardware
+before it shipped. That is what supported means here: not that the code has
+a config entry for it, but that someone finished a session with mods
+running.
 
 1. Baldur's Gate 3
 2. Cyberpunk 2077
@@ -36,7 +37,8 @@ entry for it, but that someone finished a session with mods running.
 13. Stardew Valley
 14. Starfield \*
 15. Subnautica
-16. The Witcher 3
+16. Subnautica: Below Zero
+17. The Witcher 3
 
 \* Community added game. Not tested by author.
 
@@ -47,7 +49,6 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
-- Subnautica: Below Zero
 - Subnautica 2
 
 ### Requested, not started
