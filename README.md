@@ -49,7 +49,7 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
-- Subnautica 2
+- Subnautica 2 (under construction, being tested now)
 
 ### Requested, not started
 

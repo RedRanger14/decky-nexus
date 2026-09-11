@@ -401,6 +401,30 @@
     ]
   },
   {
+    "appId": "1962700",
+    "displayName": "Subnautica 2",
+    "nexusDomain": "subnautica2",
+    "installDirName": "Subnautica2",
+    "modsSubdir": "Subnautica2/Content/Paks/~mods",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "UE4SS",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dwmapi=n,b\" %command%",
+    "prefixTools": [
+      "36"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"Subnautica2/Binaries/Win64/dwmapi.dll\", \"Subnautica2/Binaries/Win64/ue4ss\","
+    ]
+  },
+  {
     "appId": "2050650",
     "displayName": "Resident Evil 4",
     "nexusDomain": "residentevil42023",

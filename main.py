@@ -4901,6 +4901,36 @@ def _route_palschema_payload(
     return {"mode": "folder", "target": palschema_subdir, "folder": folder}
 
 
+def _peel_subdir_wrappers(scratch: str, subdir: str) -> list:
+    """Strip leading directories that merely repeat part of the target
+    path, wherever in that path they appear. Returns the entries after.
+
+    _peel_mods_path_wrappers matches from the START of the mods folder,
+    which is right for BepInEx: archives arrive as "BepInEx/plugins/X".
+    UE4SS archives arrive as a SUFFIX instead. Subnautica 2's Console
+    Commands ships "ue4ss/mods/DebugUIToggle/", which is the tail of
+    Subnautica2/Binaries/Win64/ue4ss/Mods, so an anchored peel sees
+    nothing and the router installs a mod called "ue4ss" holding a mods
+    folder holding the real one.
+
+    Only a lone directory is ever peeled, and only when its name is one of
+    the target path's own segments, so a mod folder that happens to sit
+    beside anything else is left exactly as it is.
+    """
+    segments = {
+        seg.lower()
+        for seg in (subdir or "").replace("\\", "/").split("/")
+        if seg
+    }
+    entries = os.listdir(scratch)
+    while (
+        len(entries) == 1
+        and entries[0].lower() in segments
+        and os.path.isdir(os.path.join(scratch, entries[0]))
+    ):
+        entries = _lift_wrapper_contents(scratch, os.path.join(scratch, entries[0]))
+    return entries
+
 def _looks_like_ue4ss_mod(scratch: str) -> bool:
     """UE4SS mods come in three shapes: Scripts/main.lua (Lua), a LogicMods
     dir (Blueprint), or dlls/main.dll (native) - usually with an
@@ -4955,7 +4985,7 @@ def _route_ue4ss_payload(
         return {"mode": "files", "target": logicmods_subdir, "files": moved}
 
     # Lua / native mods: the folder containing Scripts/ or dlls/ IS the mod.
-    entries = os.listdir(scratch)
+    entries = _peel_subdir_wrappers(scratch, ue4ss_subdir)
     if len(entries) == 1 and os.path.isdir(os.path.join(scratch, entries[0])):
         src, folder = os.path.join(scratch, entries[0]), entries[0]
     else:

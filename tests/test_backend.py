@@ -19765,5 +19765,62 @@ class TestNestedModsFolder(unittest.TestCase):
             os.path.join(base, folder, "ConfigurationManager.dll")))
         self.assertIn(folder, main._load_settings()["installed"][self.DOMAIN])
 
+
+class TestUe4ssWrapperPeel(unittest.TestCase):
+    """UE4SS archives arrive rooted at a SUFFIX of the target path.
+
+    Subnautica 2's Console Commands ships ue4ss/mods/DebugUIToggle/, which
+    is the tail of Subnautica2/Binaries/Win64/ue4ss/Mods. The router took
+    the single top folder as the mod, so it installed a mod called "ue4ss"
+    holding a mods folder holding the real one, and nothing loaded. Same
+    class as the BepInEx wrappers, different end of the path (2026-09-11).
+    """
+
+    SUB = "Subnautica2/Binaries/Win64/ue4ss/Mods"
+
+    def _scratch(self, rels):
+        d = os.path.join(TEST_ROOT, "ue4ss-peel")
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+        for rel in rels:
+            path = os.path.join(d, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("x")
+        return d
+
+    def test_a_loader_relative_wrapper_is_peeled_to_the_mod(self):
+        d = self._scratch(["ue4ss/mods/DebugUIToggle/Scripts/main.lua",
+                           "ue4ss/mods/DebugUIToggle/enabled.txt"])
+        self.assertEqual(main._peel_subdir_wrappers(d, self.SUB), ["DebugUIToggle"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(d, "DebugUIToggle", "Scripts", "main.lua")))
+
+    def test_a_single_mods_wrapper_is_peeled_too(self):
+        d = self._scratch(["Mods/CoolMod/Scripts/main.lua"])
+        self.assertEqual(main._peel_subdir_wrappers(d, self.SUB), ["CoolMod"])
+
+    def test_a_bare_mod_folder_is_left_alone(self):
+        d = self._scratch(["SubnauticaMapMod/Scripts/main.lua"])
+        self.assertEqual(main._peel_subdir_wrappers(d, self.SUB),
+                         ["SubnauticaMapMod"])
+
+    def test_a_wrapper_with_a_sibling_is_not_peeled(self):
+        d = self._scratch(["ue4ss/mods/X/main.lua", "README.md"])
+        self.assertEqual(sorted(main._peel_subdir_wrappers(d, self.SUB)),
+                         ["README.md", "ue4ss"])
+
+    def test_a_folder_named_after_no_segment_survives(self):
+        d = self._scratch(["Binaries/X/main.lua"])
+        # "Binaries" IS a segment of the target path, so it peels; a name
+        # that is not stays put.
+        self.assertEqual(main._peel_subdir_wrappers(d, "ue4ss/Mods"),
+                         ["Binaries"])
+
+    def test_an_empty_target_path_peels_nothing(self):
+        d = self._scratch(["ue4ss/mods/X/main.lua"])
+        self.assertEqual(main._peel_subdir_wrappers(d, ""), ["ue4ss"])
+
+
 if __name__ == "__main__":
     unittest.main()

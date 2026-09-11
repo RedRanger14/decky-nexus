@@ -1396,6 +1396,53 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // not Subnautica's 1262.
     recommendedModIds: [344, 373],
   },
+  1962700: {
+    appId: 1962700,
+    displayName: "Subnautica 2",
+    // verified against the Nexus API: 268 mods, 1,222 files
+    nexusDomain: "subnautica2",
+    // Verified on device 2026-09-11: steamapps/common/Subnautica2, and a
+    // Proton prefix already at compatdata/1962700.
+    installDirName: "Subnautica2",
+    // Unreal Engine 5, not Unity: Engine/ and Subnautica2/Content/Paks
+    // beside a Subnautica2.exe launcher. Nothing like the first two games.
+    // Pak drop-ins auto-load from ~mods, which the game does not ship and
+    // our installer creates, exactly as on Palworld.
+    modsSubdir: "Subnautica2/Content/Paks/~mods",
+    moddedSaveWarning: false,
+    // The shipping binary, not the launcher stub at the game root.
+    processName: "Subnautica2-Win64-Shipping.exe",
+    framework: {
+      name: "UE4SS",
+      detectFile: "Subnautica2/Binaries/Win64/dwmapi.dll",
+      url: "docs.ue4ss.com",
+      // "UE4SS - Subnautica 2", the build the whole mod scene targets.
+      nexusModId: 36,
+      installKind: "copyRoot",
+      // The archive was downloaded and listed rather than assumed: it is
+      // rooted AT the Win64 folder (dwmapi.dll + ue4ss/ with UE4SS.dll,
+      // UE4SS-settings.ini and a Mods/ tree), so unlike Palworld's, which
+      // bakes the full path in, this one needs telling where it goes.
+      installSubdir: "Subnautica2/Binaries/Win64",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dwmapi=n,b" %command%',
+      // copyRoot keeps no manifest, so these prefixes ARE the manifest.
+      // ue4ss/ holds the loader's own Mods dir, which is where every Lua
+      // mod lives: removing it with the loader is what reset means.
+      cleanupPrefixes: [
+        "Subnautica2/Binaries/Win64/dwmapi.dll",
+        "Subnautica2/Binaries/Win64/ue4ss",
+      ],
+    },
+    ue4ss: {
+      modsSubdir: "Subnautica2/Binaries/Win64/ue4ss/Mods",
+      logicModsSubdir: "Subnautica2/Content/Paks/LogicMods",
+    },
+    underConstruction:
+      "Subnautica 2 support is new, and it is a different engine from the " +
+      "other two Subnautica games: Unreal rather than Unity, so Step 1 " +
+      "installs UE4SS instead of BepInEx. Not yet played with mods " +
+      "running, so expect rough edges until this note goes away.",
+  },
 };
 
 /** Positional params several backend calls need for install-mode dispatch. */
