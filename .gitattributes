@@ -1,0 +1,11 @@
+# One line ending everywhere, checked out as well as stored.
+#
+# Without this, a Windows clone gets CRLF in the working tree and a Linux one
+# gets LF for the identical commit. Nothing in the repo minds, but a test
+# that compares a value spanning lines does: the game-config snapshot
+# reported Helldivers 2 as changed on a Windows laptop while every check
+# passed on the contributor's Linux box (2026-09-11, reviewing PR #24). The
+# test was fixed to normalise on read; this stops the next one being written.
+#
+# LF is also what the device runs. install.sh and main.py are read by SteamOS.
+* text=auto eol=lf

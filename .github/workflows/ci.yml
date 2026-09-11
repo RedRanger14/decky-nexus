@@ -6,7 +6,18 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Linux AND Windows, because the checks disagree between them and the
+    # disagreement is always news. Two real cases from one PR review
+    # (2026-09-11): a path assertion that built "x64\plugins" passed on the
+    # contributor's Linux box and failed on the maintainer's laptop, and the
+    # game-config snapshot compared values holding newlines, so CRLF against
+    # LF reported a game as changed. A Linux-only CI cannot see either, and
+    # both reached a human instead.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
