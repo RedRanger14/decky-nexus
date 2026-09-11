@@ -855,6 +855,49 @@ class TestResetGameModding(unittest.TestCase):
         # the game exe area is otherwise untouched
         self.assertTrue(os.path.isdir(self.data))
 
+    def test_a_loader_file_whose_name_starts_with_a_dot_is_removed(self):
+        """BepInEx drops .doorstop_version beside the loader.
+
+        Declaring it in cleanupPrefixes did nothing, because the loop
+        skipped every prefix starting with a dot, so a reset Subnautica
+        kept one file the vanilla install never had (2026-09-11, found by
+        diffing against the listing taken before the first install).
+        """
+        for name in (".doorstop_version", "winhttp.dll", "doorstop_config.ini"):
+            with open(os.path.join(self.install, name), "w") as f:
+                f.write("x")
+        result = run(
+            main.Plugin().reset_game_modding(
+                self.DOMAIN, "ResetGame", "Data", "dataDir", 0, "",
+                "starred",
+                [".doorstop_version", "winhttp.dll", "doorstop_config.ini"],
+            )
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(sorted(result["framework_files"]),
+                         [".doorstop_version", "doorstop_config.ini", "winhttp.dll"])
+        for name in (".doorstop_version", "winhttp.dll", "doorstop_config.ini"):
+            self.assertFalse(os.path.exists(os.path.join(self.install, name)), name)
+
+    def test_a_bare_dot_prefix_takes_nothing(self):
+        """The reason the blanket skip was there. A prefix of "." would
+        otherwise match every hidden file in the game folder, and ".."
+        is a traversal attempt however it arrives."""
+        keep = os.path.join(self.install, ".keepme")
+        with open(keep, "w") as f:
+            f.write("x")
+        os.makedirs(os.path.join(self.install, ".hidden-dir"), exist_ok=True)
+        result = run(
+            main.Plugin().reset_game_modding(
+                self.DOMAIN, "ResetGame", "Data", "dataDir", 0, "",
+                "starred", [".", "..", "../escape", "x/../../etc"],
+            )
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["framework_files"], [])
+        self.assertTrue(os.path.isfile(keep))
+        self.assertTrue(os.path.isdir(os.path.join(self.install, ".hidden-dir")))
+
     def test_reset_rejects_bad_domain(self):
         result = run(
             main.Plugin().reset_game_modding("Bad!", "ResetGame", "Data")

@@ -17715,7 +17715,14 @@ query Link($slug: String!, $domainName: String!) {
         framework_files = []
         for prefix in framework_file_prefixes or []:
             pl = str(prefix).lower()
-            if not pl or pl.startswith("."):
+            # A name that STARTS with a dot is legitimate: BepInEx drops
+            # .doorstop_version beside the loader, and declaring it did
+            # nothing because this skipped every dot-prefix outright, so a
+            # reset to vanilla left it behind (found 2026-09-11 by diffing
+            # a reset Subnautica against the listing taken before the first
+            # install). A BARE dot is the thing to refuse, because it would
+            # match every hidden file in the game folder.
+            if not pl or pl in (".", "..") or ".." in pl:
                 continue
             # A prefix with a slash is an EXACT relative path, not a prefix.
             #
