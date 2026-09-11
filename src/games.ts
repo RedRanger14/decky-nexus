@@ -1356,11 +1356,50 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // BepInEx itself, then Nautilus: the library the modern mods build on,
     // the way Content Patcher sits under Stardew's list.
     recommendedModIds: [1108, 1262],
+  },
+  848450: {
+    appId: 848450,
+    displayName: "Subnautica: Below Zero",
+    // verified against the Nexus API: 439 mods, 2,261 files
+    nexusDomain: "subnauticabelowzero",
+    // Verified on device 2026-09-11: the folder is SubnauticaZero, not
+    // anything containing "Below".
+    installDirName: "SubnauticaZero",
+    modsSubdir: "BepInEx/plugins",
+    moddedSaveWarning: false,
+    // Verified on device: same Unity + Proton shape as Subnautica
+    // (SubnauticaZero.exe, UnityPlayer.dll, prefix at compatdata/848450).
+    processName: "SubnauticaZero.exe",
+    framework: {
+      name: "BepInEx",
+      detectFile: "winhttp.dll",
+      url: "github.com/toebeann/BepInEx.Subnautica",
+      // Tobey's BepInEx Pack for Subnautica Below Zero. A SEPARATE upload
+      // from Subnautica's 1108, and its archive was read to confirm it is
+      // the same shape: winhttp.dll and doorstop at the root, BepInEx/
+      // beside them, plus a Below Zero config handler of its own.
+      nexusModId: 344,
+      installKind: "copyRoot",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="winhttp=n,b" %command%',
+      cleanupPrefixes: [
+        "BepInEx",
+        "winhttp.dll",
+        "doorstop_config.ini",
+        ".doorstop_version",
+        "libdoorstop.dylib",
+        "run_bepinex.sh",
+        "steam_appid.txt",
+        "changelog.txt",
+      ],
+    },
+    // BepInEx, then Nautilus BZ: Below Zero's own build of the library,
+    // not Subnautica's 1262.
+    recommendedModIds: [344, 373],
     underConstruction:
-      "Subnautica support is new. Step 1 installs BepInEx and sets the " +
-      "launch option it needs, and mods install into its plugins folder. " +
-      "Not yet played through on hardware with mods running, so expect " +
-      "rough edges until this note goes away.",
+      "Below Zero support is new. It is the same loader and the same mod " +
+      "folder as Subnautica, which is played and working, but this game " +
+      "has not been played with mods running yet. Expect rough edges " +
+      "until this note goes away.",
   },
 };
 
