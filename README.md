@@ -17,30 +17,39 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Thirteen games, each one installed, modded and played on real hardware before
+Fourteen games, each one installed, modded and played on real hardware before
 it shipped. That is what supported means here: not that the code has a config
 entry for it, but that someone finished a session with mods running.
 
-1. Cyberpunk 2077
-2. Elden Ring
-3. Fallout 4
-4. Fallout: New Vegas
-5. Helldivers 2
-6. Mount & Blade II: Bannerlord
-7. Palworld
-8. Resident Evil 4
-9. Skyrim Special Edition
-10. Slay the Spire 2
-11. STAR WARS Battlefront II (2017)
-12. Stardew Valley
-13. The Witcher 3
+1. Baldur's Gate 3
+2. Cyberpunk 2077
+3. Elden Ring
+4. Fallout 4
+5. Fallout: New Vegas
+6. Helldivers 2
+7. Mount & Blade II: Bannerlord
+8. Palworld
+9. Resident Evil 4
+10. Skyrim Special Edition
+11. Slay the Spire 2
+12. STAR WARS Battlefront II (2017)
+13. Stardew Valley
+14. The Witcher 3
+
+One note on Baldur's Gate 3, because it is unlike the rest: SteamOS installs
+the native Linux build, which has no way to load the BG3 Script Extender. Mods
+that need it are installed and switched off, with the reason on the mod, and
+the plugin switches off anything that depends on them too. There is also a
+limit on how many mods the game can load at once before it runs out of
+graphics memory while starting, measured at 450 on a Legion Go 2; very large
+collections install whole and the mods past the limit arrive switched off. The
+limit can be raised or removed in the panel if your device has more to give.
 
 ### On the roadmap
 
 Groundwork exists for these and they are NOT ready. They may appear in the
 plugin; treat anything you do with them as untested.
 
-- Baldur's Gate 3
 - Fallout 3
 - Hollow Knight: Silksong
 
