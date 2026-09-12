@@ -663,6 +663,41 @@ def _mods_dir(install_dir: str, mods_subdir: str) -> str:
     return os.path.join(_game_dir(install_dir), mods_subdir)
 
 
+def _prune_empty_mod_dirs(paths, install_path: str) -> list:
+    """Remove mod directories the plugin created, once they are empty, and
+    any parent that empties with them. Returns what went.
+
+    A reset that leaves Content/Paks/~mods, Content/Paks/LogicMods and
+    Content/Paks-disabled behind is not quite vanilla: the game ships none
+    of them, our installer made all three (Subnautica 2, 2026-09-12).
+
+    Only EMPTY directories are touched, which is what keeps it safe: a
+    game's own mods folder is never empty (Bannerlord's Modules holds
+    Native and SandBox, a dataDir game's Data holds the game's esms), so
+    this can only ever take folders whose whole contents we just removed.
+    It stops at the install root, and at the first parent that still has
+    something in it.
+    """
+    gone = []
+    root = os.path.realpath(install_path)
+    for path in paths:
+        current = path
+        while current:
+            real = os.path.realpath(current)
+            if real == root or not real.startswith(root + os.sep):
+                break
+            if not os.path.isdir(current) or os.path.islink(current):
+                break
+            try:
+                if os.listdir(current):
+                    break
+                os.rmdir(current)
+            except OSError:
+                break
+            gone.append(os.path.relpath(current, install_path).replace(os.sep, "/"))
+            current = os.path.dirname(current)
+    return gone
+
 def _disabled_dir(base: str) -> str:
     """Where a mods folder's switched-off entries live.
 
@@ -17930,6 +17965,24 @@ query Link($slug: String!, $domainName: String!) {
                     framework_files.append(name)
                 except OSError as e:
                     errors.append(f"{name}: {e}")
+        # Folders the plugin made, now that everything in them has gone:
+        # the mods dir, where switched-off mods park, and every alternate
+        # target a record used (ue4ss/Mods, LogicMods). Empty ones only.
+        # NOT mods_path on a dataDir game: there it IS the game's own Data
+        # folder, and an empty one still belongs to the game.
+        mod_dirs = [disabled_path]
+        if install_mode != "dataDir":
+            mod_dirs.append(mods_path)
+        for rec in records.values():
+            target = rec.get("target")
+            if not target or target in (".", "dlc") or not _safe_rel_path(target):
+                continue
+            base = os.path.join(install_path, *target.split("/"))
+            mod_dirs += [base, _disabled_dir(base), base + "-disabled"]
+        pruned = _prune_empty_mod_dirs(mod_dirs, install_path)
+        if pruned:
+            decky.logger.info(f"reset removed empty mod folders: {pruned}")
+
         # Mods the framework bundles with itself (SMAPI's ConsoleCommands /
         # SaveBackup). They have no install record, so the loop above never
         # sees them - but leaving them behind isn't vanilla either.

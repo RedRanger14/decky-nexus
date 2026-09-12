@@ -20055,6 +20055,42 @@ class TestResetUnrealGame(unittest.TestCase):
         for section in ("installed", "framework_setup", "collections"):
             self.assertNotIn(self.DOMAIN, settings.get(section, {}))
 
+    def test_reset_removes_the_empty_folders_the_plugin_made(self):
+        """The game ships no ~mods, no LogicMods and no Paks-disabled; our
+        installer made all three. Michael's reset left them behind
+        (2026-09-12), which is not quite vanilla."""
+        self.assertTrue(self._reset()["ok"])
+        for rel in ("G/Content/Paks/~mods",
+                    "G/Content/Paks/LogicMods",
+                    "G/Content/Paks-disabled/~mods",
+                    "G/Content/Paks-disabled"):
+            self.assertFalse(
+                os.path.exists(os.path.join(self.install, *rel.split("/"))), rel)
+        # The parent the game DOES ship stops the walk.
+        paks = os.path.join(self.install, "G", "Content", "Paks")
+        self.assertTrue(os.path.isdir(paks))
+        self.assertEqual(sorted(os.listdir(paks)), ["Game-Windows.pak"])
+
+    def test_pruning_never_takes_a_folder_that_still_holds_anything(self):
+        # Something untracked in the mods folder keeps it, and everything
+        # above it.
+        stray = os.path.join(self.install, *self.SUB.split("/"), "NotOurs")
+        os.makedirs(stray)
+        with open(os.path.join(stray, "x.pak"), "w") as f:
+            f.write("x")
+        self.assertTrue(self._reset()["ok"])
+        self.assertTrue(os.path.isfile(os.path.join(stray, "x.pak")))
+        self.assertTrue(os.path.isdir(os.path.join(self.install, *self.SUB.split("/"))))
+
+    def test_pruning_stops_at_the_install_root(self):
+        root = os.path.join(main.STEAM_COMMON, "Prune Root")
+        shutil.rmtree(root, ignore_errors=True)
+        os.makedirs(os.path.join(root, "a", "b"))
+        gone = main._prune_empty_mod_dirs([os.path.join(root, "a", "b")], root)
+        self.assertEqual(gone, ["a/b", "a"])
+        self.assertTrue(os.path.isdir(root), "the game folder itself is never removed")
+        shutil.rmtree(root, ignore_errors=True)
+
     def test_reset_takes_a_pak_parked_the_old_way_too(self):
         # Someone who switched a pak off before 1.7.28 has it inside Paks.
         legacy = os.path.join(self.install, "G", "Content", "Paks", "~mods-disabled", "OldPak")
