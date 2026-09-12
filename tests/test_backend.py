@@ -19961,5 +19961,116 @@ class TestPaksDisabledFolder(unittest.TestCase):
         self.assertTrue(os.path.isdir(base + "-disabled"))
 
 
+
+class TestResetUnrealGame(unittest.TestCase):
+    """Reset to vanilla on an Unreal game, which keeps mods in three places.
+
+    Subnautica 2's shape, the one Michael is about to reset before
+    reinstalling the collection (2026-09-12): pak mods in
+    Content/Paks/~mods, Lua mods under Binaries/Win64/ue4ss/Mods, Blueprint
+    paks in Content/Paks/LogicMods, the loader beside the game exe, and
+    since 1.7.28 switched-off paks in Content/Paks-disabled. A reset that
+    misses any of them leaves the game modded while the panel says vanilla.
+    """
+
+    DOMAIN = "subnautica2"
+    GAME = "Reset Unreal"
+    SUB = "G/Content/Paks/~mods"
+    UE4SS = "G/Binaries/Win64/ue4ss/Mods"
+    LOGIC = "G/Content/Paks/LogicMods"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+
+        def put(rel, body="x"):
+            path = os.path.join(self.install, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(body)
+
+        # The game's own files, which must survive.
+        put("G/Content/Paks/Game-Windows.pak")
+        put("G/Binaries/Win64/Game-Win64-Shipping.exe")
+        # The loader (copyRoot, no manifest) and its bundled mods.
+        put("G/Binaries/Win64/dwmapi.dll")
+        put("G/Binaries/Win64/ue4ss/UE4SS.dll")
+        put("G/Binaries/Win64/ue4ss/Mods/BPModLoaderMod/Scripts/main.lua")
+        # A pak mod switched ON, one switched OFF (outside Paks), a Lua mod,
+        # and a Blueprint pak recorded as files.
+        put(f"{self.SUB}/OnPak/0000_On_P.pak")
+        put("G/Content/Paks-disabled/~mods/OffPak/0000_Off_P.pak")
+        put(f"{self.UE4SS}/CoolLua/Scripts/main.lua")
+        put(f"{self.LOGIC}/DP_Markers.pak")
+
+        settings = main._load_settings()
+        settings["installed"] = {self.DOMAIN: {
+            "OnPak": {"mod_id": 1, "name": "On Pak", "version": "1"},
+            "OffPak": {"mod_id": 2, "name": "Off Pak", "version": "1"},
+            "CoolLua": {"mod_id": 3, "name": "Cool Lua", "version": "1",
+                        "target": self.UE4SS},
+            "Markers": {"mod_id": 4, "name": "Markers", "version": "1",
+                        "mode": "files", "target": self.LOGIC,
+                        "files": ["DP_Markers.pak"]},
+        }}
+        settings["framework_setup"] = {self.DOMAIN: {"launch_options_set": True}}
+        settings["collections"] = {self.DOMAIN: {"xzacpv": {}}}
+        main._save_settings(settings)
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def _reset(self):
+        return run(main.Plugin().reset_game_modding(
+            self.DOMAIN, self.GAME, self.SUB, "folder", 0, "", "starred",
+            ["G/Binaries/Win64/dwmapi.dll", "G/Binaries/Win64/ue4ss"],
+        ))
+
+    def test_reset_leaves_the_game_vanilla_everywhere_mods_can_live(self):
+        r = self._reset()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["removed"], 4, "every record, in all three places")
+        gone = [
+            f"{self.SUB}/OnPak",
+            "G/Content/Paks-disabled/~mods/OffPak",
+            f"{self.UE4SS}/CoolLua",
+            f"{self.LOGIC}/DP_Markers.pak",
+            "G/Binaries/Win64/dwmapi.dll",
+            "G/Binaries/Win64/ue4ss",
+        ]
+        for rel in gone:
+            self.assertFalse(
+                os.path.exists(os.path.join(self.install, *rel.split("/"))), rel)
+        # Nothing mod-shaped left anywhere under Paks, which is what the
+        # engine actually scans.
+        paks = os.path.join(self.install, "G", "Content", "Paks")
+        left = [n for _r, _d, fs in os.walk(paks) for n in fs]
+        self.assertEqual(left, ["Game-Windows.pak"], left)
+        # The game's own files are untouched.
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.install, "G", "Binaries", "Win64", "Game-Win64-Shipping.exe")))
+        settings = main._load_settings()
+        for section in ("installed", "framework_setup", "collections"):
+            self.assertNotIn(self.DOMAIN, settings.get(section, {}))
+
+    def test_reset_takes_a_pak_parked_the_old_way_too(self):
+        # Someone who switched a pak off before 1.7.28 has it inside Paks.
+        legacy = os.path.join(self.install, "G", "Content", "Paks", "~mods-disabled", "OldPak")
+        os.makedirs(legacy)
+        with open(os.path.join(legacy, "0000_Old_P.pak"), "w") as f:
+            f.write("x")
+        settings = main._load_settings()
+        settings["installed"][self.DOMAIN]["OldPak"] = {
+            "mod_id": 5, "name": "Old Pak", "version": "1"}
+        main._save_settings(settings)
+        self.assertTrue(self._reset()["ok"])
+        self.assertFalse(os.path.exists(legacy))
+        paks = os.path.join(self.install, "G", "Content", "Paks")
+        self.assertEqual(
+            [n for _r, _d, fs in os.walk(paks) for n in fs], ["Game-Windows.pak"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17836,6 +17836,11 @@ query Link($slug: String!, $domainName: String!) {
                         for cand in (
                             os.path.join(base, folder),
                             os.path.join(_disabled_dir(base), folder),
+                            # Where a switched-off mod sat before 1.7.28.
+                            # On an Unreal game that is INSIDE Content/Paks,
+                            # so a reset that missed it left the engine
+                            # loading a pak while the panel said vanilla.
+                            os.path.join(base + "-disabled", folder),
                             os.path.join(disabled_path, folder),
                         ):
                             if os.path.isdir(cand):
@@ -18506,6 +18511,11 @@ query Link($slug: String!, $domainName: String!) {
                         for cand in (
                             os.path.join(base, folder),
                             os.path.join(_disabled_dir(base), folder),
+                            # Where a switched-off mod sat before 1.7.28.
+                            # On an Unreal game that is INSIDE Content/Paks,
+                            # so a reset that missed it left the engine
+                            # loading a pak while the panel said vanilla.
+                            os.path.join(base + "-disabled", folder),
                             os.path.join(disabled_path, folder),
                         ):
                             if os.path.isdir(cand):
