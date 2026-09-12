@@ -663,6 +663,60 @@ def _mods_dir(install_dir: str, mods_subdir: str) -> str:
     return os.path.join(_game_dir(install_dir), mods_subdir)
 
 
+def _disabled_dir(base: str) -> str:
+    """Where a mods folder's switched-off entries live.
+
+    Beside it, as "<folder>-disabled", for every game but one kind. Unreal
+    mounts every .pak and .utoc it finds ANYWHERE under Content/Paks,
+    recursively, so for a mods folder inside a Paks directory the sibling
+    is still inside Paks and the "disabled" mod loads exactly as before.
+    Found on Subnautica 2 (2026-09-12): a boot hunt moved eight collection
+    paks to Content/Paks/~mods.hunt-off and the game's own breadcrumbs
+    showed it mounting them from there, so every "paks off" verdict was
+    false. The plugin's ~mods-disabled had the same flaw, on Palworld
+    too: switching a pak mod off there never did anything.
+
+    For those, the Paks segment itself is renamed: Content/Paks/~mods
+    parks in Content/Paks-disabled/~mods, outside the engine's search.
+    """
+    parts = re.split(r"[\\/]", base)
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i].lower() == "paks":
+            parts[i] = parts[i] + "-disabled"
+            return os.sep.join(parts)
+    return base + "-disabled"
+
+
+def _migrate_legacy_disabled(base: str) -> int:
+    """Move entries out of the old "<folder>-disabled" sibling when the
+    real disabled folder is somewhere else now. Returns how many moved.
+
+    Anyone who switched a pak mod off on Palworld before 2026-09-12 has it
+    sitting in Pal/Content/Paks/~mods-disabled, loaded by the game and
+    shown as off. Run from the scan, so opening My Mods puts it right."""
+    legacy = base + "-disabled"
+    real = _disabled_dir(base)
+    if os.path.normpath(legacy) == os.path.normpath(real) or not os.path.isdir(legacy):
+        return 0
+    moved = 0
+    os.makedirs(real, exist_ok=True)
+    for name in os.listdir(legacy):
+        src, dst = os.path.join(legacy, name), os.path.join(real, name)
+        if os.path.exists(dst):
+            continue
+        shutil.move(src, dst)
+        moved += 1
+    try:
+        os.rmdir(legacy)
+    except OSError:
+        pass
+    if moved:
+        decky.logger.info(
+            f"moved {moved} switched-off mod(s) out of {legacy!r}: Unreal was "
+            "still loading them from there"
+        )
+    return moved
+
 def _game_paths(install_dir: str, mods_subdir: str):
     """Game folder, mods folder, and the disabled-mods folder beside it.
 
@@ -672,7 +726,7 @@ def _game_paths(install_dir: str, mods_subdir: str):
     """
     install_path = _game_dir(install_dir)
     mods_path = os.path.join(install_path, mods_subdir)
-    disabled_path = os.path.join(install_path, f"{mods_subdir}-disabled")
+    disabled_path = _disabled_dir(mods_path)
     return install_path, mods_path, disabled_path
 
 
@@ -17781,7 +17835,7 @@ query Link($slug: String!, $domainName: String!) {
                     else:
                         for cand in (
                             os.path.join(base, folder),
-                            os.path.join(base + "-disabled", folder),
+                            os.path.join(_disabled_dir(base), folder),
                             os.path.join(disabled_path, folder),
                         ):
                             if os.path.isdir(cand):
@@ -18451,7 +18505,7 @@ query Link($slug: String!, $domainName: String!) {
                     else:
                         for cand in (
                             os.path.join(base, folder),
-                            os.path.join(base + "-disabled", folder),
+                            os.path.join(_disabled_dir(base), folder),
                             os.path.join(disabled_path, folder),
                         ):
                             if os.path.isdir(cand):
@@ -19529,7 +19583,7 @@ query CollectionInstructions($slug: String!) {
         records = _load_settings().get("installed", {}).get(game_domain, {})
         keep = {int(m) for m in (protected_ids or []) if m is not None}
         _install, mods_path, _disabled = _game_paths(install_dir, mods_subdir)
-        _disabled = _disabled or os.path.join(mods_path + "-disabled")
+        _disabled = _disabled or _disabled_dir(mods_path)
         manifests = _godot_mod_manifests(mods_path)
 
         def blame_for(key: str, rec: dict):
@@ -21469,6 +21523,7 @@ query CollectionInstructions($slug: String!) {
             }
 
         _, mods_path, disabled_path = _game_paths(install_dir, mods_subdir)
+        _migrate_legacy_disabled(mods_path)
         records = _load_settings().get("installed", {}).get(game_domain, {})
 
         hidden = {h.lower() for h in (hidden_folders or [])}
@@ -21526,10 +21581,11 @@ query CollectionInstructions($slug: String!) {
                 )
                 continue
             base = os.path.join(install_path, *target.split("/"))
+            _migrate_legacy_disabled(base)
             folder = rec.get("folder") or key
             if os.path.isdir(os.path.join(base, folder)):
                 enabled = True
-            elif os.path.isdir(os.path.join(base + "-disabled", folder)):
+            elif os.path.isdir(os.path.join(_disabled_dir(base), folder)):
                 enabled = False
             else:
                 continue  # record is stale; hide rather than mislead
@@ -21805,7 +21861,7 @@ query CollectionInstructions($slug: String!) {
                     "folders - it can't be toggled by moving the folder.",
                 }
             src_base, dst_base = (
-                (base + "-disabled", base) if enabled else (base, base + "-disabled")
+                (_disabled_dir(base), base) if enabled else (base, _disabled_dir(base))
             )
             src = os.path.join(src_base, real)
             dst = os.path.join(dst_base, real)
@@ -22039,7 +22095,7 @@ query CollectionInstructions($slug: String!) {
                     )
                 else:
                     _force_rmtree(os.path.join(base, real))
-                    _force_rmtree(os.path.join(base + "-disabled", real))
+                    _force_rmtree(os.path.join(_disabled_dir(base), real))
             _w3_remove_menu_xmls(install_path, rec)
             settings["installed"][game_domain].pop(folder, None)
             if rec.get("pakpatch"):

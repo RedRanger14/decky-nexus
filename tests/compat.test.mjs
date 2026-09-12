@@ -438,6 +438,21 @@ test("the reason names the pinned version rather than condemning the mod", () =>
   assert.match(off[0].reason, /newer build/);
 });
 
+// Better Vehicles (79): the #1 Subnautica 2 collection pins a July build
+// that asks the game for content it no longer ships, and the game dies on
+// the loading screen. Convicted alone by a pak hunt with a clean control.
+test("the Subnautica 2 pak that kills the loading screen is switched off, naming its version", () => {
+  for (const slug of ["xzacpv", undefined]) {
+    const off = collectionAutoOff("subnautica2", [79], slug);
+    assert.equal(off.length, 1, `must fire for slug ${slug}`);
+    assert.match(off[0].reason, /pins \(1\.4/);
+    assert.match(off[0].reason, /newer build \(1\.5\)/);
+    assert.match(off[0].reason, /only mod pak in place/);
+  }
+  // Mod 79 on the first game is a different mod.
+  assert.equal(collectionAutoOff("subnautica", [79], undefined).length, 0);
+});
+
 // No em dashes in player-facing copy, wherever it lives.
 test("the warning copy carries no em dashes", () => {
   for (const m of STRANDING_UI_MODS) {

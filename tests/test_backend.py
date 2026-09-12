@@ -19850,5 +19850,104 @@ class TestUe4ssWrapperPeel(unittest.TestCase):
         self.assertEqual(folder, "Pack")
 
 
+
+class TestPaksDisabledFolder(unittest.TestCase):
+    """A switched-off pak on an Unreal game must leave the Paks tree.
+
+    Unreal mounts every .pak/.utoc anywhere under Content/Paks, recursively.
+    The plugin parked disabled mods in Content/Paks/~mods-disabled, which is
+    still under Paks, so "off" changed nothing: the game loaded them exactly
+    as before. Found on Subnautica 2 on 2026-09-12 when a boot hunt's
+    "paks off" runs kept crashing and the game's own breadcrumbs showed it
+    mounting the parked paks. Palworld had the same flaw all along.
+    """
+
+    DOMAIN = "subnautica2"
+    GAME = "Paks Test"
+    SUB = "X/Content/Paks/~mods"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.paks = os.path.join(self.install, "X", "Content", "Paks")
+        self.mods = os.path.join(self.paks, "~mods")
+        os.makedirs(os.path.join(self.mods, "CoolPak"))
+        with open(os.path.join(self.mods, "CoolPak", "0000_Cool_P.pak"), "w") as f:
+            f.write("x")
+        with open(os.path.join(self.paks, "Game-Windows.pak"), "w") as f:
+            f.write("x")
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+
+    def _under_paks(self, name):
+        for root, dirs, _files in os.walk(self.paks):
+            if name in dirs:
+                return os.path.join(root, name)
+        return None
+
+    def _mods(self):
+        return run(self.plugin.get_installed_mods(
+            self.DOMAIN, self.GAME, self.SUB, "folder", 0, "", "starred", []
+        ))["mods"]
+
+    def test_the_disabled_folder_is_outside_paks(self):
+        j = os.path.join
+        self.assertEqual(
+            os.path.normpath(main._disabled_dir(j("g", "X", "Content", "Paks", "~mods"))),
+            os.path.normpath(j("g", "X", "Content", "Paks-disabled", "~mods")))
+        self.assertEqual(
+            os.path.normpath(main._disabled_dir(j("g", "Pal", "Content", "Paks", "LogicMods"))),
+            os.path.normpath(j("g", "Pal", "Content", "Paks-disabled", "LogicMods")))
+        # Case-insensitive on the segment, since Wine games mix cases.
+        self.assertIn("PAKS-disabled", main._disabled_dir(j("g", "PAKS", "~mods")))
+        # Every other game keeps the sibling it always had.
+        self.assertEqual(main._disabled_dir(j("g", "Mods")), j("g", "Mods") + "-disabled")
+        self.assertEqual(main._disabled_dir(j("g", "Win64", "ue4ss", "Mods")),
+                         j("g", "Win64", "ue4ss", "Mods") + "-disabled")
+        self.assertEqual(main._disabled_dir(j("g", "Modules")), j("g", "Modules") + "-disabled")
+
+    def test_switching_a_pak_mod_off_takes_it_out_of_the_paks_tree(self):
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, self.SUB, "CoolPak", False, "folder", self.DOMAIN))
+        self.assertTrue(r.get("ok"), r)
+        parked = os.path.join(self.install, "X", "Content", "Paks-disabled", "~mods", "CoolPak")
+        self.assertTrue(os.path.isfile(os.path.join(parked, "0000_Cool_P.pak")))
+        self.assertIsNone(self._under_paks("CoolPak"),
+                          "a switched-off pak anywhere under Paks is still loaded")
+        self.assertFalse(os.path.isdir(os.path.join(self.paks, "~mods-disabled")))
+        listed = {m["folder"]: m["enabled"] for m in self._mods()}
+        self.assertEqual(listed.get("CoolPak"), False)
+        # And back.
+        r = run(self.plugin.set_mod_enabled(
+            self.GAME, self.SUB, "CoolPak", True, "folder", self.DOMAIN))
+        self.assertTrue(r.get("ok"), r)
+        self.assertTrue(os.path.isfile(os.path.join(self.mods, "CoolPak", "0000_Cool_P.pak")))
+        self.assertFalse(os.path.exists(parked))
+
+    def test_a_pak_parked_the_old_way_is_moved_out_when_my_mods_opens(self):
+        # The state every Palworld user who ever switched a pak off is in.
+        legacy = os.path.join(self.paks, "~mods-disabled", "OldPak")
+        os.makedirs(legacy)
+        with open(os.path.join(legacy, "0000_Old_P.pak"), "w") as f:
+            f.write("x")
+        listed = {m["folder"]: m["enabled"] for m in self._mods()}
+        self.assertEqual(listed.get("OldPak"), False, "still shown as off")
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.install, "X", "Content", "Paks-disabled", "~mods", "OldPak", "0000_Old_P.pak")))
+        self.assertFalse(os.path.exists(os.path.join(self.paks, "~mods-disabled")),
+                         "the folder Unreal was loading from is gone")
+        self.assertIsNone(self._under_paks("OldPak"))
+
+    def test_a_game_without_paks_is_untouched_by_the_migration(self):
+        base = os.path.join(self.install, "Mods")
+        os.makedirs(base + "-disabled")
+        self.assertEqual(main._migrate_legacy_disabled(base), 0)
+        self.assertTrue(os.path.isdir(base + "-disabled"))
+
+
 if __name__ == "__main__":
     unittest.main()

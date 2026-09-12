@@ -368,6 +368,40 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "locked out of a game is a bad way to find out. Switch it on in My " +
       "Mods if you want it.",
   },
+  {
+    nexusDomain: "subnautica2",
+    modId: 79, // Better Vehicles
+    name: "Better Vehicles",
+    // The #1 Subnautica 2 collection crashed the game on the loading screen
+    // for Michael (2026-09-11). Convicted on 2026-09-12 by a pak hunt that
+    // met the standard: with every collection pak held OUTSIDE the game
+    // folder the game reached the lobby in 6 seconds; with all nine in it
+    // died at Subnautica2-Win64-Shipping.exe+0x1589E7F reading null; Better
+    // Vehicles ALONE died the same way; the other eight together booted.
+    // Ten runs. The game's own crash breadcrumbs show why: right before
+    // death it is asked to load packages this build no longer ships
+    // (Utility/Editor resources, DEPRECATED blueprints, generated water
+    // current meshes), and a null asset is what it then reads.
+    //
+    // The version matters. The collection pins file 1046, v1.4 from July
+    // 2026, marked OLD_VERSION on the mod page; the current build is v1.5
+    // from 2026-08-20, which may well be fine and has not been tested
+    // here. Collection installs only, so the mod page is untouched.
+    //
+    // Two hunt lessons paid for on this one, recorded in the memory notes:
+    // Unreal mounts every pak anywhere under Content/Paks, so paks parked
+    // in a sibling folder were still loading and every early "paks off"
+    // verdict was false; and Steam Cloud re-downloads the save at launch,
+    // so moving it aside proved nothing.
+    reason:
+      "The version this collection pins (1.4, from July 2026) is built " +
+      "for an older version of the game and asks it to load content that " +
+      "no longer exists, so the game dies on the loading screen before " +
+      "the menu ever appears. Isolated on this device by booting with " +
+      "this as the only mod pak in place, and the game boots with every " +
+      "other mod in the collection. The mod page has a newer build (1.5) " +
+      "that may work, so installing it from its own page is worth a try.",
+  },
 ];
 
 /** Which of a collection's mods should be installed SWITCHED OFF, each
