@@ -353,7 +353,7 @@ test("the collection page passes its slug and carries the reason with the switch
   const coll = readFileSync("src/CollectionPage.tsx", "utf8");
   assert.match(coll, /collectionAutoOff\([\s\S]{0,120}collection\.slug/,
     "the scoped rule needs the slug to decide");
-  assert.match(coll, /toggleMod\([\s\S]{0,60}false,[\s\S]{0,40}reasonById\.get/,
+  assert.match(coll, /toggleMod\(game, m\.folder, false, reason\)/,
     "the reason must reach the backend so dependents go off with the mod");
 });
 
@@ -365,7 +365,7 @@ test("the collection page passes its slug and carries the reason with the switch
 // Goon's Monk carried the cap's reason instead of its rule's.
 test("the collection page switches rule mods off before the backend pass", () => {
   const coll = readFileSync("src/CollectionPage.tsx", "utf8");
-  const toggles = coll.search(/toggleMod\([\s\S]{0,60}false,[\s\S]{0,40}reasonById\.get/);
+  const toggles = coll.search(/toggleMod\(game, m\.folder, false, reason\)/);
   const pass = coll.indexOf("await bg3DisableBrokenDeps(");
   assert.ok(toggles > 0 && pass > 0, "both steps must exist");
   assert.ok(toggles < pass, "rule toggles must come before the backend pass");
@@ -407,7 +407,7 @@ test("the collection page warns about capacity before installing", () => {
 // kills every input device at once. Disabling it restored the controller.
 test("the Subnautica mod that kills all input is a rule everywhere", () => {
   for (const slug of ["tdtzfi", undefined]) {
-    const off = collectionAutoOff("subnautica", [984], slug);
+    const off = collectionAutoOff("subnautica", [{ modId: 984, fileId: 5717 }], slug);
     assert.equal(off.length, 1, `must fire for slug ${slug}`);
     assert.match(off[0].reason, /input/);
     assert.match(off[0].reason, /controller, keyboard and trackpad/);
@@ -432,7 +432,7 @@ test("the Below Zero port of it is switched off, and says it is unproven there",
 // The first draft of the Subnautica rule blamed the mod. The fault is the
 // two-year-old build the collection pins; the current one claims a fix.
 test("the reason names the pinned version rather than condemning the mod", () => {
-  const off = collectionAutoOff("subnautica", [984], "tdtzfi");
+  const off = collectionAutoOff("subnautica", [{ modId: 984, fileId: 5717 }], "tdtzfi");
   assert.equal(off.length, 1);
   assert.match(off[0].reason, /version this collection pins/);
   assert.match(off[0].reason, /newer build/);
@@ -443,7 +443,7 @@ test("the reason names the pinned version rather than condemning the mod", () =>
 // the loading screen. Convicted alone by a pak hunt with a clean control.
 test("the Subnautica 2 pak that kills the loading screen is switched off, naming its version", () => {
   for (const slug of ["xzacpv", undefined]) {
-    const off = collectionAutoOff("subnautica2", [79], slug);
+    const off = collectionAutoOff("subnautica2", [{ modId: 79, fileId: 1046 }], slug);
     assert.equal(off.length, 1, `must fire for slug ${slug}`);
     assert.match(off[0].reason, /pins \(1\.4/);
     assert.match(off[0].reason, /newer build \(1\.5\)/);
@@ -451,6 +451,58 @@ test("the Subnautica 2 pak that kills the loading screen is switched off, naming
   }
   // Mod 79 on the first game is a different mod.
   assert.equal(collectionAutoOff("subnautica", [79], undefined).length, 0);
+});
+
+// A collection pins FILES. Subnautica 2's UI Tweaks (159) is pinned four
+// times by the #1 collection and only Smaller Crosshair (file 345) crashes;
+// a mod-level rule would switch off three working mods with it.
+test("a file-scoped rule fires for the pinned file and leaves the page's other files on", () => {
+  const files = [
+    { modId: 159, fileId: 322 }, // Less Vignette
+    { modId: 159, fileId: 345 }, // Smaller Crosshair: the one that crashes
+    { modId: 159, fileId: 349 }, // Better Builder UI
+    { modId: 159, fileId: 435 }, // Better Fabricator UI
+    { modId: 137, fileId: 1047 }, // Unpublished Content, pinned v1.2
+    { modId: 79, fileId: 1046 }, // Better Vehicles, pinned v1.4
+  ];
+  const off = collectionAutoOff("subnautica2", files, "xzacpv");
+  const hits = off.map((a) => `${a.modId}:${a.fileId}`).sort();
+  assert.deepEqual(hits, ["137:1047", "159:345", "79:1046"]);
+  assert.match(off.find((a) => a.modId === 159).reason, /Less Vignette, Better Builder UI, Better Fabricator UI\) are fine/);
+});
+
+test("a newer build of a convicted mod is left on, untested rather than condemned", () => {
+  const files = [
+    { modId: 79, fileId: 1143 }, // Better Vehicles v1.5
+    { modId: 137, fileId: 1171 }, // Unpublished Content v1.3
+    { modId: 159, fileId: 1149 }, // Smaller Crosshair v1.4
+  ];
+  assert.deepEqual(collectionAutoOff("subnautica2", files, "xzacpv"), []);
+  // Quick Slots Plus: every build before 3.0.0 is named, 3.0.0 is not.
+  assert.equal(collectionAutoOff("subnautica", [{ modId: 984, fileId: 5717 }]).length, 1);
+  assert.equal(collectionAutoOff("subnautica", [{ modId: 984, fileId: 8278 }]).length, 1);
+  assert.equal(collectionAutoOff("subnautica", [{ modId: 984, fileId: 8792 }]).length, 0);
+});
+
+test("a bare mod id cannot match a file-scoped rule, and still matches a mod-scoped one", () => {
+  // Without the file we cannot say which of the four UI Tweaks files it is.
+  assert.deepEqual(collectionAutoOff("subnautica2", [159], "xzacpv"), []);
+  assert.deepEqual(collectionAutoOff("subnautica", [984]), []);
+  // Mod-scoped rules behave exactly as before with plain ids.
+  assert.equal(collectionAutoOff("subnauticabelowzero", [306]).length, 1);
+  assert.equal(collectionAutoOff("baldursgate3", [16325]).length, 1);
+});
+
+test("the collection page hands the rules files, not just mod ids", () => {
+  const coll = readFileSync(new URL("../src/CollectionPage.tsx", import.meta.url), "utf8");
+  const calls = coll.match(/collectionAutoOff\(/g) ?? [];
+  assert.equal(calls.length, 2, "both call sites");
+  assert.equal(
+    (coll.match(/\(\{ modId: f\.modId, fileId: f\.fileId \}\)/g) ?? []).length,
+    2,
+    "each call passes {modId, fileId} per pinned file"
+  );
+  assert.match(coll, /a\.fileId === undefined \|\| a\.fileId === m\.file_id/, "the switch matches on file id");
 });
 
 // No em dashes in player-facing copy, wherever it lives.

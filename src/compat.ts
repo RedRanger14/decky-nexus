@@ -148,6 +148,15 @@ export interface CollectionOffMod {
    * switched off for people installing something else. Absent means the
    * rule applies to every collection carrying the mod. */
   collections?: string[];
+  /** Only these FILES of the mod (Nexus file ids). A collection pins files,
+   * not mods, and one mod page can carry several: Subnautica 2's "UI
+   * Tweaks" (159) is pinned four times by the #1 collection and exactly one
+   * of the four, Smaller Crosshair, kills the game while the lobby loads.
+   * A rule on the mod would switch off three working mods with it. Absent
+   * means every file of the mod. When a caller cannot say which file it
+   * has, a file-scoped rule does NOT fire: switching off a mod we have not
+   * actually convicted is the worse mistake. */
+  fileIds?: number[];
 }
 
 export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
@@ -302,6 +311,13 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
     nexusDomain: "subnautica",
     modId: 984, // Quick Slots Plus (BepInEx)
     name: "Quick Slots Plus (BepInEx)",
+    // Every build before v3.0.0 (file 8792, "Now with controller support!"),
+    // by file id, read off the mod's file list on 2026-09-12. The one the
+    // collection pinned and that locked Michael out is 5717 (v2.1.1). A
+    // collection that pins 3.0.0 or later gets it switched ON, untested
+    // rather than condemned.
+    fileIds: [4019, 4020, 4021, 4022, 4023, 4024, 4027, 4055, 4098, 4099, 4368,
+              4530, 5135, 5192, 5667, 5717, 7550, 7603, 8278],
     // Michael, 2026-09-11, after installing a 72-mod collection: "when I
     // booted the game, the controller is no longer working in the menu so
     // i cant verify if the mods have loaded. Even my keyboard and trackpad
@@ -372,6 +388,9 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
     nexusDomain: "subnautica2",
     modId: 79, // Better Vehicles
     name: "Better Vehicles",
+    // File 1046 is the v1.4 the collection pins and the one convicted. v1.5
+    // (file 1143, 2026-08-20) is untested and is left alone.
+    fileIds: [1046],
     // The #1 Subnautica 2 collection crashed the game on the loading screen
     // for Michael (2026-09-11). Convicted on 2026-09-12 by a pak hunt that
     // met the standard: with every collection pak held OUTSIDE the game
@@ -402,6 +421,50 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "other mod in the collection. The mod page has a newer build (1.5) " +
       "that may work, so installing it from its own page is worth a try.",
   },
+  {
+    nexusDomain: "subnautica2",
+    modId: 137, // Unpublished Content - More to Build
+    name: "Unpublished Content - More to Build",
+    // Convicted 2026-09-12 by the third Subnautica 2 hunt, the one with the
+    // oracle that waits for the lobby map to finish loading and the game
+    // to stay alive 20 seconds after: alone, twice, the game dies eight
+    // seconds in, right after the lobby line, while the lobby level loads.
+    // With this and the other two convicted paks out, the other five paks
+    // and all fourteen Lua mods together load the lobby and stay up. The
+    // collection pins file 1047, v1.2 from 2026-07-09; the current build is
+    // v1.3 (file 1171, 2026-08-21), untested. Same author as 79 and 159,
+    // same pattern: a pre-patch build pinned by the collection.
+    fileIds: [1047],
+    reason:
+      "The version this collection pins (1.2, from July 2026) is built " +
+      "for an older version of the game, and with it in place the game " +
+      "dies a few seconds after reaching the menu, while the lobby loads. " +
+      "Isolated on this device by booting with it as the only mod pak in " +
+      "place, twice, and the game boots with every other mod in the " +
+      "collection. The mod page has a newer build (1.3) that may work.",
+  },
+  {
+    nexusDomain: "subnautica2",
+    modId: 159, // UI Tweaks, the Smaller Crosshair file only
+    name: "Smaller Crosshair (UI Tweaks)",
+    // The reason fileIds exists. The #1 collection pins FOUR files of this
+    // one mod page: Less Vignette (322), Smaller Crosshair (345), Better
+    // Builder UI (349) and Better Fabricator UI (435). Only Smaller
+    // Crosshair crashes, alone, twice, eight seconds in while the lobby
+    // loads; the other three were in the groups that booted. A rule on the
+    // mod would switch off three working mods. The current Smaller
+    // Crosshair is v1.4 (file 1149, 2026-08-21), untested.
+    fileIds: [345],
+    reason:
+      "The version of this file the collection pins (1.1, from May 2026) " +
+      "is built for an older version of the game, and with it in place " +
+      "the game dies a few seconds after reaching the menu, while the " +
+      "lobby loads. Isolated on this device by booting with it as the only " +
+      "mod pak in place, twice. The other files from the same mod page " +
+      "(Less Vignette, Better Builder UI, Better Fabricator UI) are fine " +
+      "and stay on. The mod page has a newer Smaller Crosshair (1.4) that " +
+      "may work.",
+  },
 ];
 
 /** Which of a collection's mods should be installed SWITCHED OFF, each
@@ -416,11 +479,14 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
  * switching one on in My Mods is one tap and loses nothing. */
 export function collectionAutoOff(
   nexusDomain: string,
-  modIds: number[],
+  mods: (number | { modId: number; fileId?: number })[],
   collectionSlug?: string
-): { modId: number; reason: string }[] {
-  const ids = new Set(modIds);
-  const out: { modId: number; reason: string }[] = [];
+): { modId: number; fileId?: number; reason: string }[] {
+  const entries = mods.map((m) =>
+    typeof m === "number" ? { modId: m, fileId: undefined } : m
+  );
+  const ids = new Set(entries.map((e) => e.modId));
+  const out: { modId: number; fileId?: number; reason: string }[] = [];
   for (const fw of STRANDING_UI_MODS) {
     if (fw.nexusDomain !== nexusDomain) continue;
     for (const u of fw.undeclaredUsers ?? []) {
@@ -430,6 +496,16 @@ export function collectionAutoOff(
   for (const m of COLLECTION_OFF_MODS) {
     if (m.nexusDomain !== nexusDomain || !ids.has(m.modId)) continue;
     if (m.collections && !(collectionSlug && m.collections.includes(collectionSlug))) {
+      continue;
+    }
+    if (m.fileIds) {
+      // One entry per pinned file the rule names. A bare mod id, with no
+      // file, cannot match a file-scoped rule: see the field's note.
+      for (const e of entries) {
+        if (e.modId === m.modId && e.fileId !== undefined && m.fileIds.includes(e.fileId)) {
+          out.push({ modId: m.modId, fileId: e.fileId, reason: m.reason });
+        }
+      }
       continue;
     }
     out.push({ modId: m.modId, reason: m.reason });

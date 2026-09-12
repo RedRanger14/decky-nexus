@@ -21545,6 +21545,7 @@ query CollectionInstructions($slug: String!) {
                         "name": (rec or {}).get("name") or folder,
                         "version": (rec or {}).get("version") or "",
                         "mod_id": (rec or {}).get("mod_id"),
+                        "file_id": (rec or {}).get("file_id"),
                         "source": (rec or {}).get("source") or "",
                         "collection_slug": (rec or {}).get("collection_slug")
                         or "",
@@ -21597,6 +21598,7 @@ query CollectionInstructions($slug: String!) {
                     "name": rec.get("name") or key,
                     "version": rec.get("version") or "",
                     "mod_id": rec.get("mod_id"),
+                    "file_id": rec.get("file_id"),
                     "source": rec.get("source") or "",
                     "collection_slug": rec.get("collection_slug") or "",
                 }

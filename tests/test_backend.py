@@ -19942,6 +19942,18 @@ class TestPaksDisabledFolder(unittest.TestCase):
                          "the folder Unreal was loading from is gone")
         self.assertIsNone(self._under_paks("OldPak"))
 
+    def test_my_mods_reports_the_file_each_record_installed(self):
+        # A collection pins files, and a rule can name one file of a mod
+        # page, so the switch has to know which file a record is.
+        settings = main._load_settings()
+        settings.setdefault("installed", {}).setdefault(self.DOMAIN, {})["CoolPak"] = {
+            "mod_id": 159, "file_id": 345, "name": "Smaller Crosshair", "version": "1.1",
+        }
+        main._save_settings(settings)
+        listed = {m["folder"]: m for m in self._mods()}
+        self.assertEqual(listed["CoolPak"]["mod_id"], 159)
+        self.assertEqual(listed["CoolPak"]["file_id"], 345)
+
     def test_a_game_without_paks_is_untouched_by_the_migration(self):
         base = os.path.join(self.install, "Mods")
         os.makedirs(base + "-disabled")

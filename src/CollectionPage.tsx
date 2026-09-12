@@ -516,9 +516,10 @@ export function CollectionPage() {
     // Kind - both A/B verified on device, 2026-08-28). Installed rather
     // than skipped so switching one back on is one tap in My Mods.
     try {
+      // Files, not just mods: a rule may name one file of a mod page.
       const wanted = collectionAutoOff(
         game.nexusDomain,
-        (detail?.files ?? []).map((f) => f.modId),
+        (detail?.files ?? []).map((f) => ({ modId: f.modId, fileId: f.fileId })),
         collection.slug
       );
       const off: { name: string; reason: string }[] = [];
@@ -536,21 +537,26 @@ export function CollectionPage() {
       // 2026-09-08), and the capacity cap had already counted, and in one
       // case parked and labelled, mods a rule was about to switch off.
       if (wanted.length > 0) {
-        const reasonById = new Map(wanted.map((a) => [a.modId, a.reason]));
+        // A file-scoped rule matches the record's file; a mod-scoped one
+        // matches every record of the mod. Subnautica 2's UI Tweaks page
+        // is pinned four times and only one file crashes (2026-09-12).
+        const reasonFor = (m: { mod_id?: number; file_id?: number }) =>
+          wanted.find(
+            (a) =>
+              a.modId === m.mod_id &&
+              (a.fileId === undefined || a.fileId === m.file_id)
+          )?.reason;
         for (const m of inst.mods ?? []) {
-          if (!m.mod_id || !reasonById.has(m.mod_id) || !m.enabled) continue;
+          if (!m.mod_id || !m.enabled) continue;
+          const reason = reasonFor(m);
+          if (!reason) continue;
           // The reason travels with the switch: the record keeps it for
           // My Mods, and the backend switches off whatever requires this
           // mod too (Demon Eyes and Feywild Eyes crashed New Game when
           // Glow Eyes went off without them, 2026-09-06).
-          const r = await toggleMod(
-            game, m.folder, false, reasonById.get(m.mod_id)!
-          );
+          const r = await toggleMod(game, m.folder, false, reason);
           if (r.ok) {
-            off.push({
-              name: m.name || m.folder,
-              reason: reasonById.get(m.mod_id)!,
-            });
+            off.push({ name: m.name || m.folder, reason });
           }
         }
       }
@@ -1973,12 +1979,22 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
           // work out which of a hundred mods did it.
           const ids = (detail?.files ?? []).map((f) => f.modId);
           const stranding = collectionStrandingUi(game.nexusDomain, ids);
-          const willOff = collectionAutoOff(game.nexusDomain, ids, collection.slug)
-            .map((a) => ({
-              name:
-                detail?.files.find((f) => f.modId === a.modId)?.modName ?? "",
-              reason: a.reason,
-            }))
+          const willOff = collectionAutoOff(
+            game.nexusDomain,
+            (detail?.files ?? []).map((f) => ({ modId: f.modId, fileId: f.fileId })),
+            collection.slug
+          )
+            .map((a) => {
+              // A file-scoped rule is named after its file, so the note
+              // says "Smaller Crosshair", not "UI Tweaks".
+              const f = detail?.files.find(
+                (x) => x.modId === a.modId && (a.fileId === undefined || x.fileId === a.fileId)
+              );
+              return {
+                name: (a.fileId !== undefined ? f?.fileName : f?.modName) ?? f?.modName ?? "",
+                reason: a.reason,
+              };
+            })
             .filter((a) => a.name);
           if (
             (stranding.length === 0 && willOff.length === 0) ||

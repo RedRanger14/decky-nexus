@@ -139,6 +139,9 @@ export interface InstalledMod {
   name?: string;
   version?: string;
   mod_id?: number;
+  /** The Nexus file this record installed. A collection pins files, and a
+   * rule can name one file of a mod page, so the switch has to know. */
+  file_id?: number;
   /** dataDir mode: false when the mod has no plugin file to toggle */
   togglable?: boolean;
   /** Installed and working as far as we can tell, but the author built it
