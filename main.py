@@ -19404,11 +19404,6 @@ query Link($slug: String!, $domainName: String!) {
             _set_plugins_active(path, turn_off, False, plugins_style)
         if turn_on:
             _add_plugins(path, turn_on, plugins_style, game_domain, data_path)
-        if (turn_off or turn_on) and plugins_style == "listed":
-            await asyncio.to_thread(
-                _stagger_plugin_mtimes, data_path, path, plugins_style,
-                game_domain,
-            )
         esl = game_domain in ESL_DOMAINS
         limit = FULL_SLOT_LIMIT if esl else NO_ESL_SLOT_LIMIT
         # Count SLOTS, not lines. This counted every enabled plugin against
@@ -19421,19 +19416,28 @@ query Link($slug: String!, $domainName: String!) {
         # 0x200 flag out of each plugin header and has been correct all
         # along; this was the one caller not using it.
         # The curator's sequence, applied last so it sees every plugin
-        # this pass switched on. Timestamp-ordered engines (FO3/FNV) get
-        # nothing from this - there the file order is not the load order,
-        # and _stagger_plugin_mtimes above is what matters.
-        reordered = 0
-        if plugins_style != "listed":
-            reordered = await asyncio.to_thread(
-                _reorder_plugins, path, manifest_order
+        # this pass switched on.
+        #
+        # For FO3 and New Vegas too. Those engines read file dates, not
+        # the file, and this used to skip them on that reasoning - but the
+        # restamp below orders each dependency group BY THE FILE'S ORDER,
+        # so the file is exactly where the curator's sequence has to go
+        # first. Skipping it left every New Vegas collection in install
+        # order with only the crash-class fixes applied, which the Load
+        # Order page then showed for what it was.
+        reordered = await asyncio.to_thread(
+            _reorder_plugins, path, manifest_order
+        )
+        if reordered:
+            decky.logger.info(
+                f"collection plugins {slug!r}: moved {reordered} plugin(s) "
+                "into the order the collection asks for"
             )
-            if reordered:
-                decky.logger.info(
-                    f"collection plugins {slug!r}: moved {reordered} plugin(s) "
-                    "into the order the collection asks for"
-                )
+        if plugins_style == "listed" and (turn_off or turn_on or reordered):
+            await asyncio.to_thread(
+                _stagger_plugin_mtimes, data_path, path, plugins_style,
+                game_domain,
+            )
         after_names = _enabled_plugins(path, plugins_style)
         full, light = await asyncio.to_thread(
             _slot_usage, data_path, after_names, implicit, esl

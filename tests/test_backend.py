@@ -3547,6 +3547,34 @@ class TestPluginMtimeStagger(unittest.TestCase):
         # Everything in the past so the next install lands after.
         self.assertLess(mt("SomeMod.esp"), time.time())
 
+    def test_the_files_order_decides_within_a_group(self):
+        """The curator's sequence reaches a date-ordered game through the
+        file: plugins.txt lists B before A, so B gets the earlier stamp
+        even though A's file was older. This is what lets
+        apply_collection_plugins and the Load Order page write an order
+        for New Vegas at all."""
+        self._seed("A.esp", 1700000000)
+        self._seed("B.esp", 1700000600)
+        self._seed("FalloutNV.esm", 1700000000)
+        main._write_plugins_txt(self.ptxt, ["B.esp", "A.esp"])
+        main._stagger_plugin_mtimes(self.data, self.ptxt, "listed", "newvegas")
+        mt = lambda n: os.path.getmtime(os.path.join(self.data, n))
+        self.assertLess(mt("B.esp"), mt("A.esp"))
+
+    def test_a_collection_order_is_applied_to_a_date_ordered_game_too(self):
+        """apply_collection_plugins used to skip _reorder_plugins for
+        listed-style games. The restamp follows the file, so that left New
+        Vegas collections in install order."""
+        import inspect
+        src = inspect.getsource(main.Plugin.apply_collection_plugins)
+        # The reorder is unconditional: no style check guards it.
+        head = src[: src.index("_reorder_plugins, path, manifest_order")]
+        self.assertNotIn('plugins_style != "listed"', head[-400:])
+        self.assertIn("_reorder_plugins, path, manifest_order", src)
+        # And the restamp runs after the reorder, not before it.
+        self.assertLess(src.index("_reorder_plugins, path, manifest_order"),
+                        src.index("_stagger_plugin_mtimes, data_path, path"))
+
     def test_starred_style_untouched(self):
         self._seed("Mod.esp", 946684800)
         main._write_plugins_txt(self.ptxt, ["*Mod.esp"])
@@ -7424,13 +7452,18 @@ class TestCollectionLoadOrder(unittest.TestCase):
         main._reorder_plugins(self.path, ["UCF.esp", "EFF.esp"])
         self.assertEqual(self._read(), ["*Ucf.esp", "*eff.ESP"])
 
-    def test_it_is_applied_only_where_file_order_is_load_order(self):
-        # FO3/New Vegas order by file TIMESTAMP; rewriting their plugins
-        # file would achieve nothing and churn it every run.
+    def test_it_is_applied_to_date_ordered_games_through_the_restamp(self):
+        # This used to assert the opposite: FO3/New Vegas order by file
+        # date, so "rewriting their plugins file would achieve nothing".
+        # Wrong, because the restamp orders each dependency group by the
+        # FILE'S order - the file is exactly where the curator's sequence
+        # has to go first. The reorder runs for every style, and on a
+        # date-ordered game the restamp follows it.
         import inspect
         src = inspect.getsource(main.Plugin.apply_collection_plugins)
-        cut = src.index("_reorder_plugins")
-        self.assertIn('plugins_style != "listed"', src[cut - 400:cut])
+        cut = src.index("_reorder_plugins, path, manifest_order")
+        self.assertNotIn('plugins_style != "listed"', src[cut - 400:cut])
+        self.assertLess(cut, src.index("_stagger_plugin_mtimes, data_path, path"))
 
 
 class TestUninstallNeverEatsGameFiles(unittest.TestCase):
