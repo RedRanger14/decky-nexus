@@ -351,11 +351,12 @@ export default function LoadOrderPage() {
       .then((r) => {
         const found = r.ok ? r.games ?? [] : [];
         setAvailable(found);
-        const has = (g?: SupportedGame) =>
-          Boolean(g && found.some((f) => f.app_id === g.appId));
-        // The scoped game if it has a list to show; otherwise the first
-        // game that does, so the page opens onto something real.
-        if (!has(game)) {
+        // Stay on the scoped game even when it has nothing to arrange
+        // yet: Michael opened this with Skyrim selected and got Fallout
+        // 4's list, which reads as the wrong page. Only a game with no
+        // load order at all (Cyberpunk, Stardew) falls through to the
+        // first game that has one.
+        if (!game) {
           const first = found.length
             ? pluginGames.find((g) => g.appId === found[0].app_id)
             : undefined;
@@ -759,7 +760,8 @@ export default function LoadOrderPage() {
   const carriedEntry = carry ? entries.find((e) => e.name === carry.name) : undefined;
   const inspected = carriedEntry ?? focusedEntry;
   const filtering = filter.trim().length > 0;
-  const showGameChips = (available?.length ?? 0) > 1 || (game && !game.pluginsTxtSubpath);
+  const showGameChips =
+    (available ?? []).filter((a) => a.app_id !== game?.appId).length > 0;
 
   return (
     <Focusable
@@ -855,7 +857,11 @@ export default function LoadOrderPage() {
             style={{ display: "flex", gap: "6px", flexWrap: "wrap", margin: "8px 0 4px" }}
           >
             {pluginGames
-              .filter((g) => (available ?? []).some((a) => a.app_id === g.appId))
+              .filter(
+                (g) =>
+                  g.appId === game?.appId ||
+                  (available ?? []).some((a) => a.app_id === g.appId)
+              )
               .map((g) => {
                 const a = (available ?? []).find((x) => x.app_id === g.appId);
                 const active = game?.appId === g.appId;
@@ -888,7 +894,12 @@ export default function LoadOrderPage() {
             {scoped && !scoped.pluginsTxtSubpath && (
               <div style={{ marginBottom: "8px" }}>{unsupportedNote(scoped.displayName)}</div>
             )}
-            {(available?.length ?? 0) === 0 ? (
+            {game ? (
+              <div>
+                {game.displayName} has no plugins yet. Install a mod with an .esp or
+                .esm file and it appears here.
+              </div>
+            ) : (available?.length ?? 0) === 0 ? (
               <div>
                 Nothing to arrange yet. Install a mod for one of these games and it
                 appears here:{" "}
