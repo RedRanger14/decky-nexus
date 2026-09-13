@@ -115,14 +115,19 @@ class TestSettingsAtomicity(unittest.TestCase):
     def setUp(self):
         self.before = main._load_settings()
         self.tmp = main.SETTINGS_PATH + ".tmp"
+        self.bak = main.SETTINGS_PATH + ".bak"
 
     def tearDown(self):
-        for p in (self.tmp,):
+        for p in (self.tmp, self.bak):
             try:
                 os.remove(p)
             except OSError:
                 pass
         main._save_settings(self.before)
+        try:
+            os.remove(self.bak)
+        except OSError:
+            pass
 
     def test_a_save_that_dies_halfway_leaves_the_old_file_intact(self):
         main._save_settings({"records": "the old truth"})
@@ -147,9 +152,16 @@ class TestSettingsAtomicity(unittest.TestCase):
         if os.name != "nt":
             self.assertEqual(os.stat(main.SETTINGS_PATH).st_mode & 0o777, 0o600)
 
-    def test_a_torn_file_is_never_an_empty_configuration(self):
+    def _tear(self, text='{"installed": {"baldursgate3": {"A Mod": {"mo'):
         with open(main.SETTINGS_PATH, "w", encoding="utf-8") as f:
-            f.write('{"installed": {"baldursgate3": {"A Mod": {"mo')
+            f.write(text)
+
+    def test_a_torn_file_with_no_backup_is_never_an_empty_configuration(self):
+        self._tear()
+        try:
+            os.remove(self.bak)
+        except OSError:
+            pass
         real_sleep = main.time.sleep
         naps = []
         main.time.sleep = lambda s: naps.append(s)
@@ -159,6 +171,85 @@ class TestSettingsAtomicity(unittest.TestCase):
         finally:
             main.time.sleep = real_sleep
         self.assertEqual(len(naps), 4, "it waits and re-reads before giving up")
+
+    # ---- the backup, and why it exists --------------------------------------------------
+    # Raising for a torn file kept the records safe but bricked the plugin:
+    # every endpoint loads settings first, so the panel sat on "checking..."
+    # forever and My Mods said nothing was installed while the mods were on
+    # disk. BoogFox reported exactly that (issue #26, 2026-09-12). The last
+    # good save is now kept beside it.
+
+    def test_every_save_leaves_the_previous_one_beside_it(self):
+        main._save_settings({"gen": 1})
+        main._save_settings({"gen": 2})
+        self.assertEqual(main._load_settings(), {"gen": 2})
+        with open(self.bak, encoding="utf-8") as f:
+            self.assertEqual(main.json.load(f), {"gen": 1})
+
+    def test_a_torn_file_is_recovered_from_the_backup(self):
+        main._save_settings({"installed": {"fnv": {"A Mod": {"mod_id": 1}}}})
+        main._save_settings({"installed": {"fnv": {"A Mod": {"mod_id": 1},
+                                                   "B Mod": {"mod_id": 2}}}})
+        self._tear()
+        real_sleep = main.time.sleep
+        main.time.sleep = lambda _s: None
+        try:
+            got = main._load_settings()
+        finally:
+            main.time.sleep = real_sleep
+        self.assertEqual(sorted(got["installed"]["fnv"]), ["A Mod"],
+                         "the previous save, not the torn one and not empty")
+        # And it is put back, so the next writer does not build on the wreck.
+        with open(main.SETTINGS_PATH, encoding="utf-8") as f:
+            self.assertEqual(main.json.load(f), got)
+
+    def test_deleting_the_file_still_starts_over(self):
+        """Deleting settings.json is how a person starts fresh, and the
+        backup must not quietly undo that. Safe because the save hardlinks
+        the backup, so settings.json is never absent mid-save and a missing
+        file cannot mean a crash."""
+        main._save_settings({"installed": {"fnv": {"A Mod": {"mod_id": 1}}}})
+        main._save_settings({"api_key": "k", "installed": {"fnv": {"A Mod": {}}}})
+        self.assertTrue(os.path.isfile(self.bak), "the backup is there")
+        os.remove(main.SETTINGS_PATH)
+        self.assertEqual(main._load_settings(), {})
+
+    def test_the_backup_never_leaves_the_file_absent_mid_save(self):
+        main._save_settings({"gen": 1})
+        seen = []
+        real = main.os.replace
+
+        def watch(src, dst):
+            seen.append(os.path.isfile(main.SETTINGS_PATH))
+            return real(src, dst)
+
+        main.os.replace = watch
+        try:
+            main._save_settings({"gen": 2})
+        finally:
+            main.os.replace = real
+        self.assertTrue(all(seen), "settings.json existed at every rename")
+        self.assertEqual(main._load_settings(), {"gen": 2})
+
+    def test_a_torn_file_and_a_torn_backup_still_refuse_to_be_empty(self):
+        self._tear()
+        with open(self.bak, "w", encoding="utf-8") as f:
+            f.write("{also broken")
+        real_sleep = main.time.sleep
+        main.time.sleep = lambda _s: None
+        try:
+            with self.assertRaises(RuntimeError):
+                main._load_settings()
+        finally:
+            main.time.sleep = real_sleep
+
+    def test_a_fresh_install_is_still_an_empty_configuration(self):
+        for p in (main.SETTINGS_PATH, self.bak):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        self.assertEqual(main._load_settings(), {})
 
     def test_a_torn_read_recovers_once_the_write_lands(self):
         with open(main.SETTINGS_PATH, "w", encoding="utf-8") as f:
@@ -178,6 +269,10 @@ class TestSettingsAtomicity(unittest.TestCase):
 
     def test_a_missing_file_is_an_empty_configuration(self):
         os.remove(main.SETTINGS_PATH)
+        try:
+            os.remove(self.bak)
+        except OSError:
+            pass
         self.assertEqual(main._load_settings(), {})
 
 

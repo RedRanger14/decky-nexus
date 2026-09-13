@@ -3762,15 +3762,36 @@ function AccountSection() {
   >();
 
   useEffect(() => {
-    getAuthStatus().then(setAuth);
-    refreshContentGate().then((r) => {
-      if (r.ok)
-        setGate({
-          show: !!r.show_adult,
-          adultPref: !!r.adult_pref,
-          ageVerified: !!r.age_verified,
-        });
-    });
+    // A rejected call used to leave these on "checking..." for ever, with
+    // nothing anywhere saying why. Every endpoint reads settings.json
+    // first, so one unreadable file made the whole panel look hung:
+    // BoogFox reported the API status stuck on checking and My Mods empty
+    // while the mods were on disk (issue #26, 2026-09-12). The failure now
+    // says so, and carries the reason into any bug report.
+    getAuthStatus()
+      .then(setAuth)
+      .catch((e) =>
+        setAuth({
+          ok: false,
+          error:
+            "Could not reach the plugin backend. Reopen the panel, and if " +
+            "this keeps happening, send this with your report: " +
+            String((e as Error)?.message ?? e),
+        })
+      );
+    refreshContentGate()
+      .then((r) => {
+        if (r.ok)
+          setGate({
+            show: !!r.show_adult,
+            adultPref: !!r.adult_pref,
+            ageVerified: !!r.age_verified,
+          });
+        else setGate({ show: false, adultPref: false, ageVerified: false });
+      })
+      .catch(() =>
+        setGate({ show: false, adultPref: false, ageVerified: false })
+      );
   }, []);
 
   const onSave = async () => {

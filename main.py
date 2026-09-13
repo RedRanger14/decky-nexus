@@ -217,21 +217,78 @@ def _load_settings() -> dict:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         except FileNotFoundError:
+            # No file at all is a fresh install, and stays one: deleting
+            # settings.json is how a person starts over, and quietly
+            # restoring it from the backup would take that away. The save
+            # below hardlinks the backup rather than renaming, so the file
+            # is never absent mid-save and this case cannot mean "crashed".
             return {}
         except json.JSONDecodeError as e:
             decky.logger.warning(
                 f"settings.json did not parse (attempt {attempt + 1}): {e}"
             )
             time.sleep(0.05 * (attempt + 1))
-    raise RuntimeError(
-        "settings.json is not valid JSON; refusing to treat it as empty"
+    # The file will not parse. _save_settings keeps the previous save as
+    # settings.json.bak, written the same atomic way, so it is the last
+    # state this plugin knew about.
+    #
+    # Raising here instead bricked the whole plugin with no explanation:
+    # every endpoint loads settings first, so the panel sat on "checking..."
+    # forever and My Mods reported nothing installed while the mods were on
+    # disk. BoogFox reported exactly that on 2026-09-12 (issue #26). Losing
+    # one save is recoverable; losing every record is not, and neither is
+    # leaving somebody with a dead panel and no idea why.
+    try:
+        with open(SETTINGS_PATH + ".bak", "r", encoding="utf-8") as f:
+            recovered = json.load(f)
+    except FileNotFoundError:
+        raise RuntimeError(
+            "settings.json is not valid JSON and there is no backup beside "
+            "it; refusing to treat it as empty"
+        )
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(
+            f"settings.json is not valid JSON and its backup is unreadable "
+            f"({e}); refusing to treat it as empty"
+        )
+    decky.logger.error(
+        "settings.json was unreadable; recovered the previous save from "
+        "settings.json.bak with "
+        f"{sum(len(v) for v in (recovered.get('installed') or {}).values())} "
+        "installed mod record(s)"
     )
+    # Put it back, so the next writer builds on the recovered state rather
+    # than on the broken file.
+    try:
+        _write_settings_file(recovered)
+    except OSError as e:
+        decky.logger.warning(f"could not restore settings.json: {e}")
+    return recovered
+
+
+def _write_settings_file(settings: dict) -> None:
+    """The atomic write itself, with no backup rotation: used by the save
+    below and by the recovery in _load_settings, which must not rotate a
+    broken file over a good backup."""
+    os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
+    tmp = SETTINGS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, SETTINGS_PATH)
 
 
 def _save_settings(settings: dict) -> None:
     """Write the settings atomically: whole file or nothing, never a
     half-written one. json.dump streams a two-megabyte document in small
-    writes, and a reader in that window saw a truncated file."""
+    writes, and a reader in that window saw a truncated file.
+
+    The previous save is kept beside it as settings.json.bak before the new
+    one lands. Both moves are renames, so there is always a complete file
+    at one of the two names, and _load_settings reads the backup when the
+    main one is missing or will not parse."""
     os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
     tmp = SETTINGS_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -241,6 +298,25 @@ def _save_settings(settings: dict) -> None:
     # The settings file holds the API key - keep it owner-only, and set it
     # on the temp file so the permission is there from the first instant.
     os.chmod(tmp, 0o600)
+    # Keep the current save as the backup. A hardlink, not a rename: the
+    # old bytes get a second name while settings.json keeps its own, so
+    # there is no instant where the file is absent and a crash mid-save
+    # can never look like a fresh install. Costs nothing for a 2MB
+    # document, which matters when a 1,300-mod collection saves per mod.
+    bak = SETTINGS_PATH + ".bak"
+    try:
+        os.remove(bak)
+    except OSError:
+        pass
+    try:
+        os.link(SETTINGS_PATH, bak)
+    except OSError:
+        # No hardlinks here (or no file yet): a rename still leaves a
+        # complete file at one of the two names.
+        try:
+            os.replace(SETTINGS_PATH, bak)
+        except OSError:
+            pass
     os.replace(tmp, SETTINGS_PATH)
 
 

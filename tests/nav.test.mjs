@@ -179,6 +179,32 @@ test("the health check returns to the QAM, because that is where it opens", () =
   assert.equal(backAction("health"), "open-qam");
 });
 
+// --- a failed backend call must never look like a hang -------------------
+// Every backend endpoint reads settings.json first, so one unreadable file
+// made the whole panel look hung: the API status sat on "checking..." for
+// ever and My Mods reported nothing installed while the mods were on disk
+// (BoogFox, issue #26, 2026-09-12). The panel's first two calls now say
+// what went wrong instead of waiting for an answer that is not coming.
+test("the panel's startup calls handle a rejected backend", () => {
+  const src = read("index.tsx");
+  const start = src.indexOf("getAuthStatus()");
+  assert.ok(start > 0, "the auth call must exist");
+  const block = src.slice(start, start + 1400);
+  assert.match(block, /\.catch\(/, "getAuthStatus must handle a rejection");
+  assert.match(block, /Could not reach the plugin backend/,
+    "and say so in words the reporter can repeat");
+  const gate = src.indexOf("refreshContentGate()");
+  assert.ok(gate > 0);
+  assert.match(src.slice(gate, gate + 700), /\.catch\(/,
+    "the content gate must not sit on checking either");
+  // Both states are what the rows read as "checking...", so neither may be
+  // left undefined by a failure.
+  assert.ok(src.includes('auth === undefined ? "checking'),
+    "the status row reads checking while auth is undefined");
+  assert.ok(src.includes("gate === undefined"),
+    "and so does the adult content row");
+});
+
 // --- launch templates must survive the launch-options plugin -------------
 // This device routes Steam's launch options through decky-launch-options,
 // which treats ANY token containing "=" (with no "/" before it) as an
