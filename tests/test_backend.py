@@ -20663,6 +20663,38 @@ class TestLoadOrderPageNewVegas(unittest.TestCase):
         self.assertEqual(main._read_plugins_txt(self.path),
                          ["ModC.esp", "ModA.esp", "ModB.esp"])
 
+    def test_a_hand_set_order_survives_the_passes_that_run_later(self):
+        """The promise, on the engine where it is hardest to keep. New
+        Vegas reads file dates, so an order only holds if every later pass
+        reproduces it - and the restamp takes its sequence from
+        plugins.txt, which is where set_load_order put the user's choice.
+
+        Checked on device end to end: Michael set an order, played, and
+        the dates still matched the file afterwards."""
+        main._write_plugins_txt(self.path, ["ModA.esp", "ModB.esp", "ModC.esp"])
+        for i, n in enumerate(["ModA.esp", "ModB.esp", "ModC.esp"]):
+            self._stamp(n, 1700000000 + i * 60)
+        want = ["ModC.esp", "ModA.esp", "ModB.esp"]
+        r = run(self.plugin.set_load_order(
+            self.APP_ID, self.GAME, self.SUB, "listed", self.DOMAIN, want))
+        self.assertTrue(r["ok"], r)
+
+        def shown():
+            got = run(self.plugin.get_load_order(
+                self.APP_ID, self.GAME, self.SUB, "listed", self.DOMAIN))
+            return [e["name"] for e in got["entries"] if e["positioned"]]
+
+        self.assertEqual(shown(), want)
+        # An install later in the session restamps everything.
+        main._stagger_plugin_mtimes(
+            self.data, self.path, "listed", self.DOMAIN)
+        self.assertEqual(shown(), want, "a restamp keeps the file's order")
+        # And the automatic repair leaves a valid order alone.
+        run(self.plugin.fix_load_order(
+            self.APP_ID, self.GAME, self.SUB, "listed", self.DOMAIN))
+        self.assertEqual(shown(), want, "the sorter keeps it too")
+        self.assertEqual(main._read_plugins_txt(self.path), want)
+
     def test_switching_on_gives_it_a_place_at_the_end(self):
         main._write_plugins_txt(self.path, ["ModA.esp", "ModB.esp"])
         self._stamp("ModA.esp", 1700000000)
