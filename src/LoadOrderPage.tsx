@@ -797,6 +797,25 @@ export default function LoadOrderPage() {
               </span>
             )}
           </h2>
+          {game && state?.supported && (
+            // In the header row, not above the list: Steam's text field
+            // keeps a D-pad press that lands on it, so a field alone
+            // between the header and the rows was a trap (found on
+            // device, first build). Beside the buttons, LEFT and RIGHT
+            // walk out of it and the vertical path never enters it.
+            <div style={{ flex: "1 1 auto", minWidth: "200px", maxWidth: "420px" }}>
+              <TextField
+                label="Find a plugin or mod"
+                value={filter}
+                bShowClearAction={true}
+                disabled={Boolean(carry)}
+                onChange={(e) => setFilter(e?.target?.value ?? "")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLElement).blur();
+                }}
+              />
+            </div>
+          )}
           <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
             <DialogButton
               onClick={sortForMe}
@@ -890,19 +909,6 @@ export default function LoadOrderPage() {
             <Focusable style={{ display: "flex", gap: "18px", alignItems: "flex-start" }}>
               {/* ---- the list ---- */}
               <div style={{ flex: "1 1 auto", minWidth: 0 }}>
-                <Focusable style={{ marginBottom: "6px" }}>
-                  <TextField
-                    label="Find a plugin or mod"
-                    value={filter}
-                    bShowClearAction={true}
-                    disabled={Boolean(carry)}
-                    onChange={(e) => setFilter(e?.target?.value ?? "")}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") (e.target as HTMLElement).blur();
-                    }}
-                  />
-                </Focusable>
-
                 {(state.implicit?.length ?? 0) > 0 && (
                   <div style={{ fontSize: "12px", opacity: 0.55, margin: "6px 0 2px 4px" }}>
                     The game's own files load first: {state.implicit!.join(", ")}.

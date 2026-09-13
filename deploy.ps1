@@ -91,7 +91,7 @@ $remoteScript = (
     "SET_DIR=`"$($cfg.deckdir)/homebrew/settings`"",
     'mkdir -p "$PLUGIN_DIR"',
     'rm -rf "$PLUGIN_DIR/dist"',
-    'tar -xzf /tmp/decky-nexus-deploy.tar.gz -C "$PLUGIN_DIR"',
+    'tar --warning=no-timestamp -xzf /tmp/decky-nexus-deploy.tar.gz -C "$PLUGIN_DIR"',
     "chown -R $($cfg.deckuser):$($cfg.deckuser) `"`$PLUGIN_DIR`"",
     # Carry the old dev deployment's settings across BEFORE removing it, or
     # switching to the correct folder would silently cost this device its
