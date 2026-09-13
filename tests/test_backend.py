@@ -20707,3 +20707,499 @@ class TestLoadOrderPageNewVegas(unittest.TestCase):
                          ["ModA.esp", "ModB.esp", "Off.esp"])
         self.assertTrue(all(e["positioned"] for e in r["entries"]))
         self.assertLess(self._mt("ModB.esp"), self._mt("Off.esp"))
+
+
+def _rb(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _rt(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+class TestMassEffectFormats(unittest.TestCase):
+    """The ME3Tweaks pieces the installer reads and writes: the table of
+    contents the game reads file sizes from, and the moddesc.ini structs
+    that say what to install."""
+
+    # Game/ME3/BioGame/DLC/DLC_CON_PRO1/PCConsoleTOC.bin as shipped (852
+    # bytes, 9 buckets, 12 entries), copied off the device 2026-09-13.
+    PRO1_TOC = bytes.fromhex(
+        "130cb73a000000000900000048000000020000000000000000000000c000000001000000fc0000000200000068010000"
+        "02000000e80100000200000068020000010000009002000001000000c00200000100000044000900c00100004b8cfccd"
+        "a2ee605fdd149dfa3deb54fb2a099638436f6f6b65645043436f6e736f6c655c444c435f434f4e5f50524f315f444555"
+        "2e746c6b0000000044000900eb01000028e25b63cf3ec320159186d03cc322c69d7fe435436f6f6b65645043436f6e73"
+        "6f6c655c444c435f434f4e5f50524f315f504f4c2e746c6b000000004400090097010000cfb4c1b33001806295c3e7b1"
+        "640553f8aa43d4ef436f6f6b65645043436f6e736f6c655c444c435f434f4e5f50524f315f494e542e746c6b00000000"
+        "44000900e00100004501fe9c7771fca78d1f03d0347240a3a7c228ee436f6f6b65645043436f6e736f6c655c444c435f"
+        "434f4e5f50524f315f4a504e2e746c6b00000000300009005403000047734b57f16e49e8b2a2d91d37f3c596bfde8c7e"
+        "5043436f6e736f6c65544f432e62696e0000000044000900b9010000cbed0ac52fa43b4e3f3f422e8f0a58c632026be0"
+        "436f6f6b65645043436f6e736f6c655c444c435f434f4e5f50524f315f4954412e746c6b000000004400090022020000"
+        "d3d0e1e691759a94d8696b4feb01fdcd22cd76ad436f6f6b65645043436f6e736f6c655c444c435f434f4e5f50524f31"
+        "5f5255532e746c6b0000000044000900ac010000a65f6b0f96a81a8f6ffac460ee4cf305210df390436f6f6b65645043"
+        "436f6e736f6c655c444c435f434f4e5f50524f315f45534e2e746c6b0000000044000900d50100000cb1e9189a98167b"
+        "71f86623c7b61395ef2e4abb436f6f6b65645043436f6e736f6c655c444c435f434f4e5f50524f315f4652412e746c6b"
+        "0000000030000100380000004d934a51356a8c2928d2124eb79df3567e2f970e5043436f6e736f6c65544f432e747874"
+        "00000000380009006c0000003f634e7acbb02fa2cb2c74ffce53c22200686771436f6f6b65645043436f6e736f6c655c"
+        "4d6f756e742e646c630000000000090098360000fb08dd8aca10166b044be8fa7e67ed89715de31b436f6f6b65645043"
+        "436f6e736f6c655c44656661756c745f444c435f434f4e5f50524f312e62696e00000000"
+    )
+
+    def test_the_hash_and_layout_reproduce_a_shipped_table_byte_for_byte(self):
+        n, entries = main._me_toc_read(self.PRO1_TOC)
+        self.assertEqual((n, len(entries)), (9, 12))
+        self.assertEqual(main._me_toc_write(entries, n), self.PRO1_TOC)
+        # The game bucketed these two together; so must we.
+        self.assertEqual(main._me_strihash("DLC_CON_PRO1_DEU.tlk") % 9, 0)
+        self.assertEqual(main._me_strihash("DLC_CON_PRO1_POL.tlk") % 9, 0)
+        self.assertEqual(main._me_strihash("Mount.dlc") % 9,
+                         next(e for e in entries if e["name"].endswith("Mount.dlc"))["_bucket"]
+                         if "_bucket" in entries[0] else main._me_strihash("Mount.dlc") % 9)
+
+    def test_a_generated_table_lists_every_file_and_itself(self):
+        d = tempfile.mkdtemp(prefix="metoc-", dir=TEST_ROOT)
+        os.makedirs(os.path.join(d, "CookedPCConsole"))
+        pcc = b"P" * 100
+        with open(os.path.join(d, "CookedPCConsole", "A.pcc"), "wb") as f:
+            f.write(pcc)
+        with open(os.path.join(d, "CookedPCConsole", "B_INT.tlk"), "wb") as f:
+            f.write(b"T" * 20)
+        with open(os.path.join(d, "CookedPCConsole", "Mount.dlc"), "wb") as f:
+            f.write(b"\x01" + b"\x00" * 107)
+        with open(os.path.join(d, "AutoLoad.ini"), "w") as f:
+            f.write("[ME1DLCMOUNT]\nModMount=560\n")
+        with open(os.path.join(d, "_metacmm.txt"), "w") as f:
+            f.write("x\n1.0\n")
+        count = main._me_toc_generate(d)
+        data = _rb(os.path.join(d, "PCConsoleTOC.bin"))
+        n, entries = main._me_toc_read(data)
+        names = {e["name"] for e in entries}
+        self.assertEqual(names, {
+            "CookedPCConsole\\A.pcc", "CookedPCConsole\\B_INT.tlk",
+            "CookedPCConsole\\Mount.dlc", "AutoLoad.ini", "PCConsoleTOC.bin",
+        }, "every file, itself included, but not the plugin's own note")
+        self.assertEqual(count, 5)
+        by = {e["name"]: e for e in entries}
+        self.assertEqual(by["PCConsoleTOC.bin"]["size"], len(data), "lists its own final size")
+        self.assertEqual(by["CookedPCConsole\\A.pcc"]["size"], 100)
+        self.assertEqual(by["CookedPCConsole\\A.pcc"]["flags"], 1)
+        self.assertEqual(by["CookedPCConsole\\A.pcc"]["sha"],
+                         __import__("hashlib").sha1(pcc).digest())
+        self.assertEqual(by["CookedPCConsole\\B_INT.tlk"]["flags"], 9)
+        self.assertEqual(by["AutoLoad.ini"]["flags"], 9)
+
+    def test_updating_one_size_keeps_everything_else(self):
+        d = tempfile.mkdtemp(prefix="metoc-", dir=TEST_ROOT)
+        p = os.path.join(d, "PCConsoleTOC.bin")
+        with open(p, "wb") as f:
+            f.write(self.PRO1_TOC)
+        self.assertTrue(main._me_toc_update(
+            p, {"CookedPCConsole\\DLC_CON_PRO1_DEU.tlk": (999, None)}))
+        n, entries = main._me_toc_read(_rb(p))
+        _n0, before = main._me_toc_read(self.PRO1_TOC)
+        self.assertEqual(n, 9)
+        self.assertEqual([e["name"] for e in entries], [e["name"] for e in before])
+        by = {e["name"]: e for e in entries}
+        self.assertEqual(by["CookedPCConsole\\DLC_CON_PRO1_DEU.tlk"]["size"], 999)
+        self.assertEqual(by["CookedPCConsole\\DLC_CON_PRO1_POL.tlk"]["size"],
+                         {e["name"]: e for e in before}["CookedPCConsole\\DLC_CON_PRO1_POL.tlk"]["size"])
+        # An added file gets an entry too.
+        main._me_toc_update(p, {"CookedPCConsole\\New.pcc": (5, None)})
+        _n2, entries = main._me_toc_read(_rb(p))
+        self.assertIn("CookedPCConsole\\New.pcc", {e["name"] for e in entries})
+
+    def test_structs_survive_brackets_quotes_spaces_and_single_items(self):
+        # Charted Worlds: a DLCRequirement in brackets and a parenthesis
+        # inside a quoted description.
+        charted = ('((Condition=COND_DLC_PRESENT,ConditionalDLC=DLC_MOD_LE1CP[minversion=2.0],'
+                   'ModOperation=OP_ADD_FOLDERFILES_TO_CUSTOMDLC,ModAltDLC=Compatibility\\LE1CP,'
+                   'ModDestDLC=DLC_MOD_ChartedWorlds\\CookedPCConsole,FriendlyName="LE1 Community Patch",'
+                   'Description="Compatibility with LE1 Community Patch and Framework (version 2.0+)"))')
+        alts = main._me_parse_structs(charted)
+        self.assertEqual(len(alts), 1)
+        self.assertEqual(alts[0]["conditionaldlc"], "DLC_MOD_LE1CP[minversion=2.0]")
+        self.assertEqual(alts[0]["description"],
+                         "Compatibility with LE1 Community Patch and Framework (version 2.0+)")
+        # Casual Hubs: two structs, quoted paths with spaces.
+        casual = ('((Condition=COND_MANUAL,ModOperation=OP_ADD_FOLDERFILES_TO_CUSTOMDLC,'
+                  'ModAltDLC="Options\\Casual Outfits for Garrus and Wrex",'
+                  'ModDestDLC=DLC_MOD_CasualHubs\\CookedPCConsole,FriendlyName="Casual Outfits for Garrus and Wrex",'
+                  'Description="Gives Garrus and Wrex casual outfits, on the Normandy.",CheckedByDefault=true),'
+                  '(Condition=COND_MANUAL,ModOperation=OP_ADD_FOLDERFILES_TO_CUSTOMDLC,'
+                  'ModAltDLC="Options\\Shepard Wears Casual Clothes in Prologue",'
+                  'ModDestDLC=DLC_MOD_CasualHubs\\CookedPCConsole,FriendlyName="Shepard Wears Casual Clothes in Prologue",'
+                  'Description="Allows Shepard to wear casual clothes.",CheckedByDefault=true))')
+        alts = main._me_parse_structs(casual)
+        self.assertEqual([a["modaltdlc"] for a in alts],
+                         ["Options\\Casual Outfits for Garrus and Wrex",
+                          "Options\\Shepard Wears Casual Clothes in Prologue"])
+        # One Probe: spaces around '=' and a bare list of two structs.
+        probe = ('(FriendlyName="Fast Probe Speed", Description="Gives all, at speed.", Condition=COND_MANUAL, '
+                 'CheckedByDefault=true, OptionGroup="UXMode", ModOperation=OP_APPLY_MERGEMODS, MergeFiles = me2_fast.m3m),'
+                 '(FriendlyName="Normal Probe Speed", Description="Normal.", Condition=COND_MANUAL, '
+                 'CheckedByDefault=false, OptionGroup="UXMode", ModOperation=OP_APPLY_MERGEMODS, MergeFiles = me2_normal.m3m)')
+        alts = main._me_parse_structs(probe)
+        self.assertEqual([a["mergefiles"] for a in alts], ["me2_fast.m3m", "me2_normal.m3m"])
+        self.assertEqual(alts[0]["optiongroup"], "UXMode")
+        # A single struct with no list wrapper at all.
+        self.assertEqual(main._me_parse_structs("(FriendlyName=X, ModOperation=OP_NOTHING)"),
+                         [{"friendlyname": "X", "modoperation": "OP_NOTHING"}])
+        self.assertEqual(main._me_parse_structs(""), [])
+
+    def test_dlc_requirements_and_versions(self):
+        r = main._me_dlc_requirement("DLC_MOD_LE1CP[minversion=2.0]")
+        self.assertEqual((r["name"], r["prefix"], r["params"]),
+                         ("DLC_MOD_LE1CP", "", {"minversion": "2.0"}))
+        self.assertEqual(main._me_dlc_requirement("-DLC_MOD_X")["prefix"], "-")
+        self.assertEqual(main._me_dlc_requirement("CITADEL")["name"], "DLC_EXP_Pack003")
+        self.assertLess(main._me_version_key("1.9"), main._me_version_key("2.0"))
+        self.assertLess(main._me_version_key("2.0"), main._me_version_key("2.0.1"))
+        self.assertEqual(main._me_version_key("2.0"), main._me_version_key("2"))
+
+    def test_moddesc_ini_parses_headers_keys_and_comments(self):
+        ini = main._me_parse_moddesc(
+            "\ufeff[ModManager]\ncmmver = 9.1\n; a comment\n\n[ModInfo]\ngame=LE1\n"
+            "Modname = Casual Hubs\nrequireddlc = DLC_MOD_LE1CP[minversion=2.0]\n"
+            "[CUSTOMDLC]\nsourcedirs = A;B\ndestdirs=A;B\nnot a pair\n")
+        self.assertEqual(ini["ModManager"]["cmmver"], "9.1")
+        self.assertEqual(ini["ModInfo"]["modname"], "Casual Hubs")
+        self.assertEqual(main._me_split_semis(ini["CUSTOMDLC"]["sourcedirs"]), ["A", "B"])
+        self.assertNotIn("not a pair", str(ini))
+
+
+class TestMassEffectInstall(unittest.TestCase):
+    """A fake Legendary Edition under STEAM_COMMON and fake mod packages,
+    driven through the planner, the applier and the endpoints."""
+
+    GAME = "Mass Effect LE Test"
+    DOMAIN = "masseffectlegendaryedition"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        for le, sub in main.ME_GAME_DIRS.items():
+            root = os.path.join(self.install, "Game", sub)
+            os.makedirs(os.path.join(root, "Binaries", "Win64"))
+            os.makedirs(os.path.join(root, "BioGame", "CookedPCConsole"))
+            if le != "LE1":
+                os.makedirs(os.path.join(root, "BioGame", "DLC"))
+            with open(os.path.join(root, "Binaries", "Win64", "bink2w64.dll"), "wb") as f:
+                f.write(b"BINK")
+            with open(os.path.join(root, "BioGame", "CookedPCConsole", "Foo.pcc"), "wb") as f:
+                f.write(b"F" * 10)
+            with open(os.path.join(root, "BioGame", "PCConsoleTOC.bin"), "wb") as f:
+                f.write(main._me_toc_write([
+                    {"name": "BioGame\\CookedPCConsole\\Foo.pcc", "size": 10, "flags": 0,
+                     "sha": b"\x00" * 20},
+                    {"name": "BioGame\\PCConsoleTOC.bin", "size": 0, "flags": 0,
+                     "sha": b"\x00" * 20},
+                ]))
+        os.makedirs(os.path.join(self.install, "Game", "ME3", "BioGame", "DLC", "DLC_CON_PRO1"))
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+
+    def _scratch(self, moddesc, files):
+        d = tempfile.mkdtemp(prefix="memod-", dir=TEST_ROOT)
+        if moddesc is not None:
+            with open(os.path.join(d, "moddesc.ini"), "w", encoding="utf-8") as f:
+                f.write(moddesc)
+        for rel, content in files.items():
+            p = os.path.join(d, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(content)
+        return d
+
+    def _dlc(self, le, name=None):
+        base = main._me_dlc_dir(self.install, le)
+        return os.path.join(base, name) if name else base
+
+    def _plan_apply(self, scratch, selected=()):
+        plan = main._me_plan(scratch, self.install)
+        self.assertTrue(plan["ok"], plan.get("error"))
+        return plan, main._me_apply(plan, set(selected), self.install)
+
+    MODDESC_LE1 = (
+        "[ModManager]\ncmmver = 8.2\n\n[ModInfo]\ngame = LE1\nmodname = Galaxy Map Trackers (LE1)\n"
+        "modver = 1.3\nmoddev = x\nmoddesc = d\n\n[CUSTOMDLC]\nsourcedirs = DLC_MOD_GMT\ndestdirs = DLC_MOD_GMT\n"
+    )
+
+    def test_a_plain_dlc_mod_lands_in_its_game_with_a_table_and_a_note(self):
+        scratch = self._scratch(self.MODDESC_LE1, {
+            "DLC_MOD_GMT/AutoLoad.ini": b"[ME1DLCMOUNT]\nModMount=560\n",
+            "DLC_MOD_GMT/CookedPCConsole/Plot.pcc": b"P" * 40,
+            "M3Images/banner.jpg": b"jpg",
+        })
+        plan, result = self._plan_apply(scratch)
+        self.assertEqual(plan["game"], "LE1")
+        self.assertIsNone(main._me_wizard(plan), "no options, no wizard")
+        target = self._dlc("LE1", "DLC_MOD_GMT")
+        self.assertTrue(os.path.isfile(os.path.join(target, "CookedPCConsole", "Plot.pcc")))
+        self.assertTrue(os.path.isfile(os.path.join(target, "AutoLoad.ini")))
+        self.assertEqual(result["dlc"], ["DLC_MOD_GMT"])
+        meta = main._me_metacmm(target)
+        self.assertEqual((meta["name"], meta["version"]), ("Galaxy Map Trackers (LE1)", "1.3"))
+        _n, entries = main._me_toc_read(_rb(os.path.join(target, "PCConsoleTOC.bin")))
+        self.assertIn("CookedPCConsole\\Plot.pcc", {e["name"] for e in entries})
+        self.assertFalse(os.path.exists(os.path.join(self.install, "Game", "ME2", "BioGame", "DLC", "DLC_MOD_GMT")))
+
+    def test_an_automatic_alternate_follows_the_installed_dlc_and_its_version(self):
+        moddesc = (
+            "[ModManager]\ncmmver = 9\n[ModInfo]\ngame = LE3\nmodname = Compat\nmodver = 1.0\n"
+            "[CUSTOMDLC]\nsourcedirs = DLC_MOD_C\ndestdirs = DLC_MOD_C\n"
+            "altdlc = ((Condition=COND_DLC_PRESENT,ConditionalDLC=DLC_MOD_Framework[minversion=1.5],"
+            "ModOperation=OP_ADD_FOLDERFILES_TO_CUSTOMDLC,ModAltDLC=Compatibility\\FW,"
+            "ModDestDLC=DLC_MOD_C\\CookedPCConsole,FriendlyName=\"Framework\",Description=\"d\"))\n"
+        )
+        files = {"DLC_MOD_C/CookedPCConsole/Mount.dlc": b"\x01" + b"\x00" * 107,
+                 "Compatibility/FW/Patch.pcc": b"x"}
+        # Absent: no patch.
+        plan, result = self._plan_apply(self._scratch(moddesc, files))
+        self.assertFalse(os.path.exists(self._dlc("LE3", "DLC_MOD_C/CookedPCConsole/Patch.pcc")))
+        self.assertEqual(result["applied"], [])
+        # Present but too old: still no patch.
+        fw = self._dlc("LE3", "DLC_MOD_Framework")
+        os.makedirs(fw)
+        main._me_write_metacmm(fw, "LE3 Community Patch", "1.0", [])
+        _p, result = self._plan_apply(self._scratch(moddesc, files))
+        self.assertFalse(os.path.exists(self._dlc("LE3", "DLC_MOD_C/CookedPCConsole/Patch.pcc")))
+        # New enough: the patch goes in and the note says so.
+        main._me_write_metacmm(fw, "LE3 Community Patch", "2.0", [])
+        _p, result = self._plan_apply(self._scratch(moddesc, files))
+        self.assertTrue(os.path.isfile(self._dlc("LE3", "DLC_MOD_C/CookedPCConsole/Patch.pcc")))
+        self.assertEqual(result["applied"], ["Framework"])
+        meta_path = os.path.join(self._dlc("LE3", "DLC_MOD_C"), "_metacmm.txt")
+        self.assertIn("OPTIONSSELECTEDATINSTALL=Framework", _rt(meta_path))
+
+    def test_manual_options_become_a_wizard_and_only_the_pick_is_applied(self):
+        moddesc = (
+            "[ModManager]\ncmmver = 9.1\n[ModInfo]\ngame = LE1\nmodname = Casual Hubs\nmodver = 1.2\n"
+            "[CUSTOMDLC]\nsourcedirs = DLC_MOD_CH\ndestdirs = DLC_MOD_CH\n"
+            "altdlc = ((Condition=COND_MANUAL,ModOperation=OP_ADD_FOLDERFILES_TO_CUSTOMDLC,"
+            "ModAltDLC=\"Options\\Garrus and Wrex\",ModDestDLC=DLC_MOD_CH\\CookedPCConsole,"
+            "FriendlyName=\"Casual Outfits for Garrus and Wrex\",Description=\"a\",CheckedByDefault=true),"
+            "(Condition=COND_MANUAL,ModOperation=OP_ADD_FOLDERFILES_TO_CUSTOMDLC,"
+            "ModAltDLC=\"Options\\Prologue\",ModDestDLC=DLC_MOD_CH\\CookedPCConsole,"
+            "FriendlyName=\"Shepard Wears Casual Clothes in Prologue\",Description=\"b\",CheckedByDefault=false),"
+            "(Condition=COND_MANUAL,ModOperation=OP_NOTHING,OptionGroup=Look,FriendlyName=\"Default look\","
+            "Description=\"c\",CheckedByDefault=true),"
+            "(Condition=COND_MANUAL,ModOperation=OP_ADD_FOLDERFILES_TO_CUSTOMDLC,OptionGroup=Look,"
+            "ModAltDLC=Options\\Alt,ModDestDLC=DLC_MOD_CH\\CookedPCConsole,FriendlyName=\"Alt look\","
+            "Description=\"d\",DLCRequirements=DLC_MOD_Missing))\n"
+        )
+        files = {"DLC_MOD_CH/AutoLoad.ini": b"x", "DLC_MOD_CH/CookedPCConsole/Base.pcc": b"b",
+                 "Options/Garrus and Wrex/GW.pcc": b"g", "Options/Prologue/Pro.pcc": b"p",
+                 "Options/Alt/Alt.pcc": b"a"}
+        plan = main._me_plan(self._scratch(moddesc, files), self.install)
+        self.assertTrue(plan["ok"], plan.get("error"))
+        wizard, ctx = main._me_wizard(plan)
+        step = wizard["steps"][0]
+        self.assertEqual([g["type"] for g in step["groups"]],
+                         ["SelectAny", "SelectAny", "SelectExactlyOne"])
+        self.assertEqual([p["type"] for p in step["groups"][0]["plugins"]], ["Recommended"])
+        self.assertEqual([p["type"] for p in step["groups"][1]["plugins"]], ["Optional"])
+        look = step["groups"][2]
+        self.assertEqual(look["name"], "Look")
+        self.assertEqual([p["type"] for p in look["plugins"]], ["Recommended", "NotUsable"],
+                         "the option needing a DLC that is not installed cannot be picked")
+        self.assertEqual(ctx["steps"], wizard["steps"])
+        # Pick only Garrus and Wrex (alt 0) and the default look (alt 2).
+        result = main._me_apply(plan, {0, 2}, self.install)
+        cooked = self._dlc("LE1", "DLC_MOD_CH/CookedPCConsole")
+        self.assertTrue(os.path.isfile(os.path.join(cooked, "GW.pcc")))
+        self.assertFalse(os.path.exists(os.path.join(cooked, "Pro.pcc")))
+        self.assertFalse(os.path.exists(os.path.join(cooked, "Alt.pcc")))
+        self.assertEqual(result["applied"], ["Casual Outfits for Garrus and Wrex", "Default look"])
+
+    def test_curator_choices_map_onto_the_options_by_name(self):
+        moddesc = (
+            "[ModManager]\ncmmver = 9\n[ModInfo]\ngame = LE2\nmodname = M\nmodver = 1\n"
+            "[CUSTOMDLC]\nsourcedirs = DLC_MOD_M\ndestdirs = DLC_MOD_M\n"
+            "altdlc = ((Condition=COND_MANUAL,ModOperation=OP_NOTHING,FriendlyName=\"Extra Hats\","
+            "Description=\"a\",CheckedByDefault=false))\n"
+        )
+        plan = main._me_plan(self._scratch(moddesc, {"DLC_MOD_M/CookedPCConsole/Mount.dlc": b"\xac\x02"}),
+                             self.install)
+        wizard, ctx = main._me_wizard(plan)
+        ids = main._match_fomod_choices(ctx["steps"], {"name": "Extra Hats", "choices": ["Extra Hats"]})
+        self.assertEqual(ids, ["alt.0"])
+        self.assertEqual(main._match_fomod_choices(ctx["steps"], {}), [], "off by default, stays off")
+
+    def test_merge_mods_are_refused_whole_and_named(self):
+        pure = ("[ModManager]\ncmmver = 7\n[ModInfo]\ngame = LE2\nmodname = Sheploo\nmodver = 2\n"
+                "[BASEGAME]\nmoddir = .\nmergemods = SHEPLOO.m3m\n")
+        plan = main._me_plan(self._scratch(pure, {"MergeMods/SHEPLOO.m3m": b"M3MM"}), self.install)
+        self.assertFalse(plan["ok"])
+        self.assertIn("merge mod", plan["error"])
+        # DLC plus a merge mod is refused too: half of it would be worse.
+        mixed = ("[ModManager]\ncmmver = 9\n[ModInfo]\ngame = LE1\nmodname = Black Market\nmodver = 1.5\n"
+                 "[BASEGAME]\nmoddir = .\nmergemods = BML.m3m\n"
+                 "[CUSTOMDLC]\nsourcedirs = DLC_MOD_BM\ndestdirs = DLC_MOD_BM\n")
+        plan = main._me_plan(self._scratch(mixed, {"DLC_MOD_BM/AutoLoad.ini": b"x", "MergeMods/BML.m3m": b"x"}),
+                             self.install)
+        self.assertFalse(plan["ok"])
+        self.assertFalse(os.path.exists(self._dlc("LE1", "DLC_MOD_BM")), "nothing landed")
+        # A merge mod behind a manual option is dropped from the options,
+        # with the loss noted; the rest installs.
+        optional = ("[ModManager]\ncmmver = 9\n[ModInfo]\ngame = LE2\nmodname = Opt\nmodver = 1\n"
+                    "[CUSTOMDLC]\nsourcedirs = DLC_MOD_O\ndestdirs = DLC_MOD_O\n"
+                    "[BASEGAME]\nmoddir = .\naltfiles = ((Condition=COND_MANUAL,ModOperation=OP_APPLY_MERGEMODS,"
+                    "MergeFiles=a.m3m,FriendlyName=\"Faster probes\",Description=\"x\"))\n")
+        plan = main._me_plan(self._scratch(optional, {"DLC_MOD_O/CookedPCConsole/Mount.dlc": b"\xac\x02",
+                                                       "MergeMods/a.m3m": b"x"}), self.install)
+        self.assertTrue(plan["ok"], plan.get("error"))
+        self.assertIsNone(main._me_wizard(plan))
+        self.assertTrue(any("Faster probes" in s for s in plan["skipped"]))
+
+    def test_required_and_incompatible_dlc_are_checked_before_anything_moves(self):
+        moddesc = ("[ModManager]\ncmmver = 9\n[ModInfo]\ngame = LE1\nmodname = Needy\nmodver = 1\n"
+                   "requireddlc = DLC_MOD_LE1CP[minversion=2.0]\n"
+                   "[CUSTOMDLC]\nsourcedirs = DLC_MOD_N\ndestdirs = DLC_MOD_N\nincompatiblecustomdlc = DLC_MOD_Enemy\n")
+        files = {"DLC_MOD_N/AutoLoad.ini": b"x"}
+        plan = main._me_plan(self._scratch(moddesc, files), self.install)
+        self.assertFalse(plan["ok"])
+        self.assertIn("LE1 Community Patch (DLC_MOD_LE1CP)", plan["error"])
+        self.assertIn("2.0 or newer", plan["error"])
+        os.makedirs(self._dlc("LE1", "DLC_MOD_LE1CP"))
+        plan = main._me_plan(self._scratch(moddesc, files), self.install)
+        self.assertTrue(plan["ok"], plan.get("error"))
+        os.makedirs(self._dlc("LE1", "DLC_MOD_Enemy"))
+        plan = main._me_plan(self._scratch(moddesc, files), self.install)
+        self.assertFalse(plan["ok"])
+        self.assertIn("DLC_MOD_Enemy", plan["error"])
+
+    def test_outdated_dlc_is_removed_when_its_replacement_lands(self):
+        old = self._dlc("LE2", "DLC_MOD_Old")
+        os.makedirs(old)
+        moddesc = ("[ModManager]\ncmmver = 9\n[ModInfo]\ngame = LE2\nmodname = New\nmodver = 2\n"
+                   "[CUSTOMDLC]\nsourcedirs = DLC_MOD_New\ndestdirs = DLC_MOD_New\noutdatedcustomdlc = DLC_MOD_Old\n")
+        _p, result = self._plan_apply(self._scratch(moddesc, {"DLC_MOD_New/CookedPCConsole/Mount.dlc": b"\xac\x02"}))
+        self.assertFalse(os.path.exists(old))
+        self.assertEqual(result["removed_outdated"], ["DLC_MOD_Old"])
+
+    def test_a_bare_dlc_folder_finds_its_game_from_its_files(self):
+        le1 = self._scratch(None, {"DLC_MOD_A/AutoLoad.ini": b"x", "DLC_MOD_A/CookedPCConsole/a.pcc": b"a"})
+        self.assertEqual(main._me_plan(le1, self.install)["game"], "LE1")
+        le3 = self._scratch(None, {"DLC_MOD_B/CookedPCConsole/Mount.dlc": b"\x01\x00\x00\x00" + b"\x00" * 104})
+        self.assertEqual(main._me_plan(le3, self.install)["game"], "LE3")
+        le2 = self._scratch(None, {"wrapper/DLC_MOD_C/CookedPCConsole/Mount.dlc": b"\xac\x02\x00\x00" + b"\x00" * 105})
+        plan = main._me_plan(le2, self.install)
+        self.assertEqual(plan["game"], "LE2")
+        self.assertEqual([d for _s, d in plan["dlc"]], ["DLC_MOD_C"])
+
+    def test_the_wrong_game_and_non_mods_are_refused_with_a_reason(self):
+        ot = "[ModManager]\ncmmver = 6\n[ModInfo]\ngame = ME3\nmodname = Old\nmodver = 1\n[CUSTOMDLC]\nsourcedirs = DLC_MOD_X\ndestdirs = DLC_MOD_X\n"
+        self.assertIn("original trilogy", main._me_plan(self._scratch(ot, {"DLC_MOD_X/a": b"a"}), self.install)["error"])
+        self.assertIn("Windows program", main._me_plan(self._scratch(None, {"Setup.exe": b"MZ"}), self.install)["error"])
+        self.assertIn("texture", main._me_plan(self._scratch(None, {"ALOT.mem": b"x"}), self.install)["error"])
+        self.assertIn("not a Mass Effect mod", main._me_plan(self._scratch(None, {"readme.txt": b"x"}), self.install)["error"])
+
+    def test_a_basegame_replacement_keeps_a_backup_and_updates_the_table(self):
+        moddesc = ("[ModManager]\ncmmver = 8\n[ModInfo]\ngame = LE2\nmodname = Foo Fix\nmodver = 1\n"
+                   "[BASEGAME]\nmoddir = BASEGAME\nnewfiles = Foo.pcc\nreplacefiles = BIOGame/CookedPCConsole/Foo.pcc\n")
+        plan, result = self._plan_apply(self._scratch(moddesc, {"BASEGAME/Foo.pcc": b"N" * 33}))
+        root = main._me_game_root(self.install, "LE2")
+        live = os.path.join(root, "BioGame", "CookedPCConsole", "Foo.pcc")
+        self.assertEqual(_rb(live), b"N" * 33)
+        self.assertEqual(_rb(live + ".decky-vanilla"), b"F" * 10)
+        self.assertEqual(result["basegame"], [{"rel": "BioGame/CookedPCConsole/Foo.pcc", "new": False}])
+        _n, entries = main._me_toc_read(_rb(os.path.join(root, "BioGame", "PCConsoleTOC.bin")))
+        self.assertEqual({e["name"]: e["size"] for e in entries}["BioGame\\CookedPCConsole\\Foo.pcc"], 33)
+        # Such a record cannot be switched off, only removed - and removal
+        # restores the game's own file and the table.
+        rec = {"game": "LE2", "dlc": [], "basegame": result["basegame"]}
+        self.assertIn("cannot be switched off", main._me_set_enabled(rec, self.install, False))
+        main._me_remove_record(rec, self.install)
+        self.assertEqual(_rb(live), b"F" * 10)
+        self.assertFalse(os.path.exists(live + ".decky-vanilla"))
+        _n, entries = main._me_toc_read(_rb(os.path.join(root, "BioGame", "PCConsoleTOC.bin")))
+        self.assertEqual({e["name"]: e["size"] for e in entries}["BioGame\\CookedPCConsole\\Foo.pcc"], 10)
+
+    def test_switching_off_moves_the_folder_out_of_the_games_way(self):
+        _p, result = self._plan_apply(self._scratch(self.MODDESC_LE1, {"DLC_MOD_GMT/AutoLoad.ini": b"x"}))
+        rec = {"game": "LE1", "dlc": result["dlc"], "basegame": []}
+        self.assertEqual(main._me_set_enabled(rec, self.install, False), "")
+        self.assertFalse(os.path.exists(self._dlc("LE1", "DLC_MOD_GMT")))
+        self.assertTrue(os.path.isdir(os.path.join(main._disabled_dir(self._dlc("LE1")), "DLC_MOD_GMT")))
+        self.assertEqual(main._me_set_enabled(rec, self.install, True), "")
+        self.assertTrue(os.path.isdir(self._dlc("LE1", "DLC_MOD_GMT")))
+        main._me_remove_record(rec, self.install)
+        self.assertFalse(os.path.exists(self._dlc("LE1", "DLC_MOD_GMT")))
+
+    def test_the_bypass_keeps_the_games_dll_and_reset_puts_it_back(self):
+        done = main._me_install_bink(self.install, b"PROXY")
+        self.assertEqual(sorted(done), ["LE1", "LE2", "LE3"])
+        for le in main.ME_GAME_DIRS:
+            b = main._me_binaries(self.install, le)
+            self.assertEqual(_rb(os.path.join(b, "bink2w64.dll")), b"PROXY")
+            self.assertEqual(_rb(os.path.join(b, main.ME_BINK_ORIGINAL)), b"BINK")
+            self.assertTrue(main._me_bypass_installed(self.install, le))
+        # Installing again must not overwrite the kept original with the proxy.
+        main._me_install_bink(self.install, b"PROXY2")
+        self.assertEqual(open(os.path.join(main._me_binaries(self.install, "LE2"), main.ME_BINK_ORIGINAL), "rb").read(), b"BINK")
+        self.assertEqual(sorted(main._me_remove_bink(self.install)), ["LE1", "LE2", "LE3"])
+        self.assertEqual(open(os.path.join(main._me_binaries(self.install, "LE1"), "bink2w64.dll"), "rb").read(), b"BINK")
+        self.assertFalse(main._me_bypass_installed(self.install, "LE1"))
+
+    def test_the_endpoints_list_toggle_uninstall_and_reset(self):
+        # Two records and one folder somebody put there by hand.
+        _p, r1 = self._plan_apply(self._scratch(self.MODDESC_LE1, {"DLC_MOD_GMT/AutoLoad.ini": b"x"}))
+        hand = self._dlc("LE2", "DLC_MOD_Hand")
+        os.makedirs(hand)
+        main._me_write_metacmm(hand, "Hand Mod", "3.1", [])
+        main._me_install_bink(self.install, b"PROXY")
+        main._save_settings({"installed": {self.DOMAIN: {
+            "Galaxy Map Trackers LE1": {"name": "Galaxy Map Trackers (LE1)", "mode": "masseffect",
+                                        "game": "LE1", "dlc": r1["dlc"], "basegame": [], "enabled": True,
+                                        "version": "1.3", "mod_id": 426},
+        }}})
+        listed = run(self.plugin.get_installed_mods(self.DOMAIN, self.GAME, "Game", "masseffect"))
+        by = {m["folder"]: m for m in listed["mods"]}
+        self.assertIn("Galaxy Map Trackers LE1", by)
+        self.assertTrue(by["Galaxy Map Trackers LE1"]["togglable"])
+        self.assertNotIn("warning", by["Galaxy Map Trackers LE1"], "bypass is installed, so no warning")
+        self.assertEqual(by["LE2|DLC_MOD_Hand"]["name"], "Hand Mod (Mass Effect 2)")
+        self.assertEqual(by["LE2|DLC_MOD_Hand"]["version"], "3.1")
+        self.assertFalse(by["LE2|DLC_MOD_Hand"]["tracked"])
+        # Without the bypass the record carries the warning.
+        main._me_remove_bink(self.install)
+        listed = run(self.plugin.get_installed_mods(self.DOMAIN, self.GAME, "Game", "masseffect"))
+        self.assertIn("Bink bypass", {m["folder"]: m for m in listed["mods"]}["Galaxy Map Trackers LE1"]["warning"])
+        main._me_install_bink(self.install, b"PROXY")
+        # Toggle a record and the hand-placed folder.
+        r = run(self.plugin.set_mod_enabled(self.GAME, "Game", "Galaxy Map Trackers LE1", False,
+                                            "masseffect", self.DOMAIN))
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(os.path.exists(self._dlc("LE1", "DLC_MOD_GMT")))
+        r = run(self.plugin.set_mod_enabled(self.GAME, "Game", "LE2|DLC_MOD_Hand", False,
+                                            "masseffect", self.DOMAIN))
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(os.path.exists(hand))
+        listed = run(self.plugin.get_installed_mods(self.DOMAIN, self.GAME, "Game", "masseffect"))
+        by = {m["folder"]: m for m in listed["mods"]}
+        self.assertFalse(by["LE2|DLC_MOD_Hand"]["enabled"])
+        self.assertFalse(by["Galaxy Map Trackers LE1"]["enabled"])
+        # Uninstall the record.
+        r = run(self.plugin.uninstall_mod(self.DOMAIN, self.GAME, "Game", "Galaxy Map Trackers LE1", "masseffect"))
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("Galaxy Map Trackers LE1", main._load_settings()["installed"][self.DOMAIN])
+        # Reset: the hand-placed folder goes too, and the game's DLL is back.
+        r = run(self.plugin.reset_game_modding(self.DOMAIN, self.GAME, "Game", "masseffect"))
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(os.path.exists(os.path.join(main._disabled_dir(self._dlc("LE2")), "DLC_MOD_Hand")))
+        self.assertFalse(main._me_bypass_installed(self.install, "LE3"))
+        self.assertEqual(open(os.path.join(main._me_binaries(self.install, "LE3"), "bink2w64.dll"), "rb").read(), b"BINK")
+
+    def test_a_finished_wizard_is_routed_to_the_mass_effect_applier(self):
+        import inspect
+        src = inspect.getsource(main.Plugin.install_fomod)
+        self.assertLess(src.index('entry.get("masseffect")'), src.index("_fomod_stage("),
+                        "the Mass Effect branch comes before any FOMOD staging")

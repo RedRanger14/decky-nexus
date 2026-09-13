@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import ssl
 import threading
 import time
@@ -11924,6 +11925,1304 @@ def _collection_extras(manifest: dict) -> dict:
     return {"browse": browse, "bundle": bundle, "direct": direct}
 
 
+# ---- Mass Effect Legendary Edition -------------------------------------------
+# One Steam app, three games. Game/ME1, Game/ME2 and Game/ME3 each have
+# their own exe, their own BioGame/DLC and their own table of contents.
+# Mods are ME3Tweaks Mod Manager packages: a moddesc.ini beside the payload
+# says which game the mod is for, which DLC folders it adds, and which files
+# to swap in depending on what else is installed. The game ignores DLC_MOD
+# folders until the Bink bypass (LEBinkProxy) sits in each game's
+# Binaries/Win64, so that is this game's "framework".
+#
+# What is NOT done here, on purpose: merge mods (.m3m). Those edit
+# properties inside the game's own compressed package files, which is a
+# package editor and an Oodle decompressor away from anything this plugin
+# has. A mod that needs one is refused with the reason, whole, rather than
+# half-installed.
+
+ME_GAME_DIRS = {"LE1": "ME1", "LE2": "ME2", "LE3": "ME3"}
+ME_GAME_NAMES = {
+    "LE1": "Mass Effect 1", "LE2": "Mass Effect 2", "LE3": "Mass Effect 3",
+}
+# The compiled LEBinkProxy, as ME3Tweaks Mod Manager ships it. Pinned to a
+# commit and a hash: this is a DLL the game loads, so what installs must be
+# exactly what was checked.
+ME_BINK_URL = (
+    "https://raw.githubusercontent.com/ME3Tweaks/ME3TweaksModManager/"
+    "f97b1ece73a59884a72b339aae3d92d3eada496a/MassEffectModManagerCore/"
+    "modmanager/binkw64/bink2w64.dll"
+)
+ME_BINK_SHA256 = "fc3b6c5ede71767e1e1d260071992a044679c7da57ca7c5a2847385a78a75b73"
+ME_BINK_SIZE = 399400
+ME_BINK_ORIGINAL = "bink2w64_original.dll"
+ME_RUNNING = "Mass Effect is running. Close it before changing mods."
+ME_TOC_MAGIC = 0x3AB70C13
+# Flags per file type, read off the shipped tables: packages, audio and
+# movies carry 1; text tables, tables of contents, texture caches, mount
+# files and inis carry 9. Unknown types get 1, like a package.
+ME_TOC_HEAVY = frozenset({".tlk", ".bin", ".tfc", ".dlc", ".ini"})
+# Task-header names ME3Tweaks accepts where a DLC folder name is expected.
+ME_HEADER_DLC = {
+    "RESURGENCE": "DLC_CON_MP1", "REBELLION": "DLC_CON_MP2",
+    "EARTH": "DLC_CON_MP3", "RETALIATION": "DLC_CON_MP4",
+    "RECKONING": "DLC_CON_MP5", "PATCH1": "DLC_UPD_Patch01",
+    "PATCH2": "DLC_UPD_Patch02", "FROM_ASHES": "DLC_HEN_PR",
+    "EXTENDED_CUT": "DLC_CON_END", "LEVIATHAN": "DLC_EXP_Pack001",
+    "OMEGA": "DLC_EXP_Pack002", "CITADEL": "DLC_EXP_Pack003",
+    "CITADEL_BASE": "DLC_EXP_Pack003_Base", "APPEARANCE": "DLC_CON_APP01",
+    "FIREFIGHT": "DLC_CON_GUN01", "GROUNDSIDE": "DLC_CON_GUN02",
+    "GENESIS2": "DLC_CON_DH1", "COLLECTORS_EDITION": "DLC_OnlinePassHidCE",
+    "AEGIS_PACK": "DLC_CER_02", "APPEARANCE_PACK_1": "DLC_CON_Pack01",
+    "APPEARANCE_PACK_2": "DLC_CON_Pack02", "ARC_PROJECTOR": "DLC_CER_Arc",
+    "ARRIVAL": "DLC_EXP_Part02", "BLOOD_DRAGON_ARMOR": "DLC_PRE_DA",
+    "CERBERUS_WEAPON_ARMOR": "DLC_PRE_Cerberus",
+    "COLLECTORS_WEAPON_ARMOR": "DLC_PRE_Collectors",
+    "EQUALIZER_PACK": "DLC_MCR_03", "FIREPOWER_PACK": "DLC_MCR_01",
+    "GENESIS": "DLC_DHME1", "INCISOR": "DLC_PRE_Incisor",
+    "INFERNO_ARMOR": "DLC_PRE_General", "KASUMI": "DLC_HEN_MT",
+    "LAIR_OF_THE_SHADOW_BROKER": "DLC_EXP_Part01",
+    "NORMANDY_CRASH_SITE": "DLC_UNC_Moment01", "OVERLORD": "DLC_UNC_Pack01",
+    "RECON_HOOD": "DLC_PRO_Pepper02", "SENTRY_INTERFACE": "DLC_PRO_Gulp01",
+    "TERMINUS_WEAPON_ARMOR": "DLC_PRE_Gamestop", "UMBRA_VISOR": "DLC_PRO_Pepper01",
+    "ZAEED": "DLC_HEN_VT",
+}
+# DLC folders other mods routinely require, named for humans.
+ME_KNOWN_DLC = {
+    "dlc_mod_le1cp": ("LE1 Community Patch", 23),
+    "dlc_mod_framework": ("LE3 Community Patch and Framework", 13),
+    "dlc_mod_egm": ("Expanded Galaxy Mod", 422),
+    "dlc_mod_diversityle1": ("LE1 Diversification Project", 1172),
+}
+
+
+def _me_crc_table() -> list:
+    """Unreal's GCRCTable: polynomial 0x04C11DB7, not reflected."""
+    table = []
+    for i in range(256):
+        c = i << 24
+        for _ in range(8):
+            if c & 0x80000000:
+                c = ((c << 1) ^ 0x04C11DB7) & 0xFFFFFFFF
+            else:
+                c = (c << 1) & 0xFFFFFFFF
+        table.append(c)
+    return table
+
+
+_ME_CRC_TABLE = _me_crc_table()
+
+
+def _me_strihash(s: str) -> int:
+    """UE3 appStrihash: upper-cased UTF-16 characters, two table steps
+    each. The tables of contents bucket every entry by this hash of the
+    file's basename; found by testing candidates against the four shipped
+    tables (2026-09-13), 9,112 entries agreeing."""
+    h = 0
+    for ch in s.upper():
+        c = ord(ch)
+        for byte in (c & 0xFF, (c >> 8) & 0xFF):
+            h = ((h >> 8) & 0x00FFFFFF) ^ _ME_CRC_TABLE[(h ^ byte) & 0xFF]
+    return h
+
+
+def _me_toc_read(data: bytes):
+    """(bucket count, entries) from a PCConsoleTOC.bin.
+
+    Layout: int32 magic, int32 zero, int32 N, then N x (int32 offset from
+    the bucket record's own position to its first entry, int32 count),
+    then entries: uint16 size to the next entry (0 on the last), uint16
+    flags, int32 file size, 20 bytes sha1, the path with backslashes,
+    null terminated, padded to four bytes."""
+    magic, _zero, n = struct.unpack_from("<III", data, 0)
+    if magic != ME_TOC_MAGIC:
+        raise ValueError("not a PCConsoleTOC.bin")
+    entries = []
+    for b in range(n):
+        off, count = struct.unpack_from("<II", data, 12 + b * 8)
+        pos = 12 + b * 8 + off
+        for _ in range(count):
+            esize, flags, fsize = struct.unpack_from("<HHI", data, pos)
+            sha = data[pos + 8:pos + 28]
+            end = data.index(b"\x00", pos + 28)
+            entries.append({
+                "name": data[pos + 28:end].decode("latin-1"),
+                "size": fsize, "flags": flags, "sha": sha,
+            })
+            if esize == 0:
+                break
+            pos += esize
+    return n, entries
+
+
+def _me_toc_bucket_count(count: int) -> int:
+    return max(1, -(-count * 3 // 4))
+
+
+def _me_toc_write(entries: list, buckets: int = None) -> bytes:
+    """A PCConsoleTOC.bin from entry dicts (name, size, flags, sha).
+    Reproduces the shipped tables byte for byte given their bucket count;
+    for new tables the count is three quarters of the entries, which is
+    what the smaller shipped ones use. The game reads the count from the
+    header, so any consistent value works."""
+    n = buckets or _me_toc_bucket_count(len(entries))
+    per = [[] for _ in range(n)]
+    for e in entries:
+        base = e["name"].rsplit("\\", 1)[-1]
+        per[_me_strihash(base) % n].append(e)
+    last_bucket = max((b for b in range(n) if per[b]), default=-1)
+    body = bytearray()
+    table = []
+    pos = 12 + n * 8
+    for b in range(n):
+        group = per[b]
+        if not group:
+            table.append((0, 0))
+            continue
+        table.append((pos - (12 + b * 8), len(group)))
+        for i, e in enumerate(group):
+            raw = e["name"].encode("latin-1") + b"\x00"
+            pad = (-(28 + len(raw))) % 4
+            esize = 28 + len(raw) + pad
+            final = b == last_bucket and i == len(group) - 1
+            body += struct.pack("<HHI", 0 if final else esize, e["flags"], e["size"])
+            body += (e.get("sha") or b"\x00" * 20)[:20].ljust(20, b"\x00")
+            body += raw + b"\x00" * pad
+            pos += esize
+    out = bytearray(struct.pack("<III", ME_TOC_MAGIC, 0, n))
+    for off, count in table:
+        out += struct.pack("<II", off, count)
+    return bytes(out + body)
+
+
+def _me_toc_flags(name: str) -> int:
+    return 9 if os.path.splitext(name)[1].lower() in ME_TOC_HEAVY else 1
+
+
+def _me_sha1_file(path: str) -> bytes:
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.digest()
+
+
+def _me_toc_generate(dlc_dir: str) -> int:
+    """Write the table of contents for one DLC folder, listing every file
+    in it with its size and sha1, itself included (with its final size,
+    the way the shipped ones do). ME3Tweaks Mod Manager does this after
+    every install, and mods routinely ship without one: Galaxy Map
+    Trackers has no table at all. Returns the entry count."""
+    rels = []
+    for root, _dirs, names in os.walk(dlc_dir):
+        for n in names:
+            if n.lower() in ("pcconsoletoc.bin", "_metacmm.txt"):
+                continue
+            rel = os.path.relpath(os.path.join(root, n), dlc_dir)
+            rels.append(rel.replace(os.sep, "\\").replace("/", "\\"))
+    entries = []
+    for rel in rels:
+        p = os.path.join(dlc_dir, *rel.split("\\"))
+        entries.append({
+            "name": rel, "size": os.path.getsize(p),
+            "flags": _me_toc_flags(rel), "sha": _me_sha1_file(p),
+        })
+    own = {"name": "PCConsoleTOC.bin", "size": 0, "flags": 9, "sha": b"\x00" * 20}
+    entries.append(own)
+    entries.sort(key=lambda e: e["name"].lower())
+    own["size"] = len(_me_toc_write(entries))
+    data = _me_toc_write(entries)
+    with open(os.path.join(dlc_dir, "PCConsoleTOC.bin"), "wb") as f:
+        f.write(data)
+    return len(entries)
+
+
+def _me_toc_update(toc_path: str, changes: dict) -> bool:
+    """Update sizes (and add entries) in an existing table for files that
+    were replaced or added under it. `changes` maps a backslash path, as
+    the table spells it, to (size, sha). Keeps the bucket count when the
+    entry count is unchanged, so an untouched table stays byte-identical."""
+    if not os.path.isfile(toc_path):
+        return False
+    with open(toc_path, "rb") as f:
+        n, entries = _me_toc_read(f.read())
+    by_low = {e["name"].lower(): e for e in entries}
+    added = False
+    for rel, (size, sha) in changes.items():
+        e = by_low.get(rel.lower())
+        if e:
+            e["size"] = size
+            if sha:
+                e["sha"] = sha
+        else:
+            entries.append({"name": rel, "size": size, "flags": _me_toc_flags(rel),
+                            "sha": sha or b"\x00" * 20})
+            added = True
+    data = _me_toc_write(entries, None if added else n)
+    with open(toc_path, "wb") as f:
+        f.write(data)
+    return True
+
+
+# ---- moddesc.ini --------------------------------------------------------------
+
+def _me_parse_moddesc(text: str) -> dict:
+    """{section: {key: value}}. Headers keep their case (the format says
+    they are case sensitive, and they are all upper anyway); keys are
+    lower-cased because real files mix `sourcedirs` and `Sourcedirs`.
+    A line without '=' that is not a header or a comment is ignored, as
+    the older manager did."""
+    out = {}
+    section = None
+    for raw in (text or "").lstrip("﻿").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(";") or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            out.setdefault(section, {})
+            continue
+        if section is None or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[section][key.strip().lower()] = value.strip()
+    return out
+
+
+def _me_split_semis(value: str) -> list:
+    return [p.strip() for p in (value or "").split(";") if p.strip()]
+
+
+def _me_split_top(text: str, sep: str) -> list:
+    """Split on `sep` outside quotes and outside () and [] nesting."""
+    parts, depth, quote, cur = [], 0, None, []
+    for ch in text:
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("\"", "'"):
+            quote = ch
+            cur.append(ch)
+            continue
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == sep and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+    return parts
+
+
+def _me_unquote(v: str) -> str:
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("\"", "'"):
+        return v[1:-1]
+    return v
+
+
+def _me_parse_structs(value: str) -> list:
+    """A struct list: ((k=v, k="v v"), (k=v)) or one struct (k=v, k=v).
+    Keys are lower-cased. Commas inside quotes or inside the [] of a
+    DLCRequirement stay put, which is the part the 9.1 format note is
+    about."""
+    text = (value or "").strip()
+    if not text:
+        return []
+    groups = []
+    depth, start = 0, None
+    quote = None
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("\"", "'"):
+            quote = ch
+            continue
+        if ch == "(":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0 and start is not None:
+                groups.append(text[start + 1:i])
+                start = None
+    if not groups:
+        groups = [text]
+    # One outer group holding inner groups is the list wrapper.
+    if len(groups) == 1 and "(" in groups[0]:
+        inner = groups[0]
+        d2, s2, q2, sub = 0, None, None, []
+        for i, ch in enumerate(inner):
+            if q2:
+                if ch == q2:
+                    q2 = None
+                continue
+            if ch in ("\"", "'"):
+                q2 = ch
+                continue
+            if ch == "(":
+                if d2 == 0:
+                    s2 = i
+                d2 += 1
+            elif ch == ")":
+                d2 -= 1
+                if d2 == 0 and s2 is not None:
+                    sub.append(inner[s2 + 1:i])
+                    s2 = None
+        if sub:
+            groups = sub
+    out = []
+    for g in groups:
+        struct_ = {}
+        for pair in _me_split_top(g, ","):
+            if "=" not in pair:
+                continue
+            k, _, v = pair.partition("=")
+            struct_[k.strip().lower()] = _me_unquote(v)
+        if struct_:
+            out.append(struct_)
+    return out
+
+
+def _me_dlc_requirement(token: str) -> dict:
+    """'DLC_MOD_X[minversion=2.0]' -> {name, prefix, params}. A leading +
+    means installed (the default), - means must not be installed."""
+    t = (token or "").strip()
+    prefix = ""
+    if t[:1] in ("+", "-", "?"):
+        prefix, t = t[0], t[1:]
+    params = {}
+    if "[" in t and t.endswith("]"):
+        t, _, rest = t.partition("[")
+        for pair in _me_split_top(rest[:-1], ","):
+            if "=" in pair:
+                k, _, v = pair.partition("=")
+                params[k.strip().lower()] = _me_unquote(v)
+    name = ME_HEADER_DLC.get(t.strip().upper(), t.strip())
+    return {"name": name, "prefix": prefix, "params": params}
+
+
+def _me_version_key(v: str) -> tuple:
+    parts = []
+    for p in re.split(r"[.\-_ ]", str(v or "").strip()):
+        m = re.match(r"\d+", p)
+        parts.append(int(m.group(0)) if m else 0)
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+# ---- the game on disk ----------------------------------------------------------
+
+def _me_game_root(install_path: str, le: str) -> str:
+    return os.path.join(install_path, "Game", ME_GAME_DIRS[le])
+
+
+def _me_dlc_dir(install_path: str, le: str) -> str:
+    return os.path.join(_me_game_root(install_path, le), "BioGame", "DLC")
+
+
+def _me_binaries(install_path: str, le: str) -> str:
+    return os.path.join(_me_game_root(install_path, le), "Binaries", "Win64")
+
+
+def _me_bypass_installed(install_path: str, le: str) -> bool:
+    return os.path.isfile(os.path.join(_me_binaries(install_path, le), ME_BINK_ORIGINAL))
+
+
+def _me_metacmm(dlc_path: str) -> dict:
+    """What ME3Tweaks Mod Manager (or this plugin) recorded about an
+    installed DLC folder: name on line one, version on line two."""
+    try:
+        with open(os.path.join(dlc_path, "_metacmm.txt"), encoding="utf-8-sig",
+                  errors="replace") as f:
+            lines = [l.rstrip("\r\n") for l in f]
+    except OSError:
+        return {}
+    return {
+        "name": lines[0].strip() if lines else "",
+        "version": lines[1].strip() if len(lines) > 1 else "",
+    }
+
+
+def _me_write_metacmm(dlc_path: str, name: str, version: str, options: list) -> None:
+    """The same file ME3Tweaks Mod Manager writes, so a later mod's
+    'needs X version 2.0 or newer' can be answered, and so the Mod Manager
+    on a PC recognises what is here."""
+    lines = [name or "", version or "", "installedby Nexus Mods Decky plugin"]
+    if options:
+        lines.append("OPTIONSSELECTEDATINSTALL=" + ";".join(options))
+    with open(os.path.join(dlc_path, "_metacmm.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _me_installed_dlc(install_path: str, le: str) -> dict:
+    """lower name -> {name, version, path} for every DLC folder the game
+    would load: official and mod alike, enabled only."""
+    out = {}
+    base = _me_dlc_dir(install_path, le)
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return out
+    for n in names:
+        p = os.path.join(base, n)
+        if os.path.isdir(p):
+            out[n.lower()] = {"name": n, "version": _me_metacmm(p).get("version", ""),
+                              "path": p}
+    return out
+
+
+def _me_detect_game(dlc_path: str) -> str:
+    """Which game a bare DLC folder is for, when there is no moddesc to
+    say. LE1 DLC carry AutoLoad.ini; LE3's Mount.dlc opens with a version
+    int of 1 while LE2's opens with the mount priority."""
+    for root, _dirs, names in os.walk(dlc_path):
+        low = {n.lower(): n for n in names}
+        if "autoload.ini" in low:
+            return "LE1"
+        if "mount.dlc" in low:
+            try:
+                with open(os.path.join(root, low["mount.dlc"]), "rb") as f:
+                    first = struct.unpack("<I", f.read(4))[0]
+                return "LE3" if first == 1 else "LE2"
+            except (OSError, struct.error):
+                return ""
+    return ""
+
+
+def _me_running() -> bool:
+    """Any of the three games or the launcher alive? /proc comm scan; the
+    exe names are 15 characters, exactly what comm holds."""
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid}/comm") as f:
+                    if f.read().strip().startswith("MassEffect"):
+                        return True
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return False
+
+
+# ---- planning an install -------------------------------------------------------
+
+def _me_find_moddesc(scratch: str):
+    """(moddesc path, mod root) for the shallowest moddesc.ini, or (None,
+    None). A mod deployed by ME3Tweaks Mod Manager has it at the root; a
+    hand-zipped one often has a wrapper folder."""
+    best = None
+    for root, dirs, names in os.walk(scratch):
+        depth = root[len(scratch):].count(os.sep)
+        if depth > 2:
+            dirs[:] = []
+            continue
+        for n in names:
+            if n.lower() == "moddesc.ini":
+                cand = os.path.join(root, n)
+                if best is None or depth < best[0]:
+                    best = (depth, cand)
+    if not best:
+        return None, None
+    return best[1], os.path.dirname(best[1])
+
+
+def _me_resolve(base: str, rel: str) -> str:
+    """A moddesc path (either slash, any case) resolved under `base`."""
+    rel = (rel or "").replace("\\", "/").strip("/")
+    found = _fomod_case_resolve(base, rel)
+    return found or os.path.join(base, *rel.split("/"))
+
+
+def _me_condition_met(alt: dict, installed: dict, game_root: str) -> bool:
+    """An automatic alternate's condition against the game as it is."""
+    cond = (alt.get("condition") or "").upper()
+    if cond in ("COND_MANUAL",):
+        return False
+    if cond in ("", "COND_ALWAYS"):
+        return True
+    reqs = [_me_dlc_requirement(t) for t in _me_split_semis(alt.get("conditionaldlc", ""))]
+
+    def present(req):
+        d = installed.get(req["name"].lower())
+        if not d:
+            return False
+        minv = req["params"].get("minversion")
+        maxv = req["params"].get("maxversion")
+        have = d.get("version") or ""
+        # A folder with no recorded version (installed by hand) counts as
+        # meeting the bar: refusing would lose the compatibility files a
+        # user with the mod is exactly the one who needs.
+        if have:
+            if minv and _me_version_key(have) < _me_version_key(minv):
+                return False
+            if maxv and _me_version_key(have) > _me_version_key(maxv):
+                return False
+        return True
+
+    if cond == "COND_DLC_PRESENT":
+        return bool(reqs) and all(present(r) for r in reqs)
+    if cond == "COND_DLC_NOT_PRESENT":
+        return bool(reqs) and not any(present(r) for r in reqs)
+    if cond == "COND_ANY_DLC_PRESENT":
+        return any(present(r) for r in reqs)
+    if cond == "COND_ALL_DLC_PRESENT":
+        return bool(reqs) and all(present(r) for r in reqs)
+    if cond == "COND_ANY_DLC_NOT_PRESENT":
+        return any(not present(r) for r in reqs)
+    if cond == "COND_ALL_DLC_NOT_PRESENT":
+        return bool(reqs) and all(not present(r) for r in reqs)
+    if cond == "COND_SPECIFIC_DLC_SETUP":
+        for r in reqs:
+            want = r["prefix"] != "-"
+            if present(r) != want:
+                return False
+        return True
+    if cond == "COND_SPECIFIC_SIZED_FILES":
+        paths = _me_split_semis(alt.get("requiredfilerelativepaths", ""))
+        sizes = _me_split_semis(alt.get("requiredfilesizes", ""))
+        if not paths or len(paths) != len(sizes):
+            return False
+        for rel, size in zip(paths, sizes):
+            p = _me_resolve(game_root, rel)
+            try:
+                if os.path.getsize(p) != int(size):
+                    return False
+            except (OSError, ValueError):
+                return False
+        return True
+    return False
+
+
+def _me_requirements_met(alt: dict, installed: dict) -> bool:
+    """DLCRequirements on a manual option: the DLC that must be installed
+    for the option to be pickable at all."""
+    for t in _me_split_semis(alt.get("dlcrequirements", "")):
+        r = _me_dlc_requirement(t)
+        if (r["name"].lower() in installed) == (r["prefix"] == "-"):
+            return False
+    return True
+
+
+def _me_plan(scratch: str, install_path: str) -> dict:
+    """Read an extracted archive and decide what it would install.
+
+    Returns a plan dict with ok/error and everything _me_apply needs. A
+    plan can refuse: the wrong game, a merge mod, a required DLC that is
+    not installed, a DLC it declares itself incompatible with."""
+    moddesc, mod_root = _me_find_moddesc(scratch)
+    plan = {
+        "ok": True, "error": "", "mod_root": mod_root or scratch,
+        "game": "", "name": "", "version": "", "dlc": [], "alts": [],
+        "multilists": {}, "basegame": [], "localization": None,
+        "outdated": [], "incompatible": [], "required": [], "skipped": [],
+        "installed": {}, "cmmver": "",
+    }
+    if not moddesc:
+        # A bare DLC folder dump: no manifest, so the folder has to say
+        # which game it is for.
+        dlcs = []
+        for root, dirs, _names in os.walk(scratch):
+            depth = root[len(scratch):].count(os.sep)
+            if depth > 2:
+                dirs[:] = []
+                continue
+            for d in list(dirs):
+                if d.upper().startswith("DLC_"):
+                    dlcs.append(os.path.join(root, d))
+                    dirs.remove(d)
+        if not dlcs:
+            plan.update(ok=False, error=_me_not_a_mod_reason(scratch))
+            return plan
+        games = {_me_detect_game(d) for d in dlcs}
+        games.discard("")
+        if len(games) != 1:
+            plan.update(ok=False, error=(
+                "Could not tell which of the three games this DLC folder "
+                "is for - it has no moddesc.ini and no mount file"))
+            return plan
+        plan["game"] = games.pop()
+        plan["dlc"] = [(d, os.path.basename(d)) for d in dlcs]
+        plan["installed"] = _me_installed_dlc(install_path, plan["game"])
+        return plan
+
+    with open(moddesc, encoding="utf-8-sig", errors="replace") as f:
+        ini = _me_parse_moddesc(f.read())
+    info = ini.get("ModInfo", {})
+    plan["cmmver"] = ini.get("ModManager", {}).get("cmmver", "")
+    plan["name"] = info.get("modname", "")
+    plan["version"] = info.get("modver", "")
+    game = (info.get("game") or "").upper().strip()
+    if game in ("ME1", "ME2", "ME3"):
+        plan.update(ok=False, error=(
+            "This mod is built for the original trilogy, not Legendary "
+            "Edition, so it cannot be installed here."))
+        return plan
+    if game == "LELAUNCHER":
+        plan.update(ok=False, error="This mod changes the launcher, which is not supported here.")
+        return plan
+    if game not in ME_GAME_DIRS:
+        plan.update(ok=False, error=(
+            "The mod does not say which Mass Effect game it is for "
+            f"(game={game or 'missing'}), so it cannot be placed."))
+        return plan
+    plan["game"] = game
+    installed = _me_installed_dlc(install_path, game)
+    plan["installed"] = installed
+
+    def multilists(section: dict) -> dict:
+        out, i = {}, 1
+        while f"multilist{i}" in section:
+            out[str(i)] = _me_split_semis(section[f"multilist{i}"])
+            i += 1
+        return out
+
+    for token in _me_split_semis(info.get("requireddlc", "")):
+        plan["required"].append(_me_dlc_requirement(token))
+
+    for header, section in ini.items():
+        if header in ("ModManager", "ModInfo", "UPDATES"):
+            continue
+        if header == "CUSTOMDLC":
+            srcs = _me_split_semis(section.get("sourcedirs", ""))
+            dsts = _me_split_semis(section.get("destdirs", "")) or srcs
+            for s, d in zip(srcs, dsts):
+                plan["dlc"].append((_me_resolve(mod_root, s), d))
+            plan["outdated"] += _me_split_semis(section.get("outdatedcustomdlc", ""))
+            plan["incompatible"] += _me_split_semis(section.get("incompatiblecustomdlc", ""))
+            for token in _me_split_semis(section.get("requireddlc", "")):
+                plan["required"].append(_me_dlc_requirement(token))
+            plan["multilists"]["CUSTOMDLC"] = multilists(section)
+            for kind in ("altdlc", "altfiles"):
+                for st in _me_parse_structs(section.get(kind, "")):
+                    st["_kind"], st["_header"] = kind, "CUSTOMDLC"
+                    plan["alts"].append(st)
+            continue
+        if header == "BASEGAME":
+            if _me_split_semis(section.get("mergemods", "")):
+                plan.update(ok=False, error=(
+                    "This mod changes the game's own files with a merge "
+                    "mod, which needs ME3Tweaks Mod Manager on a PC. It "
+                    "cannot be installed from here."))
+                return plan
+            moddir = _me_resolve(mod_root, section.get("moddir", "."))
+            news = _me_split_semis(section.get("newfiles", ""))
+            reps = _me_split_semis(section.get("replacefiles", ""))
+            if (section.get("gamedirectorystructure", "").lower() == "true"
+                    and news and reps):
+                # newfiles is a folder in moddir mapping onto the
+                # replacefiles folder in the game.
+                for src_dir, dst_dir in zip(news, reps):
+                    base = _me_resolve(moddir, src_dir)
+                    for root, _d, names in os.walk(base):
+                        for n in names:
+                            rel = os.path.relpath(os.path.join(root, n), base)
+                            plan["basegame"].append((
+                                os.path.join(root, n),
+                                dst_dir.replace("\\", "/").strip("/") + "/"
+                                + rel.replace(os.sep, "/")))
+            else:
+                for src, dst in zip(news, reps):
+                    plan["basegame"].append((_me_resolve(moddir, src),
+                                             dst.replace("\\", "/").strip("/")))
+            plan["multilists"]["BASEGAME"] = multilists(section)
+            for st in _me_parse_structs(section.get("altfiles", "")):
+                st["_kind"], st["_header"] = "altfiles", "BASEGAME"
+                st["_moddir"] = moddir
+                plan["alts"].append(st)
+            continue
+        if header == "LOCALIZATION":
+            plan["localization"] = {
+                "dlcname": section.get("dlcname", ""),
+                "files": [_me_resolve(mod_root, f) for f in
+                          _me_split_semis(section.get("files", ""))],
+            }
+            continue
+        if header in ("TEXTUREMODS", "HEADMORPHS", "ASIMODS", "GAME1_EMBEDDED_TLK",
+                      "LELAUNCHER", "ME2_RCWMOD", "BALANCE_CHANGES"):
+            plan["skipped"].append(
+                f"[{header}] is a Mod Manager feature this plugin does not have"
+            )
+            continue
+        plan["skipped"].append(f"[{header}] is not used by Legendary Edition")
+
+    # A merge mod behind an option is dropped from the options; behind an
+    # automatic condition it is the mod, and the mod is refused.
+    kept = []
+    for alt in plan["alts"]:
+        if (alt.get("modoperation") or "").upper() == "OP_APPLY_MERGEMODS":
+            if (alt.get("condition") or "").upper() == "COND_MANUAL":
+                plan["skipped"].append(
+                    f"option '{alt.get('friendlyname') or 'merge mod'}' needs a "
+                    "merge mod, which this plugin cannot apply")
+                continue
+            plan.update(ok=False, error=(
+                "This mod changes the game's own files with a merge mod, "
+                "which needs ME3Tweaks Mod Manager on a PC. It cannot be "
+                "installed from here."))
+            return plan
+        kept.append(alt)
+    plan["alts"] = kept
+
+    if not plan["dlc"] and not plan["basegame"] and not plan["localization"] \
+            and not any((a.get("modoperation") or "").upper() == "OP_ADD_CUSTOMDLC"
+                        for a in plan["alts"]):
+        plan.update(ok=False, error=(
+            "This package installs nothing this plugin can place: no DLC "
+            "folder and no game files."))
+        return plan
+
+    for req in plan["required"]:
+        have = req["name"].lower() in installed
+        if req["prefix"] == "-" and have:
+            plan.update(ok=False, error=(
+                f"This mod cannot be installed alongside {req['name']}, "
+                "which is installed."))
+            return plan
+        if req["prefix"] != "-" and not have:
+            known = ME_KNOWN_DLC.get(req["name"].lower())
+            what = f"{known[0]} ({req['name']})" if known else req["name"]
+            plan.update(ok=False, error=(
+                f"This mod needs {what} installed first"
+                + (f", version {req['params']['minversion']} or newer"
+                   if req["params"].get("minversion") else "") + "."))
+            return plan
+    for name in plan["incompatible"]:
+        if name.lower() in installed:
+            plan.update(ok=False, error=(
+                f"This mod says it does not work alongside {name}, which is "
+                "installed. Switch that off first if you want this one."))
+            return plan
+    return plan
+
+
+def _me_not_a_mod_reason(scratch: str) -> str:
+    exts = set()
+    for _root, _dirs, names in os.walk(scratch):
+        for n in names:
+            exts.add(os.path.splitext(n)[1].lower())
+    if ".exe" in exts:
+        return ("This is a Windows program, not a mod package. It has to be "
+                "run on a PC.")
+    if exts & {".mem", ".tpf", ".mod"}:
+        return ("This is a texture mod for ALOT Installer or Mass Effect "
+                "Modder, which this plugin does not have.")
+    if ".asi" in exts:
+        return "This is an ASI plugin, which this plugin cannot install yet."
+    if ".torrent" in exts:
+        return "This download is only a torrent file; the mod itself is not in it."
+    return ("This is not a Mass Effect mod package: there is no moddesc.ini "
+            "and no DLC folder in it.")
+
+
+def _me_wizard(plan: dict):
+    """The manual options as a one-step FOMOD-shaped wizard, or None when
+    the mod has none. Option groups become pick-one groups with the
+    default ticked; standalone options become tick boxes. An option whose
+    required DLC is not installed is shown but cannot be picked."""
+    manual = [
+        (i, a) for i, a in enumerate(plan["alts"])
+        if (a.get("condition") or "").upper() == "COND_MANUAL"
+        and (a.get("hidden") or "").lower() != "true"
+    ]
+    if not manual:
+        return None
+    installed = plan.get("installed") or {}
+    groups, by_group = [], {}
+    for i, a in manual:
+        usable = _me_requirements_met(a, installed)
+        checked = (a.get("checkedbydefault") or "").lower() == "true"
+        plugin = {
+            "id": f"alt.{i}",
+            "name": a.get("friendlyname") or f"Option {i + 1}",
+            "description": a.get("description") or "",
+            "type": "NotUsable" if not usable else ("Recommended" if checked else "Optional"),
+            "flags": {},
+        }
+        og = a.get("optiongroup") or ""
+        if og:
+            if og not in by_group:
+                by_group[og] = {"name": og, "type": "SelectExactlyOne", "plugins": []}
+                groups.append(by_group[og])
+            by_group[og]["plugins"].append(plugin)
+        else:
+            groups.append({"name": plugin["name"], "type": "SelectAny", "plugins": [plugin]})
+    step = {"name": "Options", "visible": None, "groups": groups}
+    wizard = {"name": plan.get("name") or "Mass Effect mod", "steps": [step]}
+    return wizard, {"steps": [step]}
+
+
+def _me_copy_tree_into(src: str, dst: str) -> int:
+    """Merge a folder's files into dst (created as needed). Returns count."""
+    n = 0
+    for root, _dirs, names in os.walk(src):
+        for name in names:
+            s = os.path.join(root, name)
+            rel = os.path.relpath(s, src)
+            d = os.path.join(dst, rel)
+            _makedirs_for(d)
+            if os.path.isfile(d):
+                os.remove(d)
+            shutil.move(s, d)
+            n += 1
+    return n
+
+
+def _me_apply(plan: dict, selected: set, install_path: str) -> dict:
+    """Stage the payload with the chosen and applicable alternates, then
+    put it in the game. Returns what landed, for the record."""
+    le = plan["game"]
+    mod_root = plan["mod_root"]
+    game_root = _me_game_root(install_path, le)
+    dlc_dir = _me_dlc_dir(install_path, le)
+    installed = plan.get("installed") or _me_installed_dlc(install_path, le)
+    staging = os.path.join(mod_root, "__me_staged__")
+    _force_rmtree(staging)
+    os.makedirs(staging)
+    src_to_dest = {}
+    for src, dest in plan["dlc"]:
+        src_to_dest[os.path.basename(src).lower()] = dest
+        if os.path.isdir(src):
+            shutil.move(src, os.path.join(staging, dest))
+    basegame = list(plan["basegame"])
+    applied = []
+
+    def staged_path(mod_rel: str) -> str:
+        parts = mod_rel.replace("\\", "/").strip("/").split("/")
+        if parts:
+            parts[0] = src_to_dest.get(parts[0].lower(), parts[0])
+        found = _fomod_case_resolve(staging, "/".join(parts))
+        return found or os.path.join(staging, *parts)
+
+    for i, alt in enumerate(plan["alts"]):
+        cond = (alt.get("condition") or "").upper()
+        if cond == "COND_MANUAL":
+            if i not in selected:
+                continue
+            if not _me_requirements_met(alt, installed):
+                continue
+        elif not _me_condition_met(alt, installed, game_root):
+            continue
+        op = (alt.get("modoperation") or "").upper()
+        label = alt.get("friendlyname") or op
+        if op in ("", "OP_NOTHING"):
+            applied.append(label)
+            continue
+        lists = plan["multilists"].get(alt["_header"], {})
+        flatten = (alt.get("flattenmultilistoutput") or "").lower() == "true"
+        if alt["_kind"] == "altdlc":
+            dest = (alt.get("moddestdlc") or "").replace("\\", "/").strip("/")
+            if op == "OP_ADD_CUSTOMDLC":
+                src = _me_resolve(mod_root, alt.get("modaltdlc", ""))
+                if os.path.isdir(src) and dest:
+                    target = os.path.join(staging, *dest.split("/"))
+                    _force_rmtree(target)
+                    shutil.move(src, target)
+            elif op == "OP_ADD_FOLDERFILES_TO_CUSTOMDLC":
+                src = _me_resolve(mod_root, alt.get("modaltdlc", ""))
+                if os.path.isdir(src) and dest:
+                    _me_copy_tree_into(src, os.path.join(staging, *dest.split("/")))
+            elif op == "OP_ADD_MULTILISTFILES_TO_CUSTOMDLC":
+                root = _me_resolve(mod_root, alt.get("multilistrootpath", ""))
+                for rel in lists.get(str(alt.get("multilistid", "")).strip(), []):
+                    s = _me_resolve(root, rel)
+                    if not os.path.isfile(s) or not dest:
+                        continue
+                    tail = os.path.basename(rel.replace("\\", "/")) if flatten else rel
+                    d = os.path.join(staging, *dest.split("/"), *tail.replace("\\", "/").split("/"))
+                    _makedirs_for(d)
+                    shutil.move(s, d)
+            applied.append(label)
+            continue
+        # altfiles
+        if alt["_header"] == "CUSTOMDLC":
+            target = staged_path(alt.get("modfile", ""))
+            if op in ("OP_SUBSTITUTE", "OP_INSTALL"):
+                src = _me_resolve(mod_root, alt.get("altfile") or alt.get("modaltfile") or "")
+                if os.path.isfile(src):
+                    _makedirs_for(target)
+                    if os.path.isfile(target):
+                        os.remove(target)
+                    shutil.move(src, target)
+            elif op == "OP_NOINSTALL":
+                if os.path.isfile(target):
+                    os.remove(target)
+            applied.append(label)
+            continue
+        # BASEGAME altfiles: targets are game-relative paths.
+        target_rel = (alt.get("modfile") or "").replace("\\", "/").strip("/")
+        if op in ("OP_SUBSTITUTE", "OP_INSTALL"):
+            src = _me_resolve(mod_root, alt.get("altfile") or alt.get("modaltfile") or "")
+            if os.path.isfile(src) and target_rel:
+                basegame = [p for p in basegame if p[1].lower() != target_rel.lower()]
+                basegame.append((src, target_rel))
+        elif op == "OP_NOINSTALL":
+            basegame = [p for p in basegame if p[1].lower() != target_rel.lower()]
+        elif op == "OP_APPLY_MULTILISTFILES":
+            root = _me_resolve(mod_root, alt.get("multilistrootpath", ""))
+            tgt = (alt.get("multilisttargetpath") or "").replace("\\", "/").strip("/")
+            for rel in lists.get(str(alt.get("multilistid", "")).strip(), []):
+                s = _me_resolve(root, rel)
+                if os.path.isfile(s):
+                    tail = os.path.basename(rel.replace("\\", "/")) if flatten else rel.replace("\\", "/")
+                    basegame.append((s, f"{tgt}/{tail}".strip("/")))
+        applied.append(label)
+
+    result = {"game": le, "dlc": [], "basegame": [], "removed_outdated": [],
+              "applied": applied, "localization": []}
+    # Outdated packs go before the new folders land, in case one of them
+    # is the very folder being replaced under a new name.
+    disabled_dir = _disabled_dir(dlc_dir)
+    for name in plan["outdated"]:
+        for base in (dlc_dir, disabled_dir):
+            p = os.path.join(base, name)
+            if os.path.isdir(p):
+                _force_rmtree(p)
+                result["removed_outdated"].append(name)
+    os.makedirs(dlc_dir, exist_ok=True)
+    for dest in sorted(os.listdir(staging)):
+        src = os.path.join(staging, dest)
+        if not os.path.isdir(src):
+            continue
+        for base in (dlc_dir, disabled_dir):
+            old = os.path.join(base, dest)
+            if os.path.isdir(old):
+                _force_rmtree(old)
+        target = os.path.join(dlc_dir, dest)
+        shutil.move(src, target)
+        _me_write_metacmm(target, plan.get("name") or dest, plan.get("version") or "",
+                          [a for a in applied if a])
+        _me_toc_generate(target)
+        result["dlc"].append(dest)
+    toc_changes = {}
+    for src, target_rel in basegame:
+        if not _safe_rel_path(target_rel) or not os.path.isfile(src):
+            continue
+        low = target_rel.lower()
+        if not (low.startswith("biogame/") or low.startswith("engine/")):
+            continue
+        dest = _me_resolve(game_root, target_rel)
+        existed = os.path.isfile(dest)
+        backup = dest + ".decky-vanilla"
+        if existed and not os.path.isfile(backup):
+            shutil.copy2(dest, backup)
+        _makedirs_for(dest)
+        shutil.move(src, dest)
+        rel_norm = os.path.relpath(dest, game_root).replace(os.sep, "/")
+        result["basegame"].append({"rel": rel_norm, "new": not existed})
+        toc_changes[rel_norm.replace("/", "\\")] = (os.path.getsize(dest), _me_sha1_file(dest))
+    if toc_changes:
+        _me_toc_update(os.path.join(game_root, "BioGame", "PCConsoleTOC.bin"), toc_changes)
+    loc = plan.get("localization")
+    if loc and loc.get("dlcname"):
+        target = os.path.join(dlc_dir, loc["dlcname"], "CookedPCConsole")
+        if os.path.isdir(os.path.dirname(target)):
+            os.makedirs(target, exist_ok=True)
+            for f in loc["files"]:
+                if os.path.isfile(f) and f.lower().endswith(".tlk"):
+                    d = os.path.join(target, os.path.basename(f))
+                    shutil.move(f, d)
+                    result["localization"].append(
+                        f"{loc['dlcname']}/CookedPCConsole/{os.path.basename(f)}")
+            _me_toc_generate(os.path.dirname(target))
+    _force_rmtree(staging)
+    return result
+
+
+def _me_remove_record(rec: dict, install_path: str) -> None:
+    """Take a mod's DLC folders and file edits back out of the game."""
+    le = rec.get("game") or ""
+    if le not in ME_GAME_DIRS:
+        return
+    dlc_dir = _me_dlc_dir(install_path, le)
+    game_root = _me_game_root(install_path, le)
+    for name in rec.get("dlc") or []:
+        if not _safe_rel_path(name) or "/" in name:
+            continue
+        for base in (dlc_dir, _disabled_dir(dlc_dir)):
+            p = os.path.join(base, name)
+            if os.path.isdir(p):
+                _force_rmtree(p)
+    toc_changes = {}
+    for edit in rec.get("basegame") or []:
+        rel = edit.get("rel") or ""
+        if not _safe_rel_path(rel):
+            continue
+        live = os.path.join(game_root, *rel.split("/"))
+        backup = live + ".decky-vanilla"
+        try:
+            if os.path.isfile(backup):
+                os.replace(backup, live)
+                toc_changes[rel.replace("/", "\\")] = (os.path.getsize(live), _me_sha1_file(live))
+            elif edit.get("new") and os.path.isfile(live):
+                os.remove(live)
+        except OSError:
+            pass
+    if toc_changes:
+        _me_toc_update(os.path.join(game_root, "BioGame", "PCConsoleTOC.bin"), toc_changes)
+    for rel in rec.get("localization") or []:
+        p = os.path.join(dlc_dir, *rel.split("/"))
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+        parent = os.path.dirname(os.path.dirname(p))
+        if os.path.isdir(parent):
+            _me_toc_generate(parent)
+
+
+def _me_set_enabled(rec: dict, install_path: str, enabled: bool) -> str:
+    """Move a mod's DLC folders in or out of the game's DLC dir. Returns
+    an error string, or "" on success."""
+    le = rec.get("game") or ""
+    if le not in ME_GAME_DIRS:
+        return "This record does not say which game it belongs to"
+    if rec.get("basegame"):
+        return ("This mod replaced some of the game's own files, so it "
+                "cannot be switched off - uninstall it instead.")
+    dlc_dir = _me_dlc_dir(install_path, le)
+    off_dir = _disabled_dir(dlc_dir)
+    src_base, dst_base = (off_dir, dlc_dir) if enabled else (dlc_dir, off_dir)
+    os.makedirs(dst_base, exist_ok=True)
+    for name in rec.get("dlc") or []:
+        if not _safe_rel_path(name) or "/" in name:
+            continue
+        src = os.path.join(src_base, name)
+        dst = os.path.join(dst_base, name)
+        if os.path.isdir(src):
+            if os.path.isdir(dst):
+                _force_rmtree(dst)
+            shutil.move(src, dst)
+    return ""
+
+
+def _me_untracked(install_path: str, records: dict) -> list:
+    """Mod DLC folders in any of the three games that no record owns:
+    installed by hand, or by the Mod Manager on a PC."""
+    owned = set()
+    for rec in records.values():
+        if rec.get("mode") == "masseffect":
+            for n in rec.get("dlc") or []:
+                owned.add((rec.get("game"), n.lower()))
+    out = []
+    for le in ME_GAME_DIRS:
+        dlc_dir = _me_dlc_dir(install_path, le)
+        for base, enabled in ((dlc_dir, True), (_disabled_dir(dlc_dir), False)):
+            try:
+                names = os.listdir(base)
+            except OSError:
+                continue
+            for n in sorted(names):
+                if not n.upper().startswith("DLC_MOD_"):
+                    continue
+                if (le, n.lower()) in owned or not os.path.isdir(os.path.join(base, n)):
+                    continue
+                meta = _me_metacmm(os.path.join(base, n))
+                out.append({
+                    "folder": f"{le}|{n}",
+                    "enabled": enabled,
+                    "tracked": False,
+                    "name": f"{meta.get('name') or n} ({ME_GAME_NAMES[le]})",
+                    "version": meta.get("version") or "",
+                    "mod_id": None,
+                    "togglable": True,
+                    "source": "",
+                    "collection_slug": "",
+                    "game": le,
+                })
+    return out
+
+
+async def _me_download_bink() -> bytes:
+    """The proxy DLL, checked against the pinned hash before anything
+    touches the game."""
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=120, sock_connect=30)
+    ) as session:
+        async with session.get(ME_BINK_URL, ssl=SSL_CONTEXT) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"download failed (HTTP {resp.status})")
+            blob = await resp.read()
+    if len(blob) != ME_BINK_SIZE or hashlib.sha256(blob).hexdigest() != ME_BINK_SHA256:
+        raise RuntimeError("the downloaded file is not the expected bink2w64.dll")
+    return blob
+
+
+def _me_install_bink(install_path: str, blob: bytes) -> list:
+    """Put the proxy in each game's Binaries/Win64, keeping the game's own
+    DLL beside it under the name the proxy loads it by. Returns the games
+    it landed in."""
+    done = []
+    for le in ME_GAME_DIRS:
+        binaries = _me_binaries(install_path, le)
+        original = os.path.join(binaries, "bink2w64.dll")
+        kept = os.path.join(binaries, ME_BINK_ORIGINAL)
+        if not os.path.isdir(binaries) or not os.path.isfile(original):
+            continue
+        if not os.path.isfile(kept):
+            os.replace(original, kept)
+        with open(original, "wb") as f:
+            f.write(blob)
+        done.append(le)
+    return done
+
+
+async def _me_install_bypass(install_dir: str) -> dict:
+    """Step 1 for Mass Effect: fetch the proxy, check it, place it in each
+    of the three games."""
+    install_path = _game_dir(install_dir)
+    if not os.path.isdir(install_path):
+        return {"ok": False, "error": "Game install folder not found"}
+    if _me_running():
+        return {"ok": False, "error": ME_RUNNING}
+    try:
+        blob = await _me_download_bink()
+    except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as e:
+        return {"ok": False, "error": f"Could not fetch the Bink bypass: {e}"}
+    done = await asyncio.to_thread(_me_install_bink, install_path, blob)
+    if not done:
+        return {"ok": False,
+                "error": "None of the three games' Binaries folders were found"}
+    decky.logger.info(f"masseffect: Bink bypass installed for {done}")
+    return {"ok": True, "install_path": install_path, "games": done}
+
+
+def _me_remove_bink(install_path: str) -> list:
+    """Put the game's own DLL back. Returns the games it restored."""
+    done = []
+    for le in ME_GAME_DIRS:
+        binaries = _me_binaries(install_path, le)
+        kept = os.path.join(binaries, ME_BINK_ORIGINAL)
+        if os.path.isfile(kept):
+            os.replace(kept, os.path.join(binaries, "bink2w64.dll"))
+            done.append(le)
+    return done
+
+
+async def _me_install_from_scratch(
+    scratch: str, mod_id: int, file_id: int, mod_name: str, mod_version: str,
+    file_name: str, install_dir: str, game_domain: str, page_version: str,
+    record_source: str, collection_slug: str,
+) -> dict:
+    """The masseffect install: plan, ask about options if there are any,
+    otherwise apply and record."""
+    if _me_running():
+        _force_rmtree(scratch)
+        await _emit_progress(mod_id, "error", 0, "game running")
+        return {"ok": False, "error": ME_RUNNING}
+    install_path = _game_dir(install_dir)
+    plan = await asyncio.to_thread(_me_plan, scratch, install_path)
+    if not plan["ok"]:
+        _force_rmtree(scratch)
+        decky.logger.info(f"masseffect: {mod_name!r} refused: {plan['error']}")
+        await _emit_progress(mod_id, "error", 0, "not installable")
+        return {"ok": False, "error": plan["error"]}
+    entry = {
+        "at": time.time(), "scratch": scratch, "masseffect": True, "plan": plan,
+        "game_domain": game_domain, "mod_id": mod_id, "file_id": file_id,
+        "file_name": file_name, "mod_name": mod_name, "mod_version": mod_version,
+        "install_dir": install_dir, "page_version": page_version,
+        "record_source": record_source, "collection_slug": collection_slug,
+    }
+    wiz = _me_wizard(plan)
+    if wiz:
+        wizard, ctx = wiz
+        entry["ctx"] = ctx
+        _prune_pending_fomods()
+        token = f"{mod_id}-{file_id}-{int(time.time())}"
+        PENDING_FOMODS[token] = entry
+        await _emit_progress(mod_id, "error", 0, "options")
+        return {"ok": False, "needs_fomod": True, "fomod_token": token, "wizard": wizard}
+    return await _me_complete(entry, [])
+
+
+async def _me_complete(entry: dict, selected_ids: list) -> dict:
+    """Apply a planned masseffect install with the chosen options."""
+    plan = entry["plan"]
+    scratch = entry["scratch"]
+    mod_id = entry["mod_id"]
+    install_path = _game_dir(entry["install_dir"])
+    if _me_running():
+        _force_rmtree(scratch)
+        return {"ok": False, "error": ME_RUNNING}
+    selected = set()
+    for sid in selected_ids or []:
+        m = re.fullmatch(r"alt\.(\d+)", str(sid))
+        if m:
+            selected.add(int(m.group(1)))
+    try:
+        result = await asyncio.to_thread(_me_apply, plan, selected, install_path)
+    except OSError as e:
+        _force_rmtree(scratch)
+        await _emit_progress(mod_id, "error", 0, "install failed")
+        return {"ok": False, "error": f"Could not install: {e}"}
+    finally:
+        _force_rmtree(scratch)
+    le = result["game"]
+    game_domain = entry["game_domain"]
+    settings = _load_settings()
+    installed = settings.setdefault("installed", {}).setdefault(game_domain, {})
+    # A folder can have only one owner. Whatever record claimed one of
+    # these DLC names before is superseded, whichever mod it came from.
+    for key in list(installed):
+        other = installed[key]
+        if other.get("mode") != "masseffect" or other.get("game") != le:
+            continue
+        if key == _safe_name(entry["mod_name"]):
+            continue
+        if {n.lower() for n in other.get("dlc") or []} & {n.lower() for n in result["dlc"]}:
+            installed.pop(key, None)
+            decky.logger.info(f"masseffect: {key!r} superseded by {entry['mod_name']!r}")
+    for key in list(installed):
+        other = installed[key]
+        if other.get("mode") == "masseffect" and any(
+            n.lower() in {o.lower() for o in result["removed_outdated"]}
+            for n in other.get("dlc") or []
+        ):
+            installed.pop(key, None)
+    record_key = _safe_name(entry["mod_name"])
+    record = {
+        "mod_id": mod_id, "file_id": entry["file_id"], "name": entry["mod_name"],
+        "version": entry["mod_version"], "file_name": entry["file_name"],
+        "installed_at": int(time.time()), "page_version": entry.get("page_version") or "",
+        "source": entry.get("record_source") or "",
+        "collection_slug": entry.get("collection_slug") or "",
+        "mode": "masseffect", "game": le, "dlc": result["dlc"],
+        "basegame": result["basegame"], "localization": result["localization"],
+        "options": result["applied"], "enabled": True,
+        "skipped": plan.get("skipped") or [],
+    }
+    installed[record_key] = _merge_install_record(installed.get(record_key), record)
+    _save_settings(settings)
+    decky.logger.info(
+        f"installed masseffect mod {entry['mod_name']!r} for {le}: dlc={result['dlc']}, "
+        f"basegame={len(result['basegame'])}, options={result['applied']}"
+        + (f", removed outdated {result['removed_outdated']}" if result["removed_outdated"] else "")
+        + (f", skipped {plan['skipped']}" if plan.get("skipped") else "")
+    )
+    await _emit_progress(mod_id, "done", 100)
+    out = {"ok": True, "folder": record_key, "game": le, "dlc": result["dlc"],
+           "added": len(result["dlc"]) + len(result["basegame"])}
+    if plan.get("skipped"):
+        out["warning"] = "; ".join(plan["skipped"])
+    if not _me_bypass_installed(install_path, le):
+        out["warning"] = ((out.get("warning") + "; ") if out.get("warning") else "") + (
+            "The game ignores DLC mods until the Bink bypass is installed (Step 1).")
+    return out
+
+
 class Plugin:
     # ---- Nexus account -----------------------------------------------------
 
@@ -14187,6 +15486,16 @@ query Link($slug: String!, $domainName: String!) {
         if await _unwrap_fomod_package(scratch):
             entries = os.listdir(scratch)
 
+        # Mass Effect Legendary Edition: a moddesc.ini package for one of
+        # three games under one Steam app. Its own planner reads the
+        # archive, so nothing below may touch it first. See _me_plan.
+        if install_mode == "masseffect":
+            return await _me_install_from_scratch(
+                scratch, mod_id, file_id, mod_name, mod_version, file_name,
+                install_dir, game_domain, page_version, record_source,
+                collection_slug,
+            )
+
         if install_mode == "dataDir":
             # FOMOD wizard archives: parse the wizard, park the extraction,
             # and let the user pick options in the UI - install_fomod
@@ -16093,6 +17402,10 @@ query Link($slug: String!, $domainName: String!) {
                     "ok": False,
                     "error": "This install expired - start it again",
                 }
+            if entry.get("masseffect"):
+                # Not a FOMOD at all: a Mass Effect mod's options, shown
+                # through the same wizard. Its own applier takes over.
+                return await _me_complete(entry, list(selected_ids or []))
             scratch = entry["scratch"]
             staging = os.path.join(scratch, "__fomod_staged__")
             _force_rmtree(staging)
@@ -16567,6 +17880,10 @@ query Link($slug: String!, $domainName: String!) {
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path
             )
+        if install_kind == "masseffectBink":
+            # Not a Nexus download at all: the compiled LEBinkProxy from
+            # the ME3Tweaks Mod Manager repository, pinned by hash.
+            return await _me_install_bypass(install_dir)
         result = await self._install_framework_inner(
             game_domain,
             mod_id,
@@ -18123,6 +19440,12 @@ query Link($slug: String!, $domainName: String!) {
                 elif mode == "me3":
                     if _remove_me3_record(game_domain, key, settings):
                         removed += 1
+                elif mode == "masseffect":
+                    _me_remove_record(rec, install_path)
+                    settings.get("installed", {}).get(game_domain, {}).pop(
+                        key, None
+                    )
+                    removed += 1
                 elif mode == "bg3":
                     for n in rec.get("files") or []:
                         if not _safe_rel_path(n) or "/" in n:
@@ -18195,6 +19518,26 @@ query Link($slug: String!, $domainName: String!) {
                     removed += 1
             except OSError as e:
                 errors.append(f"{key}: {e}")
+        if install_mode == "masseffect":
+            # Vanilla means no mod DLC in any of the three games, whoever
+            # put it there, and the game's own Bink DLL back in place.
+            for le in ME_GAME_DIRS:
+                me_dlc = _me_dlc_dir(install_path, le)
+                for base in (me_dlc, _disabled_dir(me_dlc)):
+                    try:
+                        names = os.listdir(base)
+                    except OSError:
+                        continue
+                    for n in names:
+                        if n.upper().startswith("DLC_MOD_"):
+                            _force_rmtree(os.path.join(base, n))
+                            root_leftovers.append(f"{le}/{n}")
+                try:
+                    if os.path.isdir(_disabled_dir(me_dlc)) and not os.listdir(_disabled_dir(me_dlc)):
+                        os.rmdir(_disabled_dir(me_dlc))
+                except OSError:
+                    pass
+            restored += [f"bink2w64.dll ({le})" for le in _me_remove_bink(install_path)]
         framework_files = []
         for prefix in framework_file_prefixes or []:
             pl = str(prefix).lower()
@@ -18835,6 +20178,12 @@ query Link($slug: String!, $domainName: String!) {
                 elif mode == "me3":
                     if _remove_me3_record(game_domain, key, settings):
                         removed += 1
+                elif mode == "masseffect":
+                    _me_remove_record(rec, install_path)
+                    settings.get("installed", {}).get(game_domain, {}).pop(
+                        key, None
+                    )
+                    removed += 1
                 elif mode == "bg3":
                     for n in rec.get("files") or []:
                         if not _safe_rel_path(n) or "/" in n:
@@ -21954,6 +23303,44 @@ query CollectionInstructions($slug: String!) {
                 ),
             }
 
+        if install_mode == "masseffect":
+            settings = _load_settings()
+            install_path = _game_dir(install_dir)
+            records = settings.get("installed", {}).get(game_domain, {})
+            results = []
+            for key, rec in records.items():
+                if rec.get("mode") != "masseffect":
+                    continue
+                le = rec.get("game") or ""
+                warning = rec.get("warning") or ""
+                if le in ME_GAME_DIRS and not _me_bypass_installed(install_path, le):
+                    warning = ("The game ignores this mod until the Bink bypass "
+                               "is installed (Step 1)")
+                if rec.get("skipped"):
+                    warning = (warning + "; " if warning else "") + \
+                        "Part of this mod was left out: " + "; ".join(rec["skipped"])
+                results.append({
+                    "folder": key,
+                    "enabled": bool(rec.get("enabled", True)),
+                    "tracked": True,
+                    "name": rec.get("name") or key,
+                    "version": rec.get("version") or "",
+                    "mod_id": rec.get("mod_id"),
+                    "togglable": not rec.get("basegame"),
+                    "source": rec.get("source") or "",
+                    "collection_slug": rec.get("collection_slug") or "",
+                    "game": le,
+                    **({"warning": warning} if warning else {}),
+                })
+            results += _me_untracked(install_path, records)
+            results.sort(key=lambda m: (m["name"] or "").lower())
+            return {
+                "ok": True,
+                "mods": results,
+                "collections": settings.get("collections", {}).get(game_domain, {}),
+                "attention": settings.get("collection_attention", {}).get(game_domain, {}),
+            }
+
         if install_mode == "bg3":
             settings = _load_settings()
             results = [
@@ -22237,6 +23624,35 @@ query CollectionInstructions($slug: String!) {
         My Mods can answer "why is this off?", and so the BG3 dependency
         pass switches off whatever requires this mod too. Switching a mod
         back on clears it: the user has overruled the rule."""
+        if install_mode == "masseffect":
+            if _me_running():
+                return {"ok": False, "error": ME_RUNNING}
+            install_path = _game_dir(install_dir)
+            settings = _load_settings()
+            rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+            if rec and rec.get("mode") == "masseffect":
+                err = _me_set_enabled(rec, install_path, bool(enabled))
+                if err:
+                    return {"ok": False, "error": err}
+                rec["enabled"] = bool(enabled)
+                if enabled:
+                    rec.pop("warning", None)
+                elif reason:
+                    rec["warning"] = str(reason)
+                _save_settings(settings)
+                decky.logger.info(
+                    f"{'enabled' if enabled else 'disabled'} masseffect mod {folder!r}")
+                return {"ok": True}
+            # An untracked DLC folder: "LE2|DLC_MOD_X".
+            m = re.fullmatch(r"(LE[123])\|(DLC_[A-Za-z0-9_.-]+)", folder or "")
+            if not m:
+                return {"ok": False, "error": f"{folder} is not tracked"}
+            err = _me_set_enabled({"game": m.group(1), "dlc": [m.group(2)]},
+                                  install_path, bool(enabled))
+            if err:
+                return {"ok": False, "error": err}
+            return {"ok": True}
+
         if install_mode == "bg3":
             if _bg3_running():
                 return {"ok": False, "error": BG3_GAME_RUNNING}
@@ -22510,6 +23926,25 @@ query CollectionInstructions($slug: String!) {
     ) -> dict:
         """Move every mod folder at once - 'play vanilla' / 'restore mods'.
         In dataDir mode, toggles every tracked mod's plugins instead."""
+        if install_mode == "masseffect":
+            if _me_running():
+                return {"ok": False, "error": ME_RUNNING}
+            install_path = _game_dir(install_dir)
+            settings = _load_settings()
+            moved, errors = 0, []
+            for key, rec in settings.get("installed", {}).get(game_domain, {}).items():
+                if rec.get("mode") != "masseffect":
+                    continue
+                if bool(rec.get("enabled", True)) == bool(enabled):
+                    continue
+                err = _me_set_enabled(rec, install_path, bool(enabled))
+                if err:
+                    errors.append(f"{rec.get('name') or key}: {err}")
+                    continue
+                rec["enabled"] = bool(enabled)
+                moved += 1
+            _save_settings(settings)
+            return {"ok": True, "moved": moved, "errors": errors}
         if install_mode == "me3":
             settings = _load_settings()
             moved = 0
@@ -22589,6 +24024,24 @@ query CollectionInstructions($slug: String!) {
         and forget its record."""
         if os.sep in folder or "/" in folder or folder in (".", ".."):
             return {"ok": False, "error": "Invalid mod folder name"}
+        if install_mode == "masseffect":
+            if _me_running():
+                return {"ok": False, "error": ME_RUNNING}
+            install_path = _game_dir(install_dir)
+            settings = _load_settings()
+            rec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+            if rec and rec.get("mode") == "masseffect":
+                _me_remove_record(rec, install_path)
+                settings["installed"][game_domain].pop(folder, None)
+                _save_settings(settings)
+                decky.logger.info(f"uninstalled masseffect mod {folder!r}")
+                return {"ok": True}
+            m = re.fullmatch(r"(LE[123])\|(DLC_[A-Za-z0-9_.-]+)", folder or "")
+            if not m:
+                return {"ok": False, "error": f"{folder} is not tracked"}
+            _me_remove_record({"game": m.group(1), "dlc": [m.group(2)]}, install_path)
+            decky.logger.info(f"removed untracked masseffect DLC {folder!r}")
+            return {"ok": True}
         if install_mode == "bg3":
             if _bg3_running():
                 return {"ok": False, "error": BG3_GAME_RUNNING}
@@ -22824,6 +24277,26 @@ query CollectionInstructions($slug: String!) {
         ones (framework components like SMAPI's SaveBackup)."""
         try:
             protected_set = {p.lower() for p in (protected or [])}
+            if install_mode == "masseffect":
+                if _me_running():
+                    return {"ok": False, "error": ME_RUNNING}
+                settings = _load_settings()
+                install_path = _game_dir(install_dir)
+                removed_list, kept = [], []
+                recs = settings.get("installed", {}).get(game_domain, {})
+                for key, rec in list(recs.items()):
+                    if rec.get("mode") != "masseffect":
+                        continue
+                    if key.lower() in protected_set:
+                        kept.append(key)
+                        continue
+                    _me_remove_record(rec, install_path)
+                    recs.pop(key, None)
+                    removed_list.append(key)
+                _save_settings(settings)
+                decky.logger.info(
+                    f"uninstall_all (masseffect): removed {removed_list}, kept {kept}")
+                return {"ok": True, "removed": len(removed_list), "kept": kept}
             if install_mode == "bg3":
                 if _bg3_running():
                     return {"ok": False, "error": BG3_GAME_RUNNING}

@@ -351,6 +351,26 @@
     "cleanupPrefixes": []
   },
   {
+    "appId": "1328670",
+    "displayName": "Mass Effect Legendary Edition",
+    "nexusDomain": "masseffectlegendaryedition",
+    "installDirName": "Mass Effect Legendary Edition",
+    "modsSubdir": "Game",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": "masseffect",
+    "frameworkName": "Bink bypass",
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": true,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "1623730",
     "displayName": "Palworld",
     "nexusDomain": "palworld",

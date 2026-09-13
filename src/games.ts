@@ -64,7 +64,7 @@ export interface GameFramework {
   aliasModIds?: number[];
   /** How the framework archive installs: SMAPI's install.dat method, or
    * flatten-and-copy into the game dir (SKSE-style) */
-  installKind?: "smapi" | "copyRoot";
+  installKind?: "smapi" | "copyRoot" | "masseffectBink";
   /** Skip files whose name contains any of these (case-insensitive) when
    * auto-picking the download - filters out other stores' builds (e.g.
    * SKSE publishes Steam and GOG variants on the same mod page) */
@@ -1437,6 +1437,31 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       modsSubdir: "Subnautica2/Binaries/Win64/ue4ss/Mods",
       logicModsSubdir: "Subnautica2/Content/Paks/LogicMods",
     },
+  },
+  1328670: {
+    appId: 1328670,
+    displayName: "Mass Effect Legendary Edition",
+    nexusDomain: "masseffectlegendaryedition", // ~2,600 mods
+    installDirName: "Mass Effect Legendary Edition",
+    // One app, three games: Game/ME1, Game/ME2, Game/ME3, each with its own
+    // BioGame/DLC. The mod's moddesc.ini says which one it is for, so the
+    // backend routes by mod, not by this folder.
+    modsSubdir: "Game",
+    installMode: "masseffect",
+    moddedSaveWarning: false,
+    ownLauncher: true,
+    processName: "MassEffect3.exe",
+    // The games ignore DLC_MOD folders until LEBinkProxy replaces the Bink
+    // DLL in each game's Binaries/Win64. ME3Tweaks Mod Manager installs
+    // the same file; ours comes from its repository, pinned by hash.
+    framework: {
+      name: "Bink bypass",
+      detectFile: "Game/ME3/Binaries/Win64/bink2w64_original.dll",
+      url: "github.com/ME3Tweaks/LEBinkProxy",
+      installKind: "masseffectBink",
+    },
+    // The three community patches and the two most endorsed DLC mods.
+    recommendedModIds: [23, 8, 13, 422, 426],
   },
 };
 
