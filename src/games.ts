@@ -1437,11 +1437,6 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       modsSubdir: "Subnautica2/Binaries/Win64/ue4ss/Mods",
       logicModsSubdir: "Subnautica2/Content/Paks/LogicMods",
     },
-    underConstruction:
-      "Subnautica 2 support is new, and it is a different engine from the " +
-      "other two Subnautica games: Unreal rather than Unity, so Step 1 " +
-      "installs UE4SS instead of BepInEx. Not yet played with mods " +
-      "running, so expect rough edges until this note goes away.",
   },
 };
 
