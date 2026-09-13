@@ -380,6 +380,15 @@ test("the page claims the D-pad and bumpers only while carrying", () => {
   );
 });
 
+test("undo says it happened", () => {
+  // The row that moves back is usually off screen on a long list, so a
+  // silent undo is indistinguishable from a dead button.
+  const src = readCode("LoadOrderPage.tsx");
+  const at = src.indexOf("const undoLast");
+  const block = src.slice(at, at + 900);
+  assert.ok(/toaster\.toast\(\{\s*title: "Put back"/.test(block));
+});
+
 test("the page tells the footer what each button does", () => {
   const src = read("LoadOrderPage.tsx");
   for (const prop of [

@@ -714,6 +714,12 @@ export default function LoadOrderPage() {
       if (r.ok) {
         setUndo((u) => u.slice(0, -1));
         setState(r);
+        // Said out loud, because on a 220-row list the row that moved
+        // back is usually off screen and nothing else changes.
+        toaster.toast({
+          title: "Put back",
+          body: "The load order is as it was before that change.",
+        });
       } else {
         toaster.toast({ title: "Could not undo", body: r.error ?? "" });
       }
