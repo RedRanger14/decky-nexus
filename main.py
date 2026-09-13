@@ -2,11 +2,13 @@ import asyncio
 import datetime
 import glob
 import hashlib
+import itertools
 import json
 import os
 import re
 import shutil
 import ssl
+import threading
 import time
 import urllib.parse
 
@@ -19,6 +21,16 @@ STEAM_COMMON = os.path.join(
 )
 
 SETTINGS_PATH = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
+
+# One writer at a time. Saves run from the event loop AND from worker
+# threads (asyncio.to_thread), and on 2026-09-13 two of them overlapped:
+# both wrote settings.json.tmp, the first os.replace moved it, the second
+# found nothing to move and raised - which killed enforce_skips, which
+# left a collection run showing "Installing... 851/851" for good. The
+# lock serialises the writes; a per-write temp name means even a writer
+# that somehow slipped past it could not take another's file.
+_SETTINGS_LOCK = threading.RLock()
+_SETTINGS_TMP_SEQ = itertools.count()
 DOWNLOADS_DIR = os.path.join(decky.DECKY_PLUGIN_RUNTIME_DIR, "downloads")
 SAVE_BACKUPS_DIR = os.path.join(decky.DECKY_PLUGIN_RUNTIME_DIR, "save-backups")
 STEAM_USERDATA = os.path.join(decky.DECKY_USER_HOME, ".steam", "steam", "userdata")
@@ -270,14 +282,24 @@ def _write_settings_file(settings: dict) -> None:
     """The atomic write itself, with no backup rotation: used by the save
     below and by the recovery in _load_settings, which must not rotate a
     broken file over a good backup."""
-    os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
-    tmp = SETTINGS_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, SETTINGS_PATH)
+    with _SETTINGS_LOCK:
+        os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
+        tmp = _settings_tmp_path()
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, SETTINGS_PATH)
+
+
+def _settings_tmp_path() -> str:
+    """A temp name no other writer can be using: process, thread and a
+    counter. Left behind only by a crash mid-write, and harmless then."""
+    return (
+        f"{SETTINGS_PATH}.{os.getpid()}.{threading.get_ident()}."
+        f"{next(_SETTINGS_TMP_SEQ)}.tmp"
+    )
 
 
 def _save_settings(settings: dict) -> None:
@@ -288,36 +310,41 @@ def _save_settings(settings: dict) -> None:
     The previous save is kept beside it as settings.json.bak before the new
     one lands. Both moves are renames, so there is always a complete file
     at one of the two names, and _load_settings reads the backup when the
-    main one is missing or will not parse."""
-    os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
-    tmp = SETTINGS_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    # The settings file holds the API key - keep it owner-only, and set it
-    # on the temp file so the permission is there from the first instant.
-    os.chmod(tmp, 0o600)
-    # Keep the current save as the backup. A hardlink, not a rename: the
-    # old bytes get a second name while settings.json keeps its own, so
-    # there is no instant where the file is absent and a crash mid-save
-    # can never look like a fresh install. Costs nothing for a 2MB
-    # document, which matters when a 1,300-mod collection saves per mod.
-    bak = SETTINGS_PATH + ".bak"
-    try:
-        os.remove(bak)
-    except OSError:
-        pass
-    try:
-        os.link(SETTINGS_PATH, bak)
-    except OSError:
-        # No hardlinks here (or no file yet): a rename still leaves a
-        # complete file at one of the two names.
+    main one is missing or will not parse.
+
+    Serialised by _SETTINGS_LOCK, see there for the collision it stops."""
+    with _SETTINGS_LOCK:
+        os.makedirs(decky.DECKY_PLUGIN_SETTINGS_DIR, exist_ok=True)
+        tmp = _settings_tmp_path()
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        # The settings file holds the API key - keep it owner-only, and
+        # set it on the temp file so the permission is there from the
+        # first instant.
+        os.chmod(tmp, 0o600)
+        # Keep the current save as the backup. A hardlink, not a rename:
+        # the old bytes get a second name while settings.json keeps its
+        # own, so there is no instant where the file is absent and a
+        # crash mid-save can never look like a fresh install. Costs
+        # nothing for a 2MB document, which matters when a 1,300-mod
+        # collection saves per mod.
+        bak = SETTINGS_PATH + ".bak"
         try:
-            os.replace(SETTINGS_PATH, bak)
+            os.remove(bak)
         except OSError:
             pass
-    os.replace(tmp, SETTINGS_PATH)
+        try:
+            os.link(SETTINGS_PATH, bak)
+        except OSError:
+            # No hardlinks here (or no file yet): a rename still leaves a
+            # complete file at one of the two names.
+            try:
+                os.replace(SETTINGS_PATH, bak)
+            except OSError:
+                pass
+        os.replace(tmp, SETTINGS_PATH)
 
 
 _INSTALL_SEQ = None
@@ -4030,9 +4057,14 @@ def _load_skips(game_domain: str) -> dict:
 
 
 def _save_skips(game_domain: str, skips: dict) -> None:
-    settings = _load_settings()
-    settings.setdefault("skipped", {})[game_domain] = skips
-    _save_settings(settings)
+    # Load, change and save under the write lock, so another writer
+    # cannot land between the read and the write and have this one put
+    # a stale copy of everything else back over it. The New Vegas run of
+    # 2026-09-13 lost a skip exactly that way.
+    with _SETTINGS_LOCK:
+        settings = _load_settings()
+        settings.setdefault("skipped", {})[game_domain] = skips
+        _save_settings(settings)
 
 # The automated crash hunt's state, kept on disk so it survives a Decky
 # restart mid-run (which happens - the plugin gets redeployed, the device

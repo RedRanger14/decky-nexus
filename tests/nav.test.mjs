@@ -57,6 +57,31 @@ const TAB_PAGE_FILE = {
   settings: null, // rendered inside index.tsx, not its own page file
 };
 
+// A collection run that never ends reads as "Installing... 851/851" for
+// ever: the label is driven by module-level run state, so leaving and
+// returning does not clear it. The finally that ends the run awaited a
+// backend call first, and one rejection (two settings saves collided on
+// the device, 2026-09-13) skipped endCollectionRun. Whatever runs in that
+// block must be inside its own try, with the end in a finally.
+test("a collection run always ends, whatever the finishing call does", () => {
+  const src = readCode("CollectionPage.tsx");
+  const ends = [...src.matchAll(/endCollectionRun\(\);/g)].map((m) => m.index);
+  assert.ok(ends.length >= 2, "installAll and repair both end the run");
+  for (const at of ends) {
+    // The enclosing block up to this call: walk back to the nearest
+    // "finally {" and check no bare await sits between it and the end.
+    const start = src.lastIndexOf("finally {", at);
+    if (start < 0) continue;
+    const block = src.slice(start, at);
+    const awaits = [...block.matchAll(/await /g)].length;
+    if (awaits === 0) continue;
+    assert.ok(
+      /try \{[\s\S]*await [\s\S]*\} catch/.test(block),
+      "an await before endCollectionRun sits inside a try/catch"
+    );
+  }
+});
+
 test("the tab list parsed at all", () => {
   assert.ok(TAB_ENTRIES.length >= 5, JSON.stringify(TAB_ENTRIES));
 });

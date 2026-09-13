@@ -123,11 +123,69 @@ class TestSettingsAtomicity(unittest.TestCase):
                 os.remove(p)
             except OSError:
                 pass
+        # The dying-save test leaves its (now uniquely named) temp file
+        # behind on purpose; sweep every temp name so it is not mistaken
+        # for one the next test leaked.
+        for stale in self._stray_tmps():
+            try:
+                os.remove(os.path.join(os.path.dirname(main.SETTINGS_PATH), stale))
+            except OSError:
+                pass
         main._save_settings(self.before)
         try:
             os.remove(self.bak)
         except OSError:
             pass
+
+    @staticmethod
+    def _stray_tmps():
+        return sorted(
+            f for f in os.listdir(os.path.dirname(main.SETTINGS_PATH))
+            if f.startswith("settings.json.") and f.endswith(".tmp")
+        )
+
+    def test_saves_from_several_threads_at_once_all_land(self):
+        """Two saves overlapped on the device (2026-09-13): both wrote
+        settings.json.tmp, the first os.replace moved it, the second found
+        nothing to move and raised out of enforce_skips. Every writer now
+        takes the lock and its own temp name."""
+        import threading
+        errors = []
+        stray_before = self._stray_tmps()
+
+        def writer(n):
+            try:
+                for i in range(15):
+                    main._save_settings({"writer": n, "i": i})
+            except Exception as e:  # noqa: BLE001 - the test is about this
+                errors.append(repr(e))
+
+        threads = [threading.Thread(target=writer, args=(n,)) for n in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        got = main._load_settings()
+        self.assertIn("writer", got)
+        self.assertEqual(got["i"], 14)
+        self.assertEqual(self._stray_tmps(), stray_before,
+                         "no temp file left behind by these writers")
+
+    def test_the_temp_name_is_never_shared(self):
+        a, b = main._settings_tmp_path(), main._settings_tmp_path()
+        self.assertNotEqual(a, b)
+        self.assertTrue(a.startswith(main.SETTINGS_PATH + "."))
+        self.assertTrue(a.endswith(".tmp"))
+
+    def test_saving_skips_keeps_what_another_writer_just_saved(self):
+        """_save_skips loads and saves under the lock, so a save that
+        lands in between cannot be undone by it."""
+        main._save_settings({"installed": {"fnv": {"A": {"mod_id": 1}}}})
+        main._save_skips("fnv", {"a.esp": {"reason": "breaks the game"}})
+        got = main._load_settings()
+        self.assertEqual(got["skipped"]["fnv"], {"a.esp": {"reason": "breaks the game"}})
+        self.assertEqual(got["installed"]["fnv"]["A"], {"mod_id": 1})
 
     def test_a_save_that_dies_halfway_leaves_the_old_file_intact(self):
         main._save_settings({"records": "the old truth"})

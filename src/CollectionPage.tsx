@@ -1301,16 +1301,26 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       // it installs, so a mod installed BEFORE its master was skipped is
       // never reconsidered. One slipped through exactly that way on a
       // clean 1,972-mod run, and the user had to be told to fix it.
-      if (game.pluginsTxtSubpath) {
-        await enforceSkips(
-          game.appId,
-          game.installDirName,
-          game.pluginsTxtSubpath,
-          game.pluginsTxtStyle ?? "starred",
-          game.nexusDomain
-        );
+      //
+      // Guarded, because this call rejected once (two backend saves
+      // collided) and the run below never ended: the page read
+      // "Installing... 851/851" until Decky restarted. Nothing that runs
+      // here may stand between the run and its end.
+      try {
+        if (game.pluginsTxtSubpath) {
+          await enforceSkips(
+            game.appId,
+            game.installDirName,
+            game.pluginsTxtSubpath,
+            game.pluginsTxtStyle ?? "starred",
+            game.nexusDomain
+          );
+        }
+      } catch {
+        /* the on-exit pass runs it again; the run must still end */
+      } finally {
+        endCollectionRun();
       }
-      endCollectionRun();
     }
   };
 
