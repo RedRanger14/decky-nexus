@@ -36,6 +36,10 @@ export interface LoadOrderEntry {
 export interface Wall {
   name: string;
   why: string;
+  /** Which rule put it there. "masters" is the boundary between the two
+   * groups, which is a place rather than a plugin, so a message about it
+   * should not name whichever plugin happens to sit on the line. */
+  kind?: "masters" | "needs" | "dependent";
 }
 
 export interface MoveBounds {
@@ -109,12 +113,14 @@ export function moveBounds(list: LoadOrderEntry[], from: number): MoveBounds {
     down = {
       name: list[masters]?.name ?? "",
       why: "Master files load before the other plugins, whatever the order",
+      kind: "masters",
     };
   } else {
     min = masters;
     up = {
       name: list[masters - 1]?.name ?? "",
       why: "Master files always load first",
+      kind: "masters",
     };
   }
   const index = new Map<string, number>();
@@ -127,7 +133,11 @@ export function moveBounds(list: LoadOrderEntry[], from: number): MoveBounds {
     const floor = j < from ? j + 1 : j;
     if (floor > min) {
       min = floor;
-      up = { name: need, why: `${title} needs ${pluginTitle(need)} loaded before it` };
+      up = {
+        name: need,
+        why: `${title} needs ${pluginTitle(need)} loaded before it`,
+        kind: "needs",
+      };
     }
   }
   for (const dep of dependentsOf(list, e.name)) {
@@ -139,6 +149,7 @@ export function moveBounds(list: LoadOrderEntry[], from: number): MoveBounds {
       down = {
         name: dep.name,
         why: `${pluginTitle(dep.name)} needs ${title} loaded before it`,
+        kind: "dependent",
       };
     }
   }
@@ -194,6 +205,90 @@ export function shiftFor(i: number, from: number, to: number): -1 | 0 | 1 {
   if (to > from && i > from && i <= to) return -1;
   if (to < from && i >= to && i < from) return 1;
   return 0;
+}
+
+/** Why this plugin cannot be moved at all, or "" when it can be.
+ *
+ * Michael, on his first run: "I assume there are mods which you cant
+ * change the load order of? Its confusing initially why I cant move
+ * those so maybe we could add a locked icon". A row that refuses to move
+ * has to say so BEFORE it is picked up, not in a toast afterwards.
+ */
+export function lockReason(list: LoadOrderEntry[], index: number): string {
+  const e = list[index];
+  if (!e) return "";
+  if (!e.positioned) return "Switch it on to give it a place in the order";
+  const b = moveBounds(list, index);
+  if (b.min !== b.max) return "";
+  const masters = list.filter((x) => x.master).length;
+  if (e.master && masters === 1) {
+    return "The only master file, so it always loads first";
+  }
+  const after = !b.up
+    ? ""
+    : b.up.kind === "masters"
+    ? "the master files"
+    : pluginTitle(b.up.name);
+  const before = !b.down
+    ? ""
+    : b.down.kind === "masters"
+    ? "the plugins"
+    : pluginTitle(b.down.name);
+  if (after && before) return `Has to stay after ${after} and before ${before}`;
+  if (after) return `Has to stay after ${after}`;
+  if (before) return `Has to stay before ${before}`;
+  return "Nothing to swap it with";
+}
+
+/** Every lock reason at once, by plugin name. Computed per load rather
+ * than per render: it asks moveBounds about every row, which reads the
+ * whole list each time. */
+export function lockReasons(
+  list: LoadOrderEntry[],
+  off: LoadOrderEntry[] = []
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  list.forEach((e, i) => {
+    const why = lockReason(list, i);
+    if (why) out[e.name] = why;
+  });
+  for (const e of off) {
+    out[e.name] = "Switch it on to give it a place in the order";
+  }
+  return out;
+}
+
+/** Plugins that load before a master they need, in the order as shown.
+ *
+ * An order can arrive with one of these: a collection's own sequence, or
+ * a restamp that did not finish. The page says so rather than letting
+ * the user discover it when a move is refused. */
+export function orderProblems(
+  list: LoadOrderEntry[]
+): { name: string; needs: string }[] {
+  const pos = new Map<string, number>();
+  list.forEach((e, i) => pos.set(e.name.toLowerCase(), i));
+  const out: { name: string; needs: string }[] = [];
+  list.forEach((e, i) => {
+    for (const n of e.needs) {
+      const j = pos.get(n.toLowerCase());
+      if (j !== undefined && j > i) out.push({ name: e.name, needs: n });
+    }
+  });
+  return out;
+}
+
+export function problemNote(
+  problems: { name: string; needs: string }[]
+): string {
+  if (problems.length === 0) return "";
+  const first =
+    `${pluginTitle(problems[0].name)} loads before ` +
+    `${pluginTitle(problems[0].needs)}, which it needs`;
+  return problems.length === 1
+    ? `${first}. Sort for me puts it right.`
+    : `${first}, and ${problems.length - 1} more like it. ` +
+      "Sort for me puts them right.";
 }
 
 export function matchesFilter(e: LoadOrderEntry, query: string): boolean {

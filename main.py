@@ -4865,32 +4865,56 @@ def _load_order_entries(
     }
 
 
-def _load_order_violation(entries: list, want: list) -> str:
-    """Why `want` (lower-cased names, in order) is not a load order the
-    game can use - or "" when it is.
+def _load_order_violations(entries: list, order: list) -> set:
+    """The rules an order breaks, as keys that mean the same thing before
+    and after a move.
 
-    Two rules, the same two the sorter enforces: every master before every
-    regular plugin, and every plugin after each master it names. Checked
-    here as well as in the page, because the page is one client and the
-    file is what the game reads.
+    ("master", name)        a master file sitting after a regular plugin
+    ("needs", name, master) a plugin sitting before a master it needs
+
+    Keyed by the OFFENDING plugin, not by the pair of positions, so a
+    fault that was already there is recognisable as the same fault
+    afterwards. That is what lets set_load_order refuse only what a move
+    ADDS.
+
+    It has to work that way because a load order can arrive with a fault
+    in it. On the device a 220-plugin New Vegas collection had exactly
+    one: T4-modest stamped nineteen minutes before T4-plugin, which it
+    masters. The old check refused any list with any fault, including the
+    one it had just reported itself, so every move of every other plugin
+    came back "T4-modest has to load after T4-plugin" and the page was
+    read-only. Michael: "Every one I tried to move I cant and get a toast
+    error."
     """
     by_low = {e["name"].lower(): e for e in entries}
-    pos = {low: i for i, low in enumerate(want)}
+    pos = {low: i for i, low in enumerate(order)}
+    out = set()
     seen_regular = False
-    for i, low in enumerate(want):
-        e = by_low[low]
+    for i, low in enumerate(order):
+        e = by_low.get(low)
+        if not e:
+            continue
         if e["master"]:
             if seen_regular:
-                return (f"{_plugin_title(e['name'])} is a master file, and "
-                        "the game loads those before everything else")
+                out.add(("master", low))
         else:
             seen_regular = True
         for need in e["needs"]:
             j = pos.get(need.lower())
             if j is not None and j > i:
-                return (f"{_plugin_title(e['name'])} has to load after "
-                        f"{_plugin_title(need)}, which it needs")
-    return ""
+                out.add(("needs", low, need.lower()))
+    return out
+
+
+def _violation_message(violation: tuple, entries: list) -> str:
+    """One broken rule, in the words the page shows."""
+    spelled = {e["name"].lower(): e["name"] for e in entries}
+    name = _plugin_title(spelled.get(violation[1], violation[1]))
+    if violation[0] == "master":
+        return (f"{name} is a master file, and the game loads those "
+                "before everything else")
+    other = _plugin_title(spelled.get(violation[2], violation[2]))
+    return f"{name} has to load after {other}, which it needs"
 
 
 def _rewrite_load_order(
@@ -21406,9 +21430,14 @@ query CollectionInstructions($slug: String!) {
             return {"ok": False, "error":
                     "The list changed since the page read it. Reopen the "
                     "page and try again."}
-        why = _load_order_violation(state["entries"], want)
-        if why:
-            return {"ok": False, "error": why}
+        # Only the faults this move ADDS. See _load_order_violations.
+        current = [e["name"].lower() for e in positioned]
+        added = (_load_order_violations(state["entries"], want)
+                 - _load_order_violations(state["entries"], current))
+        if added:
+            return {"ok": False,
+                    "error": _violation_message(sorted(added)[0],
+                                                state["entries"])}
         by_low = {e["name"].lower(): e for e in positioned}
         lines = _read_plugins_txt(path)
         header = [l for l in lines if l.strip().startswith("#")]

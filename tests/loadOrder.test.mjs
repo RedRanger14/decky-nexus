@@ -7,6 +7,10 @@ import { readFileSync } from "node:fs";
 import {
   dependentsOf,
   kindTag,
+  lockReason,
+  lockReasons,
+  orderProblems,
+  problemNote,
   matchesFilter,
   moveBounds,
   moveEntry,
@@ -179,6 +183,82 @@ test("the landing index and the slide agree", () => {
   }
 });
 
+// --- locks: why a row will not move, said before it is picked up --------
+
+test("a plugin with nothing to swap with is locked, and says what pins it", () => {
+  // Town is needed by TownPatch directly below it, and the masters block
+  // is directly above: it has nowhere to go.
+  const list = [
+    entry("Base.esm"),
+    entry("Town.esp", { needs: ["Base.esm"] }),
+    entry("TownPatch.esp", { needs: ["Town.esp"] }),
+  ];
+  assert.equal(
+    lockReason(list, 1),
+    "Has to stay after the master files and before TownPatch"
+  );
+  assert.equal(lockReason(list, 2), "Has to stay after Town");
+  assert.equal(lockReason(list, 0), "The only master file, so it always loads first");
+});
+
+test("a plugin with room to move is not locked", () => {
+  assert.equal(lockReason(LIST, 3), "", "Spare.esp can move");
+  assert.equal(lockReason(LIST, 4), "", "Other.esp can move");
+});
+
+test("a master pinned by another master is locked too", () => {
+  // Late needs Base, and neither may leave the masters block, so with
+  // only two of them neither can move.
+  assert.equal(lockReason(LIST, 0), "Has to stay before Late");
+  assert.equal(lockReason(LIST, 1), "Has to stay after Base and before the plugins");
+});
+
+test("a plugin with no place in the order says how to give it one", () => {
+  const off = entry("Off.esp", { enabled: false, positioned: false });
+  assert.equal(
+    lockReason([...LIST, off], LIST.length),
+    "Switch it on to give it a place in the order"
+  );
+  const map = lockReasons(LIST, [off]);
+  assert.equal(map["Off.esp"], "Switch it on to give it a place in the order");
+});
+
+test("lockReasons only lists the rows that are actually locked", () => {
+  const map = lockReasons(LIST);
+  assert.ok(!("Spare.esp" in map), "a movable row has no entry");
+  assert.ok(!("Other.esp" in map));
+  assert.deepEqual(Object.keys(map).sort(), ["Base.esm", "Late.esm"]);
+});
+
+// --- a fault the order arrived with -------------------------------------
+
+test("a plugin loading before something it needs is reported, not hidden", () => {
+  // The device's New Vegas shape: one inversion in an otherwise fine list.
+  const list = [
+    entry("Base.esm"),
+    entry("T4-modest.esp", { needs: ["T4-plugin.esp"] }),
+    entry("T4-plugin.esp"),
+    entry("Spare.esp"),
+  ];
+  const problems = orderProblems(list);
+  assert.deepEqual(problems, [{ name: "T4-modest.esp", needs: "T4-plugin.esp" }]);
+  assert.equal(
+    problemNote(problems),
+    "T4-modest loads before T4-plugin, which it needs. Sort for me puts it right."
+  );
+  assert.equal(orderProblems(LIST).length, 0, "a good order reports none");
+  assert.equal(problemNote([]), "");
+});
+
+test("more than one fault is counted, not listed", () => {
+  const note = problemNote([
+    { name: "A.esp", needs: "B.esp" },
+    { name: "C.esp", needs: "D.esp" },
+    { name: "E.esp", needs: "F.esp" },
+  ]);
+  assert.match(note, /^A loads before B, which it needs, and 2 more like it\./);
+});
+
 test("dependents are found case-insensitively", () => {
   const deps = dependentsOf(LIST, "town.ESP");
   assert.deepEqual(names(deps), ["TownPatch.esp"]);
@@ -241,6 +321,44 @@ test("the toggle toast only speaks when something else changed", () => {
 });
 
 // --- the page itself --------------------------------------------------------
+
+test("every row lives in ONE focus column", () => {
+  // Separate Focusables for masters, plugins and off inside a plain div
+  // is what shipped first, and Steam's gamepad focus never left the
+  // first of them: only the master rows could be reached.
+  // read(), not readCode(): the section markers ARE comments.
+  const src = read("LoadOrderPage.tsx");
+  const start = src.indexOf("{/* ---- the list ----");
+  const end = src.indexOf("{/* ---- the inspector ---- */}");
+  assert.ok(start > 0 && end > start, "the list block is findable");
+  const list = src.slice(start, end);
+  assert.equal(
+    (list.match(/<Focusable/g) || []).length,
+    1,
+    "the list is exactly one Focusable, not one per section"
+  );
+  for (const group of ["masters.filter", "plugins.filter", "offTail.filter"]) {
+    assert.ok(list.includes(group), `${group} renders inside it`);
+  }
+});
+
+test("a row that cannot move shows a lock rather than waiting to refuse", () => {
+  const src = readCode("LoadOrderPage.tsx");
+  assert.ok(src.includes("lockReasons("), "locks are computed for the list");
+  assert.ok(/lock \? <FaLock/.test(src), "the locked row renders a lock icon");
+  assert.ok(/lock \? "Can't move"/.test(src), "and the footer legend says so");
+});
+
+test("rows slide by measured distance, not a fixed row pitch", () => {
+  // Section headings sit between rows, so the gap either side of one is
+  // bigger than a row pitch.
+  const src = readCode("LoadOrderPage.tsx");
+  assert.ok(src.includes("const slideShift"), "there is a measured slide");
+  assert.ok(
+    /tops\.current\.get\(ordered\[i \+ dir\]/.test(src),
+    "it reads the neighbour's measured top"
+  );
+});
 
 test("the page never reorders the DOM while carrying", () => {
   // The carried row keeps its DOM position and everything slides with

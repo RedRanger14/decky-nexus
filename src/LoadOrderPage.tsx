@@ -21,7 +21,7 @@ import {
   TextField,
 } from "@decky/ui";
 import { toaster } from "@decky/api";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   FaArrowsAltV,
   FaExternalLinkAlt,
@@ -39,7 +39,7 @@ import {
   setLoadOrder,
   setPluginEnabled,
 } from "./api";
-import { SectionHeading } from "./chrome";
+import { SectionHeading, WarningBox } from "./chrome";
 import { ALL_GAMES, SupportedGame, getActiveGame } from "./games";
 import {
   CARRY_HINT,
@@ -49,10 +49,13 @@ import {
   dependentsOf,
   kindLabel,
   kindTag,
+  lockReasons,
   matchesFilter,
   moveBounds,
   moveEntry,
+  orderProblems,
   orderSummary,
+  problemNote,
   pluginTitle,
   positionLabel,
   shiftFor,
@@ -97,6 +100,7 @@ const LO_CSS = `
   border-radius: 6px 0 0 6px;
 }
 .nexus-lo-master .nexus-lo-num { border-left-color: rgba(218,142,53,0.8); }
+.nexus-lo-num.locked { opacity: 0.45; border-left-color: rgba(255,255,255,0.22); }
 .nexus-lo-carried .nexus-lo-num { opacity: 1; color: ${NEXUS_ORANGE}; font-size: 15px; }
 .nexus-lo-tag {
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.6px; padding: 3px 7px;
@@ -146,6 +150,8 @@ interface RowProps {
   /** Pixels to slide while another row is carried past this one. */
   shift: number;
   blocked: boolean;
+  /** Why it cannot be moved, or "" when it can. */
+  lock: string;
   h: RowHandlers;
 }
 
@@ -158,16 +164,19 @@ const Row = memo(function Row({
   carrying,
   shift,
   blocked,
+  lock,
   h,
 }: RowProps) {
   const off = !entry.enabled;
-  const locked = Boolean(entry.skipped) || entry.missing.length > 0 || !entry.on_disk;
+  const held = Boolean(entry.skipped) || entry.missing.length > 0 || !entry.on_disk;
   const note = entry.skipped
     ? `Off: ${entry.skipped}`
     : entry.missing.length > 0
     ? `Needs ${entry.missing.map(pluginTitle).join(", ")}, which is not installed`
     : !entry.on_disk
     ? "Not installed any more"
+    : lock
+    ? lock
     : "";
   const cls =
     "nexus-lo-row" +
@@ -188,7 +197,9 @@ const Row = memo(function Row({
         carried ? (e: CustomEvent) => h.direction(e, entry.name) : undefined
       }
       onCancelButton={carrying ? (e: CustomEvent) => h.cancel(e) : undefined}
-      onOKActionDescription={carrying ? (carried ? "Put down" : "Put down here") : "Move"}
+      onOKActionDescription={
+        carrying ? (carried ? "Put down" : "Put down here") : lock ? "Can't move" : "Move"
+      }
       onSecondaryActionDescription={
         carrying || !entry.mod_id ? undefined : "Mod page"
       }
@@ -213,7 +224,9 @@ const Row = memo(function Row({
         zIndex: carried ? 3 : undefined,
       }}
     >
-      <div className="nexus-lo-num">{index < 0 ? "·" : index + 1}</div>
+      <div className={"nexus-lo-num" + (lock ? " locked" : "")}>
+        {lock ? <FaLock size={11} /> : index < 0 ? "·" : index + 1}
+      </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
@@ -247,7 +260,7 @@ const Row = memo(function Row({
           if (!carrying) h.toggle(entry.name);
         }}
       >
-        {locked && off ? <FaLock size={10} /> : null}
+        {held && off ? <FaLock size={10} /> : null}
         {entry.enabled ? "On" : "Off"}
       </div>
     </Focusable>
@@ -380,6 +393,8 @@ export default function LoadOrderPage() {
   const entries = state?.entries ?? [];
   const ordered = positioned(state);
   const offTail = entries.filter((e) => !e.positioned);
+  // Asked once per load, not per render: every answer reads the list.
+  const locks = useMemo(() => lockReasons(ordered, offTail), [state]);
   const masters = ordered.filter((e) => e.master);
   const plugins = ordered.filter((e) => !e.master);
 
@@ -735,12 +750,28 @@ export default function LoadOrderPage() {
     return b - a;
   };
 
+  /** How far a row that is NOT the carried one slides, in pixels.
+   *
+   * Measured, not PITCH times the direction: the section headings sit
+   * between rows, so the gap either side of one is bigger than a row
+   * pitch and a fixed step would leave the rows visibly misaligned
+   * exactly where the list changes section. */
+  const slideShift = (i: number): number => {
+    if (!carry) return 0;
+    const dir = shiftFor(i, carry.from, carry.to);
+    if (dir === 0) return 0;
+    const from = tops.current.get(ordered[i]?.name ?? "");
+    const to = tops.current.get(ordered[i + dir]?.name ?? "");
+    if (from === undefined || to === undefined) return dir * PITCH;
+    return to - from;
+  };
+
   const renderRow = (e: LoadOrderEntry) => {
     const i = indexOf.get(e.name) ?? -1;
     const carried = carry?.name === e.name;
     let shift = 0;
     if (carry && i >= 0) {
-      shift = carried ? carriedShift() : shiftFor(i, carry.from, carry.to) * PITCH;
+      shift = carried ? carriedShift() : slideShift(i);
     }
     return (
       <Row
@@ -751,12 +782,14 @@ export default function LoadOrderPage() {
         carrying={Boolean(carry)}
         shift={shift}
         blocked={wall?.name === e.name}
+        lock={locks[e.name] ?? ""}
         h={handlers.current}
       />
     );
   };
 
   const focusedEntry = entries.find((e) => e.name === focused);
+  const problems = useMemo(() => orderProblems(ordered), [state]);
   const carriedEntry = carry ? entries.find((e) => e.name === carry.name) : undefined;
   const inspected = carriedEntry ?? focusedEntry;
   const filtering = filter.trim().length > 0;
@@ -916,10 +949,39 @@ export default function LoadOrderPage() {
             <div style={{ fontSize: "13px", opacity: 0.7, margin: "4px 0 10px" }}>
               {orderSummary(ordered)}
             </div>
+            {/* A fault the order arrived with. Said here, once, rather
+                than discovered when a move is refused: the backend
+                allows moves that do not make things worse, so this can
+                sit unfixed for as long as the user likes. */}
+            {problems.length > 0 && !carry && (
+              <WarningBox
+                title={
+                  problems.length === 1
+                    ? "One plugin loads too early"
+                    : `${problems.length} plugins load too early`
+                }
+                body={problemNote(problems)}
+                action={{ label: "Sort for me", onClick: sortForMe }}
+              />
+            )}
 
             <Focusable style={{ display: "flex", gap: "18px", alignItems: "flex-start" }}>
-              {/* ---- the list ---- */}
-              <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+              {/* ---- the list ----
+                  ONE Focusable holding every row, headings included as
+                  plain children. Three sibling Focusables inside a plain
+                  div is what shipped first, and Steam's gamepad focus
+                  never left the first of them: Michael could reach the
+                  master rows and nothing below. My Mods carries the same
+                  note for the same reason. */}
+              <Focusable
+                style={{
+                  flex: "1 1 auto",
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: `${GAP}px`,
+                }}
+              >
                 {(state.implicit?.length ?? 0) > 0 && (
                   <div style={{ fontSize: "12px", opacity: 0.55, margin: "6px 0 2px 4px" }}>
                     The game's own files load first: {state.implicit!.join(", ")}.
@@ -927,15 +989,9 @@ export default function LoadOrderPage() {
                 )}
 
                 {masters.length > 0 && (
-                  <>
-                    <SectionHeading title={`Master files · ${masters.length}`} />
-                    <Focusable
-                      style={{ display: "flex", flexDirection: "column", gap: `${GAP}px` }}
-                    >
-                      {masters.filter((e) => matchesFilter(e, filter)).map(renderRow)}
-                    </Focusable>
-                  </>
+                  <SectionHeading title={`Master files · ${masters.length}`} />
                 )}
+                {masters.filter((e) => matchesFilter(e, filter)).map(renderRow)}
 
                 <SectionHeading title={`Plugins · ${plugins.length}`} />
                 {plugins.length === 0 && (
@@ -943,11 +999,8 @@ export default function LoadOrderPage() {
                     No plugins yet. Mods with an .esp or .esm file land here.
                   </div>
                 )}
-                <Focusable
-                  style={{ display: "flex", flexDirection: "column", gap: `${GAP}px` }}
-                >
-                  {plugins.filter((e) => matchesFilter(e, filter)).map(renderRow)}
-                </Focusable>
+                {plugins.filter((e) => matchesFilter(e, filter)).map(renderRow)}
+
                 {filtering &&
                   ordered.filter((e) => matchesFilter(e, filter)).length === 0 && (
                     <div style={{ opacity: 0.65, fontSize: "12.5px", marginTop: "6px" }}>
@@ -958,18 +1011,14 @@ export default function LoadOrderPage() {
                 {offTail.length > 0 && (
                   <>
                     <SectionHeading title={`Off · ${offTail.length}`} />
-                    <div style={{ fontSize: "12px", opacity: 0.6, margin: "-4px 0 8px 4px" }}>
+                    <div style={{ fontSize: "12px", opacity: 0.6, margin: "-4px 0 4px 4px" }}>
                       {game.displayName} has no place for a plugin that is off.
                       Switch one on and it joins the order.
                     </div>
-                    <Focusable
-                      style={{ display: "flex", flexDirection: "column", gap: `${GAP}px` }}
-                    >
-                      {offTail.filter((e) => matchesFilter(e, filter)).map(renderRow)}
-                    </Focusable>
                   </>
                 )}
-              </div>
+                {offTail.filter((e) => matchesFilter(e, filter)).map(renderRow)}
+              </Focusable>
 
               {/* ---- the inspector ---- */}
               <Focusable

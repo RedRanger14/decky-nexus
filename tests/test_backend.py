@@ -20445,6 +20445,51 @@ class TestLoadOrderPage(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertIn("Late is a master file", r["error"])
 
+    def test_a_fault_already_in_the_order_does_not_freeze_everything_else(self):
+        """The one that made the page useless on device. A 220-plugin New
+        Vegas collection arrived with a single inversion, and the old
+        check refused any list containing any fault - including the order
+        it had just reported - so every move of every other plugin came
+        back naming two plugins the user had never touched."""
+        self._write(["*Base.esm", "*TownPatch.esp", "*Town.esp",
+                     "*Spare.esp", "*Other.esp"])
+        # The fault is real and the page can see it.
+        state = self._get()
+        names = [e["name"] for e in state["entries"]]
+        self.assertEqual(
+            main._load_order_violations(state["entries"],
+                                        [n.lower() for n in names]),
+            {("needs", "townpatch.esp", "town.esp")})
+        # Moving an unrelated plugin is allowed, and lands.
+        r = self._set(["Base.esm", "TownPatch.esp", "Town.esp", "Other.esp",
+                       "Spare.esp"])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([n for n, _ in self._file()],
+                         ["Base.esm", "TownPatch.esp", "Town.esp",
+                          "Other.esp", "Spare.esp"])
+
+    def test_a_move_that_fixes_the_fault_is_allowed(self):
+        self._write(["*Base.esm", "*TownPatch.esp", "*Town.esp", "*Spare.esp"])
+        r = self._set(["Base.esm", "Town.esp", "TownPatch.esp", "Spare.esp"])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(
+            main._load_order_violations(
+                r["entries"], [e["name"].lower() for e in r["entries"]]),
+            set())
+
+    def test_a_move_that_adds_a_new_fault_is_still_refused(self):
+        # Dep needs Other. The order already has the TownPatch fault; that
+        # must not buy permission to create a second one.
+        _make_plugin(os.path.join(self.data, "Dep.esp"), ["Other.esp"])
+        self._write(["*Base.esm", "*TownPatch.esp", "*Town.esp", "*Other.esp",
+                     "*Dep.esp"])
+        r = self._set(["Base.esm", "TownPatch.esp", "Town.esp", "Dep.esp",
+                       "Other.esp"])
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error"], "Dep has to load after Other, which it needs")
+        self.assertEqual([n for n, _ in self._file()][3:],
+                         ["Other.esp", "Dep.esp"], "file untouched")
+
     def test_refuses_a_list_that_does_not_match_the_file(self):
         self._write(["*Base.esm", "*Town.esp", "*Spare.esp"])
         for bad in (["Base.esm", "Town.esp"],
