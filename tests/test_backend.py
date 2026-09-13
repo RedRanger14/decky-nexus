@@ -20205,3 +20205,337 @@ class TestResetUnrealGame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLoadOrderPage(unittest.TestCase):
+    """The Load Order page's one promise: an order you set stays set.
+
+    The automatic sorter is a stable dependency sort, so it leaves any
+    valid order exactly as it found it. That makes the promise cheap to
+    keep - never write an invalid order - and cheap to prove, which is
+    what these tests do."""
+
+    GAME = "Load Order Page Test"
+    APP_ID = 489830
+    SUB = "Skyrim Special Edition/Plugins.txt"
+    DOMAIN = "skyrimspecialedition"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(self.data)
+        _make_plugin(os.path.join(self.data, "Base.esm"), flags=1)
+        _make_plugin(os.path.join(self.data, "Late.esm"), ["Base.esm"], flags=1)
+        _make_plugin(os.path.join(self.data, "Town.esp"), ["Base.esm"])
+        _make_plugin(os.path.join(self.data, "Spare.esp"))
+        _make_plugin(os.path.join(self.data, "Other.esp"))
+        _make_plugin(os.path.join(self.data, "TownPatch.esp"),
+                     ["Base.esm", "Town.esp"])
+        # Needs a DLC the account does not own.
+        _make_plugin(os.path.join(self.data, "NeedsDLC.esp"),
+                     ["Dawnguard.esm", "DLCMissing.esm"])
+        self.path = main._plugins_txt_path(self.APP_ID, self.SUB)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.plugin = main.Plugin()
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.path), ignore_errors=True)
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+
+    def _write(self, lines):
+        main._write_plugins_txt(self.path, ["# Skyrim"] + lines)
+
+    def _get(self):
+        return run(self.plugin.get_load_order(
+            self.APP_ID, self.GAME, self.SUB, "starred", self.DOMAIN))
+
+    def _set(self, names):
+        return run(self.plugin.set_load_order(
+            self.APP_ID, self.GAME, self.SUB, "starred", self.DOMAIN, names))
+
+    def _switch(self, name, on):
+        return run(self.plugin.set_plugin_enabled(
+            self.APP_ID, self.GAME, self.SUB, "starred", self.DOMAIN,
+            name, on))
+
+    def _file(self):
+        return main._plugin_entries(main._read_plugins_txt(self.path))
+
+    def _names(self, state):
+        return [e["name"] for e in state["entries"]]
+
+    def test_shows_the_engines_order_masters_first(self):
+        # The file has a master buried among plugins; the game loads it
+        # first regardless, so the page must say so.
+        self._write(["*Town.esp", "*Base.esm", "Spare.esp", "*Late.esm"])
+        s = self._get()
+        self.assertTrue(s["ok"] and s["supported"])
+        self.assertEqual(self._names(s),
+                         ["Base.esm", "Late.esm", "Town.esp", "Spare.esp"])
+        by = {e["name"]: e for e in s["entries"]}
+        self.assertTrue(by["Base.esm"]["master"])
+        self.assertFalse(by["Town.esp"]["master"])
+        self.assertFalse(by["Spare.esp"]["enabled"])
+        self.assertTrue(all(e["positioned"] for e in s["entries"]))
+        self.assertEqual(s["implicit"][0], "Skyrim")
+        self.assertIn("Dragonborn", s["implicit"])
+
+    def test_needs_names_only_masters_in_the_list(self):
+        self._write(["*Base.esm", "*Town.esp", "*TownPatch.esp",
+                     "*NeedsDLC.esp"])
+        by = {e["name"]: e for e in self._get()["entries"]}
+        self.assertEqual(by["TownPatch.esp"]["needs"], ["Base.esm", "Town.esp"])
+        self.assertEqual(by["TownPatch.esp"]["missing"], [])
+        # Dawnguard is the game's own; DLCMissing is genuinely absent.
+        self.assertEqual(by["NeedsDLC.esp"]["needs"], [])
+        self.assertEqual(by["NeedsDLC.esp"]["missing"], ["DLCMissing.esm"])
+
+    def test_the_owning_mod_and_skip_reason_ride_along(self):
+        main._save_settings({"installed": {self.DOMAIN: {
+            "Town Overhaul": {"name": "Town Overhaul", "mod_id": 42,
+                              "plugins": ["Town.esp", "TownPatch.esp"],
+                              "collection_slug": "abc"},
+        }}})
+        main._save_skips(self.DOMAIN,
+                         {"spare.esp": {"reason": "breaks the game"}})
+        self._write(["*Base.esm", "*Town.esp", "Spare.esp"])
+        by = {e["name"]: e for e in self._get()["entries"]}
+        self.assertEqual(by["Town.esp"]["mod"], "Town Overhaul")
+        self.assertEqual(by["Town.esp"]["mod_id"], 42)
+        self.assertEqual(by["Town.esp"]["collection"], "abc")
+        self.assertEqual(by["Base.esm"]["mod"], "")
+        self.assertEqual(by["Spare.esp"]["skipped"], "breaks the game")
+
+    def test_a_valid_hand_order_is_written_exactly_and_survives_the_sorter(self):
+        self._write(["*Base.esm", "*Late.esm", "*Town.esp", "*Spare.esp",
+                     "*Other.esp", "*TownPatch.esp"])
+        # Nobody would arrive at this by sorting: Other before Town, the
+        # patch straight after Town, Spare last.
+        want = ["Base.esm", "Late.esm", "Other.esp", "Town.esp",
+                "TownPatch.esp", "Spare.esp"]
+        r = self._set(want)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self._names(r), want)
+        self.assertEqual([n for n, _ in self._file()], want)
+        self.assertTrue(os.path.isfile(self.path + main.LOAD_ORDER_BACKUP))
+        # The promise: the automatic pass leaves it exactly alone.
+        main._rewrite_load_order(self.data, self.path, "starred",
+                                 main.IMPLICIT_MASTERS_BY_DOMAIN[self.DOMAIN])
+        self.assertEqual([n for n, _ in self._file()], want)
+        run(self.plugin.fix_load_order(
+            self.APP_ID, self.GAME, self.SUB, "starred", self.DOMAIN))
+        self.assertEqual([n for n, _ in self._file()], want)
+
+    def test_a_new_install_lands_at_the_bottom_and_leaves_the_order_alone(self):
+        self._write(["*Base.esm", "*Other.esp", "*Town.esp"])
+        _make_plugin(os.path.join(self.data, "New.esp"))
+        main._add_plugins(self.path, ["New.esp"], "starred", self.DOMAIN,
+                          self.data)
+        self.assertEqual([n for n, _ in self._file()],
+                         ["Base.esm", "Other.esp", "Town.esp", "New.esp"])
+
+    def test_refuses_a_plugin_before_its_master(self):
+        self._write(["*Base.esm", "*Town.esp", "*TownPatch.esp"])
+        r = self._set(["Base.esm", "TownPatch.esp", "Town.esp"])
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error"],
+                         "TownPatch has to load after Town, which it needs")
+        self.assertEqual([n for n, _ in self._file()],
+                         ["Base.esm", "Town.esp", "TownPatch.esp"], "untouched")
+
+    def test_refuses_a_master_after_a_plugin(self):
+        self._write(["*Base.esm", "*Late.esm", "*Town.esp"])
+        r = self._set(["Base.esm", "Town.esp", "Late.esm"])
+        self.assertFalse(r["ok"])
+        self.assertIn("Late is a master file", r["error"])
+
+    def test_refuses_a_list_that_does_not_match_the_file(self):
+        self._write(["*Base.esm", "*Town.esp", "*Spare.esp"])
+        for bad in (["Base.esm", "Town.esp"],
+                    ["Base.esm", "Town.esp", "Spare.esp", "Ghost.esp"],
+                    ["Base.esm", "Town.esp", "Town.esp"]):
+            r = self._set(bad)
+            self.assertFalse(r["ok"], bad)
+            self.assertIn("changed since the page read it", r["error"])
+
+    def test_names_match_case_insensitively_and_keep_the_files_spelling(self):
+        self._write(["*Base.esm", "*Town.esp", "*Spare.esp"])
+        r = self._set(["base.ESM", "SPARE.esp", "town.esp"])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([n for n, _ in self._file()],
+                         ["Base.esm", "Spare.esp", "Town.esp"])
+
+    def test_markers_travel_with_their_plugin(self):
+        self._write(["*Base.esm", "*Town.esp", "Spare.esp", "*Other.esp"])
+        r = self._set(["Base.esm", "Spare.esp", "Other.esp", "Town.esp"])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(dict(self._file()), {
+            "Base.esm": True, "Spare.esp": False, "Other.esp": True,
+            "Town.esp": True,
+        })
+
+    def test_switching_on_brings_the_masters_it_needs(self):
+        self._write(["*Base.esm", "Town.esp", "TownPatch.esp"])
+        r = self._switch("TownPatch.esp", True)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["also"], ["Town.esp"])
+        self.assertEqual(dict(self._file()),
+                         {"Base.esm": True, "Town.esp": True,
+                          "TownPatch.esp": True})
+
+    def test_switching_off_takes_its_dependents_with_it(self):
+        self._write(["*Base.esm", "*Town.esp", "*TownPatch.esp", "*Other.esp"])
+        r = self._switch("Town.esp", False)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["also"], ["TownPatch.esp"])
+        self.assertEqual(dict(self._file()),
+                         {"Base.esm": True, "Town.esp": False,
+                          "TownPatch.esp": False, "Other.esp": True})
+
+    def test_a_skipped_plugin_stays_off_with_its_reason(self):
+        main._save_skips(self.DOMAIN,
+                         {"town.esp": {"reason": "it breaks the game"}})
+        self._write(["*Base.esm", "Town.esp", "TownPatch.esp"])
+        r = self._switch("Town.esp", True)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error"], "Town stays off: it breaks the game.")
+        # And through a dependent: the patch cannot come on either.
+        r = self._switch("TownPatch.esp", True)
+        self.assertFalse(r["ok"])
+        self.assertIn("needs Town, which stays off", r["error"])
+        self.assertEqual(dict(self._file()),
+                         {"Base.esm": True, "Town.esp": False,
+                          "TownPatch.esp": False})
+
+    def test_a_plugin_missing_its_master_cannot_be_switched_on(self):
+        self._write(["*Base.esm", "NeedsDLC.esp"])
+        r = self._switch("NeedsDLC.esp", True)
+        self.assertFalse(r["ok"])
+        self.assertIn("DLCMissing.esm", r["error"])
+        self.assertIn("left off", r["error"])
+
+    def test_an_esl_is_a_master_whatever_its_header_says(self):
+        _make_plugin(os.path.join(self.data, "Tiny.esl"))  # no flag
+        self._write(["*Town.esp", "*Tiny.esl", "*Base.esm"])
+        s = self._get()
+        by = {e["name"]: e for e in s["entries"]}
+        self.assertTrue(by["Tiny.esl"]["master"])
+        # Both masters lead, in the file's own order (Tiny needs nothing).
+        self.assertEqual(self._names(s), ["Tiny.esl", "Base.esm", "Town.esp"])
+        self.assertEqual(
+            main._sort_load_order(self.data, ["Town.esp", "Tiny.esl", "Base.esm"]),
+            ["Tiny.esl", "Base.esm", "Town.esp"])
+
+    def test_games_summary_counts_lines_without_reading_headers(self):
+        self._write(["*Base.esm", "*Town.esp", "Spare.esp"])
+        r = run(self.plugin.get_load_order_games([
+            {"app_id": self.APP_ID, "plugins_subpath": self.SUB,
+             "plugins_style": "starred", "game_domain": self.DOMAIN},
+            {"app_id": 377160, "plugins_subpath": "Fallout4/Plugins.txt",
+             "plugins_style": "starred", "game_domain": "fallout4"},
+            {"app_id": 1, "plugins_subpath": "../evil", "plugins_style": "starred"},
+        ]))
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["games"], [
+            {"app_id": self.APP_ID, "total": 3, "enabled": 2}])
+
+    def test_an_unsupported_game_says_so(self):
+        r = run(self.plugin.get_load_order(
+            self.APP_ID, self.GAME, "", "starred", self.DOMAIN))
+        self.assertEqual(r, {"ok": True, "supported": False})
+        r = run(self.plugin.get_load_order(
+            self.APP_ID, "No Such Game", self.SUB, "starred", self.DOMAIN))
+        self.assertEqual(r, {"ok": True, "supported": False})
+
+
+class TestLoadOrderPageNewVegas(unittest.TestCase):
+    """New Vegas and Fallout 3 load by file date, and a plugin that is off
+    has no line at all. The page shows the date order and applies a move
+    by restamping."""
+
+    GAME = "Load Order NV Test"
+    APP_ID = 22380
+    SUB = "FalloutNV/Plugins.txt"
+    DOMAIN = "newvegas"
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.install = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.install, ignore_errors=True)
+        self.data = os.path.join(self.install, "Data")
+        os.makedirs(self.data)
+        _make_plugin(os.path.join(self.data, "ModA.esp"))
+        _make_plugin(os.path.join(self.data, "ModB.esp"))
+        _make_plugin(os.path.join(self.data, "ModC.esp"))
+        _make_plugin(os.path.join(self.data, "Off.esp"))
+        self.path = main._plugins_txt_path(self.APP_ID, self.SUB)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.plugin = main.Plugin()
+        main._save_settings({"installed": {self.DOMAIN: {
+            "Off Mod": {"name": "Off Mod", "plugins": ["Off.esp"]},
+            "A": {"name": "A", "plugins": ["ModA.esp"]},
+        }}})
+
+    def tearDown(self):
+        shutil.rmtree(self.install, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.path), ignore_errors=True)
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+
+    def _stamp(self, name, t):
+        os.utime(os.path.join(self.data, name), (t, t))
+
+    def _mt(self, name):
+        return os.path.getmtime(os.path.join(self.data, name))
+
+    def _get(self):
+        return run(self.plugin.get_load_order(
+            self.APP_ID, self.GAME, self.SUB, "listed", self.DOMAIN))
+
+    def test_the_order_shown_is_the_file_dates_not_the_lines(self):
+        main._write_plugins_txt(self.path, ["ModA.esp", "ModB.esp", "ModC.esp"])
+        self._stamp("ModC.esp", 1700000000)
+        self._stamp("ModA.esp", 1700000060)
+        self._stamp("ModB.esp", 1700000120)
+        s = self._get()
+        names = [e["name"] for e in s["entries"]]
+        self.assertEqual(names, ["ModC.esp", "ModA.esp", "ModB.esp", "Off.esp"])
+        by = {e["name"]: e for e in s["entries"]}
+        self.assertFalse(by["Off.esp"]["enabled"])
+        self.assertFalse(by["Off.esp"]["positioned"])
+        self.assertTrue(by["ModA.esp"]["positioned"])
+        self.assertEqual(by["Off.esp"]["mod"], "Off Mod")
+
+    def test_a_move_is_applied_by_restamping(self):
+        main._write_plugins_txt(self.path, ["ModA.esp", "ModB.esp", "ModC.esp"])
+        for i, n in enumerate(["ModA.esp", "ModB.esp", "ModC.esp"]):
+            self._stamp(n, 1700000000 + i * 60)
+        r = run(self.plugin.set_load_order(
+            self.APP_ID, self.GAME, self.SUB, "listed", self.DOMAIN,
+            ["ModC.esp", "ModA.esp", "ModB.esp"]))
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([e["name"] for e in r["entries"] if e["positioned"]],
+                         ["ModC.esp", "ModA.esp", "ModB.esp"])
+        self.assertLess(self._mt("ModC.esp"), self._mt("ModA.esp"))
+        self.assertLess(self._mt("ModA.esp"), self._mt("ModB.esp"))
+        self.assertEqual(main._read_plugins_txt(self.path),
+                         ["ModC.esp", "ModA.esp", "ModB.esp"])
+
+    def test_switching_on_gives_it_a_place_at_the_end(self):
+        main._write_plugins_txt(self.path, ["ModA.esp", "ModB.esp"])
+        self._stamp("ModA.esp", 1700000000)
+        self._stamp("ModB.esp", 1700000060)
+        r = run(self.plugin.set_plugin_enabled(
+            self.APP_ID, self.GAME, self.SUB, "listed", self.DOMAIN,
+            "Off.esp", True))
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([e["name"] for e in r["entries"]],
+                         ["ModA.esp", "ModB.esp", "Off.esp"])
+        self.assertTrue(all(e["positioned"] for e in r["entries"]))
+        self.assertLess(self._mt("ModB.esp"), self._mt("Off.esp"))

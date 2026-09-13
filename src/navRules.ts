@@ -14,6 +14,7 @@ export type PageId =
   | "detail-from-qam"
   | "downloads"
   | "health"
+  | "loadorder"
   | "manager"
   | "updates";
 

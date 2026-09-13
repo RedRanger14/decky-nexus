@@ -19,6 +19,7 @@ export const TABS: TabDef[] = [
   { id: "store", label: "Store", route: "/nexus-mods" },
   { id: "downloads", label: "Downloads", route: DOWNLOADS_ROUTE },
   { id: "manager", label: "My Mods", route: "/nexus-mods/manager" },
+  { id: "loadorder", label: "Load Order", route: "/nexus-mods/load-order" },
   { id: "updates", label: "Updates", route: "/nexus-mods/updates" },
   { id: "health", label: "Health", route: "/nexus-mods/health" },
   { id: "settings", label: "Settings", route: "/nexus-mods/settings" },

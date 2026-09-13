@@ -3963,16 +3963,14 @@ def _stagger_plugin_mtimes(
     def _topo(group: list) -> list:
         return _topo_by_masters(data_path, group)
 
-    esms = [
-        real[n.lower()] for n in names
-        if n.lower().endswith(".esm")
-        and n.lower() not in vanilla_lower
-        and n.lower() in real
-    ]
-    esps = [
-        real[n.lower()] for n in names
-        if not n.lower().endswith(".esm") and n.lower() in real
-    ]
+    def _is_master(n):
+        head = _plugin_header(os.path.join(data_path, real[n.lower()]))
+        return _is_master_plugin(n, head[0] if head else 0)
+
+    present = [n for n in names if n.lower() in real
+               and n.lower() not in vanilla_lower]
+    esms = [real[n.lower()] for n in present if _is_master(n)]
+    esps = [real[n.lower()] for n in present if not _is_master(n)]
     ordered = [
         real[v.lower()] for v in vanilla if v.lower() in real
     ] + _topo(esms) + _topo(esps)
@@ -4653,6 +4651,28 @@ def _slot_usage(
     return full, light
 
 
+def _is_master_plugin(name: str, flags: int) -> bool:
+    """Whether the engine loads this plugin in the masters group.
+
+    Three ways in: the .esm extension, the .esl extension (Skyrim SE and
+    Fallout 4 treat every .esl as master-flagged whatever its header
+    says), or the master flag itself on a plugin with any extension - the
+    "ESM-flagged esp" that Skyrim modders make on purpose.
+
+    The sorter, the FO3/FNV restamp and the Load Order page all draw the
+    line here, so what the page shows as the boundary is the boundary the
+    other two keep.
+    """
+    low = name.lower()
+    return low.endswith((".esm", ".esl")) or bool(flags & PLUGIN_FLAG_MASTER)
+
+
+def _plugin_title(name: str) -> str:
+    """'Some Mod - Patch.esp' -> 'Some Mod - Patch': how the page and its
+    messages name a plugin."""
+    return re.sub(r"\.es[lmp]$", "", name or "", flags=re.IGNORECASE)
+
+
 def _sort_load_order(data_path: str, names: list) -> list:
     """Masters first, then everything else, each group in dependency
     order.
@@ -4677,11 +4697,168 @@ def _sort_load_order(data_path: str, names: list) -> list:
         head = _plugin_header(os.path.join(data_path, f)) if f else None
         cache[n.lower()] = head if head else (0, [])
     masters = [n for n in names
-               if n.lower().endswith(".esm")
-               or cache[n.lower()][0] & PLUGIN_FLAG_MASTER]
+               if _is_master_plugin(n, cache[n.lower()][0])]
     regular = [n for n in names if n not in set(masters)]
     return (_topo_by_masters(data_path, masters, cache)
             + _topo_by_masters(data_path, regular, cache))
+
+
+# The game's own files, as the page names them in its one "these load
+# first" line. Anything not here falls back to the DLC table, then to the
+# bare file name.
+_OWN_MASTER_NAMES = {
+    "skyrim": "Skyrim", "update": "Update", "dawnguard": "Dawnguard",
+    "hearthfires": "HearthFires", "dragonborn": "Dragonborn",
+    "fallout4": "Fallout 4", "dlcrobot": "Automatron",
+    "dlcworkshop01": "Wasteland Workshop", "dlccoast": "Far Harbor",
+    "dlcworkshop02": "Contraptions Workshop",
+    "dlcworkshop03": "Vault-Tec Workshop", "dlcnukaworld": "Nuka-World",
+    "dlcultrahighresolution": "High Resolution Texture Pack",
+    "falloutnv": "Fallout: New Vegas", "fallout3": "Fallout 3",
+}
+# The base game's own master, listed first in that line.
+_BASE_MASTERS = ("skyrim.esm", "fallout4.esm", "falloutnv.esm",
+                 "fallout3.esm", "starfield.esm")
+
+
+def _pretty_master_name(name: str) -> str:
+    low = name.lower()
+    return _OWN_MASTER_NAMES.get(
+        _plugin_title(low), DLC_MASTER_NAMES.get(low) or _plugin_title(name)
+    )
+
+
+def _load_order_entries(
+    data_path: str, path: str, style: str, game_domain: str
+) -> dict:
+    """Every plugin the game could load, in the order it will load them,
+    with what the Load Order page needs to move one safely.
+
+    The order shown is the ENGINE'S, not the file's. Masters come first
+    whatever the file says, because that is what the game does; on FO3
+    and New Vegas the enabled plugins are in file-date order, because that
+    is what those games read. Showing the file's own order would put a
+    boundary on screen that the sorter and the game both ignore, and the
+    first move the user made would then "jump" when it was saved.
+
+    `needs` names only masters that are in this list - the game's own
+    files load first regardless and are not the user's to arrange.
+    `positioned` is False for a New Vegas plugin that is switched off: it
+    has no line in the file and so no place in the order until it is on.
+    """
+    implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())
+    skips = _load_skips(game_domain)
+    entries = [
+        (n, on) for n, on in _plugin_entries(_read_plugins_txt(path), style)
+        if n.lower() not in implicit
+    ]
+    try:
+        real = {f.lower(): f for f in os.listdir(data_path)}
+    except OSError:
+        real = {}
+    records = _load_settings().get("installed", {}).get(game_domain, {})
+    owner = {}
+    for key, rec in records.items():
+        for pl in rec.get("plugins") or []:
+            owner.setdefault(pl.lower(), (
+                rec.get("name") or key, key,
+                rec.get("collection_slug") or "", rec.get("mod_id"),
+            ))
+    if style == "listed":
+        # Off means absent from the file; the install records know them.
+        listed = {n.lower() for n, _ in entries}
+        for low in sorted(owner):
+            if low not in listed and low in real and low not in implicit:
+                entries.append((real[low], False))
+    headers = {}
+    for n, _ in entries:
+        f = real.get(n.lower())
+        head = _plugin_header(os.path.join(data_path, f)) if f else None
+        headers[n.lower()] = head if head else (0, [])
+    if style == "listed":
+        def _mtime(name):
+            f = real.get(name.lower())
+            if not f:
+                return float("inf")
+            try:
+                return os.path.getmtime(os.path.join(data_path, f))
+            except OSError:
+                return float("inf")
+        on = sorted([e for e in entries if e[1]], key=lambda e: _mtime(e[0]))
+        entries = on + [e for e in entries if not e[1]]
+    masters = [e for e in entries
+               if _is_master_plugin(e[0], headers[e[0].lower()][0])]
+    regular = [e for e in entries if e not in masters]
+    ordered = masters + regular
+    spelled = {n.lower(): n for n, _ in ordered}
+    esl = game_domain in ESL_DOMAINS
+    out = []
+    for n, on in ordered:
+        low = n.lower()
+        flags, mast = headers[low]
+        needs, missing = [], []
+        for m in mast:
+            ml = m.lower()
+            if ml in implicit:
+                continue
+            if ml in spelled:
+                needs.append(spelled[ml])
+            elif ml not in real:
+                missing.append(m)
+        name, key, slug, mod_id = owner.get(low) or ("", "", "", None)
+        out.append({
+            "name": n,
+            "enabled": on,
+            "master": _is_master_plugin(n, flags),
+            "light": bool(esl and flags & PLUGIN_FLAG_LIGHT),
+            "needs": needs,
+            "missing": missing,
+            "on_disk": low in real,
+            "mod": name,
+            "mod_key": key,
+            "collection": slug,
+            "mod_id": mod_id,
+            "skipped": (skips.get(low) or {}).get("reason", ""),
+            "positioned": True if style != "listed" else on,
+        })
+    return {
+        "ok": True,
+        "supported": True,
+        "style": style,
+        "entries": out,
+        "implicit": [
+            _pretty_master_name(m) for m in
+            sorted(implicit, key=lambda x: (x not in _BASE_MASTERS, x))
+        ],
+    }
+
+
+def _load_order_violation(entries: list, want: list) -> str:
+    """Why `want` (lower-cased names, in order) is not a load order the
+    game can use - or "" when it is.
+
+    Two rules, the same two the sorter enforces: every master before every
+    regular plugin, and every plugin after each master it names. Checked
+    here as well as in the page, because the page is one client and the
+    file is what the game reads.
+    """
+    by_low = {e["name"].lower(): e for e in entries}
+    pos = {low: i for i, low in enumerate(want)}
+    seen_regular = False
+    for i, low in enumerate(want):
+        e = by_low[low]
+        if e["master"]:
+            if seen_regular:
+                return (f"{_plugin_title(e['name'])} is a master file, and "
+                        "the game loads those before everything else")
+        else:
+            seen_regular = True
+        for need in e["needs"]:
+            j = pos.get(need.lower())
+            if j is not None and j > i:
+                return (f"{_plugin_title(e['name'])} has to load after "
+                        f"{_plugin_title(need)}, which it needs")
+    return ""
 
 
 def _rewrite_load_order(
@@ -21111,6 +21288,223 @@ query CollectionInstructions($slug: String!) {
                 f"{r.get('restamped', 0)} restamped"
             )
         return r
+
+    # ---- Load Order page ------------------------------------------------
+
+    async def get_load_order_games(self, games: list) -> dict:
+        """Which plugin games have anything to arrange, cheaply: a line
+        count per plugins.txt, no headers read. The page uses it for the
+        game chips before it reads the one game in full."""
+        out = []
+        for g in games or []:
+            try:
+                app_id = int(g["app_id"])
+                sub = g["plugins_subpath"]
+                style = g.get("plugins_style") or "starred"
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not sub or not _safe_rel_path(sub):
+                continue
+            path = _plugins_txt_path(app_id, sub)
+            if not os.path.isfile(path):
+                continue
+            implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(
+                g.get("game_domain") or "", frozenset())
+            entries = [(n, on) for n, on in
+                       _plugin_entries(_read_plugins_txt(path), style)
+                       if n.lower() not in implicit]
+            if not entries:
+                continue
+            out.append({"app_id": app_id, "total": len(entries),
+                        "enabled": sum(1 for _, on in entries if on)})
+        return {"ok": True, "games": out}
+
+    async def get_load_order(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str
+    ) -> dict:
+        """The load order as the game will read it, one entry per plugin.
+        See _load_order_entries for what each carries and why."""
+        if not plugins_subpath or not _safe_rel_path(plugins_subpath):
+            return {"ok": True, "supported": False}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        data_path = os.path.join(_game_dir(install_dir), "Data")
+        if not os.path.isfile(path) or not os.path.isdir(data_path):
+            return {"ok": True, "supported": False}
+        return await asyncio.to_thread(
+            _load_order_entries, data_path, path, plugins_style, game_domain
+        )
+
+    async def set_load_order(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str, names: list
+    ) -> dict:
+        """Write the order the user arranged.
+
+        The one promise this page makes is that an order you set stays
+        set. The automatic sorter is a stable dependency sort, so it
+        leaves any order that already satisfies the dependencies exactly
+        as it found it - which means the way to keep the promise is to
+        never write an order that does not. So this refuses, with the
+        rule that was broken, rather than sorting it quietly and having
+        the page show one thing while the file says another.
+
+        `names` must be exactly the plugins that have a place in the
+        order, permuted: nothing is added, removed, switched on or off
+        here. FO3 and New Vegas read file dates, not the file, so the
+        same restamp that runs after an install runs here.
+        """
+        if not plugins_subpath or not _safe_rel_path(plugins_subpath):
+            return {"ok": False, "error": "Invalid plugins path"}
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        data_path = os.path.join(_game_dir(install_dir), "Data")
+        if not os.path.isfile(path):
+            return {"ok": False, "error": "This game has no plugin list yet"}
+        state = _load_order_entries(data_path, path, plugins_style, game_domain)
+        positioned = [e for e in state["entries"] if e["positioned"]]
+        have = sorted(e["name"].lower() for e in positioned)
+        want = [str(n).lower() for n in (names or [])]
+        if sorted(want) != have or len(set(want)) != len(want):
+            return {"ok": False, "error":
+                    "The list changed since the page read it. Reopen the "
+                    "page and try again."}
+        why = _load_order_violation(state["entries"], want)
+        if why:
+            return {"ok": False, "error": why}
+        by_low = {e["name"].lower(): e for e in positioned}
+        lines = _read_plugins_txt(path)
+        header = [l for l in lines if l.strip().startswith("#")]
+        try:
+            shutil.copy2(path, path + LOAD_ORDER_BACKUP)
+        except OSError:
+            pass
+        starred = plugins_style != "listed"
+        _write_plugins_txt(path, header + [
+            ("*" + by_low[low]["name"]
+             if starred and by_low[low]["enabled"] else by_low[low]["name"])
+            for low in want
+        ])
+        restamped = 0
+        if plugins_style == "listed":
+            restamped = await asyncio.to_thread(
+                _stagger_plugin_mtimes, data_path, path, plugins_style,
+                game_domain,
+            )
+        decky.logger.info(
+            f"{game_domain}: load order set by hand, {len(want)} plugin(s)"
+            + (f", {restamped} restamped" if restamped else "")
+        )
+        return await asyncio.to_thread(
+            _load_order_entries, data_path, path, plugins_style, game_domain
+        )
+
+    async def set_plugin_enabled(
+        self, app_id: int, install_dir: str, plugins_subpath: str,
+        plugins_style: str, game_domain: str, name: str, enabled: bool
+    ) -> dict:
+        """Switch one plugin on or off, and take what must come with it.
+
+        On: the masters it needs that are off come on too, because a
+        plugin without its master is a crash, not a choice - and the
+        sorter would switch them on at the next pass anyway, so doing it
+        here is the honest version. Refused when the plugin, or a master
+        it needs, is off for a recorded reason (it breaks the game, its
+        own master is not installed): that reason is the answer.
+
+        Off: everything that needs it goes off with it, for the same
+        reason in reverse. Left on, they would load against a master that
+        is gone; and the sorter would then switch this one back on to
+        serve them, undoing the user's choice within the hour.
+
+        Reports what else it changed, so the page can say so.
+        """
+        if not plugins_subpath or not _safe_rel_path(plugins_subpath):
+            return {"ok": False, "error": "Invalid plugins path"}
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        path = _plugins_txt_path(app_id, plugins_subpath)
+        data_path = os.path.join(_game_dir(install_dir), "Data")
+        if not os.path.isfile(path):
+            return {"ok": False, "error": "This game has no plugin list yet"}
+        state = _load_order_entries(data_path, path, plugins_style, game_domain)
+        by_low = {e["name"].lower(): e for e in state["entries"]}
+        target = by_low.get((name or "").lower())
+        if not target:
+            return {"ok": False, "error": f"{name} is not in the load order"}
+        title = _plugin_title(target["name"])
+        also = []
+        if enabled:
+            if target["skipped"]:
+                return {"ok": False,
+                        "error": f"{title} stays off: {target['skipped']}."}
+            if not target["on_disk"]:
+                return {"ok": False,
+                        "error": f"{title} is not installed any more"}
+            if target["missing"]:
+                gone = target["missing"]
+                return {"ok": False, "error":
+                        f"{title} needs {', '.join(gone)}, which "
+                        f"{'is' if len(gone) == 1 else 'are'} not "
+                        "installed. Switching it on stops the game "
+                        "starting, so it has been left off."}
+            seen = {target["name"].lower()}
+            frontier = [target]
+            while frontier:
+                cur = frontier.pop()
+                for need in cur["needs"]:
+                    low = need.lower()
+                    if low in seen:
+                        continue
+                    seen.add(low)
+                    m = by_low.get(low)
+                    if not m:
+                        continue
+                    if not m["enabled"]:
+                        if m["skipped"]:
+                            return {"ok": False, "error":
+                                    f"{title} needs {_plugin_title(m['name'])}"
+                                    f", which stays off: {m['skipped']}."}
+                        if m["missing"]:
+                            return {"ok": False, "error":
+                                    f"{title} needs {_plugin_title(m['name'])}"
+                                    f", which needs {', '.join(m['missing'])}"
+                                    " - not installed."}
+                        also.append(m["name"])
+                    frontier.append(m)
+            _set_plugins_active(
+                path, [target["name"]] + also, True, plugins_style)
+        else:
+            off = {target["name"].lower()}
+            changed = True
+            while changed:
+                changed = False
+                for e in state["entries"]:
+                    low = e["name"].lower()
+                    if low in off or not e["enabled"]:
+                        continue
+                    if any(n.lower() in off for n in e["needs"]):
+                        off.add(low)
+                        also.append(e["name"])
+                        changed = True
+            _set_plugins_active(
+                path, [target["name"]] + also, False, plugins_style)
+        if plugins_style == "listed":
+            await asyncio.to_thread(
+                _stagger_plugin_mtimes, data_path, path, plugins_style,
+                game_domain,
+            )
+        decky.logger.info(
+            f"{game_domain}: {target['name']} switched "
+            f"{'on' if enabled else 'off'} by hand"
+            + (f", with {', '.join(also)}" if also else "")
+        )
+        fresh = await asyncio.to_thread(
+            _load_order_entries, data_path, path, plugins_style, game_domain
+        )
+        fresh["also"] = also
+        return fresh
 
     async def crash_bisect_start(
         self, app_id: int, install_dir: str, plugins_subpath: str,

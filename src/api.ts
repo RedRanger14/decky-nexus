@@ -741,6 +741,74 @@ export const fixLoadOrder = callable<
   }
 >("fix_load_order");
 
+// ---- Load Order page ------------------------------------------------------
+export type { LoadOrderEntry } from "./loadOrderRules";
+import type { LoadOrderEntry as _LoadOrderEntry } from "./loadOrderRules";
+
+/** What the Load Order page reads and gets back from every write. */
+export interface LoadOrderState {
+  ok: boolean;
+  supported?: boolean;
+  style?: "starred" | "listed";
+  /** In the order the game will load them: masters first. */
+  entries?: _LoadOrderEntry[];
+  /** The game's own files, by their human names, which load before all of these. */
+  implicit?: string[];
+  /** After a switch: the other plugins switched with it. */
+  also?: string[];
+  error?: string;
+}
+
+export const getLoadOrderGames = callable<
+  [
+    games: {
+      app_id: number;
+      plugins_subpath: string;
+      plugins_style: string;
+      game_domain: string;
+    }[]
+  ],
+  { ok: boolean; games?: { app_id: number; total: number; enabled: number }[] }
+>("get_load_order_games");
+
+export const getLoadOrder = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string
+  ],
+  LoadOrderState
+>("get_load_order");
+
+/** Write a hand-arranged order. `names` is every positioned plugin,
+ * permuted; the backend refuses an order the game could not load. */
+export const setLoadOrder = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string,
+    names: string[]
+  ],
+  LoadOrderState
+>("set_load_order");
+
+export const setPluginEnabled = callable<
+  [
+    app_id: number,
+    install_dir: string,
+    plugins_subpath: string,
+    plugins_style: "starred" | "listed",
+    game_domain: string,
+    name: string,
+    enabled: boolean
+  ],
+  LoadOrderState
+>("set_plugin_enabled");
+
 /** Re-assert the skip set with its full dependency closure.
  *
  * Run after a collection finishes and when the game exits. The

@@ -229,6 +229,7 @@ import { CollectionPage } from "./CollectionPage";
 import { DownloadsPage } from "./DownloadsPage";
 import { ModDetailPage } from "./ModDetailPage";
 import { ManagerPage } from "./ManagerPage";
+import LoadOrderPage from "./LoadOrderPage";
 import { SettingsPage } from "./SettingsPage";
 import { UpdatesPage } from "./UpdatesPage";
 import { installLatest, toggleMod } from "./install";
@@ -260,6 +261,7 @@ const DOWNLOADS_ROUTE = "/nexus-mods/downloads";
 const HEALTH_ROUTE = "/nexus-mods/health";
 const UPDATES_ROUTE = "/nexus-mods/updates";
 const MANAGER_ROUTE = "/nexus-mods/manager";
+const LOAD_ORDER_ROUTE = "/nexus-mods/load-order";
 const SETTINGS_ROUTE = "/nexus-mods/settings";
 
 interface BackendInfo {
@@ -2671,6 +2673,23 @@ function InstalledModsSection() {
           </ButtonItem>
         </PanelSectionRow>
       )}
+      {/* Only games that load plugins in sequence have an order to set.
+          The page itself explains the rest; this is the door. */}
+      {game.pluginsTxtSubpath && (mods?.length ?? 0) > 0 && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            description="Move a mod up or down to decide which one wins"
+            onClick={() => {
+              Router.CloseSideMenus();
+              resetTabStack();
+              pushOurPage(LOAD_ORDER_ROUTE);
+            }}
+          >
+            Load order →
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
     </PanelSection>
   );
 }
@@ -4123,6 +4142,7 @@ export default definePlugin(() => {
   routerHook.addRoute(HEALTH_ROUTE, HealthCheckPage, { exact: true });
   routerHook.addRoute(UPDATES_ROUTE, UpdatesPage, { exact: true });
   routerHook.addRoute(MANAGER_ROUTE, ManagerPage, { exact: true });
+  routerHook.addRoute(LOAD_ORDER_ROUTE, LoadOrderPage, { exact: true });
   routerHook.addRoute(SETTINGS_ROUTE, SettingsPage, { exact: true });
 
   // Feed the QAM Downloads section from anywhere in the UI.
@@ -4203,6 +4223,7 @@ export default definePlugin(() => {
       routerHook.removeRoute(DOWNLOADS_ROUTE);
       routerHook.removeRoute(UPDATES_ROUTE);
       routerHook.removeRoute(MANAGER_ROUTE);
+      routerHook.removeRoute(LOAD_ORDER_ROUTE);
       routerHook.removeRoute(SETTINGS_ROUTE);
       removeEventListener("backend_event", listener);
       removeEventListener("install_progress", progressListener);

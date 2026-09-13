@@ -81,6 +81,7 @@ hardware, so the list grows slowly and on purpose.
   that game automatically, with FOMOD installers presented as a
   controller-friendly wizard rather than a desktop dialog.
 - **Applies load order automatically** where a game needs one.
+- **Load Order page** for the Bethesda games: pick a plugin up with A, move it, put it down. The lower one wins.
 - **Enable, disable and reset**: switch any installed mod on or off, or put
   the whole game back to vanilla.
 - **A health check** that reads the game's own logs and says what is
@@ -92,7 +93,7 @@ hardware, so the list grows slowly and on purpose.
   that cannot work here say so before you download them rather than
   failing after.
 
-Not supported yet: manual load order editing, Vortex profile import, and
+Not supported yet: Vortex profile import, and
 mods that need a Windows tool to install.
 
 ## How to use it
