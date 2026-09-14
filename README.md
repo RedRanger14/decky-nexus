@@ -17,10 +17,10 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Nineteen games, each one installed, modded and played on real hardware
-before it shipped. That is what supported means here: not that the code has
-a config entry for it, but that someone finished a session with mods
-running.
+Nineteen games. Every one unmarked below was installed, modded and played
+on real hardware before it shipped. That is what supported means here: not
+that the code has a config entry for it, but that someone finished a
+session with mods running.
 
 1. Baldur's Gate 3
 2. Cyberpunk 2077
@@ -28,7 +28,7 @@ running.
 4. Fallout 4
 5. Fallout: New Vegas
 6. Helldivers 2
-7. Mass Effect Legendary Edition
+7. Mass Effect Legendary Edition †
 8. Mount & Blade II: Bannerlord
 9. Palworld
 10. Resident Evil 4
@@ -43,6 +43,8 @@ running.
 19. The Witcher 3
 
 \* Community added game. Not tested by author.
+
+† New. Mods install, but it has not been played through yet, and mods that need a merge are refused.
 
 ### On the roadmap
 
