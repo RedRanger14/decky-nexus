@@ -31,6 +31,7 @@ import {
   collectionRetryDelayMs,
   collectionLaunchOptions,
   collectionMissingLoaders,
+  splitOutstanding,
   launchOptionsAppliedNote,
   loadersInstalledNote,
   unavailableNote,} from "./panelRules";
@@ -56,6 +57,7 @@ import {
   getCollection,
   getCollectionAttention,
   fixPrefixRuntime,
+  checkGameFile,
   getFrameworkSetup,
   getGameStatus,
   installFramework,
@@ -132,6 +134,10 @@ export function CollectionPage() {
   const [detail, setDetail] = useState<CollectionDetail | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [installedIds, setInstalledIds] = useState<Set<number>>(new Set());
+  // Every Nexus id that IS one of this game's mod loaders. They never go
+  // through the ordinary installer, so they are held out of the download
+  // queue - but they are NOT assumed installed. See splitOutstanding.
+  const [loaderIds, setLoaderIds] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [modInfo, setModInfo] = useState<Record<number, NexusMod | null>>({});
   // Mods a previous run left needing manual choices - persisted so any
@@ -243,29 +249,48 @@ export function CollectionPage() {
       sel.game.modsSubdir,
       ...modeParams(sel.game),
       sel.game.protectedModFolders ?? []
-    ).then((r) => {
+    ).then(async (r) => {
       if (stale()) return;
       // A read that fails must never be mistaken for "nothing installed":
       // a finished 866-record collection read as "Install remaining (951
       // of 953)" when one refresh came back empty (2026-09-08). Retry a
       // few times, and if it still fails, say so instead of pretending.
       if (!r.ok) throw new Error(r.error ?? "Could not read installed mods");
-      // Framework pins (REFramework, CET...) count as installed: Step 1
-      // owns them, and their archives don't fit the mod pipeline anyway.
-      const fwIds = [
-        sel.game.framework?.nexusModId,
-        ...(sel.game.framework?.aliasModIds ?? []),
-        ...(sel.game.extraFrameworks ?? []).flatMap((fw) => [
-          fw.nexusModId,
-          ...(fw.aliasModIds ?? []),
-        ]),
-      ].filter((x): x is number => typeof x === "number");
+      // Loaders (CET, RED4ext, SMAPI...) keep no install record, so
+      // whether they are installed is a question for the disk. They used
+      // to be added to this set unconditionally, which ticked all six of
+      // Cyberpunk's as installed on a vanilla game and then skipped them
+      // - the collection finished with its mods and nothing to load them
+      // (#28). The tick now means what it says.
+      const loaders = [
+        ...(sel.game.framework ? [sel.game.framework] : []),
+        ...(sel.game.extraFrameworks ?? []),
+      ];
+      const fwIds = loaders
+        .flatMap((fw) => [fw.nexusModId, ...(fw.aliasModIds ?? [])])
+        .filter((x): x is number => typeof x === "number");
+      setLoaderIds(new Set(fwIds));
+      const present = await Promise.all(
+        loaders.map((fw) =>
+          checkGameFile(sel.game.installDirName, fw.detectFile)
+            .then((g) => Boolean(g.ok && g.exists))
+            .catch(() => false)
+        )
+      );
+      if (stale()) return;
+      const installedLoaderIds = loaders.flatMap((fw, i) =>
+        present[i]
+          ? [fw.nexusModId, ...(fw.aliasModIds ?? [])].filter(
+              (x): x is number => typeof x === "number"
+            )
+          : []
+      );
       setInstalledIds(
         new Set([
           ...(r.mods ?? [])
             .map((m) => m.mod_id)
             .filter((id): id is number => id !== undefined),
-          ...fwIds,
+          ...installedLoaderIds,
         ])
       );
       // Only records CARRYING this slug can be uninstalled by this
@@ -877,12 +902,21 @@ export function CollectionPage() {
   const optional = detail?.files.filter((f) => f.optional) ?? [];
   // Pending-attention mods are NOT "remaining": re-queueing them just
   // re-parks (or re-skips) them - they resolve via Finish setup instead.
-  const remaining = required.filter((f) =>
+  // Outstanding work, split: the mod installer takes the mods, the
+  // finishing pass takes the loaders. Both count on the button.
+  const requiredOutstanding = required.filter((f) =>
     isRemaining(f, installedIds, rowState, attentionIds, justResolved)
   );
-  const optionalRemaining = optional.filter((f) =>
-    isRemaining(f, installedIds, rowState, attentionIds, justResolved)
+  const { mods: remaining, loaders: loaderRemaining } = splitOutstanding(
+    requiredOutstanding,
+    loaderIds
   );
+  const optionalRemaining = splitOutstanding(
+    optional.filter((f) =>
+      isRemaining(f, installedIds, rowState, attentionIds, justResolved)
+    ),
+    loaderIds
+  ).mods;
   // "Resume" only makes sense for a run THIS page started - already
   // owning some of a collection's mods individually is not a resume.
   const partialFromRun = runIsOurs && !run!.running && run!.finished > 0;
@@ -1892,7 +1926,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
         >
           <DialogButton
             className={installing ? undefined : PRIMARY_BUTTON_CLASS}
-            disabled={!detail || installing || remaining.length === 0}
+            disabled={
+              !detail ||
+              installing ||
+              remaining.length + loaderRemaining.length === 0
+            }
             onClick={() => installAll(false)}
             style={{
               ...ACTION_HERO,
@@ -1921,13 +1959,18 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                   : `Installing… ${runIsOurs ? run!.finished : 0}/${
                       runIsOurs ? run!.total : remaining.length
                     } · ${getAggregateDownloadPercent(run) ?? 0}%`
-              : remaining.length === 0 && detail
+              : remaining.length + loaderRemaining.length === 0 && detail
               ? "Everything installed ✓"
               : partialFromRun
-              ? `Resume collection (${remaining.length} left)`
-              : detail && remaining.length < required.length
-              ? `Install remaining (${remaining.length} of ${required.length})`
-              : `Install required (${remaining.length})`}
+              ? `Resume collection (${
+                  remaining.length + loaderRemaining.length
+                } left)`
+              : detail &&
+                remaining.length + loaderRemaining.length < required.length
+              ? `Install remaining (${
+                  remaining.length + loaderRemaining.length
+                } of ${required.length})`
+              : `Install required (${remaining.length + loaderRemaining.length})`}
           </DialogButton>
           <Focusable style={ACTION_ROW}>
           {actionable.length > 0 && (

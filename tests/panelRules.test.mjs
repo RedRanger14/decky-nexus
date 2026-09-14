@@ -51,6 +51,7 @@ import {
   showInstalledModsSection,
   showResetRow,
   slotPressure,
+  splitOutstanding,
   storeHeaderMinWidth,
   storeHeaderPlan,
   troubleshootingCount,
@@ -1618,6 +1619,50 @@ test("an unmeasured header plans for a Deck, not a desktop", () => {
   // planning narrow and growing is invisible.
   const plan = storeHeaderPlan(0);
   assert.ok(storeHeaderMinWidth(plan) <= 900);
+});
+
+// --- the tick beside a loader must mean what it says ---------------------
+
+test("outstanding work splits into mods and loaders, and both are work", () => {
+  const files = [
+    { modId: 107, fileId: 1 },
+    { modId: 533, fileId: 2 },
+    { modId: 7780, fileId: 3 },
+    { modId: 2987, fileId: 4 },
+  ];
+  const split = splitOutstanding(files, [107, 7780, 2380]);
+  assert.deepEqual(split.mods.map((f) => f.modId), [533, 2987]);
+  assert.deepEqual(split.loaders.map((f) => f.modId), [107, 7780]);
+  // The mod pipeline takes only the mods; the button promises both.
+  assert.equal(split.mods.length + split.loaders.length, files.length);
+});
+
+test("with no loaders declared everything is an ordinary mod", () => {
+  const files = [{ modId: 1, fileId: 1 }, { modId: 2, fileId: 2 }];
+  const split = splitOutstanding(files, new Set());
+  assert.equal(split.mods.length, 2);
+  assert.deepEqual(split.loaders, []);
+});
+
+test("the page no longer assumes a loader is installed", () => {
+  const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  // The old shape added every framework id to installedIds outright.
+  assert.doesNotMatch(
+    src,
+    /\.\.\.\(r\.mods[\s\S]{0,200}\.\.\.fwIds,/,
+    "framework ids must not be poured into installedIds unconditionally"
+  );
+  assert.match(
+    src,
+    /installedLoaderIds/,
+    "only loaders proved present on disk count as installed"
+  );
+  assert.match(src, /checkGameFile\(/, "and the proof is the detect file");
+  assert.match(
+    src,
+    /remaining\.length \+ loaderRemaining\.length/,
+    "the button counts the loaders it is about to install"
+  );
 });
 
 // --- a collection must actually install the loaders it ticks -------------

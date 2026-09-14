@@ -1318,6 +1318,25 @@ export function storeHeaderPlan(measuredWidth: number): StoreHeaderPlan {
   };
 }
 
+/** Split what a collection still has to do into the mods its ordinary
+ * installer can fetch and the loaders that need Step 1's installer.
+ *
+ * Both are outstanding work and both are counted on the button, because
+ * the button is a promise about what pressing it does. They are kept
+ * apart because putting a loader through the mod pipeline would unpack a
+ * framework archive as if it were a mod.
+ */
+export function splitOutstanding<T extends { modId: number }>(
+  outstanding: T[],
+  loaderModIds: Set<number> | number[]
+): { mods: T[]; loaders: T[] } {
+  const ids = loaderModIds instanceof Set ? loaderModIds : new Set(loaderModIds);
+  return {
+    mods: outstanding.filter((f) => !ids.has(f.modId)),
+    loaders: outstanding.filter((f) => ids.has(f.modId)),
+  };
+}
+
 /** The loaders a finished collection still owes the user.
  *
  * A collection PINS the game's loaders - every Cyberpunk one ships Cyber

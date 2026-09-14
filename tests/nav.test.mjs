@@ -651,7 +651,12 @@ test("a stale installed-mods read cannot overwrite a newer one", () => {
   const page = read("CollectionPage.tsx");
   const start = page.indexOf("const refreshInstalled = (");
   assert.ok(start > 0, "refreshInstalled must exist");
-  const fn = page.slice(start, start + 2600);
+  // To the next sibling declaration, not a fixed window. A 2,600-character
+  // slice broke the moment the function grew: the retry moved past the end
+  // and the test said the retry was gone (2026-09-14).
+  const after = page.indexOf("\n  const ", start + 10);
+  const fn = page.slice(start, after > 0 ? after : start + 6000);
+  assert.ok(fn.length > 500, "the function body was not found");
   assert.ok(
     /\+\+refreshSeq\.current/.test(fn),
     "refreshInstalled does not stamp its reads, so it cannot tell which " +
