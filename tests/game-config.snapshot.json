@@ -292,7 +292,8 @@
       "2380",
       "4198",
       "4197",
-      "1511"
+      "1511",
+      "7780"
     ],
     "manualTools": 0,
     "hasLauncherBypass": false,
@@ -305,7 +306,8 @@
       "\"red4ext\", \"bin/x64/winmm.dll\"",
       "\"red4ext/plugins/ArchiveXL\"",
       "\"red4ext/plugins/TweakXL\"",
-      "\"engine/tools\""
+      "\"engine/tools\"",
+      "\"red4ext/plugins/Codeware\""
     ]
   },
   {

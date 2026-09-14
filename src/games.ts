@@ -1130,6 +1130,21 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         nexusModId: 1511, // verified live
         installKind: "copyRoot",
       },
+      {
+        // The fifth loader, and it was missing entirely until issue #28.
+        // Codeware is what redscript and CET mods call for anything the
+        // base game does not expose, so a great many mods need it - and
+        // because nothing here knew it existed, Step 1 never offered it
+        // and every mod that required it read as "needs installing" even
+        // with it on disk. Last, because it loads through RED4ext and
+        // compiles against redscript.
+        name: "Codeware",
+        cleanupPrefixes: ["red4ext/plugins/Codeware"],
+        detectFile: "red4ext/plugins/Codeware/Codeware.dll",
+        url: "github.com/psiberx/cp2077-codeware",
+        nexusModId: 7780, // verified live: psiberx, 98k endorsements
+        installKind: "copyRoot",
+      },
     ],
   },
   553850: {

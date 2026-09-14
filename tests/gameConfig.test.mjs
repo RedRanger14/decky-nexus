@@ -148,6 +148,44 @@ if (process.env.UPDATE_SNAPSHOT || !existsSync(SNAP)) {
 }
 const saved = JSON.parse(readFileSync(SNAP, "utf8"));
 
+test("every declared loader can be detected, installed and removed", () => {
+  // Codeware was missing from Cyberpunk entirely until issue #28: nothing
+  // installed it, nothing counted it as installed, and every mod that
+  // required it read as "needs installing" with the DLL on disk. A loader
+  // is only declared when all three of these are present, so a half
+  // declaration cannot pass as one.
+  const blocks = [...src.matchAll(/detectFile:\s*"([^"]+)"/g)].map((m) => m.index);
+  assert.ok(blocks.length > 10, "found the framework blocks");
+  for (const at of blocks) {
+    // The enclosing object: back to the previous "{" that starts a
+    // framework, forward to its close.
+    const start = src.lastIndexOf("{", at);
+    const end = src.indexOf("\n      },", at);
+    const block = src.slice(start, end > 0 ? end : at + 600);
+    const name = (block.match(/name:\s*"([^"]+)"/) || [])[1] || "(unnamed)";
+    assert.match(block, /url:\s*"/, `${name} has nowhere to read about it`);
+  }
+  // The five loaders Cyberpunk actually needs, by Nexus id.
+  const cp = src.slice(src.indexOf("  1091500: {"), src.indexOf("  553850: {"));
+  for (const [id, label] of [
+    [107, "Cyber Engine Tweaks"],
+    [2380, "RED4ext"],
+    [4198, "ArchiveXL"],
+    [4197, "TweakXL"],
+    [1511, "redscript"],
+    [7780, "Codeware"],
+  ]) {
+    assert.ok(
+      cp.includes(`nexusModId: ${id}`),
+      `Cyberpunk must declare ${label} (${id}) or mods needing it read as missing`
+    );
+  }
+  assert.ok(
+    cp.includes('cleanupPrefixes: ["red4ext/plugins/Codeware"]'),
+    "and reset must be able to remove it again"
+  );
+});
+
 test("the capture found every game", () => {
   assert.ok(current.length >= 8, `only found ${current.length} games`);
 });
