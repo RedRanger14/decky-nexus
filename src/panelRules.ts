@@ -1318,6 +1318,61 @@ export function storeHeaderPlan(measuredWidth: number): StoreHeaderPlan {
   };
 }
 
+/** The loaders a finished collection still owes the user.
+ *
+ * A collection PINS the game's loaders - every Cyberpunk one ships Cyber
+ * Engine Tweaks, RED4ext, ArchiveXL, TweakXL, redscript and Codeware -
+ * but the ordinary mod installer must never unpack a framework archive,
+ * so their mod ids are counted as satisfied and skipped. Nothing then
+ * installed them.
+ *
+ * Reproduced on device 2026-09-14: Cyberpunk reset to vanilla, this
+ * collection installed, page reported "11 installed / Everything
+ * installed", and not one of the six loaders was on disk. Five mods that
+ * cannot do anything without them, and no warning. That is what
+ * "steamdeck doesnt recognize codeware or archive xl" looks like from
+ * the inside (#28).
+ *
+ * Only loaders the collection itself pins are installed here. The tick
+ * beside them is the promise being kept, not a new decision: a loader
+ * the collection never mentioned is still the game panel's Step 1.
+ */
+export interface CollectionFramework {
+  name: string;
+  nexusModId?: number;
+  aliasModIds?: number[];
+}
+
+export function collectionMissingLoaders<T extends CollectionFramework>(
+  frameworks: T[],
+  pinnedModIds: Set<number> | number[],
+  installedByName: Record<string, boolean>
+): T[] {
+  const pinned = pinnedModIds instanceof Set ? pinnedModIds : new Set(pinnedModIds);
+  return frameworks.filter((fw) => {
+    if (typeof fw.nexusModId !== "number") return false;
+    if (installedByName[fw.name]) return false;
+    const ids = [fw.nexusModId, ...(fw.aliasModIds ?? [])];
+    return ids.some((id) => pinned.has(id));
+  });
+}
+
+/** What to say once they are in. Named as loaders, because "framework"
+ * is our word and not the user's. */
+export function loadersInstalledNote(
+  names: string[],
+  gameName: string
+): { title: string; body: string } {
+  const n = names.length;
+  return {
+    title: `Installed ${n} mod loader${n === 1 ? "" : "s"} for ${gameName}`,
+    body:
+      `${names.join(", ")}. The collection lists ${n === 1 ? "it" : "these"} ` +
+      "but they install differently from ordinary mods, so they are done " +
+      "last. Without them none of the other mods load.",
+  };
+}
+
 /** Whether a finished collection should set the game's launch command
  * itself, and why not when it should not.
  *

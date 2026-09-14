@@ -30,7 +30,9 @@ import {
   isNetworkError,
   collectionRetryDelayMs,
   collectionLaunchOptions,
+  collectionMissingLoaders,
   launchOptionsAppliedNote,
+  loadersInstalledNote,
   unavailableNote,} from "./panelRules";
 
 import {
@@ -53,8 +55,10 @@ import {
   NexusMod,
   getCollection,
   getCollectionAttention,
+  fixPrefixRuntime,
   getFrameworkSetup,
   getGameStatus,
+  installFramework,
   getLaunchOptionsState,
   markLaunchOptionsSet,
   setFrameworkLaunchOptions,
@@ -75,6 +79,7 @@ import { collectionAutoOff, collectionStrandingUi } from "./compat";
 import { modeParams } from "./games";
 import {
   finishFomod,
+  installLatest,
   installPinned,
   prefetchPinned,
   preparePinned,
@@ -435,6 +440,77 @@ export function CollectionPage() {
       }
     } catch {
       /* a bundle failing must not fail the whole install */
+    }
+    // The loaders themselves. The mod pipeline skips them on purpose, so
+    // without this the collection finishes with its mods and none of the
+    // things that load them. See collectionMissingLoaders.
+    const allLoaders = [
+      ...(game.framework ? [game.framework] : []),
+      ...(game.extraFrameworks ?? []),
+    ];
+    if (allLoaders.length > 0) {
+      try {
+        const pinned = new Set((detail?.files ?? []).map((f) => f.modId));
+        const state: Record<string, boolean> = {};
+        for (const fw of allLoaders) {
+          const st = await getGameStatus(
+            game.installDirName,
+            game.modsSubdir,
+            fw.detectFile
+          );
+          state[fw.name] = Boolean(st.framework_installed);
+        }
+        const queue = collectionMissingLoaders(allLoaders, pinned, state);
+        if (queue.length > 0) {
+          // Same order as Step 1: the prefix runtime first, because CET
+          // and RED4ext install fine against an old CRT and then fail to
+          // load with nothing said in game.
+          if (game.prefixRuntimeFix) {
+            setFinalising("Updating the Windows runtime the loaders need…");
+            await fixPrefixRuntime(game.appId).catch(() => undefined);
+          }
+          const done: string[] = [];
+          for (let i = 0; i < queue.length; i++) {
+            const fw = queue[i];
+            setFinalising(
+              `Installing ${fw.name} (${i + 1} of ${queue.length})…`
+            );
+            const isMain = fw.name === game.framework?.name;
+            const r = fw.installAsMod
+              ? await installLatest(game, fw.nexusModId!, fw.name)
+              : await installFramework(
+                  game.nexusDomain,
+                  fw.nexusModId!,
+                  game.installDirName,
+                  fw.installKind ?? (isMain ? "smapi" : "copyRoot"),
+                  fw.detectFile,
+                  fw.avoidFileKeywords ?? [],
+                  fw.installSubdir ?? "",
+                  game.modsSubdir,
+                  game.appId,
+                  game.launcherXmlSubpath ?? "",
+                  game.processName ?? ""
+                );
+            if (r.ok) {
+              done.push(fw.name);
+            } else {
+              toaster.toast({
+                title: `Could not install ${fw.name}`,
+                body: r.error ?? "The other mods will not load without it",
+                duration: 15000,
+              });
+            }
+          }
+          if (done.length > 0) {
+            toaster.toast({
+              ...loadersInstalledNote(done, game.displayName),
+              duration: 12000,
+            });
+          }
+        }
+      } catch {
+        /* the game panel's Step 1 still offers them */
+      }
     }
     // The loaders the collection just installed only load if Steam starts
     // the game through them. Step 1 offers that; a collection never did,

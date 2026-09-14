@@ -15,6 +15,7 @@ import {
   cancellableDownload,
   collectionCapacityWarning,
   collectionLaunchOptions,
+  collectionMissingLoaders,
   collectionOwnedCount,
   collectionRetryDelayMs,
   crashHuntVerdict,
@@ -39,6 +40,7 @@ import {
   launchOptionsAppliedNote,
   launchWaitNotice,
   loadOrderProblem,
+  loadersInstalledNote,
   maskCoopPassword,
   missingMasterProblem,
   pauseAllControl,
@@ -1616,6 +1618,83 @@ test("an unmeasured header plans for a Deck, not a desktop", () => {
   // planning narrow and growing is invisible.
   const plan = storeHeaderPlan(0);
   assert.ok(storeHeaderMinWidth(plan) <= 900);
+});
+
+// --- a collection must actually install the loaders it ticks -------------
+
+const LOADERS = [
+  { name: "Cyber Engine Tweaks", nexusModId: 107 },
+  { name: "RED4ext", nexusModId: 2380 },
+  { name: "ArchiveXL", nexusModId: 4198 },
+  { name: "Codeware", nexusModId: 7780 },
+];
+
+test("a collection installs the loaders it pins and nothing else", () => {
+  // Reproduced on device: Cyberpunk reset to vanilla, CET+Essentials
+  // installed, page said "Everything installed", zero loaders on disk.
+  const pinned = [107, 2380, 4198, 7780, 533];
+  const none = {};
+  assert.deepEqual(
+    collectionMissingLoaders(LOADERS, pinned, none).map((f) => f.name),
+    ["Cyber Engine Tweaks", "RED4ext", "ArchiveXL", "Codeware"]
+  );
+  // A loader the collection never mentioned stays the panel's Step 1.
+  assert.deepEqual(
+    collectionMissingLoaders(LOADERS, [107], none).map((f) => f.name),
+    ["Cyber Engine Tweaks"]
+  );
+});
+
+test("a loader already on disk is left alone", () => {
+  const installed = { "Cyber Engine Tweaks": true, RED4ext: true };
+  assert.deepEqual(
+    collectionMissingLoaders(LOADERS, [107, 2380, 4198, 7780], installed).map(
+      (f) => f.name
+    ),
+    ["ArchiveXL", "Codeware"]
+  );
+  assert.deepEqual(
+    collectionMissingLoaders(
+      LOADERS,
+      [107, 2380, 4198, 7780],
+      { "Cyber Engine Tweaks": true, RED4ext: true, ArchiveXL: true, Codeware: true }
+    ),
+    [],
+    "nothing to do when they are all there"
+  );
+});
+
+test("a loader pinned under an alias id still counts", () => {
+  const withAlias = [{ name: "SKSE64", nexusModId: 30379, aliasModIds: [133427] }];
+  assert.equal(collectionMissingLoaders(withAlias, [133427], {}).length, 1);
+  assert.equal(collectionMissingLoaders(withAlias, [999], {}).length, 0);
+});
+
+test("a loader with no Nexus id is never queued", () => {
+  // The Mass Effect bypass is fetched from a pinned commit, not Nexus.
+  const bink = [{ name: "Bink bypass" }];
+  assert.deepEqual(collectionMissingLoaders(bink, [1, 2, 3], {}), []);
+});
+
+test("the loader note explains why they came last", () => {
+  const n = loadersInstalledNote(["RED4ext", "Codeware"], "Cyberpunk 2077");
+  assert.match(n.title, /Installed 2 mod loaders for Cyberpunk 2077/);
+  assert.match(n.body, /RED4ext, Codeware/);
+  assert.match(n.body, /none of the other mods load/);
+  assert.match(loadersInstalledNote(["RED4ext"], "X").title, /1 mod loader for X/);
+  assert.ok(!n.title.includes("—") && !n.body.includes("—"));
+});
+
+test("the collection page actually installs them", () => {
+  const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(src, /collectionMissingLoaders\(/, "the decision is consulted");
+  assert.match(src, /installFramework\(/, "and they go through Step 1's installer");
+  // Order matters: loaders first, then the launch command that starts the
+  // game through them.
+  assert.ok(
+    src.indexOf("collectionMissingLoaders(") < src.indexOf("collectionLaunchOptions("),
+    "loaders must be installed before the launch command is considered"
+  );
 });
 
 // --- a collection that installs the loaders must set the launch command --
