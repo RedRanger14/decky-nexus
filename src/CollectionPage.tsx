@@ -454,7 +454,13 @@ export function CollectionPage() {
             st.install_path ?? ""
           )
           .replace("{blse_script}", st.blse_script ?? "");
-        const setup = await getFrameworkSetup(game.nexusDomain, options);
+        // The RAW template, which is what the panel stores and compares
+        // against; the substituted command would always read as "not what
+        // we would set today" and mean nothing.
+        const setup = await getFrameworkSetup(
+          game.nexusDomain,
+          fw.launchOptionsTemplate!
+        );
         const launch = await getLaunchOptionsState(game.appId);
         const decision = collectionLaunchOptions({
           hasTemplate: true,
