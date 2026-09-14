@@ -1462,6 +1462,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     },
     // The three community patches and the two most endorsed DLC mods.
     recommendedModIds: [23, 8, 13, 422, 426],
+    underConstruction:
+      "Mass Effect support is new and not finished. DLC mods install and " +
+      "the Bink bypass is verified on device, but nothing here has been " +
+      "played through yet. Mods that change the game's own files with a " +
+      "merge mod are refused with a message rather than installed: that " +
+      "covers a fair share of the popular ones, so expect some mods to " +
+      "say no. Texture packs and ASI mods are not supported at all.",
   },
 };
 

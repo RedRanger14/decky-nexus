@@ -1318,6 +1318,70 @@ export function storeHeaderPlan(measuredWidth: number): StoreHeaderPlan {
   };
 }
 
+/** Whether a finished collection should set the game's launch command
+ * itself, and why not when it should not.
+ *
+ * Frameworks reach the game two ways. Step 1 installs them and then
+ * offers the launch command, which is how this was always meant to go.
+ * But a collection PINS them as ordinary mods - every Cyberpunk
+ * collection ships Cyber Engine Tweaks, RED4ext, ArchiveXL, TweakXL and
+ * redscript - and that route installed the files and set nothing. Proton
+ * loads its own version.dll and winmm.dll unless told otherwise, so the
+ * loaders sat on disk doing nothing, and every mod that needed one was
+ * blamed for failing to compile.
+ *
+ * Reported by surftoolz (#28) as "steamdeck doesnt recognize codeware or
+ * archive xl", with all five loaders installed from a collection.
+ *
+ * The one thing this must never do is overwrite a launch command the user
+ * put there. So it only writes into an empty field: anything already
+ * there, ours or theirs, leaves the decision to the panel's own step.
+ */
+export type LaunchOptionsDecision =
+  | "apply"
+  | "no-template"
+  | "framework-missing"
+  | "already-set"
+  | "field-in-use";
+
+export function collectionLaunchOptions(state: {
+  /** The game declares a launch command for its framework. */
+  hasTemplate: boolean;
+  /** The framework's own detect file is on disk, so it can actually load. */
+  frameworkInstalled: boolean;
+  /** We have recorded setting the launch command before. */
+  alreadySet: boolean;
+  /** What Steam's own field holds for this app, across accounts. */
+  steamOptions: string[];
+  /** The launch-options plugin is installed: Steam's field holds its
+   * wrapper and the real command lives in its profile instead. */
+  dloPresent: boolean;
+  dloOptions?: string | null;
+}): LaunchOptionsDecision {
+  if (!state.hasTemplate) return "no-template";
+  if (!state.frameworkInstalled) return "framework-missing";
+  if (state.alreadySet) return "already-set";
+  const inUse = state.dloPresent
+    ? Boolean((state.dloOptions ?? "").trim())
+    : (state.steamOptions ?? []).some((o) => Boolean((o ?? "").trim()));
+  return inUse ? "field-in-use" : "apply";
+}
+
+/** What to say when it was applied. Named after the framework, because
+ * "launch options" means nothing to somebody who installed a collection
+ * and expected mods. */
+export function launchOptionsAppliedNote(
+  frameworkName: string,
+  gameName: string
+): { title: string; body: string } {
+  return {
+    title: `${gameName} will now start through ${frameworkName}`,
+    body:
+      "The collection installed the mod loader, so the launch command was " +
+      "set for you. Without it the game starts without any mods.",
+  };
+}
+
 /** The narrowest the header row can lay out under a plan. The fit contract
  * lives in one place so the test can hold every width to it: a plan whose
  * minimum exceeds the width it was made for is the exact bug that panned

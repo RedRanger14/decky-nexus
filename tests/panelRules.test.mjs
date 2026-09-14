@@ -4,54 +4,56 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  requirementSetupNotes,
-  fitReportBody,
-  crashHuntVerdict,
-  cancellableDownload,
-  directNote,
-  disableFailingOutcome,
-  failingProblem,
-  frameworkStepNumbers,
-  healthVerdict,
-  installedDepsNote,
-  isGoneFromNexus,
-  isNetworkError,
-  collectionRetryDelayMs,
-  knownBrokenNote,
-  lastRunSummary,
-  preDisabledNote,
+  BG3_MOD_LIMIT_STEPS,
+  autoOffGroups,
   autoOffNote,
   autoOffSummary,
-  autoOffGroups,
-  collectionCapacityWarning,
+  bg3ModLimitNote,
   bg3ModLimitOptions,
   bg3ModLimitSelected,
-  bg3ModLimitNote,
-  BG3_MOD_LIMIT_STEPS,
-  storeHeaderPlan,
-  storeHeaderMinWidth,
-  repairedNote,
-  unavailableNote,
-  updatedNote,
+  blockedPluginsAction,
+  cancellableDownload,
+  collectionCapacityWarning,
+  collectionLaunchOptions,
+  collectionOwnedCount,
+  collectionRetryDelayMs,
+  crashHuntVerdict,
   crashSuspect,
+  directNote,
+  disableFailingOutcome,
+  endorseControl,
+  failingProblem,
+  fileConflictProblem,
+  fitReportBody,
+  frameworkStepNumbers,
+  ghostPluginProblem,
+  healthVerdict,
   huntProgressNote,
+  installedDepsNote,
+  isActionableAttention,
+  isGoneFromNexus,
+  isNetworkError,
+  isRemaining,
+  knownBrokenNote,
+  lastRunSummary,
+  launchOptionsAppliedNote,
   launchWaitNotice,
   loadOrderProblem,
-  saveLoadVerdict,
   maskCoopPassword,
+  missingMasterProblem,
   pauseAllControl,
+  preDisabledNote,
+  repairedNote,
+  requirementSetupNotes,
+  saveLoadVerdict,
   showInstalledModsSection,
   showResetRow,
   slotPressure,
-  isRemaining,
-  isActionableAttention,
-  collectionOwnedCount,
-  endorseControl,
-  missingMasterProblem,
-  blockedPluginsAction,
-  fileConflictProblem,
-  ghostPluginProblem,
+  storeHeaderMinWidth,
+  storeHeaderPlan,
   troubleshootingCount,
+  unavailableNote,
+  updatedNote,
 } from "../.test-build/panelRules.js";
 
 test("reset is reachable with no mods installed", () => {
@@ -1614,6 +1616,83 @@ test("an unmeasured header plans for a Deck, not a desktop", () => {
   // planning narrow and growing is invisible.
   const plan = storeHeaderPlan(0);
   assert.ok(storeHeaderMinWidth(plan) <= 900);
+});
+
+// --- a collection that installs the loaders must set the launch command --
+
+const LAUNCH = {
+  hasTemplate: true,
+  frameworkInstalled: true,
+  alreadySet: false,
+  steamOptions: [],
+  dloPresent: false,
+  dloOptions: null,
+};
+
+test("a collection that installed the loader sets the launch command", () => {
+  // Issue #28: Cyberpunk, every loader installed from a collection, and
+  // none of them loaded because Proton was never told to prefer them.
+  assert.equal(collectionLaunchOptions(LAUNCH), "apply");
+});
+
+test("it never overwrites a launch command already there", () => {
+  assert.equal(
+    collectionLaunchOptions({ ...LAUNCH, steamOptions: ["gamemoderun %command%"] }),
+    "field-in-use"
+  );
+  assert.equal(
+    collectionLaunchOptions({ ...LAUNCH, steamOptions: ["", "  "] }),
+    "apply",
+    "blank entries are not a command"
+  );
+  // On a launch-options-plugin device Steam's field holds that plugin's
+  // wrapper, so the real command is the one to look at.
+  assert.equal(
+    collectionLaunchOptions({
+      ...LAUNCH,
+      dloPresent: true,
+      steamOptions: ["~/.dlo/run %command%"],
+      dloOptions: null,
+    }),
+    "apply"
+  );
+  assert.equal(
+    collectionLaunchOptions({
+      ...LAUNCH,
+      dloPresent: true,
+      steamOptions: ["~/.dlo/run %command%"],
+      dloOptions: "mangohud %command%",
+    }),
+    "field-in-use"
+  );
+});
+
+test("it stays out of the way when there is nothing to do", () => {
+  assert.equal(collectionLaunchOptions({ ...LAUNCH, hasTemplate: false }), "no-template");
+  assert.equal(
+    collectionLaunchOptions({ ...LAUNCH, frameworkInstalled: false }),
+    "framework-missing",
+    "a loader that is not installed cannot be launched through"
+  );
+  assert.equal(collectionLaunchOptions({ ...LAUNCH, alreadySet: true }), "already-set");
+});
+
+test("the note names the loader rather than saying launch options", () => {
+  const n = launchOptionsAppliedNote("Cyber Engine Tweaks", "Cyberpunk 2077");
+  assert.match(n.title, /Cyberpunk 2077 will now start through Cyber Engine Tweaks/);
+  assert.match(n.body, /without any mods/);
+  assert.ok(!n.title.includes("\u2014") && !n.body.includes("\u2014"));
+});
+
+test("the collection page actually applies it", () => {
+  const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(src, /collectionLaunchOptions\(/, "the decision is consulted");
+  assert.match(
+    src,
+    /setFrameworkLaunchOptions\(/,
+    "and written the same way the panel's own step writes it"
+  );
+  assert.match(src, /markLaunchOptionsSet\(/, "and recorded, so it is not redone");
 });
 
 test("the store page actually consults the plan", () => {

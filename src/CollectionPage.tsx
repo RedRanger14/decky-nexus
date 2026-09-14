@@ -29,6 +29,8 @@ import {
   isGoneFromNexus,
   isNetworkError,
   collectionRetryDelayMs,
+  collectionLaunchOptions,
+  launchOptionsAppliedNote,
   unavailableNote,} from "./panelRules";
 
 import {
@@ -51,7 +53,11 @@ import {
   NexusMod,
   getCollection,
   getCollectionAttention,
+  getFrameworkSetup,
   getGameStatus,
+  getLaunchOptionsState,
+  markLaunchOptionsSet,
+  setFrameworkLaunchOptions,
   getUserPrefs,
   getCollectionManifest,
   getInstalledMods,
@@ -63,6 +69,7 @@ import {
   enforceSkips,
 } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
+import { setLaunchOptions } from "./steam";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 import { collectionAutoOff, collectionStrandingUi } from "./compat";
 import { modeParams } from "./games";
@@ -428,6 +435,59 @@ export function CollectionPage() {
       }
     } catch {
       /* a bundle failing must not fail the whole install */
+    }
+    // The loaders the collection just installed only load if Steam starts
+    // the game through them. Step 1 offers that; a collection never did,
+    // so every loader sat there inert. See collectionLaunchOptions.
+    if (game.framework?.launchOptionsTemplate) {
+      try {
+        setFinalising("Setting the launch command so the mods load…");
+        const fw = game.framework;
+        const st = await getGameStatus(
+          game.installDirName,
+          game.modsSubdir,
+          fw.detectFile
+        );
+        const options = fw
+          .launchOptionsTemplate!.replace(
+            "{install_path}",
+            st.install_path ?? ""
+          )
+          .replace("{blse_script}", st.blse_script ?? "");
+        const setup = await getFrameworkSetup(game.nexusDomain, options);
+        const launch = await getLaunchOptionsState(game.appId);
+        const decision = collectionLaunchOptions({
+          hasTemplate: true,
+          frameworkInstalled: Boolean(st.framework_installed),
+          alreadySet: Boolean(setup.launch_options_set),
+          steamOptions: launch.steam_options ?? [],
+          dloPresent: Boolean(launch.dlo_present),
+          dloOptions: launch.dlo_options,
+        });
+        if (decision === "apply") {
+          const r = await setFrameworkLaunchOptions(
+            game.appId,
+            game.nexusDomain,
+            options
+          );
+          const ok =
+            r.ok ||
+            (Boolean(r.use_steam_client) &&
+              setLaunchOptions(game.appId, options));
+          if (ok) {
+            await markLaunchOptionsSet(
+              game.nexusDomain,
+              fw.launchOptionsTemplate!
+            );
+            toaster.toast({
+              ...launchOptionsAppliedNote(fw.name, game.displayName),
+              duration: 12000,
+            });
+          }
+        }
+      } catch {
+        /* the game panel's own step still offers it */
+      }
     }
     if (game.pluginsTxtSubpath) {
       try {
