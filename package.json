@@ -1,6 +1,6 @@
 {
   "name": "decky-nexus",
-  "version": "1.9.6",
+  "version": "1.9.7",
   "description": "Browse, install and manage Nexus Mods for the game you are playing, from Gaming Mode on a controller. Unofficial Decky Loader plugin.",
   "type": "module",
   "scripts": {
@@ -15,7 +15,8 @@
     "test:games": "node --test tests/gameConfig.test.mjs",
     "test:compat": "tsc src/compat.ts --outDir .test-build --module es2020 --target es2020 --skipLibCheck --declaration false && node --test tests/compat.test.mjs",
     "test:loadorder": "tsc src/loadOrderRules.ts --outDir .test-build --module es2020 --target es2020 --skipLibCheck --declaration false && node --test tests/loadOrder.test.mjs",
-    "check": "pnpm run typecheck && pnpm run lint:py && pnpm run test && pnpm run test:nav && pnpm run test:proton && pnpm run test:panel && pnpm run test:games && pnpm run test:compat && pnpm run test:loadorder",
+    "test:link": "tsc src/collectionLink.ts --outDir .test-build --module es2020 --target es2020 --skipLibCheck --declaration false && node --test tests/collectionLink.test.mjs",
+    "check": "pnpm run typecheck && pnpm run lint:py && pnpm run test && pnpm run test:nav && pnpm run test:proton && pnpm run test:panel && pnpm run test:games && pnpm run test:compat && pnpm run test:loadorder && pnpm run test:link",
     "lint:py": "python -m pyflakes main.py tests"
   },
   "keywords": [

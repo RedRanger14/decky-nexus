@@ -1711,3 +1711,35 @@ test("every full-screen page scroller uses PAGE_SCROLLER", () => {
     );
   }
 });
+
+// --- the store says what the adult gate hid, and reads a link (#30) --------
+// Three in four Skyrim collections are flagged adult and an account with
+// adult content off sees none of them, with nothing said. The gate follows
+// the account; the silence was ours.
+test("every collections list on the store says what the adult gate hid", () => {
+  const code = readCode("BrowsePage.tsx");
+  for (const [setter, state] of [
+    ["setRailHidden", "railHidden"],
+    ["setAllHidden", "allHidden"],
+    ["setSearchHidden", "searchHidden"],
+  ]) {
+    assert.ok(
+      code.includes(`${setter}(r.adult_hidden`),
+      `${state} is never set from the backend's count`
+    );
+    assert.ok(
+      code.includes(`hiddenCollectionsNote(${state}`),
+      `${state} is counted but never shown`
+    );
+  }
+});
+
+test("a link in the search box is looked up and a hidden answer is honoured", () => {
+  const code = readCode("BrowsePage.tsx");
+  assert.match(code, /parseCollectionLink\(search\)/, "the search text is never parsed as a link");
+  assert.match(code, /findCollection\(link\.slug/, "a parsed link is never looked up");
+  assert.match(code, /r\.adult_hidden[\s\S]{0,120}kind: "adult"/, "an adult answer is not turned into the note");
+  assert.match(code, /ADULT_LINK_NOTE/, "the adult note is never shown");
+  // The card opens the collection under ITS game, not the scoped one.
+  assert.match(code, /game=\{linkHit\.game\}/, "a linked collection opens under the wrong game");
+});

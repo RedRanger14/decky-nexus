@@ -1147,8 +1147,29 @@ export const getCollections = callable<
     sort: string,
     offset: number
   ],
-  { ok: boolean; collections?: CollectionSummary[]; error?: string }
+  {
+    ok: boolean;
+    collections?: CollectionSummary[];
+    /** How many the account's adult gate kept off this page (#30). */
+    adult_hidden?: number;
+    error?: string;
+  }
 >("get_collections");
+
+/** One collection by the slug in its link. `game_domain` is a hint; the
+ * answer carries the collection's real game. An adult collection behind a
+ * closed gate comes back as found + adult_hidden and nothing else. */
+export const findCollection = callable<
+  [slug: string, game_domain: string],
+  {
+    ok: boolean;
+    found?: boolean;
+    adult_hidden?: boolean;
+    game_domain?: string;
+    collection?: CollectionSummary;
+    error?: string;
+  }
+>("find_collection");
 
 export const getCollection = callable<
   [slug: string, game_domain: string],

@@ -15198,9 +15198,19 @@ class TestCollectionVersionPinning(unittest.TestCase):
         with open(main.__file__, encoding="utf-8") as fh:
             source = fh.read()
         self.assertIn("gameVersions { reference }", source)
+        # The listing hands each node to _collection_summary, which is
+        # where the version check now lives (shared with find_collection
+        # so a collection found by link gets the same verdict).
         fn = source[source.index("async def get_collections"):]
-        fn = fn[:fn.index("async def get_mods")]
-        self.assertIn("_versions_mismatch(", fn)
+        fn = fn[:fn.index("async def find_collection")]
+        self.assertIn("_collection_summary(", fn)
+        helper = source[source.index("def _collection_summary"):]
+        helper = helper[:helper.index("\ndef ", 10)]
+        self.assertIn("_versions_mismatch(", helper)
+        # And the lookup uses the same helper, not a copy of it.
+        lookup = source[source.index("async def find_collection"):]
+        lookup = lookup[:lookup.index("async def get_collection(")]
+        self.assertIn("_collection_summary(", lookup)
 
 
 class TestBannerlordLoadOrder(unittest.TestCase):
@@ -21203,3 +21213,216 @@ class TestMassEffectInstall(unittest.TestCase):
         src = inspect.getsource(main.Plugin.install_fomod)
         self.assertLess(src.index('entry.get("masseffect")'), src.index("_fomod_stage("),
                         "the Mass Effect branch comes before any FOMOD staging")
+
+
+class TestFindCollectionByLink(unittest.TestCase):
+    """#30: "there's some collections that don't show up when you search
+    them". A slug from a link finds one directly, and the account's adult
+    gate is enforced on that path too, because the API does not."""
+
+    NODE = {
+        "name": "Welcome to Night City 2.31a", "slug": "iszwwe",
+        "summary": "The big one", "endorsements": 11164,
+        "adultContent": False, "description": "Install and play.",
+        "user": {"name": "dae"}, "game": {"domainName": "cyberpunk2077"},
+        "tileImage": {"thumbnailUrl": "https://img/x.jpg"},
+        "latestPublishedRevision": {"modCount": 283, "totalSize": 12345,
+                                    "gameVersions": []},
+    }
+
+    def setUp(self):
+        try:
+            os.remove(main.SETTINGS_PATH)
+        except FileNotFoundError:
+            pass
+        self.plugin = main.Plugin()
+        self.orig = main._gql_query_vars
+        self.calls = []
+
+    def tearDown(self):
+        main._gql_query_vars = self.orig
+
+    def _answer(self, node=None, error=None):
+        async def fake(query, variables, api_key=None):
+            self.calls.append((query, variables))
+            if error:
+                raise RuntimeError(error)
+            return {"collection": node}
+        main._gql_query_vars = fake
+
+    def _open_gate(self):
+        settings = main._load_settings()
+        settings["content_gate"] = {"adult_pref": True, "age_verified": True,
+                                    "blur_images": False, "checked_at": 0}
+        main._save_settings(settings)
+
+    def test_a_slug_finds_the_collection_and_says_which_game_it_is_for(self):
+        self._answer(self.NODE)
+        # The hint says Skyrim; the collection knows better.
+        r = run(self.plugin.find_collection("iszwwe", "skyrimspecialedition"))
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["found"])
+        self.assertFalse(r["adult_hidden"])
+        self.assertEqual(r["game_domain"], "cyberpunk2077")
+        c = r["collection"]
+        self.assertEqual(c["name"], "Welcome to Night City 2.31a")
+        self.assertEqual(c["slug"], "iszwwe")
+        self.assertEqual(c["author"], "dae")
+        self.assertEqual(c["modCount"], 283)
+        self.assertEqual(c["thumbnailUrl"], "https://img/x.jpg")
+        self.assertIn("needs_older_game", c)
+
+    def test_an_adult_collection_is_withheld_while_the_gate_is_closed(self):
+        # Measured live: the API hands back Gate To Sovngarde whatever
+        # viewAdultContent says. The gate has to live here.
+        self._answer({**self.NODE, "name": "Gate To Sovngarde",
+                      "slug": "qdurkx", "adultContent": True,
+                      "game": {"domainName": "skyrimspecialedition"}})
+        r = run(self.plugin.find_collection("qdurkx", "skyrimspecialedition"))
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["found"])
+        self.assertTrue(r["adult_hidden"])
+        # Told it exists and why it is hidden. Told nothing else.
+        self.assertEqual(r["game_domain"], "skyrimspecialedition")
+        self.assertNotIn("collection", r)
+        self.assertNotIn("Sovngarde", json.dumps(r))
+        # And the query asked the question the gate depends on.
+        self.assertIn("adultContent", self.calls[0][0])
+
+    def test_the_same_collection_is_shown_when_the_account_allows_it(self):
+        self._open_gate()
+        self._answer({**self.NODE, "adultContent": True})
+        r = run(self.plugin.find_collection("iszwwe", "cyberpunk2077"))
+        self.assertFalse(r["adult_hidden"])
+        self.assertEqual(r["collection"]["name"], "Welcome to Night City 2.31a")
+
+    def test_an_unknown_slug_is_not_found_rather_than_an_error(self):
+        # The API says "Collection not found" as a GraphQL error; a typo
+        # in six characters is not a failure of the plugin.
+        self._answer(error="Collection not found")
+        r = run(self.plugin.find_collection("zzzzzz", "cyberpunk2077"))
+        self.assertEqual(r, {"ok": True, "found": False})
+
+    def test_a_null_answer_is_not_found_too(self):
+        self._answer(None)
+        r = run(self.plugin.find_collection("zzzzzz", "cyberpunk2077"))
+        self.assertEqual(r, {"ok": True, "found": False})
+
+    def test_any_other_failure_is_reported_as_one(self):
+        self._answer(error="HTTP 502")
+        r = run(self.plugin.find_collection("iszwwe", "cyberpunk2077"))
+        self.assertFalse(r["ok"])
+        self.assertIn("502", r["error"])
+
+    def test_the_slug_reaches_the_api_lower_cased(self):
+        self._answer(self.NODE)
+        run(self.plugin.find_collection("ISZWWE", "cyberpunk2077"))
+        self.assertEqual(self.calls[0][1], {"slug": "iszwwe"})
+
+    def test_a_slug_that_is_not_one_is_refused_before_any_request(self):
+        self._answer(self.NODE)
+        for bad in ("", "../x", "a b", "x" * 65):
+            r = run(self.plugin.find_collection(bad, "cyberpunk2077"))
+            self.assertFalse(r["ok"], bad)
+        self.assertEqual(self.calls, [])
+
+
+class TestHiddenCollectionCount(unittest.TestCase):
+    """The store says how many collections the adult gate kept off the
+    page, instead of leaving a silent gap (#30). Live numbers on
+    2026-09-17: Skyrim 1,171 visible of 4,733."""
+
+    NODES = [
+        {"name": "Verolevi's Animations", "slug": "oxtos9",
+         "description": "", "latestPublishedRevision": {"modCount": 40}},
+        {"name": "Essential Mods for Skyrim", "slug": "xk05aw",
+         "description": "", "latestPublishedRevision": {"modCount": 60}},
+    ]
+    FILTER = "adultContent: [{ value: false }]"
+
+    def setUp(self):
+        try:
+            os.remove(main.SETTINGS_PATH)
+        except FileNotFoundError:
+            pass
+        self.plugin = main.Plugin()
+        self.orig = main._gql_query_vars
+        self.calls = []
+
+    def tearDown(self):
+        main._gql_query_vars = self.orig
+
+    def _open_gate(self):
+        settings = main._load_settings()
+        settings["content_gate"] = {"adult_pref": True, "age_verified": True,
+                                    "blur_images": False, "checked_at": 0}
+        main._save_settings(settings)
+
+    def _serve(self, filtered_total=1171, everything_total=4733,
+               fail_count=False):
+        async def fake(query, variables, api_key=None):
+            self.calls.append((query, variables))
+            if self.FILTER in query:
+                return {"collectionsV2": {"totalCount": filtered_total,
+                                          "nodes": self.NODES}}
+            if fail_count:
+                raise RuntimeError("nexus hiccup")
+            return {"collectionsV2": {"totalCount": everything_total,
+                                      "nodes": self.NODES[:1]}}
+        main._gql_query_vars = fake
+
+    def test_the_listing_counts_what_the_gate_hid(self):
+        self._serve()
+        r = run(self.plugin.get_collections(
+            "skyrimspecialedition", 8, "", "endorsements", 0))
+        self.assertTrue(r["ok"])
+        self.assertEqual([c["slug"] for c in r["collections"]],
+                         ["oxtos9", "xk05aw"])
+        self.assertEqual(r["adult_hidden"], 3562)
+        # The count is a count: one row asked for, nothing displayed.
+        counts = [v for q, v in self.calls if self.FILTER not in q]
+        self.assertEqual(len(counts), 1)
+        self.assertEqual(counts[0]["count"], 1)
+
+    def test_a_search_counts_its_own_hidden_matches(self):
+        self._serve(filtered_total=1, everything_total=5)
+        r = run(self.plugin.get_collections(
+            "skyrimspecialedition", 20, "immersive", "endorsements", 0))
+        self.assertEqual(r["adult_hidden"], 4)
+        counts = [v for q, v in self.calls if self.FILTER not in q]
+        self.assertEqual(counts[0]["search"], "immersive")
+
+    def test_nothing_is_counted_when_the_account_allows_adult_content(self):
+        self._open_gate()
+        self._serve()
+        r = run(self.plugin.get_collections(
+            "skyrimspecialedition", 8, "", "endorsements", 0))
+        self.assertEqual(r["adult_hidden"], 0)
+        # No filter in the listing, and no extra count request.
+        self.assertTrue(all(self.FILTER not in q for q, _ in self.calls))
+        self.assertTrue(all(v["count"] != 1 for _, v in self.calls))
+
+    def test_the_count_is_asked_for_on_the_first_page_only(self):
+        self._serve()
+        r = run(self.plugin.get_collections(
+            "skyrimspecialedition", 30, "", "endorsements", 30))
+        self.assertEqual(r["adult_hidden"], 0)
+        self.assertTrue(all(v["count"] != 1 for _, v in self.calls))
+
+    def test_a_failed_count_costs_the_note_and_nothing_else(self):
+        self._serve(fail_count=True)
+        r = run(self.plugin.get_collections(
+            "skyrimspecialedition", 8, "", "endorsements", 0))
+        self.assertTrue(r["ok"])
+        self.assertEqual(len(r["collections"]), 2)
+        self.assertEqual(r["adult_hidden"], 0)
+
+    def test_an_api_without_a_total_leaves_the_note_out(self):
+        async def fake(query, variables, api_key=None):
+            self.calls.append((query, variables))
+            return {"collectionsV2": {"nodes": self.NODES}}
+        main._gql_query_vars = fake
+        r = run(self.plugin.get_collections(
+            "skyrimspecialedition", 8, "", "endorsements", 0))
+        self.assertEqual(r["adult_hidden"], 0)
+        self.assertEqual(len(self.calls), 1)

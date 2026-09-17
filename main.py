@@ -11076,6 +11076,53 @@ _HTTP_SESSION = None
 # which is honest.
 COLLECTION_BACKFILL_ROUNDS = 4
 
+
+def _collection_summary(n: dict, game_domain: str, blocked_slugs) -> dict:
+    """One collection node from the API as the store shows it.
+
+    Shared by the listing and the by-link lookup so the two can never
+    disagree about what a tile carries.
+
+    A collection that needs an older game build is WARNED about, not
+    hidden. Michael: "I dont know if the collection should dissapear, that
+    feels a little too far... my preference would be an advance warning to
+    novice users so they dont download it in the first place but more
+    advanced users can push through and choose to enable/disable specific
+    mods". Hiding was the same mistake as silence in a different coat:
+    somebody who knows their setup cannot act on a collection they cannot
+    see, and nobody learns why it went.
+
+    `built_for` is the fact behind the verdict: which version the
+    collection declares, so the tile can say "BUILT FOR v1.2.11" and the
+    user can judge. Michael: "I dont like what weve done... its every
+    single collection" - a blanket badge with no version reads as a
+    blanket block.
+    """
+    slug = n.get("slug") or ""
+    rev = n.get("latestPublishedRevision") or {}
+    refs = [
+        (g or {}).get("reference") for g in (rev.get("gameVersions") or [])
+    ]
+    reader = _GAME_VERSION_READERS.get(game_domain)
+    version_pinned = bool(reader and _versions_mismatch(refs, reader()))
+    built_for = str(refs[0]) if version_pinned and refs else ""
+    needs_older = version_pinned or bool(
+        slug in blocked_slugs
+        or _collection_downgrade_reason(n.get("description") or "")
+    )
+    return {
+        "name": n.get("name") or "",
+        "slug": slug,
+        "needs_older_game": needs_older,
+        "built_for": built_for,
+        "summary": n.get("summary") or "",
+        "endorsements": n.get("endorsements") or 0,
+        "author": (n.get("user") or {}).get("name") or "",
+        "thumbnailUrl": (n.get("tileImage") or {}).get("thumbnailUrl"),
+        "modCount": rev.get("modCount") or 0,
+        "totalSize": int(rev.get("totalSize") or 0),
+    }
+
 DOWNLOAD_STALL_SECONDS = 45
 
 # How many transport failures to absorb before giving up on a file. Three
@@ -13691,6 +13738,7 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
     count: $count
     offset: $offset
   ) {
+    totalCount
     nodes {
       name
       slug
@@ -13708,15 +13756,23 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
   }
 }"""
         sort_field = _collection_sort_field(sort)
-        query = (
+        base = (
             query.replace("%SEARCHPARAM%", search_param)
             .replace("%SEARCH%", search_filter)
             .replace("%SORT%", sort_field)
-            .replace(
-                "%ADULT%",
-                "" if _show_adult() else "adultContent: [{ value: false }]",
-            )
         )
+        # Adult content follows the ACCOUNT (see _show_adult); the website
+        # hides the same collections from the same people. But hiding is
+        # not the same as pretending: with the gate closed, three in four
+        # Skyrim collections and the five most endorsed of them are not on
+        # this page, and a search for one of them reads as "does not
+        # exist" (#30). So the same query is kept unfiltered too, for a
+        # COUNT of what the gate hid. Count only - none of it is fetched.
+        gate_closed = not _show_adult()
+        query = base.replace(
+            "%ADULT%", "adultContent: [{ value: false }]" if gate_closed else ""
+        )
+        query_everything = base.replace("%ADULT%", "")
         # Filtering a fixed page leaves holes in it. Hiding the two
         # Fallout 4 collections that need an older game turned a row of
         # eight into a row of three, which is a worse page than the one
@@ -13730,6 +13786,8 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
         src_offset = int(offset)
         out = []
         hidden = []
+        # What the FILTERED query says exists in total, read off page one.
+        filtered_total = None
         # Collections already found to need a different game build. The
         # description check catches the ones that say so; this catches the
         # ones that only their files admit to, once anything has looked.
@@ -13754,76 +13812,15 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                     variables["search"] = search
                 data = await _gql_query_vars(query, variables, api_key)
                 nodes = data["collectionsV2"]["nodes"]
+                if filtered_total is None:
+                    filtered_total = data["collectionsV2"].get("totalCount")
                 src_offset += len(nodes)
                 for n in nodes:
-                    rev = n.get("latestPublishedRevision") or {}
-                    # A collection that needs an older game cannot be
-                    # installed here at all, so it does not belong on a
-                    # page of things to install. Michael: "its kind of a
-                    # highlights page and we shouldn't show things you
-                    # can't install".
-                    #
-                    # Free to check: `description` comes back on the SAME
-                    # list query, so this costs no extra requests. Hidden
-                    # from the HIGHLIGHTS only - search still finds it and
-                    # its own page still explains why it is blocked, so
-                    # nobody is told it does not exist.
                     slug = n.get("slug") or ""
-                    # WARNED, not hidden. Michael: "I dont know if the
-                    # collection should dissapear, that feels a little too
-                    # far... my preference would be an advance warning to
-                    # novice users so they dont download it in the first
-                    # place but more advanced users can push through and
-                    # choose to enable/disable specific mods".
-                    #
-                    # Right, and hiding was the same mistake as silence in
-                    # a different coat: somebody who knows their setup
-                    # cannot act on a collection they cannot see, and
-                    # nobody learns why it went.
-                    rev = n.get("latestPublishedRevision") or {}
-                    refs = [
-                        (g or {}).get("reference")
-                        for g in (rev.get("gameVersions") or [])
-                    ]
-                    reader = _GAME_VERSION_READERS.get(game_domain)
-                    version_pinned = bool(
-                        reader and _versions_mismatch(refs, reader())
-                    )
-                    built_for = (
-                        str(refs[0]) if version_pinned and refs else ""
-                    )
-                    needs_older = version_pinned or bool(
-                        slug in blocked_slugs
-                        or _collection_downgrade_reason(
-                            n.get("description") or ""
-                        )
-                    )
-                    if needs_older:
-                        hidden.append(f"{n.get('name') or slug} ({slug})")
-                    out.append(
-                        {
-                            "name": n.get("name") or "",
-                            "slug": slug,
-                            # The tile shows a warning rather than the
-                            # collection vanishing.
-                            "needs_older_game": needs_older,
-                            # The fact, not just the verdict: which version
-                            # the collection declares, so the tile can say
-                            # "BUILT FOR v1.2.11" and the user can judge.
-                            # Michael: "I dont like what weve done... its
-                            # every single collection" - a blanket badge
-                            # with no version reads as a blanket block.
-                            "built_for": built_for,
-                            "summary": n.get("summary") or "",
-                            "endorsements": n.get("endorsements") or 0,
-                            "author": (n.get("user") or {}).get("name") or "",
-                            "thumbnailUrl": (n.get("tileImage") or {}).get(
-                                "thumbnailUrl"
-                            ),
-                            "modCount": rev.get("modCount") or 0,
-                            "totalSize": int(rev.get("totalSize") or 0),
-                        }
-                    )
+                    summary = _collection_summary(n, game_domain, blocked_slugs)
+                    if summary["needs_older_game"]:
+                        hidden.append(f"{summary['name'] or slug} ({slug})")
+                    out.append(summary)
                 if len(nodes) < take:
                     break  # the source is exhausted, not just filtered
             out = out[:wanted]
@@ -13833,13 +13830,37 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
                     f"{len(hidden)} collection(s) as needing an older game "
                     f"build: {', '.join(hidden[:5])}"
                 )
+            adult_hidden = 0
+            if gate_closed and int(offset) == 0 and filtered_total is not None:
+                # One more request, count only, on the first page only.
+                # A failure here costs the note, never the page.
+                try:
+                    variables = {"gameDomain": game_domain, "count": 1,
+                                 "offset": 0}
+                    if search:
+                        variables["search"] = search
+                    everything = await _gql_query_vars(
+                        query_everything, variables, api_key
+                    )
+                    total = everything["collectionsV2"].get("totalCount")
+                    if total is not None:
+                        adult_hidden = max(0, int(total) - int(filtered_total))
+                except Exception as e:  # noqa: BLE001 - the note is optional
+                    decky.logger.debug(
+                        f"get_collections({game_domain!r}): unfiltered count "
+                        f"failed: {e}"
+                    )
             decky.logger.info(
-                f"get_collections({game_domain!r}): {len(out)} returned"
+                f"get_collections({game_domain!r}): {len(out)} returned, "
+                f"{adult_hidden} hidden by the adult gate"
             )
             return {
                 "ok": True,
                 "collections": out,
                 "hidden": len(hidden),
+                # How many the account's adult gate kept off this page, so
+                # the store can say so instead of leaving a gap (#30).
+                "adult_hidden": adult_hidden,
                 # Where the SOURCE got to, which is further than len(out)
                 # whenever something was dropped. Without it the caller
                 # re-requests rows it has already seen.
@@ -13847,6 +13868,83 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
             }
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    async def find_collection(self, slug: str, game_domain: str) -> dict:
+        """One collection by its slug: the six characters after
+        /collections/ in a nexusmods.com link. For #30: "there's some
+        collections that don't show up when you search them".
+
+        The store's search matches names only, so a link, or a slug read
+        off a friend's screen, found nothing. This finds it. `game_domain`
+        is only a hint for the version check; the collection's own game
+        comes back, because a link can name any game.
+
+        The account's adult gate is enforced HERE, on purpose. Measured
+        2026-09-17: `collection(slug:, viewAdultContent: false)` hands back
+        Gate To Sovngarde, adultContent true, exactly as `true` does - the
+        API does not gate a direct lookup. Without this check a link box
+        would be a way round the account's setting, which no plugin-side
+        path may be (see _show_adult). A hidden one is reported as hidden,
+        with nothing else about it, so the user learns why rather than
+        seeing nothing.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", slug or ""):
+            return {"ok": False, "error": "Invalid collection slug"}
+        api_key = _load_settings().get("api_key")
+        query = """
+query FindCollection($slug: String!) {
+  collection(slug: $slug, viewAdultContent: true) {
+    name
+    slug
+    summary
+    endorsements
+    adultContent
+    description
+    user { name }
+    game { domainName }
+    tileImage { thumbnailUrl(size: small) }
+    latestPublishedRevision {
+      modCount
+      totalSize
+      gameVersions { reference }
+    }
+  }
+}"""
+        try:
+            data = await _gql_query_vars(
+                query, {"slug": slug.lower()}, api_key
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                KeyError) as e:
+            # The API answers an unknown slug with an error, not a null.
+            if "not found" in str(e).lower():
+                return {"ok": True, "found": False}
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        n = data.get("collection") or None
+        if not n:
+            return {"ok": True, "found": False}
+        domain = (
+            (n.get("game") or {}).get("domainName") or game_domain or ""
+        )
+        if n.get("adultContent") and not _show_adult():
+            decky.logger.info(
+                f"find_collection({slug!r}): adult, gate closed, withheld"
+            )
+            return {
+                "ok": True, "found": True, "adult_hidden": True,
+                "game_domain": domain,
+            }
+        blocked = set(
+            ((_load_settings().get("collection_blocked") or {})
+             .get(domain) or {}).keys()
+        )
+        return {
+            "ok": True,
+            "found": True,
+            "adult_hidden": False,
+            "game_domain": domain,
+            "collection": _collection_summary(n, domain, blocked),
+        }
 
     async def get_collection(self, slug: str, game_domain: str) -> dict:
         """A collection's latest revision: ordered, pinned mod files."""

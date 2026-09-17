@@ -13,6 +13,7 @@ import {
   CollectionSummary,
   ModsResult,
   NexusMod,
+  findCollection,
   getCollections,
   getGameCategories,
   getInstalledMods,
@@ -23,7 +24,20 @@ import {
   CollectionVerdictState,
   getCollectionVerdicts,
 } from "./api";
-import { SupportedGame, frameworkModIds, getActiveGame, modeParams } from "./games";
+import {
+  ALL_GAMES,
+  SupportedGame,
+  frameworkModIds,
+  getActiveGame,
+  modeParams,
+} from "./games";
+import {
+  ADULT_LINK_NOTE,
+  LINK_HINT,
+  hiddenCollectionsNote,
+  parseCollectionLink,
+  unsupportedLinkNote,
+} from "./collectionLink";
 import {
   getBrowseGame,
   markBrowseReturn,
@@ -160,6 +174,23 @@ function ScrollHeaderIntoView() {
     return () => clearTimeout(timer);
   }, []);
   return <div ref={ref} style={{ height: 0 }} />;
+}
+
+/** What a link typed into the search box resolved to (#30). */
+type LinkHit =
+  | { kind: "found"; game: SupportedGame; collection: CollectionSummary }
+  | { kind: "adult" }
+  | { kind: "unsupported"; domain: string };
+
+/** One quiet line under a heading: what the page is NOT showing, and why.
+ * Renders nothing for empty text so callers need not guard it. */
+function HiddenNote({ text }: { text: string }) {
+  if (!text) return null;
+  return (
+    <div style={{ fontSize: "12.5px", opacity: 0.7, margin: "0 0 8px" }}>
+      {text}
+    </div>
+  );
 }
 
 function CollectionCard({
@@ -716,6 +747,15 @@ export function BrowsePage() {
   const [searchScope, setSearchScope] = useState<"mods" | "collections">(
     "mods"
   );
+  // How many collections the account's adult gate kept off each list, so
+  // the page can say so instead of leaving a gap (#30). One per fetch,
+  // because each has its own total.
+  const [railHidden, setRailHidden] = useState(0);
+  const [allHidden, setAllHidden] = useState(0);
+  const [searchHidden, setSearchHidden] = useState(0);
+  // A link, or a bare slug, in the search box, looked up directly. The
+  // ordinary search runs beside it; this is one more result.
+  const [linkHit, setLinkHit] = useState<LinkHit | null>(null);
   const [searchCollections, setSearchCollections] = useState<
     CollectionSummary[]
   >([]);
@@ -735,6 +775,7 @@ export function BrowsePage() {
       (r) => {
         if (!r.ok) return;
         const page = r.collections ?? [];
+        if (offset === 0) setAllHidden(r.adult_hidden ?? 0);
         setCollectionsHasMore(page.length >= 30);
         setAllCollections((prev) => (append ? [...prev, ...page] : page));
       }
@@ -804,7 +845,10 @@ export function BrowsePage() {
     setPopular([]);
     setTotal(undefined);
     getCollections(game.nexusDomain, 5, "", "endorsements", 0).then((r) => {
-      if (!cancelled && r.ok) setCollections(r.collections ?? []);
+      if (!cancelled && r.ok) {
+        setCollections(r.collections ?? []);
+        setRailHidden(r.adult_hidden ?? 0);
+      }
     });
     // Badges for every list on this page, fetched once per game.
     getCollectionVerdicts(game.nexusDomain, game.appId)
@@ -841,14 +885,52 @@ export function BrowsePage() {
   useEffect(() => {
     if (isHome || !effectiveSearch) {
       setSearchCollections([]);
+      setSearchHidden(0);
       return;
     }
     const timer = setTimeout(() => {
       getCollections(game.nexusDomain, 20, effectiveSearch, "endorsements", 0).then((r) => {
-        if (r.ok) setSearchCollections(r.collections ?? []);
+        if (r.ok) {
+          setSearchCollections(r.collections ?? []);
+          setSearchHidden(r.adult_hidden ?? 0);
+        }
       });
     }, 500);
     return () => clearTimeout(timer);
+  }, [game.appId, search]);
+
+  // A link, or the six characters after /collections/ in one, names ONE
+  // collection. The search above matches names only, so a link found
+  // nothing (#30). A link can name any game; the answer says which, and
+  // the card opens it under that game.
+  useEffect(() => {
+    const link = parseCollectionLink(search);
+    if (isHome || !link) {
+      setLinkHit(null);
+      return;
+    }
+    let stale = false;
+    const timer = setTimeout(() => {
+      findCollection(link.slug, link.domain ?? game.nexusDomain).then((r) => {
+        if (stale) return;
+        if (!r.ok || !r.found) {
+          setLinkHit(null);
+        } else if (r.adult_hidden) {
+          setLinkHit({ kind: "adult" });
+        } else {
+          const target = ALL_GAMES.find((g) => g.nexusDomain === r.game_domain);
+          if (!target || !r.collection) {
+            setLinkHit({ kind: "unsupported", domain: r.game_domain ?? "" });
+          } else {
+            setLinkHit({ kind: "found", game: target, collection: r.collection });
+          }
+        }
+      });
+    }, 500);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
   }, [game.appId, search]);
 
   useEffect(() => {
@@ -1169,6 +1251,7 @@ export function BrowsePage() {
                 />
               </div>
             </Focusable>
+            <HiddenNote text={hiddenCollectionsNote(allHidden, false)} />
             <Focusable
               autoFocus={true}
               style={{
@@ -1260,6 +1343,7 @@ export function BrowsePage() {
         {collections.length > 0 && (
               <>
                 <SectionHeading title="Collections" />
+                <HiddenNote text={hiddenCollectionsNote(railHidden, false)} />
                 <Focusable
                   style={{
                     display: "grid",
@@ -1341,6 +1425,41 @@ export function BrowsePage() {
             {loading && mods.length === 0 && (
               <div style={{ padding: "24px 0", opacity: 0.8 }}>Loading mods…</div>
             )}
+            {search.trim() !== "" && linkHit && (
+              <div style={{ marginTop: "10px" }}>
+                {linkHit.kind === "found" ? (
+                  <>
+                    <SectionHeading title="From your link" />
+                    {linkHit.game.appId !== game.appId && (
+                      <HiddenNote
+                        text={`A ${linkHit.game.displayName} collection.`}
+                      />
+                    )}
+                    <Focusable
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, 1fr)",
+                        gap: "12px",
+                      }}
+                    >
+                      <CollectionCard
+                        game={linkHit.game}
+                        c={linkHit.collection}
+                        verdict={verdicts[linkHit.collection.slug]}
+                      />
+                    </Focusable>
+                  </>
+                ) : (
+                  <HiddenNote
+                    text={
+                      linkHit.kind === "adult"
+                        ? ADULT_LINK_NOTE
+                        : unsupportedLinkNote(linkHit.domain)
+                    }
+                  />
+                )}
+              </div>
+            )}
             {!loading && !error && mods.length === 0 && total !== undefined && (
               <div style={{ padding: "24px 0", opacity: 0.8 }}>
                 No mods match “{search.trim()}”.
@@ -1374,12 +1493,15 @@ export function BrowsePage() {
               </Focusable>
             )}
             {search.trim() !== "" && searchScope === "collections" ? (
+              <>
+              <div style={{ marginTop: "8px" }}>
+                <HiddenNote text={hiddenCollectionsNote(searchHidden, true)} />
+              </div>
               <Focusable
                 style={{
                   display: "grid",
                   gridTemplateColumns: "repeat(3, 1fr)",
                   gap: "12px",
-                  marginTop: "8px",
                 }}
               >
                 {searchCollections.map((c) => (
@@ -1393,9 +1515,11 @@ export function BrowsePage() {
                 {searchCollections.length === 0 && (
                   <div style={{ opacity: 0.7, fontSize: "13px" }}>
                     No collections match "{search.trim()}".
+                    {!searchHidden && !linkHit && ` ${LINK_HINT}`}
                   </div>
                 )}
               </Focusable>
+              </>
             ) : (
             <Focusable
               autoFocus={!typedRecently()}
