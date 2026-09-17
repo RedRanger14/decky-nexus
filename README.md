@@ -69,6 +69,8 @@ appear in the plugin until they do.
 - Nier: Automata
 - Skyrim VR
 - The Blood of Dawnwalker
+- GTA V
+- Guitar Hero World Tour
 
 Want one moved up, or a new one added? Open a [game request][issues] and say
 which. Adding a game means installing it, modding it and playing it on
