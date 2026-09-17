@@ -12007,6 +12007,12 @@ ME_BINK_SHA256 = "fc3b6c5ede71767e1e1d260071992a044679c7da57ca7c5a2847385a78a75b
 ME_BINK_SIZE = 399400
 ME_BINK_ORIGINAL = "bink2w64_original.dll"
 ME_RUNNING = "Mass Effect is running. Close it before changing mods."
+# Said the same way wherever a merge mod stops an install, because the
+# user's next question is always "so can I get this mod at all".
+ME_MERGE_REFUSAL = (
+    "This mod works by editing the game's own files (a merge mod), which "
+    "needs ME3Tweaks Mod Manager on a PC. It cannot be installed from here."
+)
 ME_TOC_MAGIC = 0x3AB70C13
 # Flags per file type, read off the shipped tables: packages, audio and
 # movies carry 1; text tables, tables of contents, texture caches, mount
@@ -12470,11 +12476,24 @@ def _me_running() -> bool:
 
 # ---- planning an install -------------------------------------------------------
 
-def _me_find_moddesc(scratch: str):
-    """(moddesc path, mod root) for the shallowest moddesc.ini, or (None,
-    None). A mod deployed by ME3Tweaks Mod Manager has it at the root; a
-    hand-zipped one often has a wrapper folder."""
-    best = None
+def _me_moddesc_game(path: str) -> str:
+    """The `game` a moddesc.ini declares, upper-cased, or "". Read on its
+    own so an archive holding several mods can be sorted before any of
+    them is planned in full."""
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as f:
+            ini = _me_parse_moddesc(f.read())
+    except OSError:
+        return ""
+    return (ini.get("ModInfo", {}).get("game") or "").upper().strip()
+
+
+def _me_moddesc_candidates(scratch: str) -> list:
+    """Every moddesc.ini in the archive as (depth, path, game), shallowest
+    first. One archive often holds more than one mod: the Unofficial LE2
+    Patch ships the patch under LE2/ and a launcher video fix under
+    LELauncher/, each with its own moddesc."""
+    out = []
     for root, dirs, names in os.walk(scratch):
         depth = root[len(scratch):].count(os.sep)
         if depth > 2:
@@ -12482,11 +12501,29 @@ def _me_find_moddesc(scratch: str):
             continue
         for n in names:
             if n.lower() == "moddesc.ini":
-                cand = os.path.join(root, n)
-                if best is None or depth < best[0]:
-                    best = (depth, cand)
-    if not best:
+                p = os.path.join(root, n)
+                out.append((depth, p, _me_moddesc_game(p)))
+    out.sort(key=lambda c: (c[0], c[1]))
+    return out
+
+
+def _me_find_moddesc(scratch: str):
+    """(moddesc path, mod root) for the mod this archive is really for, or
+    (None, None). A mod deployed by ME3Tweaks Mod Manager has moddesc.ini
+    at the root; a hand-zipped one often has a wrapper folder.
+
+    Shallowest wins, EXCEPT that a moddesc for one of the three games
+    beats one this plugin cannot install. The Unofficial LE2 Patch
+    (13,252 endorsements) ships two mods side by side at the same depth,
+    and taking whichever the filesystem listed first refused the whole
+    download with "This mod changes the launcher", which is true of the
+    half nobody asked for.
+    """
+    cands = _me_moddesc_candidates(scratch)
+    if not cands:
         return None, None
+    playable = [c for c in cands if c[2] in ME_GAME_DIRS]
+    best = (playable or cands)[0]
     return best[1], os.path.dirname(best[1])
 
 
@@ -12712,17 +12749,16 @@ def _me_plan(scratch: str, install_path: str) -> dict:
     # A merge mod behind an option is dropped from the options; behind an
     # automatic condition it is the mod, and the mod is refused.
     kept = []
+    dropped_merges = False
     for alt in plan["alts"]:
         if (alt.get("modoperation") or "").upper() == "OP_APPLY_MERGEMODS":
             if (alt.get("condition") or "").upper() == "COND_MANUAL":
+                dropped_merges = True
                 plan["skipped"].append(
                     f"option '{alt.get('friendlyname') or 'merge mod'}' needs a "
                     "merge mod, which this plugin cannot apply")
                 continue
-            plan.update(ok=False, error=(
-                "This mod changes the game's own files with a merge mod, "
-                "which needs ME3Tweaks Mod Manager on a PC. It cannot be "
-                "installed from here."))
+            plan.update(ok=False, error=ME_MERGE_REFUSAL)
             return plan
         kept.append(alt)
     plan["alts"] = kept
@@ -12730,7 +12766,15 @@ def _me_plan(scratch: str, install_path: str) -> dict:
     if not plan["dlc"] and not plan["basegame"] and not plan["localization"] \
             and not any((a.get("modoperation") or "").upper() == "OP_ADD_CUSTOMDLC"
                         for a in plan["alts"]):
+        # A mod whose every option was a merge mod has just had all of them
+        # dropped, so "installs nothing" is true but says the wrong thing:
+        # it reads as a broken download rather than a limit of this plugin.
+        # Two of the ten most endorsed mods for this game are exactly that
+        # shape - One Probe All Resources (14,447 endorsements) and Skip
+        # Minigames (9,485) are nothing but merge mods behind a pick-one
+        # group - and both told the user their package was empty.
         plan.update(ok=False, error=(
+            ME_MERGE_REFUSAL if dropped_merges else
             "This package installs nothing this plugin can place: no DLC "
             "folder and no game files."))
         return plan

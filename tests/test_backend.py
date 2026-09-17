@@ -21469,3 +21469,162 @@ class TestCollectionTilesCarryTheAdultFlag(unittest.TestCase):
             {"slug": "xxsqm4", "adultContent": True},
             "skyrimspecialedition", set())
         self.assertIs(tile["adultContent"], True)
+
+
+class TestMassEffectMergeOnlyMods(unittest.TestCase):
+    """A mod that is NOTHING but merge mods behind a pick-one group told
+    the user its package was empty. Two of the ten most endorsed mods for
+    this game are exactly that shape, so the message mattered.
+
+    Both moddesc files below are the real ones, read off the device from
+    the archives the plugin had already downloaded (mods 149 and 304)."""
+
+    ONE_PROBE = """[ModManager]
+cmmver = 7.0
+
+[ModInfo]
+modname = One Probe All Resources
+game = LE2
+moddesc = Scanning will detect all resources and anomalies.
+moddev = ThievingSix
+modver = 1.0
+nexuscode = 149
+
+[BASEGAME]
+moddir = .
+altfiles = (FriendlyName="Fast Probe Speed", Description="Twice speed.", \
+Condition=COND_MANUAL, CheckedByDefault=true, OptionGroup="UXMode", \
+ModOperation=OP_APPLY_MERGEMODS, MergeFiles = me2_fast.m3m),\
+(FriendlyName="Normal Probe Speed", Description="Normal speed.", \
+Condition=COND_MANUAL, CheckedByDefault=false, OptionGroup="UXMode", \
+ModOperation=OP_APPLY_MERGEMODS, MergeFiles = me2_normal.m3m)
+"""
+
+    AUTOMATIC = """[ModManager]
+cmmver = 7.0
+
+[ModInfo]
+modname = Always Merges
+game = LE2
+modver = 1.0
+
+[BASEGAME]
+moddir = .
+altfiles = (FriendlyName="Always", Condition=COND_ALWAYS, \
+ModOperation=OP_APPLY_MERGEMODS, MergeFiles = always.m3m)
+"""
+
+    EMPTY = """[ModManager]
+cmmver = 7.0
+
+[ModInfo]
+modname = Nothing At All
+game = LE2
+modver = 1.0
+"""
+
+    def _plan(self, moddesc):
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, True)
+        with open(os.path.join(scratch, "moddesc.ini"), "w",
+                  encoding="utf-8") as f:
+            f.write(moddesc)
+        game = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, game, True)
+        for le in ("ME1", "ME2", "ME3"):
+            os.makedirs(os.path.join(game, "Game", le, "BioGame", "DLC"),
+                        exist_ok=True)
+        return main._me_plan(scratch, game)
+
+    def test_a_merge_only_mod_says_it_is_a_merge_mod(self):
+        plan = self._plan(self.ONE_PROBE)
+        self.assertFalse(plan["ok"])
+        self.assertEqual(plan["error"], main.ME_MERGE_REFUSAL)
+        # The old message was the bug: it read as a broken download.
+        self.assertNotIn("installs nothing", plan["error"])
+        self.assertIn("merge mod", plan["error"])
+        self.assertIn("ME3Tweaks Mod Manager", plan["error"])
+
+    def test_an_automatic_merge_mod_is_refused_the_same_way(self):
+        plan = self._plan(self.AUTOMATIC)
+        self.assertFalse(plan["ok"])
+        self.assertEqual(plan["error"], main.ME_MERGE_REFUSAL)
+
+    def test_a_genuinely_empty_package_still_says_so(self):
+        # The merge-mod message must not swallow the real empty case.
+        plan = self._plan(self.EMPTY)
+        self.assertFalse(plan["ok"])
+        self.assertIn("installs nothing", plan["error"])
+        self.assertNotEqual(plan["error"], main.ME_MERGE_REFUSAL)
+
+    def test_the_dropped_options_are_still_listed_as_skipped(self):
+        # The refusal explains itself; the skipped list keeps the detail.
+        plan = self._plan(self.ONE_PROBE)
+        joined = " ".join(plan["skipped"])
+        self.assertIn("Fast Probe Speed", joined)
+        self.assertIn("Normal Probe Speed", joined)
+
+
+class TestMassEffectMultiModArchive(unittest.TestCase):
+    """One archive, several mods. The Unofficial LE2 Patch ships the patch
+    under LE2/ and a launcher video fix under LELauncher/, both at the same
+    depth, and the whole download was refused with "This mod changes the
+    launcher" because the launcher half was listed first."""
+
+    def _archive(self, members):
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, True)
+        for folder, game in members:
+            d = os.path.join(scratch, folder)
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "moddesc.ini"), "w",
+                      encoding="utf-8") as f:
+                f.write("[ModManager]\ncmmver = 7.0\n\n[ModInfo]\n"
+                        f"modname = {folder}\ngame = {game}\nmodver = 1.0\n")
+        return scratch
+
+    def test_the_playable_mod_wins_over_the_launcher_one(self):
+        # The real shape, in the real listing order that broke it.
+        scratch = self._archive([
+            ("LELauncher/Unofficial LE2 Patch Launcher Video Fix", "LELAUNCHER"),
+            ("LE2/Unofficial LE2 Patch", "LE2"),
+        ])
+        path, root = main._me_find_moddesc(scratch)
+        self.assertEqual(main._me_moddesc_game(path), "LE2")
+        self.assertIn("Unofficial LE2 Patch", root)
+        self.assertNotIn("Launcher", root)
+
+    def test_it_wins_from_either_listing_order(self):
+        scratch = self._archive([
+            ("LE2/Patch", "LE2"),
+            ("LELauncher/Fix", "LELAUNCHER"),
+        ])
+        self.assertEqual(
+            main._me_moddesc_game(main._me_find_moddesc(scratch)[0]), "LE2")
+
+    def test_a_shallower_playable_mod_still_wins(self):
+        scratch = self._archive([("Wrapper/Deep", "LE3")])
+        os.makedirs(os.path.join(scratch, "top"), exist_ok=True)
+        with open(os.path.join(scratch, "moddesc.ini"), "w",
+                  encoding="utf-8") as f:
+            f.write("[ModManager]\ncmmver = 7.0\n\n[ModInfo]\n"
+                    "modname = Root\ngame = LE1\nmodver = 1.0\n")
+        path, _root = main._me_find_moddesc(scratch)
+        self.assertEqual(main._me_moddesc_game(path), "LE1")
+
+    def test_an_archive_with_nothing_playable_keeps_its_own_refusal(self):
+        # Still refused, and still for the right reason - the preference
+        # must not invent a playable mod that is not there.
+        scratch = self._archive([("LELauncher/Fix", "LELAUNCHER")])
+        path, _root = main._me_find_moddesc(scratch)
+        self.assertEqual(main._me_moddesc_game(path), "LELAUNCHER")
+
+    def test_the_candidate_list_reports_every_mod_and_its_game(self):
+        scratch = self._archive([
+            ("LELauncher/Fix", "LELAUNCHER"), ("LE2/Patch", "LE2"),
+        ])
+        games = sorted(c[2] for c in main._me_moddesc_candidates(scratch))
+        self.assertEqual(games, ["LE2", "LELAUNCHER"])
+
+    def test_an_unreadable_moddesc_reports_no_game_rather_than_raising(self):
+        self.assertEqual(main._me_moddesc_game("/no/such/moddesc.ini"), "")
