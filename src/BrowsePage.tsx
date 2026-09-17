@@ -54,7 +54,7 @@ import {
 // only declare children, but the underlying component takes Focusable-ish
 // props.
 const Scroller: any = ScrollPanelGroup;
-import { PageBackdrop, SectionHeading, StackedThumb } from "./chrome";
+import { AdultBadge, PageBackdrop, SectionHeading, StackedThumb } from "./chrome";
 import { NEXUS_ORANGE, PAGE_SCROLLER } from "./theme";
 import { storeHeaderPlan, STORE_HEADER_EDGE } from "./panelRules";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
@@ -198,6 +198,7 @@ function CollectionCard({
   c,
   fromList,
   verdict,
+  blur,
 }: {
   game: SupportedGame;
   c: CollectionSummary;
@@ -206,7 +207,13 @@ function CollectionCard({
   fromList?: boolean;
   /** What this device has done with it, if anything. */
   verdict?: CollectionVerdictState;
+  /** The account's "blur adult images" preference. Mod tiles honoured it
+   * from the start; collection tiles showed adult art plain to an account
+   * that had asked for it blurred, because the listing never fetched the
+   * flag. Michael has exactly that setting. */
+  blur?: boolean;
 }) {
+  const blurred = !!blur && !!c.adultContent;
   return (
     <Focusable
       onActivate={() => {
@@ -227,13 +234,18 @@ function CollectionCard({
       {/* Stacked-card thumb: the at-a-glance cue that a collection is a
           DECK of mods, not one mod. "contain" like the detail header -
           cropping collection art to fill a tile cut the sides off it. */}
-      <StackedThumb
-        src={c.thumbnailUrl}
-        width={72}
-        height={64}
-        peek={5}
-        fit="contain"
-      />
+      <div style={{ position: "relative", flexShrink: 0 }}>
+        <div style={blurred ? { filter: "blur(10px)" } : undefined}>
+          <StackedThumb
+            src={c.thumbnailUrl}
+            width={72}
+            height={64}
+            peek={5}
+            fit="contain"
+          />
+        </div>
+        {blurred && <AdultBadge />}
+      </div>
       <div style={{ minWidth: 0, alignSelf: "center" }}>
         <div
           style={{
@@ -311,27 +323,6 @@ function StatsLine({ mod, author }: { mod: NexusMod; author?: boolean }) {
         {mod.downloads.toLocaleString()}
       </span>
     </span>
-  );
-}
-
-/** "18+" chip for adult mods whose account preference blurs images. */
-function AdultBadge() {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: "6px",
-        right: "6px",
-        padding: "2px 7px",
-        borderRadius: "4px",
-        background: "rgba(0,0,0,0.72)",
-        fontSize: "11px",
-        fontWeight: 700,
-        letterSpacing: "0.5px",
-      }}
-    >
-      18+
-    </div>
   );
 }
 
@@ -1267,6 +1258,7 @@ export function BrowsePage() {
                   c={c}
                   fromList
                   verdict={verdicts[c.slug]}
+                  blur={blurAdult}
                 />
               ))}
             </Focusable>
@@ -1358,6 +1350,7 @@ export function BrowsePage() {
                       game={game}
                       c={c}
                       verdict={verdicts[c.slug]}
+                      blur={blurAdult}
                     />
                   ))}
                   <Focusable
@@ -1446,6 +1439,7 @@ export function BrowsePage() {
                         game={linkHit.game}
                         c={linkHit.collection}
                         verdict={verdicts[linkHit.collection.slug]}
+                        blur={blurAdult}
                       />
                     </Focusable>
                   </>
@@ -1510,6 +1504,7 @@ export function BrowsePage() {
                       game={game}
                       c={c}
                       verdict={verdicts[c.slug]}
+                      blur={blurAdult}
                     />
                 ))}
                 {searchCollections.length === 0 && (

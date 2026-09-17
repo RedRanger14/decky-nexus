@@ -21426,3 +21426,46 @@ class TestHiddenCollectionCount(unittest.TestCase):
             "skyrimspecialedition", 8, "", "endorsements", 0))
         self.assertEqual(r["adult_hidden"], 0)
         self.assertEqual(len(self.calls), 1)
+
+
+class TestCollectionTilesCarryTheAdultFlag(unittest.TestCase):
+    """Mod tiles blur adult art for an account whose preference says so;
+    collection tiles showed it plain, because the listing never fetched
+    the flag. Michael's own account is "on, with blur"."""
+
+    def test_the_listing_selects_the_flag_and_every_tile_carries_it(self):
+        plugin = main.Plugin()
+        orig = main._gql_query_vars
+        seen = []
+
+        async def fake(query, variables, api_key=None):
+            seen.append(query)
+            return {"collectionsV2": {"nodes": [
+                {"name": "Immersive & Adult", "slug": "xxsqm4",
+                 "adultContent": True, "description": "",
+                 "latestPublishedRevision": {"modCount": 1}},
+                {"name": "Keizaal Online", "slug": "gm8l1r",
+                 "adultContent": False, "description": "",
+                 "latestPublishedRevision": {"modCount": 1}},
+            ]}}
+
+        main._gql_query_vars = fake
+        try:
+            r = run(plugin.get_collections(
+                "skyrimspecialedition", 8, "", "endorsements", 0))
+        finally:
+            main._gql_query_vars = orig
+        flags = {c["slug"]: c["adultContent"] for c in r["collections"]}
+        self.assertEqual(flags, {"xxsqm4": True, "gm8l1r": False})
+        # Selected on the NODE, not only used in the filter clause.
+        self.assertRegex(seen[0], r"nodes \{\s*name\s*slug\s*adultContent")
+
+    def test_a_tile_without_the_field_reads_as_not_adult(self):
+        tile = main._collection_summary(
+            {"slug": "gm8l1r", "name": "Keizaal Online"},
+            "skyrimspecialedition", set())
+        self.assertIs(tile["adultContent"], False)
+        tile = main._collection_summary(
+            {"slug": "xxsqm4", "adultContent": True},
+            "skyrimspecialedition", set())
+        self.assertIs(tile["adultContent"], True)

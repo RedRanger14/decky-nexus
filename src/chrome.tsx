@@ -264,3 +264,27 @@ export function WarningBox({
     </div>
   );
 }
+
+/** "18+" chip on a tile whose art is blurred by the account's preference.
+ * Absolute, top-right of the nearest positioned ancestor, so the caller
+ * wraps the art in a `position: relative` box and puts this beside the
+ * BLURRED element, not inside it, or the chip blurs too. */
+export function AdultBadge() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: "6px",
+        right: "6px",
+        padding: "2px 7px",
+        borderRadius: "4px",
+        background: "rgba(0,0,0,0.72)",
+        fontSize: "11px",
+        fontWeight: 700,
+        letterSpacing: "0.5px",
+      }}
+    >
+      18+
+    </div>
+  );
+}

@@ -1743,3 +1743,26 @@ test("a link in the search box is looked up and a hidden answer is honoured", ()
   // The card opens the collection under ITS game, not the scoped one.
   assert.match(code, /game=\{linkHit\.game\}/, "a linked collection opens under the wrong game");
 });
+
+
+// --- collection tiles honour the account's blur preference ----------------
+// Mod tiles blurred adult art and wore the 18+ chip from the start.
+// Collection tiles did neither, so an account set to "adult on, blur
+// images" (Michael's) saw adult collection art plain.
+test("every collection card is told the account's blur preference", () => {
+  const code = readCode("BrowsePage.tsx");
+  const cards = [...code.matchAll(/<CollectionCard\b[\s\S]*?\/>/g)];
+  assert.ok(cards.length >= 4, `expected four CollectionCard sites, found ${cards.length}`);
+  for (const m of cards) {
+    assert.match(m[0], /blur=\{blurAdult\}/, "a CollectionCard is not passed blur:\n" + m[0]);
+  }
+  assert.match(code, /c\.adultContent/, "CollectionCard never reads the collection's adult flag");
+  assert.match(code, /blurred && <AdultBadge \/>/, "a blurred collection tile wears no 18+ chip");
+});
+
+test("the collection page header blurs adult art the same way", () => {
+  const page = readCode("CollectionPage.tsx");
+  assert.match(page, /getShowAdult\(\)/, "the collection page never asks for the blur preference");
+  assert.match(page, /blurAdult && collection\.adultContent/, "the header art ignores the flag");
+  assert.match(page, /<AdultBadge \/>/, "the header wears no 18+ chip");
+});

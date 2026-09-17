@@ -11113,6 +11113,10 @@ def _collection_summary(n: dict, game_domain: str, blocked_slugs) -> dict:
     return {
         "name": n.get("name") or "",
         "slug": slug,
+        # So a tile can blur its art for an account that asks. Mod tiles
+        # did; collection tiles showed adult art plain until this was
+        # fetched.
+        "adultContent": bool(n.get("adultContent")),
         "needs_older_game": needs_older,
         "built_for": built_for,
         "summary": n.get("summary") or "",
@@ -13742,6 +13746,7 @@ query TrendingCollections($gameDomain: String!, $count: Int, $offset: Int%SEARCH
     nodes {
       name
       slug
+      adultContent
       summary
       endorsements
       tileImage { thumbnailUrl(size: small) }

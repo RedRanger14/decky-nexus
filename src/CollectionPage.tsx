@@ -73,6 +73,7 @@ import {
   setCollectionAttention,
   uninstallCollection,
   enforceSkips,
+  getShowAdult,
 } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { setLaunchOptions } from "./steam";
@@ -119,7 +120,13 @@ import {
   PRIMARY_BUTTON_CSS,
   WHITE_BUTTON_CLASS,
 } from "./theme";
-import { PageBackdrop, SectionHeading, StackedThumb, StatChip } from "./chrome";
+import {
+  AdultBadge,
+  PageBackdrop,
+  SectionHeading,
+  StackedThumb,
+  StatChip,
+} from "./chrome";
 import { DownloadsButton } from "./DownloadsButton";
 
 const Scroller: any = ScrollPanelGroup;
@@ -134,6 +141,21 @@ export function CollectionPage() {
   const sel = getSelectedCollection();
   const [detail, setDetail] = useState<CollectionDetail | undefined>();
   const [error, setError] = useState<string | undefined>();
+  // The account's "blur adult images" preference, for the header art.
+  // Same rule as the store tiles: blur only when the gate is open AND the
+  // preference asks for it.
+  const [blurAdult, setBlurAdult] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    getShowAdult()
+      .then((r) => {
+        if (!cancelled && r.ok) setBlurAdult(!!r.show_adult && !!r.blur_adult);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [installedIds, setInstalledIds] = useState<Set<number>>(new Set());
   // Every Nexus id that IS one of this game's mod loaders. They never go
   // through the ordinary installer, so they are held out of the download
@@ -1791,14 +1813,25 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
         <Focusable style={{ display: "flex", gap: "20px", padding: "12px 0" }}>
           {/* The same stacked-card language as the store tiles, at header
               scale: this page is a deck of mods, and looks like one. */}
-          <StackedThumb
-            src={collection.thumbnailUrl}
-            width={180}
-            height={200}
-            peek={9}
-            radius={8}
-            fit="contain"
-          />
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <div
+              style={
+                blurAdult && collection.adultContent
+                  ? { filter: "blur(14px)" }
+                  : undefined
+              }
+            >
+              <StackedThumb
+                src={collection.thumbnailUrl}
+                width={180}
+                height={200}
+                peek={9}
+                radius={8}
+                fit="contain"
+              />
+            </div>
+            {blurAdult && collection.adultContent && <AdultBadge />}
+          </div>
           <div style={{ minWidth: 0, alignSelf: "center" }}>
             <h2
               style={{
@@ -2566,7 +2599,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                         <>
                           {info.thumbnailUrl && (
                             <img
-                              src={info.thumbnailUrl}
+                                src={
+                                  blurAdult && info.adultContent
+                                    ? info.thumbnailBlurredUrl ?? info.thumbnailUrl
+                                    : info.thumbnailUrl
+                                }
                               alt=""
                               loading="lazy"
                               decoding="async"
@@ -2576,6 +2613,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                                 objectFit: "cover",
                                 borderRadius: "4px",
                                 flexShrink: 0,
+                                ...(blurAdult && info.adultContent && !info.thumbnailBlurredUrl
+                                  ? { filter: "blur(12px)" }
+                                  : {}),
                               }}
                             />
                           )}
@@ -2723,7 +2763,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                         <>
                           {info.thumbnailUrl && (
                             <img
-                              src={info.thumbnailUrl}
+                                src={
+                                  blurAdult && info.adultContent
+                                    ? info.thumbnailBlurredUrl ?? info.thumbnailUrl
+                                    : info.thumbnailUrl
+                                }
                               alt=""
                               loading="lazy"
                               decoding="async"
@@ -2733,6 +2777,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                                 objectFit: "cover",
                                 borderRadius: "4px",
                                 flexShrink: 0,
+                                ...(blurAdult && info.adultContent && !info.thumbnailBlurredUrl
+                                  ? { filter: "blur(12px)" }
+                                  : {}),
                               }}
                             />
                           )}

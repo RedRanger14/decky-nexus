@@ -1095,6 +1095,9 @@ export interface ModRequirement {
 export interface CollectionSummary {
   name: string;
   slug: string;
+  /** Flagged adult by Nexus. Tiles blur the art when the account's
+   * preference says to, as mod tiles do. */
+  adultContent?: boolean;
   summary: string;
   endorsements: number;
   author: string;
