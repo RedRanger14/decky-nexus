@@ -67,6 +67,7 @@ import {
   ACTION_ROW,
   actionColumnWidth,
   NEXUS_ORANGE,
+  PAGE_SCROLLER,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
   BUSY_BUTTON_CLASS,
@@ -683,14 +684,7 @@ export function ModDetailPage() {
       )}
       <Scroller
         focusable={false}
-        style={{
-          height: "100%",
-          overflowY: "auto",
-          // Clears the SteamOS footer bar AND makes focus-driven scrolling
-          // stop short of it (scroll-padding), so the last row is usable.
-          padding: "0 24px 110px",
-          scrollPaddingBottom: "110px",
-        }}
+        style={PAGE_SCROLLER}
       >
       {/* Mod art as blurred atmosphere behind the header - depth without
           competing with the real artwork card in front of it. */}

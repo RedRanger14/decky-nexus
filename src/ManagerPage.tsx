@@ -38,6 +38,7 @@ import {
 import {
   BLUE_BUTTON_CLASS,
   NEXUS_ORANGE,
+  PAGE_SCROLLER,
   PRIMARY_BUTTON_CSS,
   WHITE_BUTTON_CLASS,
 } from "./theme";
@@ -601,7 +602,7 @@ export function ManagerPage() {
       <Scroller
         focusable={false}
         onButtonDown={handleTabButtons("manager")}
-        style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
+        style={PAGE_SCROLLER}
       >
         <TabBar currentId="manager" />
         <style>{PRIMARY_BUTTON_CSS}</style>

@@ -38,7 +38,7 @@ import { SupportedGame, frameworkModIds, getActiveGame } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 import { fitReportBody, healthVerdict } from "./panelRules";
 import { installLatest } from "./install";
-import { LINK_CHIP_CLASS } from "./theme";
+import { LINK_CHIP_CLASS, PAGE_SCROLLER } from "./theme";
 import { setDetailOrigin, setSelectedMod } from "./state";
 
 const WARN = "230, 180, 80";
@@ -365,12 +365,7 @@ export default function HealthCheckPage() {
       <Scroller
         focusable={false}
         onButtonDown={handleTabButtons("health")}
-        style={{
-          height: "100%",
-          overflowY: "auto",
-          padding: "0 24px 110px",
-          scrollPaddingBottom: "110px",
-        }}
+        style={PAGE_SCROLLER}
       >
         <style>{SWEEP_CSS}</style>
         <TabBar currentId="health" />

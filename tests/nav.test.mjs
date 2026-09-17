@@ -1623,3 +1623,91 @@ test("every declared framework can be undone by a reset", () => {
       "remove it:\n" + missing.join("\n---\n")
   );
 });
+
+// --- the footer bar must not eat the last row (issue #29) ----------------
+// SteamOS paints its button legend across the bottom of the screen on top
+// of the page. Every full-screen page padded its scroller to clear it, and
+// for three releases that padding did nothing at all: Steam's panels are
+// content-box, so `height: 100%` plus `padding-bottom: Npx` makes the
+// scroll viewport N taller than the screen and puts the padding in the
+// part nobody can see. Measured on a Legion Go 2: computed height 804.5px,
+// clientHeight 915px, last row's bottom at y=845 on an 844px screen.
+//
+// These tests exist because the number was raised twice by people who
+// reasonably assumed padding pads.
+
+const THEME_SRC = read("theme.ts");
+
+/** The literal body of PAGE_SCROLLER in theme.ts. */
+const pageScrollerBody = () => {
+  const at = THEME_SRC.indexOf("export const PAGE_SCROLLER");
+  assert.ok(at >= 0, "theme.ts no longer exports PAGE_SCROLLER");
+  const open = THEME_SRC.indexOf("{", at);
+  const close = THEME_SRC.indexOf("\n};", open);
+  assert.ok(close > open, "could not read the PAGE_SCROLLER object");
+  return THEME_SRC.slice(open, close);
+};
+
+test("the shared page scroller is border-box, so its padding is real", () => {
+  assert.match(
+    pageScrollerBody(),
+    /boxSizing:\s*"border-box"/,
+    "PAGE_SCROLLER lost boxSizing: border-box. Without it the bottom " +
+      "padding grows the scroll viewport by exactly the amount it pads, " +
+      "the last row lands under the SteamOS footer bar, and raising the " +
+      "number changes nothing. This is issue #29."
+  );
+});
+
+test("the footer clearance actually clears the footer bar", () => {
+  const m = THEME_SRC.match(/export const FOOTER_CLEARANCE = (\d+);/);
+  assert.ok(m, "theme.ts no longer exports FOOTER_CLEARANCE");
+  // The bar measured 42px in page pixels in Gaming Mode. Anything at or
+  // under that leaves the last row touching or beneath it.
+  assert.ok(
+    Number(m[1]) > 42,
+    `FOOTER_CLEARANCE is ${m[1]}px and the legend bar is 42px tall`
+  );
+});
+
+test("no page writes its own footer clearance", () => {
+  const offenders = [];
+  for (const f of sources()) {
+    if (f === "theme.ts") continue;
+    const code = readCode(f);
+    // Both halves of the old pattern. A page that re-states either one is
+    // a page that will drift from the measured value, and - worse - is
+    // probably re-stating the sizing too and losing border-box with it.
+    if (/scrollPaddingBottom\s*:/.test(code)) offenders.push(`${f}: scrollPaddingBottom`);
+    // A page-edge padding whose bottom value is large enough to be an
+    // attempt at footer clearance. Small ones (a sticky header's 6px) are
+    // ordinary layout and are left alone.
+    for (const m of code.matchAll(/padding\s*:\s*["'`]0 24px (\d+)px/g)) {
+      if (Number(m[1]) >= 40) offenders.push(`${f}: padding ${m[1]}px`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "these files set their own bottom clearance instead of spreading " +
+      "PAGE_SCROLLER from theme.ts:\n" + offenders.join("\n")
+  );
+});
+
+test("every full-screen page scroller uses PAGE_SCROLLER", () => {
+  // The pages with a route of their own. SettingsPage renders inside
+  // index.tsx but still owns a scroller.
+  const PAGES = [
+    "BrowsePage.tsx", "CollectionPage.tsx", "DownloadsPage.tsx",
+    "HealthCheckPage.tsx", "LoadOrderPage.tsx", "ManagerPage.tsx",
+    "ModDetailPage.tsx", "SettingsPage.tsx", "UpdatesPage.tsx",
+  ];
+  for (const f of PAGES) {
+    const code = readCode(f);
+    assert.match(
+      code,
+      /<Scroller[\s\S]{0,400}?style=\{(?:PAGE_SCROLLER|\{\s*\.\.\.PAGE_SCROLLER)/,
+      `${f} has a full-screen scroller that does not use PAGE_SCROLLER`
+    );
+  }
+});

@@ -71,7 +71,7 @@ import {
   handleTabButtons,
   pushOurPage,
 } from "./Tabs";
-import { NEXUS_ORANGE, PRIMARY_BUTTON_CSS } from "./theme";
+import { NEXUS_ORANGE, PAGE_SCROLLER, PRIMARY_BUTTON_CSS } from "./theme";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -811,12 +811,7 @@ export default function LoadOrderPage() {
       <Scroller
         focusable={false}
         onButtonDown={tabButtons}
-        style={{
-          height: "100%",
-          overflowY: "auto",
-          padding: "0 24px 110px",
-          scrollPaddingBottom: "110px",
-        }}
+        style={PAGE_SCROLLER}
       >
         <style>{PRIMARY_BUTTON_CSS + LO_CSS}</style>
         <TabBar currentId="loadorder" />

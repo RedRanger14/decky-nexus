@@ -114,6 +114,7 @@ import {
   ACTION_ROW,
   actionColumnWidth,
   BLUE_BUTTON_CLASS,
+  PAGE_SCROLLER,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
   WHITE_BUTTON_CLASS,
@@ -1776,7 +1777,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
     >
       <Scroller
         focusable={false}
-        style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
+        style={PAGE_SCROLLER}
       >
         <style>{PRIMARY_BUTTON_CSS + `
         @keyframes nexusFinishPulse {

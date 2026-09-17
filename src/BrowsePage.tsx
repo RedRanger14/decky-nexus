@@ -41,7 +41,7 @@ import {
 // props.
 const Scroller: any = ScrollPanelGroup;
 import { PageBackdrop, SectionHeading, StackedThumb } from "./chrome";
-import { NEXUS_ORANGE } from "./theme";
+import { NEXUS_ORANGE, PAGE_SCROLLER } from "./theme";
 import { storeHeaderPlan, STORE_HEADER_EDGE } from "./panelRules";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 
@@ -975,13 +975,8 @@ export function BrowsePage() {
         focusable={false}
         onButtonDown={handleTabButtons("store")}
         style={{
-          height: "100%",
-          overflowY: "auto",
-          // Clears the SteamOS footer bar AND makes focus-driven scrolling
-          // stop short of it (scroll-padding), so the last row is usable.
-          padding: "0 24px 110px",
-          scrollPaddingBottom: "110px",
-          // ...and the same at the top, so focusing a row never slides it
+          ...PAGE_SCROLLER,
+          // The same trick at the top, so focusing a row never slides it
           // under the pinned nav and search.
           scrollPaddingTop: `${pinned.height}px`,
           position: "relative",

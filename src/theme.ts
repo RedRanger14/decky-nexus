@@ -202,3 +202,49 @@ export function actionColumnWidth(count: number): string {
   const n = Math.max(1, count);
   return `${n * ACTION_BUTTON_MAX + (n - 1) * ACTION_GAP}px`;
 }
+
+// ---------------------------------------------------------------------------
+// Full-screen page scrolling
+// ---------------------------------------------------------------------------
+//
+// SteamOS paints a button legend bar (STEAM / MENU / A Select / B Back)
+// across the bottom of the screen, ON TOP of the page. Measured on a Legion
+// Go 2 in Gaming Mode it is 42px tall in page pixels and sits flush with
+// the bottom edge. A page that fills the screen therefore has to keep its
+// last row above it or the row is unusable.
+//
+// This was "fixed" three times before by raising the bottom padding, and it
+// never once moved the last row, because of the trap below.
+//
+// THE TRAP: Steam's stylesheet leaves these panels on `box-sizing:
+// content-box`. With `height: 100%` and `padding-bottom: 110px`, the border
+// box becomes 100% PLUS 110px - the scroll viewport grows below the screen
+// by exactly the amount of padding, and the padding lands in the part that
+// is off-screen. Clearance gained: zero, at any number you pick. Issue #29,
+// diagnosed by measuring on device: the scroller's computed height was
+// 804.5px, its clientHeight 915px, and the last row's bottom landed at
+// y=845 on an 844px screen.
+//
+// `boxSizing: "border-box"` is what makes the padding real. It is not an
+// optional tidy-up here, so the padding and the sizing live together in one
+// object that every full-screen page spreads, and a test checks that no
+// page writes its own.
+
+/** Height of the SteamOS footer legend bar, plus breathing room. */
+export const FOOTER_CLEARANCE = 72;
+
+/** The scroll container of a full-screen page. Spread it, then add
+ * whatever that page needs on top (a `scrollPaddingTop` for a pinned
+ * header, `position: relative` for a backdrop). Do not re-state the
+ * padding or the sizing: that is the whole point of it being here. */
+export const PAGE_SCROLLER: CSSProperties = {
+  height: "100%",
+  // Without this the padding below is decoration. See THE TRAP above.
+  boxSizing: "border-box",
+  overflowY: "auto",
+  // Clears the footer bar, and scroll-padding makes Steam's focus-driven
+  // scrolling stop short of it too, so the last row is reachable AND
+  // readable rather than merely scrolled to.
+  padding: `0 24px ${FOOTER_CLEARANCE}px`,
+  scrollPaddingBottom: `${FOOTER_CLEARANCE}px`,
+};

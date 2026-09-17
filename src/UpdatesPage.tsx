@@ -15,7 +15,11 @@ import { dismissUpdate, installFramework } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { installLatest } from "./install";
 import { PendingUpdate, scanUpdates } from "./updates";
-import { PRIMARY_BUTTON_CLASS, PRIMARY_BUTTON_CSS } from "./theme";
+import {
+  PAGE_SCROLLER,
+  PRIMARY_BUTTON_CLASS,
+  PRIMARY_BUTTON_CSS,
+} from "./theme";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
@@ -172,7 +176,7 @@ export function UpdatesPage() {
       <Scroller
         focusable={false}
         onButtonDown={handleTabButtons("updates")}
-        style={{ height: "100%", overflowY: "auto", padding: "0 24px 110px", scrollPaddingBottom: "110px" }}
+        style={PAGE_SCROLLER}
       >
         <style>{PRIMARY_BUTTON_CSS}</style>
         <TabBar currentId="updates" />

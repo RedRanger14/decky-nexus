@@ -11,7 +11,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { UserPrefs, getUserPrefs, setUserPrefs } from "./api";
-import { NEXUS_ORANGE } from "./theme";
+import { NEXUS_ORANGE, PAGE_SCROLLER } from "./theme";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
 
 const Scroller: any = ScrollPanelGroup;
@@ -144,12 +144,7 @@ export function SettingsPage() {
       <Scroller
         focusable={false}
         onButtonDown={handleTabButtons("settings")}
-        style={{
-          height: "100%",
-          overflowY: "auto",
-          padding: "0 24px 110px",
-          scrollPaddingBottom: "110px",
-        }}
+        style={PAGE_SCROLLER}
       >
         <TabBar currentId="settings" />
         <div
