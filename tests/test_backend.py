@@ -21657,7 +21657,7 @@ EnableLE1CoalescedMerge = True
 
     def test_every_dialog_setting_is_forced(self):
         out = main._me_m3_settings_ini(self.REAL_INI)
-        for key, value in main.ME_M3_SETTINGS.items():
+        for key, (_section, value) in main.ME_M3_SETTINGS.items():
             self.assertIn(f"{key} = {value}", out, key)
 
     def test_settings_we_do_not_own_are_left_alone(self):
@@ -21679,15 +21679,47 @@ EnableLE1CoalescedMerge = True
 
     def test_a_key_a_future_build_does_not_write_is_added(self):
         out = main._me_m3_settings_ini("[ModManager]\nLanguage = int\n")
-        for key, value in main.ME_M3_SETTINGS.items():
+        for key, (_section, value) in main.ME_M3_SETTINGS.items():
             self.assertIn(f"{key} = {value}", out, key)
         self.assertIn("Language = int", out)
 
     def test_an_empty_file_still_produces_every_setting(self):
         out = main._me_m3_settings_ini("")
-        self.assertIn("[ModManager]", out)
-        for key, value in main.ME_M3_SETTINGS.items():
+        for key, (_section, value) in main.ME_M3_SETTINGS.items():
             self.assertIn(f"{key} = {value}", out, key)
+
+    def test_every_setting_lands_under_its_own_header(self):
+        """The section is part of the setting, not decoration.
+
+        Writing EnableTelemetry under [ModManager] rather than [Logging]
+        left M3 on its default of ON, so it initialised Application
+        Insights, which asks WMI for the OS name, and wminet_utils.dll
+        does not exist in a Proton prefix. Fatal startup crash, before it
+        ever looked at the mod. Caught by running it on the Legion on
+        2026-09-18, not by a test, which is why this one exists.
+        """
+        for source in ("", "[ModManager]\nLanguage = int\n", self.REAL_INI):
+            out = main._me_m3_settings_ini(source)
+            current = ""
+            placed = {}
+            for line in out.splitlines():
+                t = line.strip()
+                if t.startswith("[") and t.endswith("]"):
+                    current = t[1:-1]
+                    continue
+                key = t.partition("=")[0].strip()
+                if key in main.ME_M3_SETTINGS:
+                    placed[key] = current
+            for key, (section, _value) in main.ME_M3_SETTINGS.items():
+                self.assertEqual(
+                    placed.get(key), section,
+                    f"{key} under [{placed.get(key)}], expected [{section}]")
+
+    def test_telemetry_is_off_in_a_file_written_from_nothing(self):
+        # The exact case that crashed M3 on device.
+        out = main._me_m3_settings_ini("")
+        logging_block = out.split("[Logging]", 1)[1].split("\n[", 1)[0]
+        self.assertIn("EnableTelemetry = False", logging_block)
 
     def test_it_is_idempotent(self):
         once = main._me_m3_settings_ini(self.REAL_INI)

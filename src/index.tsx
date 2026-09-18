@@ -239,6 +239,7 @@ import { installLatest, toggleMod } from "./install";
 import HealthCheckPage, { setHealthGame } from "./HealthCheckPage";
 import { scanUpdates } from "./updates";
 import {
+  MERGE_STEP_BUSY,
   MERGE_STEP_EXPLAINER,
   MERGE_STEP_TITLE,
   mergeStepFailure,
@@ -1792,7 +1793,7 @@ function CurrentGameSection() {
                   <ButtonItem
                     layout="below"
                     disabled={mergeBusy}
-                    description="Downloads ME3Tweaks Mod Manager and sets it up for you"
+                    description="Downloads ME3Tweaks Mod Manager and sets it up for you. Takes about ten minutes."
                     onClick={async () => {
                       setMergeBusy(true);
                       setMergeError("");
@@ -1819,7 +1820,7 @@ function CurrentGameSection() {
                       }
                     }}
                   >
-                    {mergeBusy ? "Setting up…" : "Install Mod Manager"}
+                    {mergeBusy ? MERGE_STEP_BUSY : "Install Mod Manager"}
                   </ButtonItem>
                 )}
                 {mergeOn === true && (

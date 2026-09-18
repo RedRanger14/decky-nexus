@@ -12845,19 +12845,33 @@ ME_M3_EXE = "ME3TweaksModManager.exe"
 # settings.ini values we force before M3's first useful run. Each one is a
 # dialog that would otherwise wait for a click we cannot deliver: synthetic
 # input does not reach a window under gamescope.
+#
+# The section each key lives in is part of the setting: M3 reads
+# EnableTelemetry from [Logging] and the rest from [ModManager], and a key
+# written under the wrong header is simply not found. That is not a tidiness
+# point. Writing EnableTelemetry under [ModManager] left M3 on its default
+# of ON, so it initialised Application Insights, which asks WMI for the OS
+# name, and `wminet_utils.dll` does not exist in a Proton prefix:
+#
+#   [FTL] ME3Tweaks Mod Manager has encountered a fatal startup crash
+#   TypeInitializationException ... System.Management.WmiNetUtilsHelper
+#
+# It never reached the mod. Turning telemetry off is what keeps it alive
+# here, quite apart from not reporting this user's modding to anyone.
 ME_M3_SETTINGS = {
-    # Do not report this user's modding to a third party.
-    "EnableTelemetry": "False",
+    # Do not report this user's modding to a third party, and do not let
+    # the telemetry stack load at all. See above.
+    "EnableTelemetry": ("Logging", "False"),
     # Do not let M3 grab nxm:// links away from the plugin.
-    "ConfigureNXMHandlerOnBoot": "False",
+    "ConfigureNXMHandlerOnBoot": ("ModManager", "False"),
     # We own updates; M3 must not fetch mods on its own.
-    "AutoImportModUpdates": "False",
+    "AutoImportModUpdates": ("ModManager", "False"),
     # The what's-new panel on first boot.
-    "ShowedPreviewMessage2": "True",
+    "ShowedPreviewMessage2": ("ModManager", "True"),
     # OneTimeMessage_LE1CoalescedOverwriteWarning. Without this the first
     # LE1 Coalesced merge shows an OK/Cancel box, and every merge queued
     # behind it never runs.
-    "ShowLE1CoalescedMergeOverwritesFile": "False",
+    "ShowLE1CoalescedMergeOverwritesFile": ("ModManager", "False"),
 }
 
 # What M3 writes when a mod install has finished, whatever the outcome.
@@ -12884,10 +12898,10 @@ def _me_m3_settings_ini(existing: str) -> str:
     missing is appended to its section, and a missing section is created,
     because M3 only writes the keys its current build knows.
     """
-    want = dict(ME_M3_SETTINGS)
+    want = {k: v for k, v in ME_M3_SETTINGS.items()}
     out = []
-    # Matched by key rather than section: M3 spreads these across
-    # [Logging], [UI] and [ModManager], and the names are unique.
+    # An existing line is rewritten in place, wherever it sits: the key
+    # names are unique across the file, so this cannot move one.
     for raw in (existing or "").splitlines():
         line = raw.strip()
         if line.startswith("[") and line.endswith("]"):
@@ -12895,26 +12909,30 @@ def _me_m3_settings_ini(existing: str) -> str:
             continue
         key = line.partition("=")[0].strip()
         if key in want:
-            out.append(f"{key} = {want.pop(key)}")
+            out.append(f"{key} = {want.pop(key)[1]}")
             continue
         out.append(raw)
-    if want:
-        # Anything M3 did not write goes in [ModManager], which is where
-        # every one of them lives in 9.2.
-        if not any(l.strip() == "[ModManager]" for l in out):
-            out.append("")
-            out.append("[ModManager]")
-            for key, value in want.items():
-                out.append(f"{key} = {value}")
-        else:
+    # Whatever M3 has not written yet goes under ITS OWN header, creating
+    # the section if this is a file we are authoring from nothing.
+    by_section = {}
+    for key, (section, value) in want.items():
+        by_section.setdefault(section, []).append((key, value))
+    for section, entries in by_section.items():
+        header = f"[{section}]"
+        if any(l.strip() == header for l in out):
             merged, done = [], False
             for raw in out:
                 merged.append(raw)
-                if not done and raw.strip() == "[ModManager]":
-                    for key, value in want.items():
+                if not done and raw.strip() == header:
+                    for key, value in entries:
                         merged.append(f"{key} = {value}")
                     done = True
             out = merged
+        else:
+            out.append("")
+            out.append(header)
+            for key, value in entries:
+                out.append(f"{key} = {value}")
     return "\n".join(out).rstrip("\n") + "\n"
 
 

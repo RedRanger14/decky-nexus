@@ -42,6 +42,8 @@ export const MERGE_STEP_EXPLAINER =
   "This downloads it from Nexus Mods (about 200 MB, by Mgamerz) and sets it " +
   "up inside this game's own Windows environment, where the plugin runs it " +
   "for you in the background. You will never have to open it.\n\n" +
+  "It takes about ten minutes, most of it downloading. You can leave this " +
+  "menu while it works.\n\n" +
   "It is somebody else's program, which is why this is a button rather than " +
   "something that happens on its own. You can remove it again below, and " +
   "removing it leaves any mods it installed in place.";
@@ -70,6 +72,13 @@ export const MERGE_STEP_STAGES: Record<string, string> = {
 export function offersMergeSupport(installMode: string | undefined): boolean {
   return installMode === "masseffect";
 }
+
+/** Shown on the button while the step runs. Measured on a Legion Go 2:
+ * 610 seconds from a clean prefix, nearly all of it the download. Ten
+ * minutes of "Setting up" with nothing else on screen is indistinguishable
+ * from a hang, and this plugin's audience is people on a couch who cannot
+ * go and read a log. */
+export const MERGE_STEP_BUSY = "Setting up, this takes about ten minutes…";
 
 /** What the panel says after a failed attempt. Kept because a toast is
  * gone before it can be read, and this step is long enough that the user

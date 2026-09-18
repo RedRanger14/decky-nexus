@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   MERGE_NEEDED_NOTE,
+  MERGE_STEP_BUSY,
   MERGE_STEP_EXPLAINER,
   MERGE_STEP_STAGES,
   MERGE_STEP_TITLE,
@@ -72,9 +73,19 @@ test("a failure is kept and shown rather than left to a toast", () => {
   assert.match(msg, /Network error/);
 });
 
+test("the wait is stated up front, because ten minutes of silence reads as a hang", () => {
+  // Measured on a Legion Go 2: 610 seconds from a clean prefix, nearly
+  // all of it the 200 MB download.
+  assert.match(MERGE_STEP_EXPLAINER, /ten minutes/i);
+  assert.match(MERGE_STEP_BUSY, /ten minutes/i);
+  // And that they need not sit and watch it.
+  assert.match(MERGE_STEP_EXPLAINER, /leave this\s+menu/i);
+});
+
 test("no copy here uses an em dash", () => {
   const all = [
     MERGE_STEP_TITLE,
+    MERGE_STEP_BUSY,
     MERGE_STEP_EXPLAINER,
     MERGE_NEEDED_NOTE,
     mergeStepSummary(false, ""),
@@ -82,6 +93,7 @@ test("no copy here uses an em dash", () => {
     mergeStepFailure("x"),
     ...Object.values(MERGE_STEP_STAGES),
   ];
+  // Written as an escape so this guard never trips over itself.
   for (const s of all) assert.doesNotMatch(s, /—/, s);
 });
 
