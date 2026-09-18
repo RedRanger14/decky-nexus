@@ -21628,3 +21628,261 @@ class TestMassEffectMultiModArchive(unittest.TestCase):
 
     def test_an_unreadable_moddesc_reports_no_game_rather_than_raising(self):
         self.assertEqual(main._me_moddesc_game("/no/such/moddesc.ini"), "")
+
+
+class TestMassEffectM3Config(unittest.TestCase):
+    """Config written into the Proton prefix before ME3Tweaks Mod Manager
+    is allowed to run. Each forced setting is a dialog that would otherwise
+    wait for a click nothing can deliver (synthetic input does not reach a
+    window under gamescope). The ini below is the one M3 9.2.1 actually
+    wrote on the Legion on 2026-09-18."""
+
+    REAL_INI = """[Logging]
+LogModStartup = False
+EnableTelemetry = True
+LogModInstallation = False
+
+[UI]
+DeveloperMode = False
+DarkTheme = False
+
+[ModManager]
+Language = int
+ShowedPreviewMessage2 = False
+ConfigureNXMHandlerOnBoot = True
+ShowLE1CoalescedMergeOverwritesFile = True
+AutoImportModUpdates = True
+EnableLE1CoalescedMerge = True
+"""
+
+    def test_every_dialog_setting_is_forced(self):
+        out = main._me_m3_settings_ini(self.REAL_INI)
+        for key, value in main.ME_M3_SETTINGS.items():
+            self.assertIn(f"{key} = {value}", out, key)
+
+    def test_settings_we_do_not_own_are_left_alone(self):
+        out = main._me_m3_settings_ini(self.REAL_INI)
+        # M3's own features and the user's own preferences survive.
+        self.assertIn("Language = int", out)
+        self.assertIn("EnableLE1CoalescedMerge = True", out)
+        self.assertIn("LogModStartup = False", out)
+        # Sections keep their shape.
+        for header in ("[Logging]", "[UI]", "[ModManager]"):
+            self.assertIn(header, out)
+
+    def test_telemetry_is_off_even_though_it_lives_in_another_section(self):
+        # EnableTelemetry is under [Logging], the rest under [ModManager].
+        # Matching by key rather than section is what makes that work.
+        out = main._me_m3_settings_ini(self.REAL_INI)
+        logging_block = out.split("[UI]")[0]
+        self.assertIn("EnableTelemetry = False", logging_block)
+
+    def test_a_key_a_future_build_does_not_write_is_added(self):
+        out = main._me_m3_settings_ini("[ModManager]\nLanguage = int\n")
+        for key, value in main.ME_M3_SETTINGS.items():
+            self.assertIn(f"{key} = {value}", out, key)
+        self.assertIn("Language = int", out)
+
+    def test_an_empty_file_still_produces_every_setting(self):
+        out = main._me_m3_settings_ini("")
+        self.assertIn("[ModManager]", out)
+        for key, value in main.ME_M3_SETTINGS.items():
+            self.assertIn(f"{key} = {value}", out, key)
+
+    def test_it_is_idempotent(self):
+        once = main._me_m3_settings_ini(self.REAL_INI)
+        self.assertEqual(once, main._me_m3_settings_ini(once))
+
+    def test_the_target_line_is_the_wine_path_of_the_game(self):
+        line = main._me_m3_target_line("/games/Mass Effect Legendary Edition", "LE1")
+        self.assertTrue(line.startswith("Z:"), line)
+        self.assertIn(r"\Game\ME1", line)
+        self.assertNotIn("/", line)
+        self.assertEqual(
+            main._me_m3_target_line("/g/MELE", "LE3"), r"Z:\g\MELE\Game\ME3")
+
+
+class TestMassEffectM3Verdict(unittest.TestCase):
+    """M3 never exits, so a run ends when its log says so. Lines below are
+    copied from the real run that installed the LE1 Community Patch."""
+
+    RUNNING = [
+        "2026-09-18 18:21:09 [INF] [M3] Loading moddesc: Z:\\tmp\\mods\\23\\moddesc.ini",
+        "2026-09-18 18:21:10 [INF] [M3] BeginInstallingMod(): LE1 Community Patch",
+    ]
+    INSTALLED_ONLY = RUNNING + [
+        "2026-09-18 18:21:11 [INF] [M3] <<<<<<< Finishing modinstaller",
+        "2026-09-18 18:21:11 [INF] [M3] Submitted a background task to engine: MergeLE1Coalesced",
+    ]
+    FINISHED = INSTALLED_ONLY + [
+        "2026-09-18 18:21:13 [INF] [ME3TWEAKSCORE] Performing Bio2DA Merge for game: Z:\\g",
+        "2026-09-18 18:21:14 [INF] [M3] Panel closing: AutoTOC",
+    ]
+
+    def test_a_run_still_going_is_not_finished(self):
+        self.assertEqual(main._me_m3_verdict(self.RUNNING)["state"], "running")
+
+    def test_the_installer_finishing_is_not_enough(self):
+        # The Coalesced, 2DA and TOC merges run AFTER the installer closes.
+        # Calling it done there leaves the game folder inconsistent.
+        self.assertEqual(
+            main._me_m3_verdict(self.INSTALLED_ONLY)["state"], "running")
+
+    def test_done_means_the_merges_finished_too(self):
+        v = main._me_m3_verdict(self.FINISHED)
+        self.assertEqual(v["state"], "done")
+        self.assertEqual(v["error"], "")
+
+    def test_failure_beats_a_finished_marker(self):
+        lines = self.FINISHED + [
+            "2026-09-18 18:21:15 [ERR] [M3] An error occurred during mod installation",
+        ]
+        v = main._me_m3_verdict(lines)
+        self.assertEqual(v["state"], "failed")
+        self.assertIn("error occurred", v["error"])
+
+    def test_every_failure_marker_is_caught(self):
+        for marker in main.ME_M3_FAIL_MARKERS:
+            v = main._me_m3_verdict([f"2026-09-18 [ERR] [M3] {marker} blah"])
+            self.assertEqual(v["state"], "failed", marker)
+            self.assertTrue(v["error"], marker)
+
+    def test_an_abort_keeps_m3s_own_words(self):
+        v = main._me_m3_verdict([
+            "2026-09-18 18:21:15 [ERR] [M3] INSTALL_ABORTED_NO_BACKUP",
+        ])
+        self.assertEqual(v["state"], "failed")
+        self.assertIn("INSTALL_ABORTED_NO_BACKUP", v["error"])
+
+    def test_nothing_at_all_is_still_running(self):
+        self.assertEqual(main._me_m3_verdict([])["state"], "running")
+
+
+class TestMassEffectM3Moddesc(unittest.TestCase):
+    """M3 shows its own options panel for any mod with manual alternates,
+    and nothing can click it. Our wizard already asked, so the chosen merge
+    mods are written out unconditionally. The moddesc below is the real One
+    Probe All Resources one, read off the device."""
+
+    ONE_PROBE = """[ModManager]
+cmmver = 7.0
+
+[ModInfo]
+modname = One Probe All Resources
+game = LE2
+modver = 1.0
+
+[BASEGAME]
+moddir = .
+altfiles = (FriendlyName="Fast Probe Speed", Condition=COND_MANUAL, \
+CheckedByDefault=true, OptionGroup="UXMode", \
+ModOperation=OP_APPLY_MERGEMODS, MergeFiles = me2_fast.m3m),\
+(FriendlyName="Normal Probe Speed", Condition=COND_MANUAL, \
+OptionGroup="UXMode", ModOperation=OP_APPLY_MERGEMODS, \
+MergeFiles = me2_normal.m3m)
+"""
+
+    def _plan(self, text):
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, True)
+        with open(os.path.join(scratch, "moddesc.ini"), "w",
+                  encoding="utf-8") as f:
+            f.write(text)
+        game = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, game, True)
+        for le in ("ME1", "ME2", "ME3"):
+            os.makedirs(os.path.join(game, "Game", le, "BioGame", "DLC"),
+                        exist_ok=True)
+        return main._me_plan(scratch, game)
+
+    def test_the_chosen_option_becomes_the_merge_list(self):
+        plan = self._plan(self.ONE_PROBE)
+        # _me_plan refuses merge-only mods but records their options, so
+        # the M3 path can still offer them.
+        alts = plan["merge_alts"]
+        fast = next(i for i, a in enumerate(alts)
+                    if "Fast" in (a.get("friendlyname") or ""))
+        got = main._me_m3_merge_choice(plan, {fast})
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(got["merges"], ["me2_fast.m3m"])
+
+    def test_the_other_option_gives_the_other_file(self):
+        plan = self._plan(self.ONE_PROBE)
+        alts = plan["merge_alts"]
+        normal = next(i for i, a in enumerate(alts)
+                      if "Normal" in (a.get("friendlyname") or ""))
+        got = main._me_m3_merge_choice(plan, {normal})
+        self.assertEqual(got["merges"], ["me2_normal.m3m"])
+
+    def test_choosing_nothing_is_refused_rather_than_installed_empty(self):
+        plan = self._plan(self.ONE_PROBE)
+        got = main._me_m3_merge_choice(plan, set())
+        self.assertFalse(got["ok"])
+        self.assertIn("nothing to install", got["error"])
+
+    def test_an_option_that_is_not_a_merge_mod_is_refused_not_guessed(self):
+        plan = {"merge_files": ["x.m3m"], "merge_alts": [],
+                "alts": [{"condition": "COND_MANUAL",
+                          "modoperation": "OP_ADD_CUSTOMDLC",
+                          "friendlyname": "Extra outfits"}]}
+        got = main._me_m3_merge_choice(plan, {0})
+        self.assertFalse(got["ok"])
+        self.assertIn("cannot pass on", got["error"])
+
+    def test_the_rewritten_moddesc_has_no_alternates_left(self):
+        out = main._me_m3_moddesc(self.ONE_PROBE, ["me2_fast.m3m"])
+        self.assertNotIn("altfiles", out.lower())
+        self.assertNotIn("COND_MANUAL", out)
+        self.assertIn("mergemods = me2_fast.m3m", out)
+        # Everything M3 needs to identify the mod survives.
+        self.assertIn("game = LE2", out)
+        self.assertIn("modname = One Probe All Resources", out)
+        self.assertIn("[BASEGAME]", out)
+        self.assertIn("moddir = .", out)
+
+    def test_the_rewrite_reparses_as_the_same_mod(self):
+        out = main._me_m3_moddesc(self.ONE_PROBE, ["me2_fast.m3m"])
+        ini = main._me_parse_moddesc(out)
+        self.assertEqual(ini["ModInfo"]["game"], "LE2")
+        self.assertEqual(ini["BASEGAME"]["mergemods"], "me2_fast.m3m")
+        self.assertNotIn("altfiles", ini["BASEGAME"])
+
+    def test_several_chosen_merges_are_joined(self):
+        out = main._me_m3_moddesc(self.ONE_PROBE, ["a.m3m", "b.m3m"])
+        self.assertIn("mergemods = a.m3m;b.m3m", out)
+
+    def test_a_mod_with_no_basegame_section_gets_one(self):
+        out = main._me_m3_moddesc(
+            "[ModInfo]\nmodname = X\ngame = LE1\n", ["x.m3m"])
+        ini = main._me_parse_moddesc(out)
+        self.assertEqual(ini["BASEGAME"]["mergemods"], "x.m3m")
+        self.assertEqual(ini["BASEGAME"]["moddir"], ".")
+
+    def test_an_existing_mergemods_line_is_replaced_not_doubled(self):
+        text = ("[ModInfo]\ngame = LE1\n\n[BASEGAME]\nmoddir = .\n"
+                "mergemods = old.m3m\n")
+        out = main._me_m3_moddesc(text, ["new.m3m"])
+        self.assertEqual(out.count("mergemods"), 1)
+        self.assertIn("mergemods = new.m3m", out)
+
+
+class TestMassEffectMergeRefusal(unittest.TestCase):
+    """Before the user has turned Mod Manager support on, a merge mod is
+    not impossible, it is one step away. Saying otherwise is the silence
+    this plugin keeps having to fix."""
+
+    def test_without_support_it_points_at_the_step(self):
+        msg = main._me_merge_refusal(False)
+        self.assertIn("Mod Manager support", msg)
+        self.assertIn("panel", msg)
+        # Never tell the user it cannot be done when it can.
+        self.assertNotIn("cannot be installed from here", msg)
+
+    def test_with_support_on_it_reports_a_real_failure(self):
+        msg = main._me_merge_refusal(True)
+        self.assertIn("log", msg)
+        self.assertNotIn("turn on", msg.lower())
+
+    def test_neither_message_uses_an_em_dash(self):
+        for ready in (True, False):
+            self.assertNotIn("\u2014", main._me_merge_refusal(ready))

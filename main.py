@@ -12617,6 +12617,12 @@ def _me_plan(scratch: str, install_path: str) -> dict:
         "multilists": {}, "basegame": [], "localization": None,
         "outdated": [], "incompatible": [], "required": [], "skipped": [],
         "installed": {}, "cmmver": "",
+        # The merge mods this package would apply, kept even though this
+        # installer cannot apply them: ME3Tweaks Mod Manager can, and the
+        # plan is meant to describe the mod truthfully rather than only
+        # what we happen to support. `merge_alts` are the ones behind a
+        # manual option, in the order the user would be shown them.
+        "merge_alts": [], "merge_files": [], "needs_m3": False,
     }
     if not moddesc:
         # A bare DLC folder dump: no manifest, so the folder has to say
@@ -12699,11 +12705,12 @@ def _me_plan(scratch: str, install_path: str) -> dict:
                     plan["alts"].append(st)
             continue
         if header == "BASEGAME":
-            if _me_split_semis(section.get("mergemods", "")):
-                plan.update(ok=False, error=(
-                    "This mod changes the game's own files with a merge "
-                    "mod, which needs ME3Tweaks Mod Manager on a PC. It "
-                    "cannot be installed from here."))
+            unconditional_merges = _me_split_semis(
+                section.get("mergemods", ""))
+            if unconditional_merges:
+                plan["needs_m3"] = True
+                plan["merge_files"].extend(unconditional_merges)
+                plan.update(ok=False, error=ME_MERGE_REFUSAL)
                 return plan
             moddir = _me_resolve(mod_root, section.get("moddir", "."))
             news = _me_split_semis(section.get("newfiles", ""))
@@ -12752,12 +12759,16 @@ def _me_plan(scratch: str, install_path: str) -> dict:
     dropped_merges = False
     for alt in plan["alts"]:
         if (alt.get("modoperation") or "").upper() == "OP_APPLY_MERGEMODS":
+            plan["needs_m3"] = True
             if (alt.get("condition") or "").upper() == "COND_MANUAL":
                 dropped_merges = True
+                plan["merge_alts"].append(alt)
                 plan["skipped"].append(
                     f"option '{alt.get('friendlyname') or 'merge mod'}' needs a "
                     "merge mod, which this plugin cannot apply")
                 continue
+            plan["merge_files"].extend(
+                _me_split_semis(alt.get("mergefiles", "")))
             plan.update(ok=False, error=ME_MERGE_REFUSAL)
             return plan
         kept.append(alt)
@@ -12801,6 +12812,232 @@ def _me_plan(scratch: str, install_path: str) -> dict:
                 "installed. Switch that off first if you want this one."))
             return plan
     return plan
+
+
+# ---- driving ME3Tweaks Mod Manager --------------------------------------------
+# Merge mods (.m3m) rewrite the game's own compressed packages: script
+# recompiles, class replacements, 2DA and Coalesced merges. Six of the ten
+# most endorsed mods for this game are merge mods, including all three
+# community patches, and several mods that DO install then require one. So
+# refusing them is refusing most of the game's modding scene.
+#
+# We do not reimplement that. ME3Tweaks Mod Manager already does it, ships
+# maintained Wine support (its own linux/ directory and a documented
+# --disablewineworkarounds flag), and installs a mod from the command line.
+# Spiked end to end on a Legion Go 2 on 2026-09-18: the LE1 Community Patch
+# and One Probe All Resources both installed unattended in the game's own
+# Proton prefix with no dialog and no click.
+#
+# Michael approved the dependency on one condition: it is never installed
+# behind the user's back. It is its own step in the panel, with text saying
+# what it is and why, and until the user presses it a merge mod is refused
+# with a message pointing at that step. This is the one place the plugin's
+# "act, don't instruct" rule gives way, because downloading and running
+# somebody else's 200MB program is a decision that belongs to the user.
+#
+# Full spike notes, including the four dialogs and how each is configured
+# away: docs/research/mass-effect-merge-mods.md.
+
+ME_M3_MOD_ID = 2  # "ME3Tweaks Mod Manager" on the Nexus LE page
+ME_M3_DIRNAME = "ME3TweaksModManager"
+ME_M3_EXE = "ME3TweaksModManager.exe"
+
+# settings.ini values we force before M3's first useful run. Each one is a
+# dialog that would otherwise wait for a click we cannot deliver: synthetic
+# input does not reach a window under gamescope.
+ME_M3_SETTINGS = {
+    # Do not report this user's modding to a third party.
+    "EnableTelemetry": "False",
+    # Do not let M3 grab nxm:// links away from the plugin.
+    "ConfigureNXMHandlerOnBoot": "False",
+    # We own updates; M3 must not fetch mods on its own.
+    "AutoImportModUpdates": "False",
+    # The what's-new panel on first boot.
+    "ShowedPreviewMessage2": "True",
+    # OneTimeMessage_LE1CoalescedOverwriteWarning. Without this the first
+    # LE1 Coalesced merge shows an OK/Cancel box, and every merge queued
+    # behind it never runs.
+    "ShowLE1CoalescedMergeOverwritesFile": "False",
+}
+
+# What M3 writes when a mod install has finished, whatever the outcome.
+ME_M3_DONE_MARKER = "<<<<<<< Finishing modinstaller"
+# The post-install merges. AutoTOC closes last, so its panel closing is the
+# signal that the game folder is consistent again.
+ME_M3_MERGE_DONE = "Panel closing: AutoTOC"
+# Failure markers, in M3's own words. EModInstallerResult names cover the
+# aborts (no backup, missing DLC, not enough space, oodle missing...).
+ME_M3_FAIL_MARKERS = (
+    "An error occurred during mod installation",
+    "INSTALL_FAILED",
+    "INSTALL_ABORTED",
+    "errorApplyingMergeMod",
+    "Could not parse command line arguments",
+)
+
+
+def _me_m3_settings_ini(existing: str) -> str:
+    """M3's settings.ini with our values forced, keeping everything else.
+
+    M3 writes the file itself on first boot; we edit rather than author it
+    so a future build's new keys survive. A key we care about that is
+    missing is appended to its section, and a missing section is created,
+    because M3 only writes the keys its current build knows.
+    """
+    want = dict(ME_M3_SETTINGS)
+    out = []
+    # Matched by key rather than section: M3 spreads these across
+    # [Logging], [UI] and [ModManager], and the names are unique.
+    for raw in (existing or "").splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            out.append(raw)
+            continue
+        key = line.partition("=")[0].strip()
+        if key in want:
+            out.append(f"{key} = {want.pop(key)}")
+            continue
+        out.append(raw)
+    if want:
+        # Anything M3 did not write goes in [ModManager], which is where
+        # every one of them lives in 9.2.
+        if not any(l.strip() == "[ModManager]" for l in out):
+            out.append("")
+            out.append("[ModManager]")
+            for key, value in want.items():
+                out.append(f"{key} = {value}")
+        else:
+            merged, done = [], False
+            for raw in out:
+                merged.append(raw)
+                if not done and raw.strip() == "[ModManager]":
+                    for key, value in want.items():
+                        merged.append(f"{key} = {value}")
+                    done = True
+            out = merged
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def _me_m3_target_line(install_path: str, le: str) -> str:
+    """One GameTargets{LE1,LE2,LE3}.txt line: the game directory as Wine
+    sees it. Every Linux path is reachable at Z:, which is what M3 itself
+    logged when it validated these."""
+    unix = _me_game_root(install_path, le)
+    return "Z:" + unix.replace("/", "\\")
+
+
+def _me_m3_verdict(new_lines: list) -> dict:
+    """Read M3's log tail and say whether the run is finished.
+
+    M3 never exits, so this is how a run ends: {state, error}, where state
+    is "running", "done" or "failed". "done" means the installer finished
+    AND the merges behind it did, because a mod whose Coalesced or TOC
+    merge never ran leaves the game inconsistent.
+    """
+    text = "\n".join(new_lines or [])
+    for marker in ME_M3_FAIL_MARKERS:
+        if marker in text:
+            line = next(
+                (l.strip() for l in reversed(new_lines or []) if marker in l), marker
+            )
+            # Keep M3's own sentence, without its timestamp and level.
+            msg = line.split("] ", 2)[-1] if "] " in line else line
+            return {"state": "failed", "error": msg[:300]}
+    if ME_M3_DONE_MARKER in text and ME_M3_MERGE_DONE in text:
+        return {"state": "done", "error": ""}
+    return {"state": "running", "error": ""}
+
+
+def _me_m3_merge_choice(plan: dict, selected: set) -> dict:
+    """What to hand M3 for a mod whose merge mods sit behind options.
+
+    M3 shows its own options panel for any mod with manual alternates, and
+    nothing can click it. Our wizard has already asked the user, so we
+    write a moddesc with the alternates removed and the chosen merge mods
+    named unconditionally. Measured with One Probe All Resources: the panel
+    then opens and closes in 46ms and the install runs.
+
+    Returns {ok, merges, error}. Refuses rather than guessing when a manual
+    alternate is something other than a merge mod, because materialising a
+    DLC or file alternate wrongly would install the wrong mod quietly.
+    """
+    # Merges the mod applies whatever the user picks, recorded by _me_plan.
+    merges = list(plan.get("merge_files") or [])
+    # Anything still manual that is NOT a merge mod cannot be materialised
+    # into a moddesc by the rewrite below, and guessing would install the
+    # wrong mod silently.
+    for alt in plan.get("alts") or []:
+        if (alt.get("condition") or "").upper() == "COND_MANUAL":
+            return {
+                "ok": False, "merges": [],
+                "error": (
+                    "This mod has options this plugin cannot pass on to Mod "
+                    "Manager yet, so it will not install it rather than "
+                    "install the wrong thing."
+                ),
+            }
+    for i, alt in enumerate(plan.get("merge_alts") or []):
+        if i in selected:
+            merges.extend(_me_split_semis(alt.get("mergefiles", "")))
+    if not merges:
+        return {
+            "ok": False, "merges": [],
+            "error": "No merge mod was chosen, so there is nothing to install.",
+        }
+    return {"ok": True, "merges": merges, "error": ""}
+
+
+def _me_m3_moddesc(original: str, merges: list) -> str:
+    """The original moddesc with every alternate dropped and `mergemods`
+    under [BASEGAME] naming exactly what was chosen.
+
+    Written next to a copy of the mod, never over the user's download.
+    """
+    keep = []
+    section = ""
+    seen_basegame = False
+    for raw in (original or "").lstrip("\ufeff").splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            if section.upper() == "BASEGAME" and not seen_basegame:
+                keep.append("mergemods = " + ";".join(merges))
+                seen_basegame = True
+            section = line[1:-1].strip()
+            keep.append(raw)
+            continue
+        key = line.partition("=")[0].strip().lower()
+        if key in ("altfiles", "altdlc", "mergemods"):
+            continue
+        keep.append(raw)
+    if section.upper() == "BASEGAME" and not seen_basegame:
+        keep.append("mergemods = " + ";".join(merges))
+        seen_basegame = True
+    if not seen_basegame:
+        keep.append("")
+        keep.append("[BASEGAME]")
+        keep.append("moddir = .")
+        keep.append("mergemods = " + ";".join(merges))
+    return "\n".join(keep).rstrip("\n") + "\n"
+
+
+def _me_merge_refusal(m3_ready: bool) -> str:
+    """What a merge mod is told when it cannot be installed.
+
+    Before the user has turned on Mod Manager support the answer is not
+    "no", it is "not yet, and here is the switch". Saying "this cannot be
+    installed from here" when it can be, one step away, is the kind of
+    silence this plugin keeps getting wrong.
+    """
+    if m3_ready:
+        return (
+            "Mod Manager could not install this mod. Its own log is in the "
+            "plugin's logs folder."
+        )
+    return (
+        "This mod edits the game's own files (a merge mod). The plugin can "
+        "install those, but it needs ME3Tweaks Mod Manager to do it: turn on "
+        "Mod Manager support in the Nexus Mods panel first."
+    )
 
 
 def _me_not_a_mod_reason(scratch: str) -> str:
