@@ -13040,6 +13040,293 @@ def _me_merge_refusal(m3_ready: bool) -> str:
     )
 
 
+# Where the marker "backup" lives. M3 refuses to touch a package file
+# unless the game has a backup registered, and its own check is two
+# directories and a marker file - nothing reads the contents. We are not
+# going to copy 111GB to satisfy a checkbox, and our reset is our own, so
+# this is a marker and nothing else. Michael approved that on 2026-09-18
+# with one condition: name it so nobody can mistake it for a real backup.
+ME_M3_MARKER_DIRNAME = "me3-marker-not-a-backup"
+ME_M3_MARKER_README = (
+    "This is NOT a backup.\n\n"
+    "ME3Tweaks Mod Manager refuses to install mods that edit the game's own\n"
+    "files unless a backup is registered for that game. Its check is only\n"
+    "that this folder exists and holds a file called cmm_vanilla. Nothing\n"
+    "here is a copy of your game.\n\n"
+    "Do not restore from this folder. To undo Mass Effect modding use the\n"
+    "Nexus Mods plugin's own reset, or Steam's Verify Integrity of Game\n"
+    "Files.\n"
+)
+# Microsoft's own redistributable, the same URL and switches ME3Tweaks Mod
+# Manager uses when it offers to install it (MSVCPPDetector.cs). Needed
+# because Legendary Edition ASI support is built against it.
+ME_M3_VCREDIST_URL = "https://aka.ms/vc14/vc_redist.x64.exe"
+
+
+def _me_m3_root(compat: str) -> str:
+    return os.path.join(compat, "pfx", "drive_c", ME_M3_DIRNAME)
+
+
+def _me_m3_exe_path(compat: str) -> str:
+    return os.path.join(_me_m3_root(compat), ME_M3_EXE)
+
+
+def _me_m3_programdata(compat: str) -> str:
+    return os.path.join(
+        compat, "pfx", "drive_c", "ProgramData", ME_M3_DIRNAME
+    )
+
+
+def _me_m3_log_dir(compat: str) -> str:
+    return os.path.join(_me_m3_programdata(compat), "logs")
+
+
+def _me_m3_marker_root() -> str:
+    return os.path.join(decky.DECKY_PLUGIN_RUNTIME_DIR, ME_M3_MARKER_DIRNAME)
+
+
+def _me_m3_ready(compat: str) -> bool:
+    """Is Mod Manager staged and configured in this game's prefix?"""
+    return os.path.isfile(_me_m3_exe_path(compat)) and os.path.isfile(
+        os.path.join(_me_m3_programdata(compat), "settings.ini")
+    )
+
+
+def _me_m3_write_config(compat: str, install_path: str) -> None:
+    """Everything M3 reads before it will run unattended. All plain files;
+    the registry half is _me_m3_write_registry."""
+    data = _me_m3_programdata(compat)
+    os.makedirs(data, exist_ok=True)
+    for le in ME_GAME_DIRS:
+        if not os.path.isdir(_me_game_root(install_path, le)):
+            continue
+        with open(os.path.join(data, f"GameTargets{le}.txt"), "w",
+                  encoding="utf-8", newline="\r\n") as f:
+            f.write(_me_m3_target_line(install_path, le) + "\n")
+    ini_path = os.path.join(data, "settings.ini")
+    try:
+        with open(ini_path, encoding="utf-8", errors="replace") as f:
+            existing = f.read()
+    except OSError:
+        existing = ""
+    with open(ini_path, "w", encoding="utf-8", newline="\r\n") as f:
+        f.write(_me_m3_settings_ini(existing))
+
+
+def _me_m3_markers() -> dict:
+    """{LE1: unix path} for the marker directories, created if missing."""
+    out = {}
+    for le in ME_GAME_DIRS:
+        root = os.path.join(_me_m3_marker_root(), le)
+        for sub in ("BIOGame", "Binaries"):
+            os.makedirs(os.path.join(root, sub), exist_ok=True)
+        # The marker M3 looks for, and the note that says what this is not.
+        with open(os.path.join(root, "cmm_vanilla"), "w") as f:
+            f.write("")
+        with open(os.path.join(root, "READ ME - NOT A BACKUP.txt"), "w",
+                  encoding="utf-8") as f:
+            f.write(ME_M3_MARKER_README)
+        out[le] = root
+    return out
+
+
+async def _me_m3_reg(proton: str, compat: str, steam_root: str,
+                     args: list) -> int:
+    """Run `reg` inside the prefix. Proton's own `run` verb refused on this
+    device (it tries to stage dlls first and died on a missing
+    amdxcffx64.dll), so the prefix's wine is called directly with
+    WINEPREFIX - which is what Proton would do anyway."""
+    wine = os.path.join(os.path.dirname(proton), "files", "bin", "wine")
+    if not os.path.isfile(wine):
+        wine = os.path.join(os.path.dirname(proton), "files", "bin", "wine64")
+    if not os.path.isfile(wine):
+        return -1
+    env = _host_env({
+        "WINEPREFIX": os.path.join(compat, "pfx"),
+        "WINEDEBUG": "-all",
+        "STEAM_COMPAT_CLIENT_INSTALL_PATH": steam_root,
+        "STEAM_COMPAT_DATA_PATH": compat,
+    })
+    proc = await asyncio.create_subprocess_exec(
+        wine, "reg", *args,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        env=env,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=120)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return -1
+    return proc.returncode or 0
+
+
+async def _me_m3_write_registry(proton: str, compat: str,
+                                steam_root: str) -> str:
+    """Register the marker directories as M3's vanilla backups. Returns ''
+    or an error."""
+    for le, path in _me_m3_markers().items():
+        win = "Z:" + path.replace("/", "\\")
+        rc = await _me_m3_reg(proton, compat, steam_root, [
+            "add", r"HKCU\Software\ME3Tweaks", "/v",
+            f"{le}VanillaBackupLocation", "/t", "REG_SZ", "/d", win, "/f",
+        ])
+        if rc != 0:
+            return f"could not register the {le} marker (reg exit {rc})"
+    return ""
+
+
+async def _me_m3_kill(compat: str) -> None:
+    """Stop any M3 in this prefix, and the wineserver holding it.
+
+    Both halves matter. M3 never exits on its own, and a wineserver left
+    from an earlier run (or from Steam launching the game under a
+    different Proton) holds the prefix and makes the next launch silently
+    do nothing - measured twice on device before this was understood.
+    """
+    for pattern in (
+        r"^c:\\windows\\system32\\steam\.exe .*" + ME_M3_EXE,
+        r"^python3 .*proton run .*" + ME_M3_EXE,
+    ):
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "pkill", "-9", "-f", pattern,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=_host_env(),
+            )
+            await asyncio.wait_for(proc.wait(), timeout=20)
+        except (OSError, asyncio.TimeoutError):
+            pass
+    await asyncio.sleep(1)
+
+
+async def _me_m3_stop_wineserver(proton: str, compat: str) -> None:
+    ws = os.path.join(os.path.dirname(proton), "files", "bin", "wineserver")
+    if not os.path.isfile(ws):
+        return
+    env = _host_env({"WINEPREFIX": os.path.join(compat, "pfx")})
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ws, "-k",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL, env=env,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=30)
+    except (OSError, asyncio.TimeoutError):
+        pass
+    await asyncio.sleep(2)
+
+
+def _me_m3_spare_display() -> str:
+    """An X display M3 can open a window on that the user will not see.
+
+    Gamescope runs two Xwayland servers. :0 is the session the user is
+    looking at and only ever composites the focused window; :1 is spare.
+    Putting M3 on :1 is what makes this invisible rather than a window
+    flashing over whatever they are doing.
+    """
+    for disp in (":1", ":0"):
+        if os.path.exists(f"/tmp/.X11-unix/X{disp[1:]}"):
+            return disp
+    return ":0"
+
+
+async def _me_m3_launch(proton: str, compat: str, steam_root: str,
+                        args: list, timeout: int) -> dict:
+    """Run M3 with `args` and wait for its log to say the run is over.
+
+    M3 has no exit code to read: it is a GUI app that stays open. The log
+    is the contract - see _me_m3_verdict for what counts as finished.
+    """
+    exe = _me_m3_exe_path(compat)
+    if not os.path.isfile(exe):
+        return {"ok": False, "error": "Mod Manager is not installed"}
+    await _me_m3_kill(compat)
+    await _me_m3_stop_wineserver(proton, compat)
+
+    log_dir = _me_m3_log_dir(compat)
+
+    def _log_lines() -> list:
+        try:
+            newest = max(
+                (os.path.join(log_dir, n) for n in os.listdir(log_dir)
+                 if n.lower().endswith(".txt")),
+                key=os.path.getmtime,
+            )
+        except (OSError, ValueError):
+            return []
+        try:
+            with open(newest, encoding="utf-8", errors="replace") as f:
+                return f.read().splitlines()
+        except OSError:
+            return []
+
+    before = len(_log_lines())
+    env = _host_env({
+        "DISPLAY": _me_m3_spare_display(),
+        "STEAM_COMPAT_CLIENT_INSTALL_PATH": steam_root,
+        "STEAM_COMPAT_DATA_PATH": compat,
+        "WINEDEBUG": "-all",
+    })
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    cmd = ["python3", proton, "run", exe, "--disablewineworkarounds"] + list(args)
+    decky.logger.info(f"masseffect m3: running {' '.join(args)}")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=_me_m3_root(compat), env=env, start_new_session=True,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError as e:
+        return {"ok": False, "error": f"Could not start Mod Manager: {e}"}
+
+    verdict = {"state": "running", "error": ""}
+    waited = 0
+    while waited < timeout:
+        await asyncio.sleep(5)
+        waited += 5
+        verdict = _me_m3_verdict(_log_lines()[before:])
+        if verdict["state"] != "running":
+            break
+    await _me_m3_kill(compat)
+    try:
+        proc.kill()
+    except (OSError, ProcessLookupError):
+        pass
+    if verdict["state"] == "done":
+        decky.logger.info(f"masseffect m3: finished in {waited}s")
+        return {"ok": True, "error": ""}
+    if verdict["state"] == "failed":
+        decky.logger.warning(f"masseffect m3: failed: {verdict['error']}")
+        return {"ok": False, "error": verdict["error"]}
+    decky.logger.warning(f"masseffect m3: gave up after {timeout}s")
+    return {"ok": False, "error": (
+        "Mod Manager did not finish in time. Its log is in the plugin's "
+        "logs folder."
+    )}
+
+
+async def _me_m3_fetch_vcredist(dest: str) -> str:
+    """Microsoft's redistributable, straight from Microsoft."""
+    if os.path.isfile(dest) and os.path.getsize(dest) > 1_000_000:
+        return ""
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=300)
+        ) as session:
+            async with session.get(ME_M3_VCREDIST_URL, ssl=SSL_CONTEXT) as r:
+                if r.status != 200:
+                    return f"HTTP {r.status} fetching the Visual C++ runtime"
+                tmp = dest + ".part"
+                with open(tmp, "wb") as f:
+                    async for chunk in r.content.iter_chunked(1 << 16):
+                        f.write(chunk)
+        os.replace(tmp, dest)
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+        return f"Could not download the Visual C++ runtime: {type(e).__name__}"
+    return ""
+
+
 def _me_not_a_mod_reason(scratch: str) -> str:
     exts = set()
     for _root, _dirs, names in os.walk(scratch):
@@ -23083,6 +23370,179 @@ query CollectionInstructions($slug: String!) {
         return r
 
     # ---- Load Order page ------------------------------------------------
+
+    # ---- merge mod support (ME3Tweaks Mod Manager) ----------------------
+    # Its own step in the panel rather than something that happens behind
+    # the user's back. See the block comment above ME_M3_MOD_ID.
+
+    async def get_merge_support(self, install_dir: str, app_id: int) -> dict:
+        """Is Mod Manager support set up for this game?"""
+        try:
+            proton, compat, _steam, err = _proton_binary_for(int(app_id))
+        except Exception as e:  # noqa: BLE001 - a status read blocks nothing
+            return {"ok": True, "installed": False, "error": str(e)}
+        if err or not compat:
+            return {"ok": True, "installed": False, "error": err or ""}
+        state = _load_settings().get("me_merge_support", {}) or {}
+        return {
+            "ok": True,
+            "installed": _me_m3_ready(compat),
+            "version": state.get("version", ""),
+            "at": state.get("at", 0),
+            "last_error": state.get("last_error", ""),
+        }
+
+    async def setup_merge_support(self, install_dir: str, app_id: int) -> dict:
+        """Download ME3Tweaks Mod Manager and configure it to run headless
+        in this game's Proton prefix.
+
+        Deliberately a step the user presses. The panel text says what it
+        is and whose it is; this only runs after they have read that.
+        """
+        if _me_running():
+            return {"ok": False, "error": ME_RUNNING}
+        settings = _load_settings()
+        api_key = settings.get("api_key")
+        if not api_key:
+            return {"ok": False, "error": "Not signed in"}
+        proton, compat, steam_root, err = _proton_binary_for(int(app_id))
+        if err or not proton:
+            return {"ok": False, "error": err or "No Proton build found"}
+        install_path = _game_dir(install_dir)
+        if not os.path.isdir(install_path):
+            return {"ok": False, "error": "Game folder not found"}
+
+        def _fail(stage: str, message: str) -> dict:
+            store = settings.setdefault("me_merge_support", {})
+            store["last_error"] = f"{stage}: {message}"
+            _save_settings(settings)
+            decky.logger.warning(f"merge support {stage}: {message}")
+            return {"ok": False, "error": message}
+
+        # 1. The Nexus download. Mod 2's main file is a 7-Zip self
+        #    extractor holding one self-contained exe: no installer to run
+        #    and no .NET to put in the prefix.
+        url = (f"{NEXUS_API_BASE}/v1/games/masseffectlegendaryedition"
+               f"/mods/{ME_M3_MOD_ID}/files.json")
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as session:
+                async with session.get(
+                    url, headers=_api_headers(api_key), ssl=SSL_CONTEXT
+                ) as r:
+                    if r.status != 200:
+                        return _fail("lookup", f"Nexus Mods API error (HTTP {r.status})")
+                    body = await r.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return _fail("lookup", f"Network error: {type(e).__name__}")
+        mains = [f for f in (body.get("files") or [])
+                 if (f.get("category_name") or "").upper() == "MAIN"]
+        if not mains:
+            return _fail("lookup", "Mod Manager has no main file on Nexus Mods")
+        newest = max(mains, key=lambda f: int(f.get("uploaded_timestamp") or 0))
+        file_id = int(newest["file_id"])
+        version = str(newest.get("version") or "")
+
+        derr, archive = await _download_archive(
+            "masseffectlegendaryedition", ME_M3_MOD_ID, file_id,
+            newest.get("file_name") or f"m3-{file_id}.exe", api_key,
+        )
+        if derr:
+            return _fail("download", derr)
+
+        # 2. Unpack the SFX and stage the exe in the prefix.
+        scratch = _extract_scratch(ME_M3_MOD_ID, file_id)
+        _force_rmtree(scratch)
+        os.makedirs(scratch, exist_ok=True)
+        xerr = await _extract_archive(archive, scratch)
+        if xerr:
+            _force_rmtree(scratch)
+            return _fail("extract", f"Could not unpack Mod Manager: {xerr}")
+        found = ""
+        for root, _dirs, names in os.walk(scratch):
+            for n in names:
+                if n.lower() == ME_M3_EXE.lower():
+                    found = os.path.join(root, n)
+                    break
+            if found:
+                break
+        if not found:
+            _force_rmtree(scratch)
+            return _fail("extract", "Mod Manager's program was not in the download")
+        target_dir = _me_m3_root(compat)
+        os.makedirs(target_dir, exist_ok=True)
+        try:
+            shutil.copy2(found, _me_m3_exe_path(compat))
+        except OSError as e:
+            _force_rmtree(scratch)
+            return _fail("stage", f"Could not place Mod Manager: {e}")
+        _force_rmtree(scratch)
+
+        # 3. Config, so its first run asks nothing.
+        try:
+            _me_m3_write_config(compat, install_path)
+        except OSError as e:
+            return _fail("configure", f"Could not write Mod Manager's settings: {e}")
+        rerr = await _me_m3_write_registry(proton, compat, steam_root)
+        if rerr:
+            return _fail("configure", rerr)
+
+        # 4. The Visual C++ runtime, which Legendary Edition ASI support
+        #    needs. Same file and switches Mod Manager itself would use.
+        vc = os.path.join(DOWNLOADS_DIR, "vc_redist.x64.exe")
+        verr = await _me_m3_fetch_vcredist(vc)
+        if verr:
+            return _fail("runtime", verr)
+        try:
+            env = _host_env({
+                "STEAM_COMPAT_CLIENT_INSTALL_PATH": steam_root,
+                "STEAM_COMPAT_DATA_PATH": compat,
+                "WINEDEBUG": "-all",
+            })
+            proc = await asyncio.create_subprocess_exec(
+                "python3", proton, "run", vc,
+                "/install", "/quiet", "/norestart",
+                env=env, stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=600)
+        except (OSError, asyncio.TimeoutError) as e:
+            # Not fatal on its own: Mod Manager checks the registry, and a
+            # prefix that already has the runtime passes anyway.
+            decky.logger.warning(f"merge support: vc redist run: {e}")
+
+        store = settings.setdefault("me_merge_support", {})
+        store.update({"version": version, "file_id": file_id,
+                      "at": int(time.time()), "last_error": ""})
+        _save_settings(settings)
+        decky.logger.info(
+            f"merge support installed: Mod Manager {version} in prefix {app_id}"
+        )
+        return {"ok": True, "version": version}
+
+    async def remove_merge_support(self, install_dir: str, app_id: int) -> dict:
+        """Take Mod Manager and its markers back out. Mods it installed
+        stay installed; this only removes the tool."""
+        proton, compat, steam_root, err = _proton_binary_for(int(app_id))
+        if err or not compat:
+            return {"ok": False, "error": err or "No prefix found"}
+        await _me_m3_kill(compat)
+        if proton:
+            await _me_m3_stop_wineserver(proton, compat)
+            for le in ME_GAME_DIRS:
+                await _me_m3_reg(proton, compat, steam_root, [
+                    "delete", r"HKCU\Software\ME3Tweaks", "/v",
+                    f"{le}VanillaBackupLocation", "/f",
+                ])
+        for path in (_me_m3_root(compat), _me_m3_programdata(compat),
+                     _me_m3_marker_root()):
+            _force_rmtree(path)
+        settings = _load_settings()
+        settings.pop("me_merge_support", None)
+        _save_settings(settings)
+        decky.logger.info("merge support removed")
+        return {"ok": True}
 
     async def get_load_order_games(self, games: list) -> dict:
         """Which plugin games have anything to arrange, cheaply: a line

@@ -1956,6 +1956,34 @@ export const getPrefixToolsState = callable<
   }
 >("get_prefix_tools_state");
 
+/** Is ME3Tweaks Mod Manager set up in this game's Proton prefix? It is
+ * what installs merge mods, and it is installed only when the user presses
+ * the step that explains it. See src/mergeSupport.ts. */
+export const getMergeSupport = callable<
+  [install_dir: string, app_id: number],
+  {
+    ok: boolean;
+    installed?: boolean;
+    version?: string;
+    at?: number;
+    last_error?: string;
+    error?: string;
+  }
+>("get_merge_support");
+
+/** Download Mod Manager and configure it to run headless. Long: a 200 MB
+ * download plus a runtime install inside the prefix. */
+export const setupMergeSupport = callable<
+  [install_dir: string, app_id: number],
+  { ok: boolean; version?: string; error?: string }
+>("setup_merge_support");
+
+/** Take it back out. Mods it installed stay installed. */
+export const removeMergeSupport = callable<
+  [install_dir: string, app_id: number],
+  { ok: boolean; error?: string }
+>("remove_merge_support");
+
 export const skipPrefixTools = callable<
   [game_domain: string, mod_ids: number[], skipped: boolean],
   { ok: boolean }

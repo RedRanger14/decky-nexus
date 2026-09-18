@@ -80,6 +80,7 @@ import {
   getPrefixRuntimeState,
   getScriptExtenderState,
   setScriptExtenderPlugins,
+  getMergeSupport,
   getPrefixToolsState,
   getMe3State,
   getMe3LaunchCommand,
@@ -87,6 +88,8 @@ import {
   setMe3CoopPassword,
   installMe3,
   installFramework,
+  removeMergeSupport,
+  setupMergeSupport,
   skipPrefixTools,
   runPrefixTool,
   seedGameIni,
@@ -235,6 +238,13 @@ import { UpdatesPage } from "./UpdatesPage";
 import { installLatest, toggleMod } from "./install";
 import HealthCheckPage, { setHealthGame } from "./HealthCheckPage";
 import { scanUpdates } from "./updates";
+import {
+  MERGE_STEP_EXPLAINER,
+  MERGE_STEP_TITLE,
+  mergeStepFailure,
+  mergeStepSummary,
+  offersMergeSupport,
+} from "./mergeSupport";
 
 /** QAM row shortcut: jump from an installed mod straight to its detail page
  * (to re-check requirements, files, or updates). */
@@ -544,6 +554,13 @@ function CurrentGameSection() {
   >({});
   const [toolsSkipped, setToolsSkipped] = useState<Record<number, boolean>>({});
   const [toolsInfoOpen, setToolsInfoOpen] = useState(false);
+  // Merge mod support: ME3Tweaks Mod Manager in the game's prefix. Only
+  // Mass Effect offers it, and only the user turns it on.
+  const [mergeOn, setMergeOn] = useState<boolean | undefined>();
+  const [mergeVersion, setMergeVersion] = useState("");
+  const [mergeError, setMergeError] = useState("");
+  const [mergeInfoOpen, setMergeInfoOpen] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
   const [toolsBusy, setToolsBusy] = useState<string | undefined>();
   // me3 (FromSoft games): loader state + Seamless Co-op's session password.
   const [me3, setMe3] = useState<Me3State | undefined>();
@@ -637,6 +654,16 @@ function CurrentGameSection() {
         getFrostyState(game.nexusDomain, game.installDirName, game.appId).then(
           (r) => setFrostyState(r.ok ? r : undefined)
         );
+      }
+      if (offersMergeSupport(game.installMode)) {
+        getMergeSupport(game.installDirName, game.appId)
+          .then((r) => {
+            if (!r.ok) return;
+            setMergeOn(!!r.installed);
+            setMergeVersion(r.version ?? "");
+            setMergeError(r.last_error ?? "");
+          })
+          .catch(() => setMergeOn(false));
       }
       if (game.prefixTools) {
         getPrefixToolsState(game.nexusDomain).then((r) => {
@@ -1711,6 +1738,117 @@ function CurrentGameSection() {
           )}
           {/* Step 3: prefix tools - exe patchers the scene depends on,
               run inside the game's Proton prefix, one tap for all. */}
+          {/* Merge mod support. Deliberately a step the user presses:
+              it downloads and runs somebody else's program, and that is
+              not a decision to make on their behalf. Until it is on, a
+              merge mod is refused with a message pointing here rather
+              than "this cannot be installed". */}
+          {offersMergeSupport(game.installMode) && status?.installed && (
+            <PanelSectionRow>
+              <div>
+                <Field label={MERGE_STEP_TITLE} childrenLayout="below">
+                  {mergeOn === undefined
+                    ? "Checking…"
+                    : mergeStepSummary(mergeOn, mergeVersion)}
+                </Field>
+                {mergeError && !mergeBusy && (
+                  <div
+                    style={{
+                      padding: "7px 10px",
+                      margin: "0 0 8px",
+                      background: "rgba(224, 92, 92, 0.12)",
+                      borderLeft: "3px solid #e05c5c",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    ⚠ {mergeStepFailure(mergeError)}
+                  </div>
+                )}
+                <ButtonItem
+                  layout="below"
+                  bottomSeparator="none"
+                  onClick={() => setMergeInfoOpen(!mergeInfoOpen)}
+                >
+                  {mergeInfoOpen ? "▾" : "▸"} What is this?
+                </ButtonItem>
+                {mergeInfoOpen && (
+                  <div
+                    style={{
+                      padding: "8px 10px",
+                      margin: "0 0 8px",
+                      background: "rgba(255,255,255,0.05)",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                      lineHeight: 1.5,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {MERGE_STEP_EXPLAINER}
+                  </div>
+                )}
+                {mergeOn === false && (
+                  <ButtonItem
+                    layout="below"
+                    disabled={mergeBusy}
+                    description="Downloads ME3Tweaks Mod Manager and sets it up for you"
+                    onClick={async () => {
+                      setMergeBusy(true);
+                      setMergeError("");
+                      const r = await setupMergeSupport(
+                        game.installDirName,
+                        game.appId
+                      ).catch((e) => ({ ok: false, error: String(e) }));
+                      setMergeBusy(false);
+                      if (r.ok) {
+                        setMergeOn(true);
+                        setMergeVersion(
+                          (r as { version?: string }).version ?? ""
+                        );
+                        toaster.toast({
+                          title: "Merge mod support ready",
+                          body: "Mods that edit the game's own files can now install.",
+                        });
+                      } else {
+                        setMergeError(r.error ?? "Setup failed");
+                        toaster.toast({
+                          title: "Could not set up merge mod support",
+                          body: r.error ?? "",
+                        });
+                      }
+                    }}
+                  >
+                    {mergeBusy ? "Setting up…" : "Install Mod Manager"}
+                  </ButtonItem>
+                )}
+                {mergeOn === true && (
+                  <ButtonItem
+                    layout="below"
+                    disabled={mergeBusy}
+                    description="Mods it already installed stay installed"
+                    onClick={async () => {
+                      setMergeBusy(true);
+                      const r = await removeMergeSupport(
+                        game.installDirName,
+                        game.appId
+                      ).catch((e) => ({ ok: false, error: String(e) }));
+                      setMergeBusy(false);
+                      if (r.ok) {
+                        setMergeOn(false);
+                        setMergeVersion("");
+                        setMergeError("");
+                      } else {
+                        setMergeError(r.error ?? "Removal failed");
+                      }
+                    }}
+                  >
+                    {mergeBusy ? "Removing…" : "Remove Mod Manager"}
+                  </ButtonItem>
+                )}
+              </div>
+            </PanelSectionRow>
+          )}
           {game.prefixTools && status?.installed && (
             <PanelSectionRow>
               <style>{`
