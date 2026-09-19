@@ -1766,3 +1766,41 @@ test("the collection page header blurs adult art the same way", () => {
   assert.match(page, /blurAdult && collection\.adultContent/, "the header art ignores the flag");
   assert.match(page, /<AdultBadge \/>/, "the header wears no 18+ chip");
 });
+
+// --- the merge mod step must render for the game that needs it -----------
+// It was first placed in the panel's frameworkless branch, which Mass
+// Effect never takes: it has a framework (the Bink bypass). Everything
+// compiled, the bundle shipped, the backend reported the step installed,
+// and the panel showed no step at all. Michael: "ive opened the legion but
+// I cant see any step bout merge mod support".
+//
+// The panel splits on `game.framework && !game.frostbite && status?.installed`.
+// Mass Effect is on the framework side, so the step has to be there too.
+test("the merge mod step is in the panel's framework branch", () => {
+  const code = readCode("index.tsx");
+  // The RENDER site, not the useEffect that reads the state: the effect
+  // calls offersMergeSupport too and comes first in the file, so matching
+  // the bare call made this test pass on the very bug it describes.
+  const step = code.indexOf(
+    "offersMergeSupport(game.installMode) && status?.installed"
+  );
+  assert.ok(step > 0, "the merge step is not rendered at all");
+  const split = code.indexOf("game.launcherBypass && status?.installed &&");
+  assert.ok(split > 0, "could not find the frameworkless branch");
+  assert.ok(
+    step < split,
+    "the merge mod step is in the frameworkless branch, where Mass Effect " +
+      "never goes: it has a framework, so the step would never render"
+  );
+});
+
+test("the merge mod step is gated on the game, not hardcoded", () => {
+  const code = readCode("index.tsx");
+  // The predicate lives in mergeSupport.ts so only one place decides.
+  assert.match(code, /offersMergeSupport\(game\.installMode\)/);
+  assert.doesNotMatch(
+    code,
+    /installMode === ["']masseffect["']/,
+    "the panel should ask offersMergeSupport rather than test the mode itself"
+  );
+});
