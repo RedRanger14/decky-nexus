@@ -21742,6 +21742,254 @@ EnableLE1CoalescedMerge = True
             main._me_m3_target_line("/g/MELE", "LE3"), r"Z:\g\MELE\Game\ME3")
 
 
+class TestMassEffectAsiMods(unittest.TestCase):
+    """[ASIMODS]: the half of a mod that is a DLL, not a folder.
+
+    An ASI is side-loaded by the Bink bypass at startup. Some mods are
+    inert without one: ALOT ships its textures as a
+    CombinedTextureOverrides.btp that nothing reads unless LE3's Texture
+    Override ASI is present. Until 2026-09-19 this installer listed
+    [ASIMODS] as an unsupported Mod Manager feature and installed the
+    folder anyway, so ALOT looked installed and changed nothing. Michael
+    reported it as "not 100% sure if the textures have changed".
+
+    The manifest below is trimmed from the real ME3Tweaks one, keeping
+    the shape that matters: a group holds several versions, and the game
+    number is 4/5/6 for LE1/LE2/LE3.
+    """
+
+    MANIFEST = """<?xml version="1.0"?>
+<ASIManifest>
+  <updategroup groupid="0" game="3">
+    <asimod>
+      <name>Mouse Disabler</name>
+      <installedname>MouseDisabler</installedname>
+      <version>1</version>
+      <hash>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</hash>
+      <downloadlink>https://example.invalid/MouseDisabler-v1.asi</downloadlink>
+    </asimod>
+  </updategroup>
+  <updategroup groupid="87" game="6">
+    <asimod>
+      <name>Texture Override</name>
+      <installedname>LE3TextureOverride</installedname>
+      <version>2</version>
+      <hash>315b8c4e696af816322c5a9cfdc95c5a</hash>
+      <downloadlink>https://example.invalid/LE3TextureOverride-v2.0.asi</downloadlink>
+    </asimod>
+    <asimod>
+      <name>Texture Override</name>
+      <installedname>LE3TextureOverride</installedname>
+      <version>4</version>
+      <hash>e75d0fd1c13968a5e3f317dcc013bdb7</hash>
+      <downloadlink>https://example.invalid/LE3TextureOverride-v4.0.asi</downloadlink>
+    </asimod>
+    <asimod>
+      <name>Texture Override</name>
+      <installedname>LE3TextureOverride</installedname>
+      <version>3</version>
+      <hash>ce689cdb33f937856eaad87f7a9ad72c</hash>
+      <downloadlink>https://example.invalid/LE3TextureOverride-v3.0.asi</downloadlink>
+    </asimod>
+  </updategroup>
+  <updategroup groupid="88" game="4">
+    <asimod>
+      <name>Texture Override</name>
+      <installedname>LE1TextureOverride</installedname>
+      <version>3</version>
+      <hash>bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</hash>
+      <downloadlink>https://example.invalid/LE1TextureOverride-v3.0.asi</downloadlink>
+    </asimod>
+  </updategroup>
+</ASIManifest>
+"""
+
+    def _root(self):
+        # main's own parser, not the stdlib one: Decky's embedded Python
+        # has no xml package, so a test that used ElementTree would pass
+        # here and prove nothing about the device.
+        return main.xml_parse(self.MANIFEST)
+
+    # --- reading the moddesc -------------------------------------------
+
+    def test_the_real_alot_line_is_read(self):
+        # Copied from ALOT for LE3 2022.1.4, the mod that exposed this.
+        self.assertEqual(
+            main._me_asi_groupids("((GroupID=87))"), ["87"])
+
+    def test_several_groups_and_duplicates(self):
+        self.assertEqual(
+            main._me_asi_groupids("((GroupID=87),(GroupID=40),(GroupID=87))"),
+            ["87", "40"])
+
+    def test_junk_is_ignored_rather_than_installed(self):
+        for bad in ("", "   ", "((GroupID=))", "((Nonsense=87))",
+                    "((GroupID=../../evil))", "((GroupID=8x7))"):
+            self.assertEqual(main._me_asi_groupids(bad), [], bad)
+
+    # --- picking the file ----------------------------------------------
+
+    def test_the_newest_version_wins_whatever_the_order(self):
+        # v4 is listed between v2 and v3 in the real manifest too, so
+        # "last one in the file" would pick the wrong build.
+        pick = main._me_asi_pick(self._root(), "87", "LE3")
+        self.assertEqual(pick["version"], "4")
+        self.assertEqual(pick["installedname"], "LE3TextureOverride")
+        self.assertEqual(pick["file"], "LE3TextureOverride-v4.asi")
+        self.assertEqual(pick["hash"], "e75d0fd1c13968a5e3f317dcc013bdb7")
+
+    def test_the_game_must_match_the_group(self):
+        # Group 87 is LE3's. Asking for it as LE1 must find nothing
+        # rather than dropping an LE3 DLL into LE1.
+        self.assertEqual(main._me_asi_pick(self._root(), "87", "LE1"), {})
+        self.assertEqual(main._me_asi_pick(self._root(), "88", "LE3"), {})
+        self.assertEqual(
+            main._me_asi_pick(self._root(), "88", "LE1")["installedname"],
+            "LE1TextureOverride")
+
+    def test_an_original_trilogy_group_is_not_a_legendary_one(self):
+        # Manifest game 3 is ME3, not LE3. The numbering is 1-3 then 4-6.
+        self.assertEqual(main._me_asi_pick(self._root(), "0", "LE3"), {})
+
+    def test_an_unknown_group_is_not_a_crash(self):
+        self.assertEqual(main._me_asi_pick(self._root(), "9999", "LE3"), {})
+
+    def test_an_error_page_is_not_a_manifest(self):
+        # The bundled parser never raises, so a 502 HTML body parses into
+        # something perfectly valid and empty. Without a shape check that
+        # would overwrite a good cache and then report no ASI exists.
+        self.assertFalse(main._me_asi_usable(main.xml_parse(
+            "<html><body><h1>502 Bad Gateway</h1></body></html>")))
+        self.assertFalse(main._me_asi_usable(main.xml_parse("")))
+        self.assertTrue(main._me_asi_usable(self._root()))
+
+    def test_a_download_link_must_be_https(self):
+        # The file is a DLL the game loads; it does not come over plain
+        # http whatever the manifest says.
+        bad = main.xml_parse(self.MANIFEST.replace(
+            "https://example.invalid/LE3TextureOverride-v4.0.asi",
+            "http://example.invalid/LE3TextureOverride-v4.0.asi"))
+        # v4 is now unusable, so the newest usable build is not picked at
+        # all rather than silently downgraded over http.
+        self.assertEqual(main._me_asi_pick(bad, "87", "LE3"), {})
+
+    def test_an_installedname_cannot_carry_a_path(self):
+        bad = main.xml_parse(self.MANIFEST.replace(
+            "<installedname>LE3TextureOverride</installedname>",
+            "<installedname>../../../Binaries/Win64/bink2w64</installedname>"))
+        self.assertEqual(main._me_asi_pick(bad, "87", "LE3"), {})
+
+    # --- installing and removing ---------------------------------------
+
+    def _game(self):
+        install = tempfile.mkdtemp(dir=TEST_ROOT)
+        os.makedirs(os.path.join(install, "Game", "ME3", "Binaries", "Win64"))
+        return install
+
+    def test_a_bad_hash_is_refused(self):
+        # This is a DLL the game loads. A mismatch means the file is not
+        # what ME3Tweaks published, and installing it anyway would be the
+        # worst possible failure mode here.
+        pick = main._me_asi_pick(self._root(), "87", "LE3")
+
+        class FakeResp:
+            status = 200
+            async def read(self):
+                return b"not the real asi"
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+
+        class FakeSession:
+            def get(self, *a, **k):
+                return FakeResp()
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+
+        with mock.patch.object(main.aiohttp, "ClientSession",
+                               lambda *a, **k: FakeSession()):
+            err, body = asyncio.new_event_loop().run_until_complete(
+                main._me_asi_fetch(pick))
+        self.assertIn("hash mismatch", err)
+        self.assertEqual(body, b"")
+
+    def test_removal_takes_the_file_back_out(self):
+        install = self._game()
+        asi_dir = main._me_asi_dir(install, "LE3")
+        os.makedirs(asi_dir)
+        keep = os.path.join(asi_dir, "AutoTOCLE-v2.asi")
+        mine = os.path.join(asi_dir, "LE3TextureOverride-v4.asi")
+        for p in (keep, mine):
+            with open(p, "wb") as f:
+                f.write(b"x")
+        main._me_asi_remove(install, "LE3", ["LE3TextureOverride-v4.asi"])
+        self.assertFalse(os.path.exists(mine))
+        # Somebody else's ASI is not ours to delete: Mod Manager puts
+        # AutoTOC there and other mods rely on it.
+        self.assertTrue(os.path.exists(keep))
+
+    def test_removal_cannot_escape_the_asi_folder(self):
+        install = self._game()
+        os.makedirs(main._me_asi_dir(install, "LE3"))
+        victim = os.path.join(install, "Game", "ME3", "Binaries", "Win64",
+                              "bink2w64.dll")
+        with open(victim, "wb") as f:
+            f.write(b"important")
+        main._me_asi_remove(install, "LE3",
+                            ["../bink2w64.dll", "..\\bink2w64.dll",
+                             "/etc/passwd", ""])
+        self.assertTrue(os.path.exists(victim))
+
+    def test_removal_of_an_unknown_game_does_nothing(self):
+        main._me_asi_remove(self._game(), "", ["x.asi"])
+        main._me_asi_remove(self._game(), "LE9", ["x.asi"])
+
+    # --- the planner ----------------------------------------------------
+
+    def test_the_planner_reads_asimods_instead_of_shrugging(self):
+        scratch = tempfile.mkdtemp(dir=TEST_ROOT)
+        os.makedirs(os.path.join(scratch, "DLC_MOD_ALOT", "CookedPCConsole"))
+        # The real ALOT moddesc, trimmed to the sections that matter.
+        with open(os.path.join(scratch, "moddesc.ini"), "w",
+                  encoding="utf-8") as f:
+            f.write(
+                "[ModManager]\ncmmver = 9.2\n\n"
+                "[ModInfo]\ngame = LE3\n"
+                "modname = A Lot of Textures (ALOT) for LE3\n"
+                "modver = 2022.1.4\n\n"
+                "[CUSTOMDLC]\nsourcedirs = DLC_MOD_ALOT\n"
+                "destdirs = DLC_MOD_ALOT\n\n"
+                "[ASIMODS]\nasimodstoinstall = ((GroupID=87))\n")
+        plan = main._me_plan(scratch, self._game())
+        self.assertTrue(plan["ok"], plan.get("error"))
+        self.assertEqual(plan["game"], "LE3")
+        self.assertEqual(plan["asi"], ["87"])
+        # And it must no longer be reported as something we cannot do.
+        self.assertFalse(
+            [s for s in plan["skipped"] if "ASIMODS" in s],
+            f"still listed as unsupported: {plan['skipped']}")
+
+    def test_other_unsupported_headers_are_still_reported(self):
+        # Narrowing the skip list must not have swallowed its neighbours.
+        scratch = tempfile.mkdtemp(dir=TEST_ROOT)
+        os.makedirs(os.path.join(scratch, "DLC_MOD_X"))
+        with open(os.path.join(scratch, "moddesc.ini"), "w",
+                  encoding="utf-8") as f:
+            f.write(
+                "[ModManager]\ncmmver = 9.2\n\n"
+                "[ModInfo]\ngame = LE3\nmodname = X\nmodver = 1\n\n"
+                "[CUSTOMDLC]\nsourcedirs = DLC_MOD_X\ndestdirs = DLC_MOD_X\n\n"
+                "[HEADMORPHS]\nfiles = a.ron\n\n"
+                "[TEXTUREMODS]\nfiles = b.mem\n")
+        plan = main._me_plan(scratch, self._game())
+        joined = " ".join(plan["skipped"])
+        self.assertIn("HEADMORPHS", joined)
+        self.assertIn("TEXTUREMODS", joined)
+
+
 class TestMassEffectVcRuntimeSkip(unittest.TestCase):
     """Whether the Visual C++ runtime already sits in the prefix.
 

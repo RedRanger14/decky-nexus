@@ -12624,6 +12624,9 @@ def _me_plan(scratch: str, install_path: str) -> dict:
         # what we happen to support. `merge_alts` are the ones behind a
         # manual option, in the order the user would be shown them.
         "merge_alts": [], "merge_files": [], "needs_m3": False,
+        # ASI group ids from [ASIMODS]. Not a Mod Manager exclusive: an
+        # ASI is a file in a folder, and some mods are inert without one.
+        "asi": [],
     }
     if not moddesc:
         # A bare DLC folder dump: no manifest, so the folder has to say
@@ -12746,7 +12749,12 @@ def _me_plan(scratch: str, install_path: str) -> dict:
                           _me_split_semis(section.get("files", ""))],
             }
             continue
-        if header in ("TEXTUREMODS", "HEADMORPHS", "ASIMODS", "GAME1_EMBEDDED_TLK",
+        if header == "ASIMODS":
+            for gid in _me_asi_groupids(section.get("asimodstoinstall", "")):
+                if gid not in plan["asi"]:
+                    plan["asi"].append(gid)
+            continue
+        if header in ("TEXTUREMODS", "HEADMORPHS", "GAME1_EMBEDDED_TLK",
                       "LELAUNCHER", "ME2_RCWMOD", "BALANCE_CHANGES"):
             plan["skipped"].append(
                 f"[{header}] is a Mod Manager feature this plugin does not have"
@@ -13880,6 +13888,237 @@ def _me_merge_cascade(game_domain: str, le: str, keep: str = "") -> list:
     return dropped
 
 
+# ---- ASI mods ---------------------------------------------------------
+# An ASI is a DLL the Bink bypass side-loads at startup. Some mods are
+# only data until one is present: ALOT ships its textures as a
+# CombinedTextureOverrides.btp that nothing reads without LE3's Texture
+# Override ASI, so installing the DLC folder alone leaves the mod looking
+# installed and doing nothing. Michael installed ALOT on 2026-09-19 and
+# could not tell whether it had worked, which is exactly that.
+#
+# moddesc names them by group id only, so the file comes from ME3Tweaks'
+# manifest: it carries the download link and an MD5 per version, and the
+# highest version in a group is the current one.
+ME_ASI_MANIFEST_URL = "https://me3tweaks.com/mods/asi/getmanifest?AllGames=1"
+# The manifest numbers the games; 1-3 are the originals, 4-6 Legendary.
+ME_ASI_GAME_NUM = {"LE1": "4", "LE2": "5", "LE3": "6"}
+ME_ASI_MANIFEST_TTL = 24 * 60 * 60
+
+
+def _me_asi_dir(install_path: str, le: str) -> str:
+    return os.path.join(_me_binaries(install_path, le), "ASI")
+
+
+def _me_asi_groupids(value: str) -> list:
+    """The group ids in an [ASIMODS] asimodstoinstall list."""
+    ids = []
+    for st in _me_parse_structs(value):
+        gid = (st.get("groupid") or "").strip()
+        if gid.isdigit() and gid not in ids:
+            ids.append(gid)
+    return ids
+
+
+def _me_asi_text(node, tag: str) -> str:
+    """A child element's text, or ''. The bundled parser has no
+    findtext, and this file may not import the stdlib one: Decky's
+    embedded Python ships without pyexpat, which is how the FOMOD wizard
+    once shipped dead."""
+    if node is None:
+        return ""
+    child = node.find(tag)
+    return (child.text or "").strip() if child is not None else ""
+
+
+def _me_asi_usable(root) -> bool:
+    """Does this look like the manifest rather than an error page?
+
+    The bundled parser never raises, so a 502 HTML body parses happily
+    into something with no update groups. Checking the shape is the only
+    way to tell, and it must be checked before a good cache is replaced.
+    """
+    return bool(root is not None and root.findall("updategroup"))
+
+
+async def _me_asi_manifest() -> tuple:
+    """ME3Tweaks' ASI manifest, cached on disk for a day.
+
+    Returns (error, root). A stale cache beats a failed install, so an
+    unreachable server falls back to whatever was last fetched.
+    """
+    cache = os.path.join(DOWNLOADS_DIR, "me3tweaks-asi-manifest.xml")
+    fresh = False
+    try:
+        fresh = (time.time() - os.path.getmtime(cache)) < ME_ASI_MANIFEST_TTL
+    except OSError:
+        pass
+    if not fresh:
+        try:
+            os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as session:
+                async with session.get(ME_ASI_MANIFEST_URL, ssl=SSL_CONTEXT) as r:
+                    if r.status == 200:
+                        body = await r.read()
+                        text = body.decode("utf-8-sig", errors="replace")
+                        # Check the shape before replacing the cache: an
+                        # error page must not evict a good copy.
+                        if _me_asi_usable(xml_parse(text)):
+                            tmp = cache + ".part"
+                            with open(tmp, "wb") as f:
+                                f.write(body)
+                            os.replace(tmp, cache)
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            pass
+    try:
+        root = xml_parse_file(cache)
+    except OSError:
+        return "Could not reach the ME3Tweaks ASI list", None
+    if not _me_asi_usable(root):
+        return "Could not read the ME3Tweaks ASI list", None
+    return "", root
+
+
+def _me_asi_pick(root, groupid: str, le: str) -> dict:
+    """The newest ASI in a group, for this game. {} if there is none."""
+    want = ME_ASI_GAME_NUM.get(le, "")
+    for ug in root.findall("updategroup"):
+        if ug.get("groupid") != groupid or ug.get("game") != want:
+            continue
+        best, best_v = None, -1
+        for m in ug.findall("asimod"):
+            try:
+                v = int(_me_asi_text(m, "version"))
+            except ValueError:
+                continue
+            if v > best_v:
+                best, best_v = m, v
+        if best is None:
+            continue
+        name = _me_asi_text(best, "installedname")
+        link = _me_asi_text(best, "downloadlink")
+        # The name becomes a filename, so it may not carry a path.
+        if (not name or not link or "/" in name or "\\" in name
+                or not _safe_rel_path(name + ".asi")):
+            continue
+        if not link.lower().startswith("https://"):
+            continue
+        return {
+            "groupid": groupid,
+            "name": _me_asi_text(best, "name") or name,
+            "installedname": name,
+            "version": str(best_v),
+            "link": link,
+            "hash": _me_asi_text(best, "hash").lower(),
+            "file": f"{name}-v{best_v}.asi",
+        }
+    return {}
+
+
+async def _me_asi_fetch(pick: dict) -> tuple:
+    """Download one ASI and check it against the manifest's MD5.
+
+    Returns (error, bytes). The hash is the whole point: this is a DLL
+    the game will load, so a mismatch is refused rather than installed.
+    """
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=180)
+        ) as session:
+            async with session.get(pick["link"], ssl=SSL_CONTEXT) as r:
+                if r.status != 200:
+                    return f"HTTP {r.status}", b""
+                body = await r.read()
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        return type(e).__name__, b""
+    if not body:
+        return "empty download", b""
+    want = pick.get("hash") or ""
+    if want:
+        got = hashlib.md5(body).hexdigest()
+        if got != want:
+            return f"hash mismatch ({got[:8]} not {want[:8]})", b""
+    return "", body
+
+
+async def _me_asi_install(install_path: str, le: str, groupids: list) -> tuple:
+    """Put the ASI mods a moddesc asked for into the game.
+
+    Returns (installed filenames, notes). Never raises and never fails
+    the mod: the DLC half is already in place by the time this runs, and
+    a mod that is partly there with a note beats one rolled back for a
+    dependency the user cannot do anything about.
+    """
+    if not groupids:
+        return [], []
+    err, root = await _me_asi_manifest()
+    if err:
+        return [], [err]
+    asi_dir = _me_asi_dir(install_path, le)
+    try:
+        os.makedirs(asi_dir, exist_ok=True)
+    except OSError as e:
+        return [], [f"Could not create the ASI folder: {e}"]
+    done, notes = [], []
+    for gid in groupids:
+        pick = _me_asi_pick(root, gid, le)
+        if not pick:
+            notes.append(f"ASI group {gid} is not in the ME3Tweaks list for {le}")
+            continue
+        dest = os.path.join(asi_dir, pick["file"])
+        if os.path.isfile(dest):
+            done.append(pick["file"])
+            continue
+        err, body = await _me_asi_fetch(pick)
+        if err:
+            notes.append(f"Could not install {pick['name']}: {err}")
+            continue
+        # One version of an ASI at a time. The loader takes every .asi in
+        # the folder, so leaving v3 beside v4 loads the mod twice.
+        stale = []
+        try:
+            for n in os.listdir(asi_dir):
+                if (n.lower().startswith(pick["installedname"].lower() + "-v")
+                        and n.lower().endswith(".asi")):
+                    stale.append(n)
+        except OSError:
+            pass
+        try:
+            tmp = dest + ".part"
+            with open(tmp, "wb") as f:
+                f.write(body)
+            os.replace(tmp, dest)
+        except OSError as e:
+            notes.append(f"Could not write {pick['name']}: {e}")
+            continue
+        for n in stale:
+            if n != pick["file"]:
+                try:
+                    os.remove(os.path.join(asi_dir, n))
+                except OSError:
+                    pass
+        done.append(pick["file"])
+        decky.logger.info(
+            f"masseffect asi: installed {pick['name']} v{pick['version']} "
+            f"({pick['file']}) for {le}")
+    return done, notes
+
+
+def _me_asi_remove(install_path: str, le: str, files: list) -> None:
+    """Take recorded ASI files back out."""
+    if not files or le not in ME_GAME_DIRS:
+        return
+    asi_dir = _me_asi_dir(install_path, le)
+    for name in files:
+        if not name or "/" in name or "\\" in name or not _safe_rel_path(name):
+            continue
+        try:
+            os.remove(os.path.join(asi_dir, name))
+        except OSError:
+            pass
+
+
 def _me_remove_record(rec: dict, install_path: str) -> None:
     """Take a mod's DLC folders and file edits back out of the game."""
     le = rec.get("game") or ""
@@ -13924,6 +14163,7 @@ def _me_remove_record(rec: dict, install_path: str) -> None:
         parent = os.path.dirname(os.path.dirname(p))
         if os.path.isdir(parent):
             _me_toc_generate(parent)
+    _me_asi_remove(install_path, le, rec.get("asi") or [])
 
 
 def _me_set_enabled(rec: dict, install_path: str, enabled: bool) -> str:
@@ -14359,6 +14599,13 @@ async def _me_complete(entry: dict, selected_ids: list) -> dict:
             for n in other.get("dlc") or []
         ):
             installed.pop(key, None)
+    # The ASI half of the mod. ALOT is only a texture file until LE3's
+    # Texture Override ASI is present, so this runs before the record is
+    # written and its notes travel with the mod's other warnings.
+    asi_files, asi_notes = await _me_asi_install(
+        install_path, le, plan.get("asi") or [])
+    if asi_notes:
+        plan.setdefault("skipped", []).extend(asi_notes)
     record_key = _safe_name(entry["mod_name"])
     record = {
         "mod_id": mod_id, "file_id": entry["file_id"], "name": entry["mod_name"],
@@ -14369,6 +14616,7 @@ async def _me_complete(entry: dict, selected_ids: list) -> dict:
         "mode": "masseffect", "game": le, "dlc": result["dlc"],
         "basegame": result["basegame"], "localization": result["localization"],
         "options": result["applied"], "enabled": True,
+        "asi": asi_files,
         "skipped": plan.get("skipped") or [],
     }
     installed[record_key] = _merge_install_record(installed.get(record_key), record)
@@ -14376,6 +14624,7 @@ async def _me_complete(entry: dict, selected_ids: list) -> dict:
     decky.logger.info(
         f"installed masseffect mod {entry['mod_name']!r} for {le}: dlc={result['dlc']}, "
         f"basegame={len(result['basegame'])}, options={result['applied']}"
+        + (f", asi={asi_files}" if asi_files else "")
         + (f", removed outdated {result['removed_outdated']}" if result["removed_outdated"] else "")
         + (f", skipped {plan['skipped']}" if plan.get("skipped") else "")
     )
