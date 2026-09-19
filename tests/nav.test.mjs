@@ -1899,3 +1899,25 @@ test("the framework button and its handler ask the same question", () => {
     "onInstallFramework still bails out on a missing Nexus mod id"
   );
 });
+
+test("the merge step reads progress from the backend, not the downloads store", () => {
+  // The store refuses to CREATE a row for anything but a real download
+  // and seeds a placeholder phase, so reading it left the button stuck on
+  // that placeholder for the whole ten minute setup. Michael: "There is
+  // still not loading bar/animated loading bar though".
+  const code = readCode("index.tsx");
+  const effect = code.slice(
+    code.indexOf("if (!mergeBusy) {"),
+    code.indexOf("if (!mergeBusy) {") + 900
+  );
+  assert.match(
+    effect,
+    /addEventListener<\[p: InstallProgress\]>/,
+    "the merge step no longer listens for progress itself"
+  );
+  assert.doesNotMatch(
+    effect,
+    /getDownloads\(\)/,
+    "the merge step is reading the downloads store again"
+  );
+});

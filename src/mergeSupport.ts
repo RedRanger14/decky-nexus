@@ -47,7 +47,7 @@ export const MERGE_STEP_EXPLAINER =
   "adding new ones. The LE1, LE2 and LE3 community patches all do, and so " +
   "do many mods that depend on them. Installing those needs ME3Tweaks Mod " +
   "Manager, the tool the Mass Effect modding community builds around.\n\n" +
-  "This downloads it from Nexus Mods (about 200 MB, by Mgamerz) and sets it " +
+  "This downloads it from Nexus Mods (about 70 MB, by Mgamerz) and sets it " +
   "up inside this game's own Windows environment, where the plugin runs it " +
   "for you in the background. You will never have to open it.\n\n" +
   "It takes about ten minutes, most of it downloading. You can leave this " +
@@ -71,10 +71,14 @@ export const MERGE_NEEDED_NOTE =
 export const MERGE_STEP_BUSY = "Setting up, this takes about ten minutes…";
 
 /** Progress text while the step runs, keyed by the phase the backend
- * emits. It is a long job (a 200 MB download, then a runtime install
+ * emits. It is a long job (a 70 MB download, then a runtime install
  * inside the prefix) and silence reads as a hang. Michael: "Up to 10
  * minutes with no visual feedback is not accetpable". */
 export const MERGE_STEP_STAGES: Record<string, string> = {
+  // What a row looks like before the backend has said anything. Left
+  // unmapped once, and the button sat on the generic busy text for the
+  // whole setup because nothing ever replaced it.
+  starting: "Starting…",
   queued: "Finding Mod Manager on Nexus Mods…",
   downloading: "Downloading Mod Manager",
   extracting: "Unpacking Mod Manager…",
@@ -97,29 +101,56 @@ export function mergeStepProgress(phase?: string, percent?: number): string {
     const pct = Math.max(0, Math.min(100, Math.round(percent ?? 0)));
     return `${text} ${pct}%`;
   }
+  // The runtime install is minutes long and silent, so it says what it is
+  // rather than leaving "Setting up" to look like the step before it.
+  if (phase === "installing" && (percent ?? 0) >= 80) {
+    return "Installing the Windows runtime, a few minutes…";
+  }
   return text;
 }
 
+/** How long the Windows runtime install runs for, in milliseconds.
+ *
+ * It is the long pole and it reports nothing: a silent Microsoft
+ * installer running under Proton. Measured on a Legion Go 2, the whole
+ * setup took 605 seconds and the 68 MB download was about ten of them.
+ */
+export const MERGE_RUNTIME_BUDGET_MS = 8 * 60 * 1000;
+
 /** How full the button's progress bar should be, 0 to 100.
  *
- * The download is most of the wall clock, so it owns most of the bar:
- * finishing the download at 100% and then sitting on "setting up" for
- * four more minutes would read as a hang at the worst moment. Measured on
- * a Legion Go 2: 610 seconds total.
+ * `elapsedInPhaseMs` only matters for the runtime install. Everything
+ * before it has real numbers and finishes in seconds; that phase has
+ * neither, so the bar creeps against a measured budget rather than
+ * stopping. The prefix-tool step does the same for the same reason: a bar
+ * that stops looks like a hang, and this one first shipped weighted as
+ * though the download were the long part, so it hit 99% in fifteen
+ * seconds and sat there for eight minutes.
  */
-export function mergeStepPercent(phase?: string, percent?: number): number {
+export function mergeStepPercent(
+  phase?: string,
+  percent?: number,
+  elapsedInPhaseMs = 0
+): number {
   const pct = Math.max(0, Math.min(100, percent ?? 0));
   const bar = (() => {
     switch (phase) {
+      case "starting":
+        return 1;
       case "queued":
         return 2;
       case "downloading":
-        return 5 + pct * 0.55;
+        return 3 + pct * 0.17;
       case "extracting":
-        return 62;
-      case "installing":
-        // The backend walks 40 to 80 through staging, config and runtime.
-        return 65 + Math.max(0, pct - 40) * 0.85;
+        return 22;
+      case "installing": {
+        // The backend walks 40 to 80 through staging and config, all of
+        // it quick. 80 means the runtime installer is running.
+        if (pct < 80) return 24 + Math.max(0, pct - 40) * 0.15;
+        const ran = Math.max(0, elapsedInPhaseMs) / MERGE_RUNTIME_BUDGET_MS;
+        // Never reaches the end on the clock alone: only "done" does that.
+        return 30 + Math.min(1, ran) * 65;
+      }
       case "done":
         return 100;
       default:
@@ -127,8 +158,7 @@ export function mergeStepPercent(phase?: string, percent?: number): number {
     }
   })();
   // Clamped at the end rather than trusted: a phase whose percentage runs
-  // past what this expected would otherwise overflow the track. The
-  // installing arm did exactly that at 100, returning 116.
+  // past what this expected would otherwise overflow the track.
   return Math.max(0, Math.min(100, bar));
 }
 

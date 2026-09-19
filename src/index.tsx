@@ -570,20 +570,56 @@ function CurrentGameSection() {
   // events, so it shows here AND in the Downloads panel, and the download
   // percentage is genuine bytes rather than a guess against a clock.
   const [mergeProgress, setMergeProgress] = useState<
-    { phase: string; percent: number } | undefined
+    { phase: string; percent: number; since: number } | undefined
   >();
+  // Ticks only while the runtime installer runs. That phase reports
+  // nothing and lasts minutes, so without a clock the bar would stop dead
+  // in the middle of the job and read as a hang, which is the whole
+  // complaint this step is answering.
+  const [mergeTick, setMergeTick] = useState(0);
   useEffect(() => {
     if (!mergeBusy) {
       setMergeProgress(undefined);
       return;
     }
-    const read = () => {
-      const row = getDownloads().find((d) => d.modId === ME3TWEAKS_MOD_ID);
-      if (row) setMergeProgress({ phase: row.phase, percent: row.percent });
+    // Straight from the backend rather than through the downloads store.
+    // The store exists to feed the Downloads panel and has rules of its
+    // own for that job: it refuses to CREATE a row for anything but a
+    // real download, and nameDownload seeds one in a placeholder phase.
+    // Reading it left this button sitting on that placeholder while the
+    // setup ran, which is the silence this was meant to end. The store
+    // still gets the same events, so the Downloads panel still lists it.
+    const onProgress = (p: InstallProgress) => {
+      if (p.mod_id !== ME3TWEAKS_MOD_ID) return;
+      setMergeProgress((prev) => {
+        // The clock restarts only when the phase really changes, so a
+        // repeated event inside one phase cannot rewind the bar.
+        const same = prev?.phase === p.phase;
+        return {
+          phase: p.phase,
+          percent: p.percent,
+          since: same ? prev!.since : Date.now(),
+        };
+      });
     };
-    read();
-    return subscribeDownloads(read);
+    const listener = addEventListener<[p: InstallProgress]>(
+      "install_progress",
+      onProgress
+    );
+    return () => removeEventListener("install_progress", listener);
   }, [mergeBusy]);
+  useEffect(() => {
+    if (!mergeBusy) {
+      setMergeTick(0);
+      return;
+    }
+    const id = setInterval(() => setMergeTick((n) => n + 1), 3000);
+    return () => clearInterval(id);
+  }, [mergeBusy]);
+  const mergeElapsed = mergeProgress ? Date.now() - mergeProgress.since : 0;
+  // Read so the tick counts as a dependency of the rendered bar rather
+  // than looking like dead state to anyone reading this later.
+  void mergeTick;
   const [toolsBusy, setToolsBusy] = useState<string | undefined>();
   // me3 (FromSoft games): loader state + Seamless Co-op's session password.
   const [me3, setMe3] = useState<Me3State | undefined>();
@@ -1590,7 +1626,8 @@ function CurrentGameSection() {
                         ? ({
                             "--tool-pct": `${mergeStepPercent(
                               mergeProgress?.phase,
-                              mergeProgress?.percent
+                              mergeProgress?.percent,
+                              mergeElapsed
                             )}%`,
                           } as React.CSSProperties)
                         : undefined

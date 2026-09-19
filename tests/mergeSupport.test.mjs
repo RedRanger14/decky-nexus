@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   MERGE_NEEDED_NOTE,
+  MERGE_RUNTIME_BUDGET_MS,
   MERGE_STEP_BUSY,
   MERGE_STEP_EXPLAINER,
   MERGE_STEP_STAGES,
@@ -51,7 +52,7 @@ test("the explainer answers what, whose, how big, and why a button", () => {
   assert.match(t, /ME3Tweaks Mod Manager/);
   assert.match(t, /Mgamerz/);
   // How big, since it lands on the user's device.
-  assert.match(t, /200 MB/);
+  assert.match(t, /70 MB/);
   // That it is somebody else's program, said plainly.
   assert.match(t, /somebody else's program/i);
   // And that it is reversible, which is what makes the decision cheap.
@@ -80,8 +81,9 @@ test("a failure is kept and shown rather than left to a toast", () => {
 });
 
 test("the wait is stated up front, because ten minutes of silence reads as a hang", () => {
-  // Measured on a Legion Go 2: 610 seconds from a clean prefix, nearly
-  // all of it the 200 MB download.
+  // Measured on a Legion Go 2: 605 seconds from a clean prefix, and the
+  // 68 MB download was about ten of them. The rest is the silent Windows
+  // runtime installer.
   assert.match(MERGE_STEP_EXPLAINER, /ten minutes/i);
   assert.match(MERGE_STEP_BUSY, /ten minutes/i);
   // And that they need not sit and watch it.
@@ -97,6 +99,7 @@ test("no copy here uses an em dash", () => {
     mergeStepSummary(false, ""),
     mergeStepSummary(true, "9.2.1"),
     mergeStepFailure("x"),
+    mergeStepProgress("installing", 80),
     ...Object.values(MERGE_STEP_STAGES),
   ];
   // Written as an escape so this guard never trips over itself.
@@ -175,11 +178,56 @@ test("the bar only ever moves forwards through the phases", () => {
   assert.equal(steps.at(-1), 100);
 });
 
-test("the download does not fill the bar, because it is not the whole job", () => {
-  // Reaching 100% and then sitting on "setting up" for four more minutes
-  // is exactly the hang this was meant to stop looking like.
-  assert.ok(mergeStepPercent("downloading", 100) < 70);
-  assert.ok(mergeStepPercent("downloading", 100) > 50);
+test("the download barely moves the bar, because it is a tenth of the job", () => {
+  // This first shipped weighted as though the download were the long
+  // part. It is not: on a Legion Go 2 the 68 MB download was ten seconds
+  // of a 605 second setup. The bar hit 99% in fifteen seconds and then
+  // sat there for eight minutes, which is precisely the hang it exists
+  // to stop looking like.
+  const full = mergeStepPercent("downloading", 100);
+  assert.ok(full > 10, `download finished at ${full}%, which reads as stalled`);
+  assert.ok(full < 30, `download alone reached ${full}%, over-claiming the job`);
+});
+
+test("the runtime install owns most of the bar, because it owns most of the wait", () => {
+  const entering = mergeStepPercent("installing", 80, 0);
+  const halfway = mergeStepPercent("installing", 80, MERGE_RUNTIME_BUDGET_MS / 2);
+  const overdue = mergeStepPercent("installing", 80, MERGE_RUNTIME_BUDGET_MS * 3);
+  assert.ok(entering < 40, `entered the long phase at ${entering}%`);
+  assert.ok(halfway > entering + 20, "the bar must visibly move during the wait");
+  // Running over budget parks it short of the end rather than lying.
+  assert.ok(overdue <= 95, `ran past its budget to ${overdue}%`);
+  assert.ok(overdue > halfway);
+  assert.equal(mergeStepPercent("done", 100), 100);
+});
+
+test("only the backend can finish the bar, never the clock", () => {
+  // A bar that reaches 100% while the work continues is a worse lie than
+  // one that stops, so the last stretch is reserved for the done event.
+  for (const ms of [0, 60_000, MERGE_RUNTIME_BUDGET_MS, 60 * 60_000]) {
+    assert.ok(mergeStepPercent("installing", 80, ms) < 100, `at ${ms}ms`);
+  }
+});
+
+test("the clock never drags the bar backwards mid-phase", () => {
+  let last = 0;
+  for (let ms = 0; ms <= MERGE_RUNTIME_BUDGET_MS * 2; ms += 15_000) {
+    const v = mergeStepPercent("installing", 80, ms);
+    assert.ok(v >= last, `went backwards at ${ms}ms: ${last} then ${v}`);
+    last = v;
+  }
+});
+
+test("the long phase says what it is waiting on, not just 'setting up'", () => {
+  // "Setting up Mod Manager" was already on screen for the quick staging
+  // steps, so leaving it there for the eight minute runtime install told
+  // the user nothing had changed when in fact the slow part had started.
+  const staging = mergeStepProgress("installing", 40);
+  const runtime = mergeStepProgress("installing", 80);
+  assert.notEqual(runtime, staging);
+  assert.match(runtime, /runtime/i);
+  // And it warns about the length, so a still-looking bar is expected.
+  assert.match(runtime, /minutes/i);
 });
 
 test("the bar stays within its track", () => {
@@ -189,4 +237,14 @@ test("the bar stays within its track", () => {
       assert.ok(v >= 0 && v <= 100, `${phase} ${pct} gave ${v}`);
     }
   }
+});
+
+test("the placeholder phase is mapped, not left to the generic busy text", () => {
+  // nameDownload seeds the Downloads row in this phase before the backend
+  // has said anything. Leaving it unmapped is what made the button sit on
+  // "Setting up, this takes about ten minutes…" for a whole setup while
+  // the work was actually progressing.
+  assert.equal(mergeStepProgress("starting", 0), MERGE_STEP_STAGES.starting);
+  assert.notEqual(mergeStepProgress("starting", 0), MERGE_STEP_BUSY);
+  assert.ok(mergeStepPercent("starting", 0) > 0);
 });
