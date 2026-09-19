@@ -87,6 +87,14 @@ sys.path.insert(0, REPO_ROOT)
 import main  # noqa: E402
 
 
+
+def _read_main_source() -> str:
+    """main.py as text, for the handful of tests that assert on structure
+    rather than behaviour (a reset path that is hard to exercise for real
+    without a game on disk)."""
+    with open(main.__file__, encoding="utf-8") as fh:
+        return fh.read()
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -22196,3 +22204,25 @@ class TestMassEffectMergeToggleAndRemoval(unittest.TestCase):
         self.assertIn("plainDlc", left)
         self.assertIn("keeper", left)
         self.assertNotIn("other", left)
+
+
+class TestMassEffectResetTakesEverything(unittest.TestCase):
+    """Reset means vanilla. It already removed the Bink bypass, which is
+    the other thing a panel step puts on the device, so leaving ME3Tweaks
+    Mod Manager behind would be the odd one out."""
+
+    def test_reset_removes_mod_manager_and_restores_the_packages(self):
+        src = _read_main_source()
+        block = src[src.index("async def reset_game_modding"):]
+        block = block[:block.index("\n    async def ", 10)]
+        me = block[block.index('if install_mode == "masseffect":'):]
+        self.assertIn("_me_restore_vanilla", me)
+        self.assertIn("remove_merge_support", me)
+
+    def test_a_failure_removing_it_does_not_abort_the_reset(self):
+        # Half a reset is worse than a reset that leaves one tool behind.
+        src = _read_main_source()
+        i = src.index("reset: removing merge support")
+        window = src[i - 400:i + 80]
+        self.assertIn("try:", window)
+        self.assertIn("except Exception", window)

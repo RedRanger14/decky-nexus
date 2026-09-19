@@ -20679,6 +20679,15 @@ query Link($slug: String!, $domainName: String!) {
                 put_back = _me_restore_vanilla(install_path, le)
                 if put_back:
                     root_leftovers.append(f"{le}/{put_back} game file(s) restored")
+            # And Mod Manager itself. Reset already takes the Bink bypass
+            # back out, which is the other thing a step put there, so
+            # leaving somebody else's 200MB program behind after the user
+            # asked to reset would be the odd one out. It costs them the
+            # ten minute setup again, which is the honest price of a reset.
+            try:
+                await self.remove_merge_support(install_dir, int(app_id or 0))
+            except Exception as e:  # noqa: BLE001 - reset must not die here
+                decky.logger.warning(f"reset: removing merge support: {e}")
             for le in ME_GAME_DIRS:
                 me_dlc = _me_dlc_dir(install_path, le)
                 for base in (me_dlc, _disabled_dir(me_dlc)):
