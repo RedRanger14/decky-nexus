@@ -24,12 +24,20 @@
 /** The step's heading. */
 export const MERGE_STEP_TITLE = "Merge mod support";
 
-/** One line under the heading, before the user expands anything. */
+/** The step's one line of body text.
+ *
+ * It leads with the step's name because the Field label is now its NUMBER
+ * ("Step 2"), the same shape as every other step in the panel. Michael:
+ * "can we make isntalling the mod manager step 2 because its an action in
+ * its own right".
+ */
 export function mergeStepSummary(installed: boolean, version: string): string {
-  if (!installed) return "Not installed. Needed for the community patches.";
+  if (!installed) {
+    return `${MERGE_STEP_TITLE}: not installed. Needed for the community patches.`;
+  }
   return version
-    ? `ME3Tweaks Mod Manager ${version} installed`
-    : "ME3Tweaks Mod Manager installed";
+    ? `ME3Tweaks Mod Manager ${version} installed ✓`
+    : "ME3Tweaks Mod Manager installed ✓";
 }
 
 /** What pressing the button will actually do, in full. Shown before the
@@ -55,16 +63,74 @@ export const MERGE_NEEDED_NOTE =
   "Mods that edit the game's own files need this. Without it they are " +
   "skipped with a note rather than installed.";
 
-/** Progress text while the step runs. It is a long job (a 200 MB download,
- * then a runtime install inside the prefix) and silence reads as a hang. */
+/** Shown on the button while the step runs. Measured on a Legion Go 2:
+ * 610 seconds from a clean prefix, nearly all of it the download. Ten
+ * minutes of "Setting up" with nothing else on screen is indistinguishable
+ * from a hang, and this plugin's audience is people on a couch who cannot
+ * go and read a log. */
+export const MERGE_STEP_BUSY = "Setting up, this takes about ten minutes…";
+
+/** Progress text while the step runs, keyed by the phase the backend
+ * emits. It is a long job (a 200 MB download, then a runtime install
+ * inside the prefix) and silence reads as a hang. Michael: "Up to 10
+ * minutes with no visual feedback is not accetpable". */
 export const MERGE_STEP_STAGES: Record<string, string> = {
-  lookup: "Finding Mod Manager on Nexus Mods…",
-  download: "Downloading Mod Manager (about 200 MB)…",
-  extract: "Unpacking…",
-  stage: "Putting it in the game's environment…",
-  configure: "Setting it up…",
-  runtime: "Installing the Windows runtime it needs…",
+  queued: "Finding Mod Manager on Nexus Mods…",
+  downloading: "Downloading Mod Manager",
+  extracting: "Unpacking Mod Manager…",
+  installing: "Setting up Mod Manager…",
+  done: "Ready",
 };
+
+/** What the button says right now, given the last progress event.
+ *
+ * The download is the long part and the only one with real numbers, so it
+ * is the only one that shows a percentage: a made-up percentage on the
+ * other phases would be worse than none. Everything else names what it is
+ * doing, which is enough to show it is alive.
+ */
+export function mergeStepProgress(phase?: string, percent?: number): string {
+  if (!phase) return MERGE_STEP_BUSY;
+  const text = MERGE_STEP_STAGES[phase];
+  if (!text) return MERGE_STEP_BUSY;
+  if (phase === "downloading") {
+    const pct = Math.max(0, Math.min(100, Math.round(percent ?? 0)));
+    return `${text} ${pct}%`;
+  }
+  return text;
+}
+
+/** How full the button's progress bar should be, 0 to 100.
+ *
+ * The download is most of the wall clock, so it owns most of the bar:
+ * finishing the download at 100% and then sitting on "setting up" for
+ * four more minutes would read as a hang at the worst moment. Measured on
+ * a Legion Go 2: 610 seconds total.
+ */
+export function mergeStepPercent(phase?: string, percent?: number): number {
+  const pct = Math.max(0, Math.min(100, percent ?? 0));
+  const bar = (() => {
+    switch (phase) {
+      case "queued":
+        return 2;
+      case "downloading":
+        return 5 + pct * 0.55;
+      case "extracting":
+        return 62;
+      case "installing":
+        // The backend walks 40 to 80 through staging, config and runtime.
+        return 65 + Math.max(0, pct - 40) * 0.85;
+      case "done":
+        return 100;
+      default:
+        return 0;
+    }
+  })();
+  // Clamped at the end rather than trusted: a phase whose percentage runs
+  // past what this expected would otherwise overflow the track. The
+  // installing arm did exactly that at 100, returning 116.
+  return Math.max(0, Math.min(100, bar));
+}
 
 /** Whether the step should be offered at all. Only Mass Effect uses merge
  * mods, so only Mass Effect gets the step: a game that cannot use it must
@@ -72,13 +138,6 @@ export const MERGE_STEP_STAGES: Record<string, string> = {
 export function offersMergeSupport(installMode: string | undefined): boolean {
   return installMode === "masseffect";
 }
-
-/** Shown on the button while the step runs. Measured on a Legion Go 2:
- * 610 seconds from a clean prefix, nearly all of it the download. Ten
- * minutes of "Setting up" with nothing else on screen is indistinguishable
- * from a hang, and this plugin's audience is people on a couch who cannot
- * go and read a log. */
-export const MERGE_STEP_BUSY = "Setting up, this takes about ten minutes…";
 
 /** What the panel says after a failed attempt. Kept because a toast is
  * gone before it can be read, and this step is long enough that the user
@@ -100,3 +159,8 @@ export function mergeStepFailure(error: string): string {
 export function managedRequirementNote(override?: string): string {
   return override || "not needed (this plugin does its job)";
 }
+
+/** ME3Tweaks Mod Manager's own Nexus mod id. Progress for the setup is
+ * reported under it, so the Downloads panel lists it like any other
+ * download instead of the step being the only place anything moves. */
+export const ME3TWEAKS_MOD_ID = 2;

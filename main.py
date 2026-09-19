@@ -23908,12 +23908,19 @@ query CollectionInstructions($slug: String!) {
         if not os.path.isdir(install_path):
             return {"ok": False, "error": "Game folder not found"}
 
-        def _fail(stage: str, message: str) -> dict:
+        async def _fail(stage: str, message: str) -> dict:
             store = settings.setdefault("me_merge_support", {})
             store["last_error"] = f"{stage}: {message}"
             _save_settings(settings)
             decky.logger.warning(f"merge support {stage}: {message}")
+            await _emit_progress(ME_M3_MOD_ID, "error", 0, message)
             return {"ok": False, "error": message}
+
+        # Ten minutes with nothing moving reads as a hang. The download
+        # half already reports real bytes through _download_archive under
+        # this same mod id; these fill in the phases around it so the
+        # panel and the Downloads list always have something true to show.
+        await _emit_progress(ME_M3_MOD_ID, "queued", 0)
 
         # 1. The Nexus download. Mod 2's main file is a 7-Zip self
         #    extractor holding one self-contained exe: no installer to run
@@ -23928,14 +23935,16 @@ query CollectionInstructions($slug: String!) {
                     url, headers=_api_headers(api_key), ssl=SSL_CONTEXT
                 ) as r:
                     if r.status != 200:
-                        return _fail("lookup", f"Nexus Mods API error (HTTP {r.status})")
+                        return await _fail(
+                            "lookup", f"Nexus Mods API error (HTTP {r.status})")
                     body = await r.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            return _fail("lookup", f"Network error: {type(e).__name__}")
+            return await _fail("lookup", f"Network error: {type(e).__name__}")
         mains = [f for f in (body.get("files") or [])
                  if (f.get("category_name") or "").upper() == "MAIN"]
         if not mains:
-            return _fail("lookup", "Mod Manager has no main file on Nexus Mods")
+            return await _fail(
+                "lookup", "Mod Manager has no main file on Nexus Mods")
         newest = max(mains, key=lambda f: int(f.get("uploaded_timestamp") or 0))
         file_id = int(newest["file_id"])
         version = str(newest.get("version") or "")
@@ -23945,16 +23954,18 @@ query CollectionInstructions($slug: String!) {
             newest.get("file_name") or f"m3-{file_id}.exe", api_key,
         )
         if derr:
-            return _fail("download", derr)
+            return await _fail("download", derr)
 
         # 2. Unpack the SFX and stage the exe in the prefix.
         scratch = _extract_scratch(ME_M3_MOD_ID, file_id)
         _force_rmtree(scratch)
         os.makedirs(scratch, exist_ok=True)
+        await _emit_progress(ME_M3_MOD_ID, "extracting", 100)
         xerr = await _extract_archive(archive, scratch)
         if xerr:
             _force_rmtree(scratch)
-            return _fail("extract", f"Could not unpack Mod Manager: {xerr}")
+            return await _fail(
+                "extract", f"Could not unpack Mod Manager: {xerr}")
         found = ""
         for root, _dirs, names in os.walk(scratch):
             for n in names:
@@ -23965,31 +23976,37 @@ query CollectionInstructions($slug: String!) {
                 break
         if not found:
             _force_rmtree(scratch)
-            return _fail("extract", "Mod Manager's program was not in the download")
+            return await _fail(
+                "extract", "Mod Manager's program was not in the download")
         target_dir = _me_m3_root(compat)
         os.makedirs(target_dir, exist_ok=True)
+        await _emit_progress(ME_M3_MOD_ID, "installing", 40)
         try:
             shutil.copy2(found, _me_m3_exe_path(compat))
         except OSError as e:
             _force_rmtree(scratch)
-            return _fail("stage", f"Could not place Mod Manager: {e}")
+            return await _fail("stage", f"Could not place Mod Manager: {e}")
         _force_rmtree(scratch)
 
         # 3. Config, so its first run asks nothing.
+        await _emit_progress(ME_M3_MOD_ID, "installing", 60)
         try:
             _me_m3_write_config(compat, install_path)
         except OSError as e:
-            return _fail("configure", f"Could not write Mod Manager's settings: {e}")
+            return await _fail(
+                "configure", f"Could not write Mod Manager's settings: {e}")
         rerr = await _me_m3_write_registry(proton, compat, steam_root)
         if rerr:
-            return _fail("configure", rerr)
+            return await _fail("configure", rerr)
 
         # 4. The Visual C++ runtime, which Legendary Edition ASI support
         #    needs. Same file and switches Mod Manager itself would use.
+        await _emit_progress(ME_M3_MOD_ID, "installing", 70)
         vc = os.path.join(DOWNLOADS_DIR, "vc_redist.x64.exe")
         verr = await _me_m3_fetch_vcredist(vc)
         if verr:
-            return _fail("runtime", verr)
+            return await _fail("runtime", verr)
+        await _emit_progress(ME_M3_MOD_ID, "installing", 80)
         try:
             env = _host_env({
                 "STEAM_COMPAT_CLIENT_INSTALL_PATH": steam_root,
@@ -24002,8 +24019,22 @@ query CollectionInstructions($slug: String!) {
                 env=env, stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
             )
-            await asyncio.wait_for(proc.wait(), timeout=600)
-        except (OSError, asyncio.TimeoutError) as e:
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=600)
+            except asyncio.TimeoutError:
+                # Kill it rather than walk away. A runtime installer left
+                # running outlives the setup, holds the prefix against the
+                # next Mod Manager run, and looks to anything scanning for
+                # Windows processes like a modding tool mid-write: it
+                # blocked a deploy an hour after the setup had "finished".
+                decky.logger.warning(
+                    "merge support: the runtime installer overran, stopping it")
+                try:
+                    proc.kill()
+                except (OSError, ProcessLookupError):
+                    pass
+                await _me_m3_stop_wineserver(proton, compat)
+        except OSError as e:
             # Not fatal on its own: Mod Manager checks the registry, and a
             # prefix that already has the runtime passes anyway.
             decky.logger.warning(f"merge support: vc redist run: {e}")
@@ -24015,6 +24046,7 @@ query CollectionInstructions($slug: String!) {
         decky.logger.info(
             f"merge support installed: Mod Manager {version} in prefix {app_id}"
         )
+        await _emit_progress(ME_M3_MOD_ID, "done", 100)
         return {"ok": True, "version": version}
 
     async def remove_merge_support(self, install_dir: str, app_id: int) -> dict:

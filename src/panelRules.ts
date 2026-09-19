@@ -384,18 +384,27 @@ export function unavailableNote(names: string[]): string {
  * Returned rather than hardcoded so adding another optional step cannot
  * reintroduce the gap.
  */
-export function frameworkStepNumbers(hasLaunchCommand: boolean): {
+export function frameworkStepNumbers(
+  hasLaunchCommand: boolean,
+  hasMergeSupport = false
+): {
   install: number;
   launch: number;
+  merge: number;
   browse: number;
   play: number;
 } {
   let n = 1;
   const install = n++;
   const launch = hasLaunchCommand ? n++ : 0;
+  // Mass Effect's Mod Manager setup. Michael: "can we make isntalling the
+  // mod manager step 2 because its an action in its own right". It is: a
+  // download, a runtime install and ten minutes, and calling it something
+  // other than a step made it look optional in a list of steps.
+  const merge = hasMergeSupport ? n++ : 0;
   const browse = n++;
   const play = n++;
-  return { install, launch, browse, play };
+  return { install, launch, merge, browse, play };
 }
 
 /** What the panel says about libraries it installed on a mod's behalf.

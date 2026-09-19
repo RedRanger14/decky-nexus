@@ -156,6 +156,7 @@ import {
   getCollectionRun,
   getCompletedDownloads,
   getDownloads,
+  nameDownload,
   notifyGameStateChanged,
   subscribeGameState,
   setBrowseGame,
@@ -240,10 +241,11 @@ import { installLatest, toggleMod } from "./install";
 import HealthCheckPage, { setHealthGame } from "./HealthCheckPage";
 import { scanUpdates } from "./updates";
 import {
-  MERGE_STEP_BUSY,
+  ME3TWEAKS_MOD_ID,
   MERGE_STEP_EXPLAINER,
-  MERGE_STEP_TITLE,
   mergeStepFailure,
+  mergeStepPercent,
+  mergeStepProgress,
   mergeStepSummary,
   offersMergeSupport,
 } from "./mergeSupport";
@@ -563,6 +565,25 @@ function CurrentGameSection() {
   const [mergeError, setMergeError] = useState("");
   const [mergeInfoOpen, setMergeInfoOpen] = useState(false);
   const [mergeBusy, setMergeBusy] = useState(false);
+  // Real progress for the Mod Manager setup. The backend reports it under
+  // Mod Manager's own Nexus id through the ordinary install-progress
+  // events, so it shows here AND in the Downloads panel, and the download
+  // percentage is genuine bytes rather than a guess against a clock.
+  const [mergeProgress, setMergeProgress] = useState<
+    { phase: string; percent: number } | undefined
+  >();
+  useEffect(() => {
+    if (!mergeBusy) {
+      setMergeProgress(undefined);
+      return;
+    }
+    const read = () => {
+      const row = getDownloads().find((d) => d.modId === ME3TWEAKS_MOD_ID);
+      if (row) setMergeProgress({ phase: row.phase, percent: row.percent });
+    };
+    read();
+    return subscribeDownloads(read);
+  }, [mergeBusy]);
   const [toolsBusy, setToolsBusy] = useState<string | undefined>();
   // me3 (FromSoft games): loader state + Seamless Co-op's session password.
   const [me3, setMe3] = useState<Me3State | undefined>();
@@ -943,7 +964,8 @@ function CurrentGameSection() {
   // Step numbers follow what renders. BaseLib needs no launch command, so
   // hardcoded labels produced "Step 1" followed by "Step 3".
   const fwSteps = frameworkStepNumbers(
-    Boolean(game?.framework?.launchOptionsTemplate)
+    Boolean(game?.framework?.launchOptionsTemplate),
+    offersMergeSupport(game?.installMode)
   );
   const coopMasked = maskCoopPassword(coopSaved, coopShown);
   const missingFrameworks = allFrameworks.filter((fw, i) =>
@@ -1485,7 +1507,10 @@ function CurrentGameSection() {
           {offersMergeSupport(game.installMode) && status?.installed && (
             <PanelSectionRow>
               <div>
-                <Field label={MERGE_STEP_TITLE} childrenLayout="below">
+                <Field
+                  label={`Step ${fwSteps.merge}`}
+                  childrenLayout="below"
+                >
                   {mergeOn === undefined
                     ? "Checking…"
                     : mergeStepSummary(mergeOn, mergeVersion)}
@@ -1558,6 +1583,27 @@ function CurrentGameSection() {
                   </ButtonItem>
                 )}
                 {mergeOn === false && (
+                  <div
+                    className={mergeBusy ? "nexus-tool-fill" : undefined}
+                    style={
+                      mergeBusy
+                        ? ({
+                            "--tool-pct": `${mergeStepPercent(
+                              mergeProgress?.phase,
+                              mergeProgress?.percent
+                            )}%`,
+                          } as React.CSSProperties)
+                        : undefined
+                    }
+                  >
+                  <style>{`
+                    .nexus-tool-fill button,
+                    .nexus-tool-fill .DialogButton {
+                      background: linear-gradient(90deg, rgba(218,142,53,0.55) var(--tool-pct), rgba(255,255,255,0.08) var(--tool-pct)) !important;
+                      color: #fff !important;
+                      transition: background 0.4s linear;
+                    }
+                  `}</style>
                   <ButtonItem
                     layout="below"
                     disabled={mergeBusy}
@@ -1565,6 +1611,11 @@ function CurrentGameSection() {
                     onClick={async () => {
                       setMergeBusy(true);
                       setMergeError("");
+                      nameDownload(
+                        ME3TWEAKS_MOD_ID,
+                        "ME3Tweaks Mod Manager",
+                        game.appId
+                      );
                       const r = await setupMergeSupport(
                         game.installDirName,
                         game.appId
@@ -1588,8 +1639,14 @@ function CurrentGameSection() {
                       }
                     }}
                   >
-                    {mergeBusy ? MERGE_STEP_BUSY : "Install Mod Manager"}
+                    {mergeBusy
+                      ? mergeStepProgress(
+                          mergeProgress?.phase,
+                          mergeProgress?.percent
+                        )
+                      : "Install Mod Manager"}
                   </ButtonItem>
+                  </div>
                 )}
               </div>
             </PanelSectionRow>

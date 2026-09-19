@@ -1355,9 +1355,27 @@ test("a framework needing a launch command numbers 1 to 4", () => {
   assert.deepEqual(frameworkStepNumbers(true), {
     install: 1,
     launch: 2,
+    merge: 0,
     browse: 3,
     play: 4,
   });
+});
+
+test("merge support takes a number of its own", () => {
+  // Michael: "can we make isntalling the mod manager step 2 because its
+  // an action in its own right". It is: a 200MB download, a runtime
+  // install and ten minutes.
+  const steps = frameworkStepNumbers(false, true);
+  assert.equal(steps.install, 1);
+  assert.equal(steps.merge, 2);
+  assert.equal(steps.browse, 3);
+  assert.equal(steps.play, 4);
+});
+
+test("a game without merge support has no gap where it would be", () => {
+  const steps = frameworkStepNumbers(false, false);
+  assert.equal(steps.merge, 0);
+  assert.equal(steps.browse, 2);
 });
 
 test("a framework needing no launch command has no gap", () => {
@@ -1373,14 +1391,21 @@ test("the launch step is falsy when it does not render", () => {
 });
 
 test("the numbers are always consecutive from 1", () => {
+  // Every combination, because the whole point of this function is that
+  // adding another optional step cannot reintroduce a gap. It renders in
+  // this order: install, launch command, merge support, browse, play.
   for (const hasLaunch of [true, false]) {
-    const s = frameworkStepNumbers(hasLaunch);
-    const shown = [s.install, s.launch, s.browse, s.play].filter(Boolean);
-    assert.deepEqual(
-      shown,
-      shown.map((_, i) => i + 1),
-      `gap with hasLaunch=${hasLaunch}`
-    );
+    for (const hasMerge of [true, false]) {
+      const s = frameworkStepNumbers(hasLaunch, hasMerge);
+      const shown = [s.install, s.launch, s.merge, s.browse, s.play].filter(
+        Boolean
+      );
+      assert.deepEqual(
+        shown,
+        shown.map((_, i) => i + 1),
+        `gap with hasLaunch=${hasLaunch} hasMerge=${hasMerge}`
+      );
+    }
   }
 });
 
