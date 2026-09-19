@@ -24043,6 +24043,13 @@ query CollectionInstructions($slug: String!) {
         store.update({"version": version, "file_id": file_id,
                       "at": int(time.time()), "last_error": ""})
         _save_settings(settings)
+        # Leave the prefix quiet. Running the runtime installer starts
+        # Proton's own helpers (steam.exe, explorer.exe) and they stay up
+        # afterwards, holding the prefix against the next Mod Manager run
+        # and looking to anything scanning for Windows processes like a
+        # modding tool mid-write. Measured: six left behind by a setup
+        # that had reported success.
+        await _me_m3_stop_wineserver(proton, compat)
         decky.logger.info(
             f"merge support installed: Mod Manager {version} in prefix {app_id}"
         )
