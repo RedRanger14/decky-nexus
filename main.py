@@ -12976,42 +12976,58 @@ def _me_m3_merge_choice(plan: dict, selected: set) -> dict:
     named unconditionally. Measured with One Probe All Resources: the panel
     then opens and closes in 46ms and the install runs.
 
-    Returns {ok, merges, error}. Refuses rather than guessing when a manual
-    alternate is something other than a merge mod, because materialising a
-    DLC or file alternate wrongly would install the wrong mod quietly.
+    Returns {ok, merges, dlc, error}, where `dlc` is (source, dest) for
+    each optional DLC folder the user asked for. An option we cannot
+    express in a moddesc at all is refused rather than guessed at, because
+    installing the wrong half of a mod quietly is worse than not installing
+    it.
     """
     # Merges the mod applies whatever the user picks, recorded by _me_plan.
     merges = list(plan.get("merge_files") or [])
-    # Anything still manual that is NOT a merge mod cannot be materialised
-    # into a moddesc by the rewrite below, and guessing would install the
-    # wrong mod silently.
-    for alt in plan.get("alts") or []:
-        if (alt.get("condition") or "").upper() == "COND_MANUAL":
+    dlc = []
+    for i, alt in enumerate(plan.get("merge_alts") or []):
+        if i in selected:
+            merges.extend(_me_split_semis(alt.get("mergefiles", "")))
+    # A merge mod may also offer ordinary DLC folders. The LE3 Community
+    # Patch offers localised audio that way. Not picking one means dropping
+    # it, which the rewrite does anyway; picking one means naming it in
+    # sourcedirs/destdirs so M3 installs it without asking.
+    for i, alt in enumerate(plan.get("alts") or []):
+        if (alt.get("condition") or "").upper() != "COND_MANUAL":
+            continue
+        op = (alt.get("modoperation") or "").upper()
+        if op not in ("OP_ADD_CUSTOMDLC", "OP_ADD_FOLDERFILES_TO_CUSTOMDLC",
+                      "OP_NOTHING"):
             return {
-                "ok": False, "merges": [],
+                "ok": False, "merges": [], "dlc": [],
                 "error": (
                     "This mod has options this plugin cannot pass on to Mod "
                     "Manager yet, so it will not install it rather than "
                     "install the wrong thing."
                 ),
             }
-    for i, alt in enumerate(plan.get("merge_alts") or []):
-        if i in selected:
-            merges.extend(_me_split_semis(alt.get("mergefiles", "")))
+        if op == "OP_NOTHING" or f"dlc.{i}" not in selected:
+            continue
+        src = (alt.get("modaltdlc") or "").strip()
+        dst = (alt.get("moddestdlc") or "").strip()
+        if src and dst and _safe_rel_path(src) and _safe_rel_path(dst):
+            dlc.append((src, dst))
     if not merges:
         return {
-            "ok": False, "merges": [],
+            "ok": False, "merges": [], "dlc": [],
             "error": "No merge mod was chosen, so there is nothing to install.",
         }
-    return {"ok": True, "merges": merges, "error": ""}
+    return {"ok": True, "merges": merges, "dlc": dlc, "error": ""}
 
 
-def _me_m3_moddesc(original: str, merges: list) -> str:
-    """The original moddesc with every alternate dropped and `mergemods`
-    under [BASEGAME] naming exactly what was chosen.
+def _me_m3_moddesc(original: str, merges: list, dlc: list = None) -> str:
+    """The original moddesc with every alternate dropped, `mergemods`
+    under [BASEGAME] naming exactly what was chosen, and any optional DLC
+    folders the user picked folded into [CUSTOMDLC].
 
-    Written next to a copy of the mod, never over the user's download.
+    Written over the copy in our scratch dir, never the user's download.
     """
+    adds = list(dlc or [])
     keep = []
     section = ""
     seen_basegame = False
@@ -13026,6 +13042,16 @@ def _me_m3_moddesc(original: str, merges: list) -> str:
             continue
         key = line.partition("=")[0].strip().lower()
         if key in ("altfiles", "altdlc", "mergemods"):
+            continue
+        # A picked DLC option becomes another entry in the lists M3 reads,
+        # which is what "install this option" means in moddesc terms.
+        if adds and section.upper() == "CUSTOMDLC" and key in ("sourcedirs",
+                                                               "destdirs"):
+            current = _me_split_semis(line.partition("=")[2])
+            extra = [a[0] for a in adds] if key == "sourcedirs" else [
+                a[1] for a in adds]
+            merged = current + [e for e in extra if e not in current]
+            keep.append(f"{key} = " + ";".join(merged))
             continue
         keep.append(raw)
     if section.upper() == "BASEGAME" and not seen_basegame:
@@ -13318,6 +13344,11 @@ async def _me_m3_launch(proton: str, compat: str, steam_root: str,
         proc.kill()
     except (OSError, ProcessLookupError):
         pass
+    # Stop the prefix's wineserver too. Proton leaves helpers of its own
+    # running (xalia.exe is the one that showed up), and a live wineserver
+    # both holds the prefix against the next run and looks to anything
+    # scanning for Windows processes like a modding tool still working.
+    await _me_m3_stop_wineserver(proton, compat)
     if verdict["state"] == "done":
         decky.logger.info(f"masseffect m3: finished in {waited}s")
         return {"ok": True, "error": ""}
@@ -13963,16 +13994,26 @@ def _me_merge_wizard(plan: dict):
     answer already in it.
     """
     manual = [
-        (i, a) for i, a in enumerate(plan.get("merge_alts") or [])
+        ("alt", i, a) for i, a in enumerate(plan.get("merge_alts") or [])
         if (a.get("hidden") or "").lower() != "true"
+    ]
+    # Optional DLC folders on a merge mod are options too: the LE3
+    # Community Patch offers localised audio this way, and refusing the
+    # whole mod over one tick box would lose the third most endorsed mod
+    # for this game.
+    manual += [
+        ("dlc", i, a) for i, a in enumerate(plan.get("alts") or [])
+        if (a.get("condition") or "").upper() == "COND_MANUAL"
+        and (a.get("hidden") or "").lower() != "true"
+        and (a.get("modoperation") or "").upper() != "OP_NOTHING"
     ]
     if not manual:
         return None
     groups, by_group = [], {}
-    for i, a in manual:
+    for kind, i, a in manual:
         checked = (a.get("checkedbydefault") or "").lower() == "true"
         plugin = {
-            "id": f"alt.{i}",
+            "id": f"{kind}.{i}",
             "name": a.get("friendlyname") or f"Option {i + 1}",
             "description": a.get("description") or "",
             "type": "Recommended" if checked else "Optional",
@@ -14017,7 +14058,10 @@ async def _me_m3_complete(entry: dict, selected_ids: list) -> dict:
         await _emit_progress(mod_id, "error", 0, "no merge support")
         return {"ok": False, "error": _me_merge_refusal(False)}
 
-    selected = set()
+    # Merge options come back as alt.N (an index into merge_alts) and DLC
+    # options as dlc.N (an index into alts); both are needed, so the raw
+    # ids go through alongside the numbers.
+    selected = set(str(s) for s in (selected_ids or []))
     for sid in selected_ids or []:
         m = re.fullmatch(r"alt\.(\d+)", str(sid))
         if m:
@@ -14045,10 +14089,20 @@ async def _me_m3_complete(entry: dict, selected_ids: list) -> dict:
         with open(moddesc, encoding="utf-8-sig", errors="replace") as f:
             original = f.read()
         with open(moddesc, "w", encoding="utf-8", newline="\r\n") as f:
-            f.write(_me_m3_moddesc(original, merges))
+            f.write(_me_m3_moddesc(original, merges, choice.get("dlc")))
     except OSError as e:
         _force_rmtree(scratch)
         return {"ok": False, "error": f"Could not prepare the mod: {e}"}
+
+    # What DLC folders exist before M3 runs, so we can tell which ones it
+    # creates. A merge mod often ships ordinary DLC folders too: the LE3
+    # Community Patch installs three. Observing the difference beats
+    # predicting from the moddesc, which cannot drift from what M3 did.
+    dlc_dir = _me_dlc_dir(install_path, le)
+    try:
+        before_dlc = set(os.listdir(dlc_dir))
+    except OSError:
+        before_dlc = set()
 
     await _emit_progress(mod_id, "installing", 50)
     win_path = "Z:" + moddesc.replace("/", "\\")
@@ -14061,10 +14115,28 @@ async def _me_m3_complete(entry: dict, selected_ids: list) -> dict:
         await _emit_progress(mod_id, "error", 0, "merge failed")
         return {"ok": False, "error": result["error"]}
 
+    try:
+        added_dlc = sorted(set(os.listdir(dlc_dir)) - before_dlc)
+    except OSError:
+        added_dlc = []
+
     settings = _load_settings()
     installed = settings.setdefault("installed", {}).setdefault(
         entry["game_domain"], {}
     )
+    # A folder can have only one owner, and M3 may have replaced one that
+    # another record claimed.
+    for key in list(installed):
+        other = installed[key]
+        if other.get("mode") != "masseffect" or other.get("game") != le:
+            continue
+        if key == _safe_name(entry["mod_name"]):
+            continue
+        if {n.lower() for n in other.get("dlc") or []} & {
+                n.lower() for n in added_dlc}:
+            installed.pop(key, None)
+            decky.logger.info(
+                f"masseffect: {key!r} superseded by {entry['mod_name']!r}")
     record_key = _safe_name(entry["mod_name"])
     record = {
         "mod_id": mod_id, "file_id": entry["file_id"],
@@ -14073,7 +14145,7 @@ async def _me_m3_complete(entry: dict, selected_ids: list) -> dict:
         "page_version": entry.get("page_version") or "",
         "source": entry.get("record_source") or "",
         "collection_slug": entry.get("collection_slug") or "",
-        "mode": "masseffect", "game": le, "dlc": [], "basegame": [],
+        "mode": "masseffect", "game": le, "dlc": added_dlc, "basegame": [],
         "localization": None, "options": [], "enabled": True,
         "skipped": [],
         # What makes this record different from an ordinary one: it was
@@ -14090,11 +14162,12 @@ async def _me_m3_complete(entry: dict, selected_ids: list) -> dict:
     _save_settings(settings)
     decky.logger.info(
         f"installed masseffect merge mod {entry['mod_name']!r} for {le}: "
-        f"merges={merges}, held {len(held)} of {len(targets)} target(s)"
+        f"merges={merges}, dlc={added_dlc}, "
+        f"held {len(held)} of {len(targets)} target(s)"
     )
     await _emit_progress(mod_id, "done", 100)
-    out = {"ok": True, "folder": record_key, "game": le, "dlc": [],
-           "added": len(merges)}
+    out = {"ok": True, "folder": record_key, "game": le, "dlc": added_dlc,
+           "added": len(merges) + len(added_dlc)}
     if len(held) < len(targets):
         out["warning"] = (
             "Some of this mod's changes cannot be undone by Reset, because "

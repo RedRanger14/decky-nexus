@@ -169,7 +169,7 @@ if (-not $Force) {
     # in the last minute.
     $script = @(
         'b=',
-        'ps -eo comm | grep -iE "[.]exe$" | grep -viE "^(services|winedevice|plugplay|explorer|rpcss|svchost|conhost|tabtip|start|wineboot)[.]exe$" | head -1 | grep -q . && b=tool',
+        'ps -eo comm | grep -iE "[.]exe$" | grep -viE "^(services|winedevice|plugplay|explorer|rpcss|svchost|conhost|tabtip|start|wineboot|xalia)[.]exe$" | head -1 | grep -q . && b=tool',
         '[ -n "$(find /home/deck/homebrew/data/Nexus-Mods/downloads -name "*.part" -mmin -1 2>/dev/null)" ] && b=download',
         'echo $b'
     ) -join "`n"

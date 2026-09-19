@@ -21852,14 +21852,87 @@ MergeFiles = me2_normal.m3m)
         self.assertFalse(got["ok"])
         self.assertIn("nothing to install", got["error"])
 
-    def test_an_option_that_is_not_a_merge_mod_is_refused_not_guessed(self):
+    def test_an_option_kind_we_cannot_express_is_refused_not_guessed(self):
+        # A file substitution cannot be written into a moddesc by the
+        # rewrite, and installing half a mod quietly is worse than a no.
         plan = {"merge_files": ["x.m3m"], "merge_alts": [],
                 "alts": [{"condition": "COND_MANUAL",
-                          "modoperation": "OP_ADD_CUSTOMDLC",
-                          "friendlyname": "Extra outfits"}]}
-        got = main._me_m3_merge_choice(plan, {0})
+                          "modoperation": "OP_SUBSTITUTE",
+                          "friendlyname": "Alternate textures"}]}
+        got = main._me_m3_merge_choice(plan, {"dlc.0"})
         self.assertFalse(got["ok"])
         self.assertIn("cannot pass on", got["error"])
+
+    def test_an_optional_dlc_folder_is_carried_through_when_picked(self):
+        """The LE3 Community Patch, third most endorsed mod for this game,
+        has unconditional merge mods plus one optional DLC folder for
+        localised audio. Refusing the whole mod over that tick box lost
+        it entirely."""
+        plan = {"merge_files": ["a.m3m"], "merge_alts": [],
+                "alts": [{"condition": "COND_MANUAL",
+                          "modoperation": "OP_ADD_CUSTOMDLC",
+                          "modaltdlc": "DLC_MOD_LE3Patch_LOC",
+                          "moddestdlc": "DLC_MOD_LE3Patch_LOC",
+                          "friendlyname": "Community Patch Localization"}]}
+        got = main._me_m3_merge_choice(plan, {"dlc.0"})
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(got["merges"], ["a.m3m"])
+        self.assertEqual(got["dlc"],
+                         [("DLC_MOD_LE3Patch_LOC", "DLC_MOD_LE3Patch_LOC")])
+
+    def test_an_optional_dlc_folder_not_picked_is_simply_dropped(self):
+        plan = {"merge_files": ["a.m3m"], "merge_alts": [],
+                "alts": [{"condition": "COND_MANUAL",
+                          "modoperation": "OP_ADD_CUSTOMDLC",
+                          "modaltdlc": "DLC_MOD_X", "moddestdlc": "DLC_MOD_X",
+                          "friendlyname": "Optional extra"}]}
+        got = main._me_m3_merge_choice(plan, set())
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(got["dlc"], [])
+
+    def test_a_descriptive_always_on_option_is_not_treated_as_a_choice(self):
+        # LE3CP lists three COND_ALWAYS / OP_NOTHING entries purely to
+        # describe itself in Mod Manager's own UI.
+        plan = {"merge_files": ["a.m3m"], "merge_alts": [],
+                "alts": [{"condition": "COND_ALWAYS",
+                          "modoperation": "OP_NOTHING",
+                          "friendlyname": "LE3 Community Framework"}]}
+        got = main._me_m3_merge_choice(plan, set())
+        self.assertTrue(got["ok"], got)
+
+    def test_a_dlc_name_that_escapes_the_folder_is_ignored(self):
+        plan = {"merge_files": ["a.m3m"], "merge_alts": [],
+                "alts": [{"condition": "COND_MANUAL",
+                          "modoperation": "OP_ADD_CUSTOMDLC",
+                          "modaltdlc": "../../etc", "moddestdlc": "../../etc",
+                          "friendlyname": "Nope"}]}
+        got = main._me_m3_merge_choice(plan, {"dlc.0"})
+        self.assertTrue(got["ok"])
+        self.assertEqual(got["dlc"], [])
+
+    def test_a_picked_dlc_folder_is_written_into_customdlc(self):
+        text = "\n".join([
+            "[ModInfo]", "game = LE3", "",
+            "[BASEGAME]", "moddir = .", "mergemods = old.m3m", "",
+            "[CUSTOMDLC]", "sourcedirs = DLC_MOD_A;DLC_MOD_B",
+            "destdirs = DLC_MOD_A;DLC_MOD_B", ""])
+        out = main._me_m3_moddesc(text, ["new.m3m"],
+                                  [("DLC_MOD_LOC", "DLC_MOD_LOC")])
+        ini = main._me_parse_moddesc(out)
+        self.assertEqual(ini["CUSTOMDLC"]["sourcedirs"],
+                         "DLC_MOD_A;DLC_MOD_B;DLC_MOD_LOC")
+        self.assertEqual(ini["CUSTOMDLC"]["destdirs"],
+                         "DLC_MOD_A;DLC_MOD_B;DLC_MOD_LOC")
+        self.assertEqual(ini["BASEGAME"]["mergemods"], "new.m3m")
+
+    def test_the_dlc_lists_are_untouched_when_nothing_was_picked(self):
+        text = "\n".join([
+            "[ModInfo]", "game = LE3", "", "[BASEGAME]", "moddir = .", "",
+            "[CUSTOMDLC]", "sourcedirs = DLC_MOD_A", "destdirs = DLC_MOD_A",
+            ""])
+        out = main._me_m3_moddesc(text, ["new.m3m"], [])
+        ini = main._me_parse_moddesc(out)
+        self.assertEqual(ini["CUSTOMDLC"]["sourcedirs"], "DLC_MOD_A")
 
     def test_the_rewritten_moddesc_has_no_alternates_left(self):
         out = main._me_m3_moddesc(self.ONE_PROBE, ["me2_fast.m3m"])
