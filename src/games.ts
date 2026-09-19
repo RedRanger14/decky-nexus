@@ -1478,12 +1478,14 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // The three community patches and the two most endorsed DLC mods.
     recommendedModIds: [23, 8, 13, 422, 426],
     underConstruction:
-      "Mass Effect support is new and not finished. DLC mods install and " +
-      "the Bink bypass is verified on device, but nothing here has been " +
-      "played through yet. Mods that change the game's own files with a " +
-      "merge mod are refused with a message rather than installed: that " +
-      "covers a fair share of the popular ones, so expect some mods to " +
-      "say no. Texture packs and ASI mods are not supported at all.",
+      "Mass Effect support is new and still being tested. Mods that add " +
+      "content install and have been played on a Steam Deck. Texture packs " +
+      "work when they ship as a Mod Manager package, which the big ones do.\n\n" +
+      "Mods that edit the game's own files, which includes all three " +
+      "community patches, need the Merge mod support step below. That step " +
+      "is new and has had less testing than the rest.\n\n" +
+      "Not supported: ASI plugins, and mods that only ship for the original " +
+      "trilogy rather than Legendary Edition.",
   },
 };
 

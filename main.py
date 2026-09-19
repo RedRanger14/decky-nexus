@@ -4,6 +4,7 @@ import glob
 import hashlib
 import itertools
 import json
+import lzma
 import os
 import re
 import shutil
@@ -13079,6 +13080,12 @@ ME_M3_MARKER_README = (
 # Manager uses when it offers to install it (MSVCPPDetector.cs). Needed
 # because Legendary Edition ASI support is built against it.
 ME_M3_VCREDIST_URL = "https://aka.ms/vc14/vc_redist.x64.exe"
+# How long one merge mod install may take. The LE1 Community Patch, the
+# biggest in the scene, took about three minutes on the Legion including
+# every post-install merge; a small one took twenty seconds. Ten minutes
+# is generous rather than tight, because the failure it guards against is
+# M3 sitting on a dialog forever, not a slow disk.
+ME_M3_INSTALL_TIMEOUT = 600
 
 
 def _me_m3_root(compat: str) -> str:
@@ -13345,6 +13352,170 @@ async def _me_m3_fetch_vcredist(dest: str) -> str:
     return ""
 
 
+# What M3's own merges rewrite on top of whatever the mod names. Coalesced
+# and the 2DA tables are rebuilt from every installed DLC every time, so
+# they change even when the merge mod never mentions them, and a reset that
+# does not put them back leaves the game with a Coalesced describing mods
+# that are gone. Measured on the Legion: installing the LE1 Community Patch
+# rewrote all of these.
+ME_MERGE_SIDE_EFFECTS = {
+    "LE1": ("BioGame/CookedPCConsole/Coalesced_INT.bin",
+            "BioGame/CookedPCConsole/Engine.pcc",
+            "BioGame/CookedPCConsole/SFXGame.pcc",
+            "BioGame/CookedPCConsole/Startup_INT.pcc",
+            "BioGame/PCConsoleTOC.bin"),
+    "LE2": ("BioGame/CookedPCConsole/SFXGame.pcc",
+            "BioGame/PCConsoleTOC.bin"),
+    "LE3": ("BioGame/CookedPCConsole/SFXGame.pcc",
+            "BioGame/PCConsoleTOC.bin"),
+}
+
+
+def _me_m3m_manifest(path: str):
+    """The JSON manifest inside a .m3m, or None.
+
+    Format, read off the ME3Tweaks source and confirmed against all
+    thirteen merge mods in the LE1 Community Patch, One Probe and Sheploo:
+
+        "M3MM" magic, one version byte, then an Unreal string holding the
+        manifest. An Unreal string is an int32 length; negative means that
+        many UTF-16 characters (including the null), positive means ASCII.
+        Version 2 wraps it: uncompressed size, compressed size, five bytes
+        of LZMA1 properties, then a raw LZMA stream whose contents are the
+        Unreal string.
+
+    We read it for one reason: `filename` on each entry names the game
+    package the merge will rewrite, which is what has to be copied aside
+    BEFORE ME3Tweaks Mod Manager runs. Afterwards is too late.
+    """
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    if data[:4] != b"M3MM" or len(data) < 10:
+        return None
+
+    def unreal_string(buf: bytes, off: int) -> str:
+        n = int.from_bytes(buf[off:off + 4], "little", signed=True)
+        off += 4
+        if n < 0:
+            return buf[off:off + (-n) * 2].decode("utf-16-le", "replace")
+        return buf[off:off + n].decode("latin-1", "replace")
+
+    try:
+        if data[4] >= 2:
+            decompressed = int.from_bytes(data[5:9], "little")
+            compressed = int.from_bytes(data[9:13], "little")
+            props = data[13]
+            dict_size = int.from_bytes(data[14:18], "little")
+            rem = props // 9
+            filters = [{
+                "id": lzma.FILTER_LZMA1, "lc": props % 9, "lp": rem % 5,
+                "pb": rem // 5, "dict_size": dict_size,
+            }]
+            buf = lzma.LZMADecompressor(
+                format=lzma.FORMAT_RAW, filters=filters
+            ).decompress(data[18:18 + compressed], max_length=decompressed)
+            text = unreal_string(buf, 0)
+        else:
+            text = unreal_string(data, 5)
+        return json.loads(text.rstrip("\x00"))
+    except Exception as e:  # noqa: BLE001 - an unreadable mod must not crash
+        decky.logger.warning(f"masseffect: could not read {path}: {e}")
+        return None
+
+
+def _me_merge_targets(mod_root: str, merges: list, le: str) -> list:
+    """Game-relative paths a merge mod install will rewrite.
+
+    The files the manifests name, plus the ones M3's own post-install
+    merges always touch. Returned sorted and deduplicated so the backup is
+    stable and can be compared between runs.
+
+    An unreadable manifest returns the side effects only, and the caller
+    treats a short list as a reason to be careful rather than confident.
+    """
+    names = set()
+    for merge in merges or []:
+        if not _safe_rel_path(merge):
+            continue
+        manifest = _me_m3m_manifest(os.path.join(mod_root, merge))
+        if not manifest:
+            continue
+        for entry in manifest.get("files") or []:
+            name = (entry.get("filename") or "").strip()
+            if name and _safe_rel_path(name):
+                names.add(f"BioGame/CookedPCConsole/{name}")
+    names.update(ME_MERGE_SIDE_EFFECTS.get(le, ()))
+    return sorted(names)
+
+
+def _me_vanilla_dir(le: str) -> str:
+    """Where the untouched copies of rewritten game files live.
+
+    Not a backup of the game: only the handful of packages a merge mod
+    edits, kept so uninstall and reset can undo one. See
+    ME_M3_MARKER_DIRNAME for the other thing that is not a backup.
+    """
+    return os.path.join(
+        decky.DECKY_PLUGIN_RUNTIME_DIR, "me-vanilla-packages", le
+    )
+
+
+def _me_save_vanilla(install_path: str, le: str, rels: list) -> list:
+    """Copy each file aside if we have not already. Returns what is held.
+
+    Only the FIRST copy counts: once a merge mod has rewritten SFXGame.pcc,
+    copying it again would save the modded version as the vanilla one, and
+    reset would restore the mod it was meant to remove.
+    """
+    root = _me_vanilla_dir(le)
+    held = []
+    for rel in rels or []:
+        src = os.path.join(_me_game_root(install_path, le), *rel.split("/"))
+        dst = os.path.join(root, *rel.split("/"))
+        if os.path.isfile(dst):
+            held.append(rel)
+            continue
+        if not os.path.isfile(src):
+            continue
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            held.append(rel)
+        except OSError as e:
+            decky.logger.warning(f"masseffect: could not hold {rel}: {e}")
+    if held:
+        decky.logger.info(
+            f"masseffect: holding {len(held)} vanilla package(s) for {le}"
+        )
+    return held
+
+
+def _me_restore_vanilla(install_path: str, le: str) -> int:
+    """Put every held file back and forget them. Returns how many."""
+    root = _me_vanilla_dir(le)
+    if not os.path.isdir(root):
+        return 0
+    done = 0
+    for dirpath, _dirs, names in os.walk(root):
+        for name in names:
+            src = os.path.join(dirpath, name)
+            rel = os.path.relpath(src, root)
+            dst = os.path.join(_me_game_root(install_path, le), rel)
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                done += 1
+            except OSError as e:
+                decky.logger.warning(f"masseffect: restore {rel}: {e}")
+    _force_rmtree(root)
+    if done:
+        decky.logger.info(f"masseffect: restored {done} vanilla package(s) for {le}")
+    return done
+
+
 def _me_not_a_mod_reason(scratch: str) -> str:
     exts = set()
     for _root, _dirs, names in os.walk(scratch):
@@ -13578,11 +13749,43 @@ def _me_apply(plan: dict, selected: set, install_path: str) -> dict:
     return result
 
 
+def _me_merge_cascade(game_domain: str, le: str, keep: str = "") -> list:
+    """Forget every merge mod record for one game, except `keep`.
+
+    Merge mods all edit the same handful of packages, so putting those
+    packages back undoes every one of them at once. Leaving the other
+    records in place would have My Mods listing mods that are no longer in
+    the game, which is the kind of quiet lie this plugin keeps having to
+    fix. Returns the names dropped, so the caller can say so.
+    """
+    settings = _load_settings()
+    installed = settings.get("installed", {}).get(game_domain, {})
+    dropped = []
+    for key in list(installed):
+        rec = installed[key]
+        if key == keep or not rec.get("merge"):
+            continue
+        if (rec.get("game") or "") != le:
+            continue
+        dropped.append(rec.get("name") or key)
+        installed.pop(key, None)
+    if dropped:
+        _save_settings(settings)
+        decky.logger.info(
+            f"masseffect: restoring {le} game files also removed "
+            f"{len(dropped)} other merge mod(s): {', '.join(dropped)}")
+    return dropped
+
+
 def _me_remove_record(rec: dict, install_path: str) -> None:
     """Take a mod's DLC folders and file edits back out of the game."""
     le = rec.get("game") or ""
     if le not in ME_GAME_DIRS:
         return
+    if rec.get("merge"):
+        # Its changes are inside the game's own packages; the only way out
+        # is the copies taken before ME3Tweaks Mod Manager rewrote them.
+        _me_restore_vanilla(install_path, le)
     dlc_dir = _me_dlc_dir(install_path, le)
     game_root = _me_game_root(install_path, le)
     for name in rec.get("dlc") or []:
@@ -13626,6 +13829,9 @@ def _me_set_enabled(rec: dict, install_path: str, enabled: bool) -> str:
     le = rec.get("game") or ""
     if le not in ME_GAME_DIRS:
         return "This record does not say which game it belongs to"
+    if rec.get("merge"):
+        return ("This mod is built into the game's own files, so it cannot "
+                "be switched off. Uninstall it to put those files back.")
     if rec.get("basegame"):
         return ("This mod replaced some of the game's own files, so it "
                 "cannot be switched off - uninstall it instead.")
@@ -13748,10 +13954,163 @@ def _me_remove_bink(install_path: str) -> list:
     return done
 
 
+def _me_merge_wizard(plan: dict):
+    """The merge mod's own options as a wizard, or None when it has none.
+
+    Same shape as _me_wizard, built from merge_alts rather than alts:
+    ME3Tweaks Mod Manager would show its own options panel for these and
+    nothing can click it, so we ask here and hand it a moddesc with the
+    answer already in it.
+    """
+    manual = [
+        (i, a) for i, a in enumerate(plan.get("merge_alts") or [])
+        if (a.get("hidden") or "").lower() != "true"
+    ]
+    if not manual:
+        return None
+    groups, by_group = [], {}
+    for i, a in manual:
+        checked = (a.get("checkedbydefault") or "").lower() == "true"
+        plugin = {
+            "id": f"alt.{i}",
+            "name": a.get("friendlyname") or f"Option {i + 1}",
+            "description": a.get("description") or "",
+            "type": "Recommended" if checked else "Optional",
+            "flags": {},
+        }
+        og = a.get("optiongroup") or ""
+        if og:
+            if og not in by_group:
+                by_group[og] = {"name": og, "type": "SelectExactlyOne",
+                                "plugins": []}
+                groups.append(by_group[og])
+            by_group[og]["plugins"].append(plugin)
+        else:
+            groups.append({"name": plugin["name"], "type": "SelectAny",
+                           "plugins": [plugin]})
+    step = {"name": "Options", "visible": None, "groups": groups}
+    wizard = {"name": plan.get("name") or "Mass Effect mod", "steps": [step]}
+    return wizard, {"steps": [step]}
+
+
+async def _me_m3_complete(entry: dict, selected_ids: list) -> dict:
+    """Install a merge mod by driving ME3Tweaks Mod Manager.
+
+    The order matters. The vanilla copies are taken BEFORE M3 runs,
+    because once it has rewritten SFXGame.pcc the original is gone and
+    reset has nothing to put back.
+    """
+    plan = entry["plan"]
+    scratch = entry["scratch"]
+    mod_id = entry["mod_id"]
+    le = plan.get("game") or ""
+    install_path = _game_dir(entry["install_dir"])
+    app_id = int(entry.get("app_id") or 0)
+
+    if _me_running():
+        _force_rmtree(scratch)
+        return {"ok": False, "error": ME_RUNNING}
+
+    proton, compat, steam_root, err = _proton_binary_for(app_id)
+    if err or not proton or not _me_m3_ready(compat):
+        _force_rmtree(scratch)
+        await _emit_progress(mod_id, "error", 0, "no merge support")
+        return {"ok": False, "error": _me_merge_refusal(False)}
+
+    selected = set()
+    for sid in selected_ids or []:
+        m = re.fullmatch(r"alt\.(\d+)", str(sid))
+        if m:
+            selected.add(int(m.group(1)))
+    choice = _me_m3_merge_choice(plan, selected)
+    if not choice["ok"]:
+        _force_rmtree(scratch)
+        await _emit_progress(mod_id, "error", 0, "options")
+        return {"ok": False, "error": choice["error"]}
+    merges = choice["merges"]
+
+    # Hold the vanilla packages this will rewrite. Best effort: a mod whose
+    # manifest we cannot read still installs, but reset will only be able
+    # to undo the files we did manage to hold, so say so in the record.
+    mod_root = plan.get("mod_root") or scratch
+    targets = await asyncio.to_thread(_me_merge_targets, mod_root, merges, le)
+    held = await asyncio.to_thread(
+        _me_save_vanilla, install_path, le, targets
+    )
+
+    # Hand M3 a moddesc with the chosen options already resolved, so its
+    # own options panel opens and closes without waiting for a click.
+    moddesc = os.path.join(mod_root, "moddesc.ini")
+    try:
+        with open(moddesc, encoding="utf-8-sig", errors="replace") as f:
+            original = f.read()
+        with open(moddesc, "w", encoding="utf-8", newline="\r\n") as f:
+            f.write(_me_m3_moddesc(original, merges))
+    except OSError as e:
+        _force_rmtree(scratch)
+        return {"ok": False, "error": f"Could not prepare the mod: {e}"}
+
+    await _emit_progress(mod_id, "installing", 50)
+    win_path = "Z:" + moddesc.replace("/", "\\")
+    result = await _me_m3_launch(
+        proton, compat, steam_root, ["--installmod", win_path],
+        ME_M3_INSTALL_TIMEOUT,
+    )
+    _force_rmtree(scratch)
+    if not result["ok"]:
+        await _emit_progress(mod_id, "error", 0, "merge failed")
+        return {"ok": False, "error": result["error"]}
+
+    settings = _load_settings()
+    installed = settings.setdefault("installed", {}).setdefault(
+        entry["game_domain"], {}
+    )
+    record_key = _safe_name(entry["mod_name"])
+    record = {
+        "mod_id": mod_id, "file_id": entry["file_id"],
+        "name": entry["mod_name"], "version": entry["mod_version"],
+        "file_name": entry["file_name"], "installed_at": int(time.time()),
+        "page_version": entry.get("page_version") or "",
+        "source": entry.get("record_source") or "",
+        "collection_slug": entry.get("collection_slug") or "",
+        "mode": "masseffect", "game": le, "dlc": [], "basegame": [],
+        "localization": None, "options": [], "enabled": True,
+        "skipped": [],
+        # What makes this record different from an ordinary one: it was
+        # installed by Mod Manager and it rewrote game files rather than
+        # adding a folder, so it cannot be toggled off, only removed.
+        "merge": True,
+        "merge_files": merges,
+        "merge_targets": targets,
+        "merge_held": held,
+    }
+    installed[record_key] = _merge_install_record(
+        installed.get(record_key), record
+    )
+    _save_settings(settings)
+    decky.logger.info(
+        f"installed masseffect merge mod {entry['mod_name']!r} for {le}: "
+        f"merges={merges}, held {len(held)} of {len(targets)} target(s)"
+    )
+    await _emit_progress(mod_id, "done", 100)
+    out = {"ok": True, "folder": record_key, "game": le, "dlc": [],
+           "added": len(merges)}
+    if len(held) < len(targets):
+        out["warning"] = (
+            "Some of this mod's changes cannot be undone by Reset, because "
+            "the plugin could not read which game files it edits."
+        )
+    if not _me_bypass_installed(install_path, le):
+        out["warning"] = ((out.get("warning") + "; ") if out.get("warning") else "") + (
+            "The game ignores mod content until the Bink bypass is "
+            "installed (Step 1).")
+    return out
+
+
 async def _me_install_from_scratch(
     scratch: str, mod_id: int, file_id: int, mod_name: str, mod_version: str,
     file_name: str, install_dir: str, game_domain: str, page_version: str,
-    record_source: str, collection_slug: str,
+    record_source: str, collection_slug: str, app_id: int = 0,
 ) -> dict:
     """The masseffect install: plan, ask about options if there are any,
     otherwise apply and record."""
@@ -13761,18 +14120,44 @@ async def _me_install_from_scratch(
         return {"ok": False, "error": ME_RUNNING}
     install_path = _game_dir(install_dir)
     plan = await asyncio.to_thread(_me_plan, scratch, install_path)
-    if not plan["ok"]:
-        _force_rmtree(scratch)
-        decky.logger.info(f"masseffect: {mod_name!r} refused: {plan['error']}")
-        await _emit_progress(mod_id, "error", 0, "not installable")
-        return {"ok": False, "error": plan["error"]}
     entry = {
         "at": time.time(), "scratch": scratch, "masseffect": True, "plan": plan,
         "game_domain": game_domain, "mod_id": mod_id, "file_id": file_id,
         "file_name": file_name, "mod_name": mod_name, "mod_version": mod_version,
         "install_dir": install_dir, "page_version": page_version,
         "record_source": record_source, "collection_slug": collection_slug,
+        "app_id": app_id,
     }
+    # A merge mod is not something this installer can place, but it is
+    # something ME3Tweaks Mod Manager can, so it is checked BEFORE the
+    # plan's own refusal: _me_plan describes what WE can do, not what is
+    # possible. Without merge support turned on the refusal points at the
+    # step that turns it on rather than saying no.
+    if plan.get("needs_m3"):
+        proton, compat, _steam, perr = _proton_binary_for(int(app_id or 0))
+        if perr or not proton or not _me_m3_ready(compat):
+            _force_rmtree(scratch)
+            decky.logger.info(
+                f"masseffect: {mod_name!r} needs merge support, which is off")
+            await _emit_progress(mod_id, "error", 0, "needs merge support")
+            return {"ok": False, "error": _me_merge_refusal(False)}
+        wiz = _me_merge_wizard(plan)
+        if wiz:
+            wizard, ctx = wiz
+            entry["ctx"] = ctx
+            entry["m3"] = True
+            _prune_pending_fomods()
+            token = f"{mod_id}-{file_id}-{int(time.time())}"
+            PENDING_FOMODS[token] = entry
+            await _emit_progress(mod_id, "error", 0, "options")
+            return {"ok": False, "needs_fomod": True,
+                    "fomod_token": token, "wizard": wizard}
+        return await _me_m3_complete(entry, [])
+    if not plan["ok"]:
+        _force_rmtree(scratch)
+        decky.logger.info(f"masseffect: {mod_name!r} refused: {plan['error']}")
+        await _emit_progress(mod_id, "error", 0, "not installable")
+        return {"ok": False, "error": plan["error"]}
     wiz = _me_wizard(plan)
     if wiz:
         wizard, ctx = wiz
@@ -16182,7 +16567,7 @@ query Link($slug: String!, $domainName: String!) {
             return await _me_install_from_scratch(
                 scratch, mod_id, file_id, mod_name, mod_version, file_name,
                 install_dir, game_domain, page_version, record_source,
-                collection_slug,
+                collection_slug, app_id,
             )
 
         if install_mode == "dataDir":
@@ -18093,7 +18478,12 @@ query Link($slug: String!, $domainName: String!) {
                 }
             if entry.get("masseffect"):
                 # Not a FOMOD at all: a Mass Effect mod's options, shown
-                # through the same wizard. Its own applier takes over.
+                # through the same wizard. Its own applier takes over, or
+                # ME3Tweaks Mod Manager does when the options were which
+                # merge mods to apply.
+                if entry.get("m3"):
+                    return await _me_m3_complete(
+                        entry, list(selected_ids or []))
                 return await _me_complete(entry, list(selected_ids or []))
             scratch = entry["scratch"]
             staging = os.path.join(scratch, "__fomod_staged__")
@@ -20209,7 +20599,13 @@ query Link($slug: String!, $domainName: String!) {
                 errors.append(f"{key}: {e}")
         if install_mode == "masseffect":
             # Vanilla means no mod DLC in any of the three games, whoever
-            # put it there, and the game's own Bink DLL back in place.
+            # put it there, the game's own Bink DLL back in place, and the
+            # packages any merge mod rewrote restored from the copies taken
+            # before ME3Tweaks Mod Manager ran.
+            for le in ME_GAME_DIRS:
+                put_back = _me_restore_vanilla(install_path, le)
+                if put_back:
+                    root_leftovers.append(f"{le}/{put_back} game file(s) restored")
             for le in ME_GAME_DIRS:
                 me_dlc = _me_dlc_dir(install_path, le)
                 for base in (me_dlc, _disabled_dir(me_dlc)):
@@ -24897,6 +25293,18 @@ query CollectionInstructions($slug: String!) {
                 settings["installed"][game_domain].pop(folder, None)
                 _save_settings(settings)
                 decky.logger.info(f"uninstalled masseffect mod {folder!r}")
+                if rec.get("merge"):
+                    # Putting the game's packages back undid every merge
+                    # mod on this game, not just this one. Say so rather
+                    # than leave My Mods listing ones that are gone.
+                    also = _me_merge_cascade(
+                        game_domain, rec.get("game") or "", keep=folder)
+                    if also:
+                        return {"ok": True, "warning": (
+                            "Removing this also removed "
+                            + ", ".join(also)
+                            + ", because they all change the same game "
+                              "files. Reinstall any you still want.")}
                 return {"ok": True}
             m = re.fullmatch(r"(LE[123])\|(DLC_[A-Za-z0-9_.-]+)", folder or "")
             if not m:

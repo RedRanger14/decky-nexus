@@ -21918,3 +21918,208 @@ class TestMassEffectMergeRefusal(unittest.TestCase):
     def test_neither_message_uses_an_em_dash(self):
         for ready in (True, False):
             self.assertNotIn("\u2014", main._me_merge_refusal(ready))
+
+
+def _m3m_bytes(manifest_obj, version=1):
+    """Build a .m3m the way ME3Tweaks Mod Manager writes one."""
+    text = json.dumps(manifest_obj) + chr(0)
+    body = text.encode("utf-16-le")
+    prefix = (-len(text)).to_bytes(4, "little", signed=True)
+    if version >= 2:
+        import lzma as _lzma
+        filt = [{"id": _lzma.FILTER_LZMA1, "lc": 3, "lp": 0, "pb": 2,
+                 "dict_size": 65536}]
+        comp = _lzma.LZMACompressor(format=_lzma.FORMAT_RAW, filters=filt)
+        blob = comp.compress(prefix + body) + comp.flush()
+        props = bytes([(2 * 5 + 0) * 9 + 3]) + (65536).to_bytes(4, "little")
+        return (b"M3MM" + bytes([2])
+                + len(prefix + body).to_bytes(4, "little")
+                + len(blob).to_bytes(4, "little") + props + blob)
+    return b"M3MM" + bytes([1]) + prefix + body
+
+
+class TestMassEffectMergeManifest(unittest.TestCase):
+    """Reading a .m3m to find out which game packages it will rewrite.
+
+    This is what makes a merge mod undoable: the files have to be copied
+    aside BEFORE Mod Manager runs, and afterwards is too late. Verified
+    against all thirteen real merge mods on the device (the LE1 Community
+    Patch's ten, One Probe's two and Sheploo's one): 13 of 13 parsed.
+    """
+
+    MANIFEST = {"files": [
+        {"filename": "SFXGame.pcc", "changes": [
+            {"entryname": "X", "scriptupdate": {"scriptfilename": "a.uc"}}]},
+        {"filename": "Startup_INT.pcc", "changes": [
+            {"entryname": "Y", "propertyupdates": []}]},
+    ]}
+
+    def _write(self, tmp, name, obj, version=1):
+        path = os.path.join(tmp, name)
+        with open(path, "wb") as f:
+            f.write(_m3m_bytes(obj, version))
+        return path
+
+    def test_a_version_1_merge_mod_names_its_targets(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = self._write(tmp, "a.m3m", self.MANIFEST, version=1)
+        got = main._me_m3m_manifest(path)
+        self.assertEqual([f["filename"] for f in got["files"]],
+                         ["SFXGame.pcc", "Startup_INT.pcc"])
+
+    def test_a_version_2_merge_mod_is_decompressed(self):
+        # Three of the LE1 Community Patch's ten are version 2, and the
+        # first parser silently produced nothing for them.
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = self._write(tmp, "b.m3m", self.MANIFEST, version=2)
+        got = main._me_m3m_manifest(path)
+        self.assertEqual([f["filename"] for f in got["files"]],
+                         ["SFXGame.pcc", "Startup_INT.pcc"])
+
+    def test_rubbish_is_none_rather_than_an_exception(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for name, data in (("bad.m3m", b"NOPE1234"), ("short.m3m", b"M3MM"),
+                           ("empty.m3m", b"")):
+            path = os.path.join(tmp, name)
+            with open(path, "wb") as f:
+                f.write(data)
+            self.assertIsNone(main._me_m3m_manifest(path), name)
+        self.assertIsNone(main._me_m3m_manifest(os.path.join(tmp, "nope.m3m")))
+
+    def test_targets_include_what_m3s_own_merges_rewrite(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        self._write(tmp, "a.m3m", self.MANIFEST)
+        got = main._me_merge_targets(tmp, ["a.m3m"], "LE1")
+        self.assertIn("BioGame/CookedPCConsole/SFXGame.pcc", got)
+        self.assertIn("BioGame/CookedPCConsole/Startup_INT.pcc", got)
+        # Coalesced and the TOC are rebuilt by M3 every time, named or not.
+        self.assertIn("BioGame/CookedPCConsole/Coalesced_INT.bin", got)
+        self.assertIn("BioGame/PCConsoleTOC.bin", got)
+        self.assertEqual(got, sorted(set(got)))
+
+    def test_an_unreadable_manifest_still_yields_the_side_effects(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with open(os.path.join(tmp, "junk.m3m"), "wb") as f:
+            f.write(b"not a merge mod")
+        got = main._me_merge_targets(tmp, ["junk.m3m"], "LE1")
+        self.assertIn("BioGame/PCConsoleTOC.bin", got)
+
+    def test_a_merge_name_that_escapes_the_mod_folder_is_ignored(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        got = main._me_merge_targets(tmp, ["../../etc/passwd"], "LE2")
+        self.assertTrue(all(".." not in g for g in got), got)
+
+
+class TestMassEffectVanillaHolding(unittest.TestCase):
+    """The copies that make a merge mod undoable."""
+
+    def setUp(self):
+        self.install = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.install, True)
+        self.cooked = os.path.join(
+            self.install, "Game", "ME1", "BioGame", "CookedPCConsole")
+        os.makedirs(self.cooked, exist_ok=True)
+        self.pkg = os.path.join(self.cooked, "SFXGame.pcc")
+        with open(self.pkg, "wb") as f:
+            f.write(b"VANILLA")
+        try:
+            shutil.rmtree(main._me_vanilla_dir("LE1"), ignore_errors=True)
+        except OSError:
+            pass
+        self.addCleanup(
+            shutil.rmtree, main._me_vanilla_dir("LE1"), True)
+
+    REL = ["BioGame/CookedPCConsole/SFXGame.pcc"]
+
+    def test_the_original_is_held_and_can_be_put_back(self):
+        held = main._me_save_vanilla(self.install, "LE1", self.REL)
+        self.assertEqual(held, self.REL)
+        with open(self.pkg, "wb") as f:
+            f.write(b"MERGED-BY-MOD-MANAGER")
+        self.assertEqual(main._me_restore_vanilla(self.install, "LE1"), 1)
+        with open(self.pkg, "rb") as f:
+            self.assertEqual(f.read(), b"VANILLA")
+
+    def test_a_second_merge_mod_does_not_overwrite_the_held_original(self):
+        """The bug this guards is total: hold, install mod A, hold again
+        for mod B, and the "vanilla" copy is now A's output. Reset would
+        then restore A forever."""
+        main._me_save_vanilla(self.install, "LE1", self.REL)
+        with open(self.pkg, "wb") as f:
+            f.write(b"AFTER-MOD-A")
+        main._me_save_vanilla(self.install, "LE1", self.REL)
+        main._me_restore_vanilla(self.install, "LE1")
+        with open(self.pkg, "rb") as f:
+            self.assertEqual(f.read(), b"VANILLA")
+
+    def test_restoring_forgets_the_copies(self):
+        main._me_save_vanilla(self.install, "LE1", self.REL)
+        main._me_restore_vanilla(self.install, "LE1")
+        self.assertFalse(os.path.isdir(main._me_vanilla_dir("LE1")))
+        # And a second restore is a no-op rather than an error.
+        self.assertEqual(main._me_restore_vanilla(self.install, "LE1"), 0)
+
+    def test_a_file_that_does_not_exist_is_skipped_quietly(self):
+        held = main._me_save_vanilla(
+            self.install, "LE1", self.REL + ["BioGame/CookedPCConsole/Nope.pcc"])
+        self.assertEqual(held, self.REL)
+
+    def test_the_holding_folder_is_not_called_a_backup(self):
+        # It holds a handful of packages, not the game. Michael's standing
+        # condition on the Mod Manager markers applies here too.
+        self.assertNotIn("backup", main._me_vanilla_dir("LE1").lower())
+
+
+class TestMassEffectMergeToggleAndRemoval(unittest.TestCase):
+    """A merge mod lives inside the game's own files, so it cannot be
+    switched off, and removing one takes the others with it."""
+
+    def test_a_merge_mod_refuses_to_be_switched_off(self):
+        err = main._me_set_enabled(
+            {"game": "LE1", "merge": True}, "/nonexistent", False)
+        self.assertTrue(err)
+        self.assertIn("cannot", err.lower())
+        self.assertIn("uninstall", err.lower())
+
+    def test_an_ordinary_dlc_mod_is_unaffected(self):
+        install = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, install, True)
+        for sub in ("BioGame/DLC",):
+            os.makedirs(os.path.join(install, "Game", "ME1", *sub.split("/")),
+                        exist_ok=True)
+        err = main._me_set_enabled(
+            {"game": "LE1", "dlc": []}, install, False)
+        self.assertEqual(err, "")
+
+    def test_removing_one_merge_mod_forgets_the_others_for_that_game(self):
+        try:
+            os.remove(main.SETTINGS_PATH)
+        except FileNotFoundError:
+            pass
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["masseffectlegendaryedition"] = {
+            "keeper": {"mode": "masseffect", "game": "LE1", "merge": True,
+                       "name": "The one being removed"},
+            "other": {"mode": "masseffect", "game": "LE1", "merge": True,
+                      "name": "LE1 Community Patch"},
+            "otherGame": {"mode": "masseffect", "game": "LE2", "merge": True,
+                          "name": "One Probe All Resources"},
+            "plainDlc": {"mode": "masseffect", "game": "LE1",
+                         "dlc": ["DLC_MOD_X"], "name": "Charted Worlds"},
+        }
+        main._save_settings(settings)
+        dropped = main._me_merge_cascade(
+            "masseffectlegendaryedition", "LE1", keep="keeper")
+        self.assertEqual(dropped, ["LE1 Community Patch"])
+        left = main._load_settings()["installed"]["masseffectlegendaryedition"]
+        # The other game's merge mod and this game's ordinary DLC mod stay.
+        self.assertIn("otherGame", left)
+        self.assertIn("plainDlc", left)
+        self.assertIn("keeper", left)
+        self.assertNotIn("other", left)

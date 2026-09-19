@@ -44,7 +44,7 @@ session with mods running.
 
 \* Community added game. Not tested by author.
 
-† New. Mods install, but it has not been played through yet, and mods that need a merge are refused.
+† New. Played on a Deck, and mods that edit the game's own files install through an optional step in the panel. That step is newer than the rest.
 
 ### On the roadmap
 
