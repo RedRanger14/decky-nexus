@@ -1519,6 +1519,36 @@ function CurrentGameSection() {
                     {MERGE_STEP_EXPLAINER}
                   </div>
                 )}
+                {/* Removal lives INSIDE the explanation, not beside the
+                    steps. Michael: "the remove mod manager button needs to
+                    go inside the accordian as it just looks like another
+                    step that needs clicking before browsing mods". Exactly
+                    right: a panel of numbered steps teaches people that
+                    every button in it is something to press. */}
+                {mergeInfoOpen && mergeOn === true && (
+                  <ButtonItem
+                    layout="below"
+                    disabled={mergeBusy}
+                    description="Mods it already installed stay installed"
+                    onClick={async () => {
+                      setMergeBusy(true);
+                      const r = await removeMergeSupport(
+                        game.installDirName,
+                        game.appId
+                      ).catch((e) => ({ ok: false, error: String(e) }));
+                      setMergeBusy(false);
+                      if (r.ok) {
+                        setMergeOn(false);
+                        setMergeVersion("");
+                        setMergeError("");
+                      } else {
+                        setMergeError(r.error ?? "Removal failed");
+                      }
+                    }}
+                  >
+                    {mergeBusy ? "Removing…" : "Remove Mod Manager"}
+                  </ButtonItem>
+                )}
                 {mergeOn === false && (
                   <ButtonItem
                     layout="below"
@@ -1551,30 +1581,6 @@ function CurrentGameSection() {
                     }}
                   >
                     {mergeBusy ? MERGE_STEP_BUSY : "Install Mod Manager"}
-                  </ButtonItem>
-                )}
-                {mergeOn === true && (
-                  <ButtonItem
-                    layout="below"
-                    disabled={mergeBusy}
-                    description="Mods it already installed stay installed"
-                    onClick={async () => {
-                      setMergeBusy(true);
-                      const r = await removeMergeSupport(
-                        game.installDirName,
-                        game.appId
-                      ).catch((e) => ({ ok: false, error: String(e) }));
-                      setMergeBusy(false);
-                      if (r.ok) {
-                        setMergeOn(false);
-                        setMergeVersion("");
-                        setMergeError("");
-                      } else {
-                        setMergeError(r.error ?? "Removal failed");
-                      }
-                    }}
-                  >
-                    {mergeBusy ? "Removing…" : "Remove Mod Manager"}
                   </ButtonItem>
                 )}
               </div>

@@ -38,6 +38,7 @@ import { EndorsePill } from "./EndorseButton";
 import { popOurPage, pushOurPage } from "./Tabs";
 import { getCompatHint, getStrandingWarning } from "./compat";
 import { frameworkModIds, modeParams } from "./games";
+import { managedRequirementNote } from "./mergeSupport";
 import {
   finishFomod,
   installCompanionFiles,
@@ -1003,7 +1004,9 @@ export function ModDetailPage() {
                   const label = external
                     ? req.modName || req.notes || req.url || "external"
                     : managed
-                    ? `${req.modName} · not needed (this plugin does its job)`
+                    ? `${req.modName} · ${managedRequirementNote(
+                        game.managedRequirementNotes?.[req.modId]
+                      )}`
                     : req.modName;
                   return (
                     <Focusable

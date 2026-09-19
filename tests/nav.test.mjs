@@ -1804,3 +1804,34 @@ test("the merge mod step is gated on the game, not hardcoded", () => {
     "the panel should ask offersMergeSupport rather than test the mode itself"
   );
 });
+
+test("Mass Effect does not list desktop programs as mods to install", () => {
+  const games = readCode("games.ts");
+  const at = games.indexOf("Mass Effect Legendary Edition");
+  const block = games.slice(at, at + 6000);
+  // 2 is ME3Tweaks Mod Manager, 20 the Trilogy Save Editor. The community
+  // patches list Mod Manager as a requirement, and before this the mod
+  // page offered to install a 200MB Windows program as if it were a mod.
+  assert.match(block, /heroExcludeModIds:\s*\[2,\s*20\]/);
+  assert.match(block, /managedRequirementNotes/);
+  assert.match(block, /Merge mod support step/);
+});
+
+test("removing Mod Manager is inside the explanation, not beside the steps", () => {
+  const code = readCode("index.tsx");
+  const i = code.indexOf("Remove Mod Manager");
+  assert.ok(i > 0, "the remove button is gone entirely");
+  // It must be gated on the accordion being open. A panel of numbered
+  // steps teaches people that every button in it is one to press, and an
+  // undo button sitting there reads as the next step.
+  const before = code.slice(Math.max(0, i - 1400), i);
+  assert.match(
+    before,
+    /mergeInfoOpen && mergeOn === true/,
+    "Remove Mod Manager renders outside the What-is-this accordion"
+  );
+  assert.equal(
+    (code.match(/Remove Mod Manager/g) || []).length, 1,
+    "the remove button is rendered in more than one place"
+  );
+});

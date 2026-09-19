@@ -88,3 +88,15 @@ export function mergeStepFailure(error: string): string {
   if (!trimmed) return "";
   return `Last attempt failed: ${trimmed}`;
 }
+
+/** What a requirement pill says for a tool the plugin handles itself.
+ *
+ * The default is for desktop mod managers the plugin replaces. Mass
+ * Effect overrides it, because there the plugin does not replace
+ * ME3Tweaks Mod Manager, it installs and drives it. Telling someone a
+ * community patch's requirement is "not needed" when the patch genuinely
+ * cannot install without it would be the wrong kind of reassuring.
+ */
+export function managedRequirementNote(override?: string): string {
+  return override || "not needed (this plugin does its job)";
+}

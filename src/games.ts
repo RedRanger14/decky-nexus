@@ -232,6 +232,16 @@ export interface SupportedGame {
    * and should not showcase. The install-time tool refusal still catches
    * them if someone finds them by search. */
   heroExcludeModIds?: number[];
+  /** What a requirement pill should say instead of "not needed (this
+   * plugin does its job)" for one of the ids above.
+   *
+   * Mass Effect needs this because the generic line is a lie there. The
+   * plugin does NOT do ME3Tweaks Mod Manager's job: it installs Mod
+   * Manager and drives it, behind the Merge mod support step. Michael,
+   * seeing it listed as a required mod on the community patches: "is that
+   * not confusing for the user if they dont need it?" They do need it;
+   * what they do not need is to install it themselves. */
+  managedRequirementNotes?: Record<number, string>;
   /** Mods that can never work through this plugin, with the reason shown on
    * the tile badge and the mod page. Curated, deliberately short: only for
    * mods popular enough that people WILL try them, where failing at install
@@ -1477,6 +1487,15 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     },
     // The three community patches and the two most endorsed DLC mods.
     recommendedModIds: [23, 8, 13, 422, 426],
+    // Desktop Windows programs the community lists as requirements out of
+    // habit. Neither is a mod: 2 is ME3Tweaks Mod Manager, which the Merge
+    // mod support step installs and drives, and 20 is the Trilogy Save
+    // Editor, which does not belong on a Deck at all.
+    heroExcludeModIds: [2, 20],
+    managedRequirementNotes: {
+      2: "installed by the Merge mod support step",
+      20: "a PC save editor, not needed to play",
+    },
     underConstruction:
       "Mass Effect support is new and still being tested. Mods that add " +
       "content install and have been played on a Steam Deck. Texture packs " +

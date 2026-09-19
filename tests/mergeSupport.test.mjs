@@ -9,6 +9,7 @@ import {
   MERGE_STEP_EXPLAINER,
   MERGE_STEP_STAGES,
   MERGE_STEP_TITLE,
+  managedRequirementNote,
   mergeStepFailure,
   mergeStepSummary,
   offersMergeSupport,
@@ -94,10 +95,23 @@ test("no copy here uses an em dash", () => {
     ...Object.values(MERGE_STEP_STAGES),
   ];
   // Written as an escape so this guard never trips over itself.
-  for (const s of all) assert.doesNotMatch(s, /—/, s);
+  for (const s of all) assert.doesNotMatch(s, /\u2014/, s);
 });
 
 test("the needed note says what happens without the step, not just that it is missing", () => {
   assert.match(MERGE_NEEDED_NOTE, /skipped/i);
   assert.match(MERGE_NEEDED_NOTE, /note/i);
+});
+
+test("a tool the plugin handles says the right thing, per game", () => {
+  // The generic line is for desktop managers the plugin REPLACES.
+  assert.match(managedRequirementNote(), /not needed/);
+  // Mass Effect overrides it, because there the plugin does not replace
+  // ME3Tweaks Mod Manager, it installs and drives it. Telling someone a
+  // community patch's requirement is "not needed" would be a lie: the
+  // patch genuinely cannot install without it.
+  const override = "installed by the Merge mod support step";
+  assert.equal(managedRequirementNote(override), override);
+  assert.doesNotMatch(managedRequirementNote(override), /not needed/);
+  assert.equal(managedRequirementNote(""), managedRequirementNote());
 });
