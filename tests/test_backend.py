@@ -21742,6 +21742,84 @@ EnableLE1CoalescedMerge = True
             main._me_m3_target_line("/g/MELE", "LE3"), r"Z:\g\MELE\Game\ME3")
 
 
+class TestMassEffectVcRuntimeSkip(unittest.TestCase):
+    """Whether the Visual C++ runtime already sits in the prefix.
+
+    This is the difference between a one minute setup and an eleven
+    minute one. Re-running the installer when the runtime is already
+    there does nothing useful and still overran the ten minute budget on
+    every measured attempt, so it was killed and the setup reported
+    success anyway. Michael watched that wait with no feedback and said
+    it was not acceptable; the honest fix is to not wait at all.
+
+    The registry lines below are copied from the Legion's own prefix.
+    Wine writes key names with doubled backslashes, so these are raw
+    strings: the file really does contain two of them.
+    """
+
+    REAL_X64 = (
+        r"[Software\\Classes\\Installer\\Dependencies\\"
+        r"VC,redist.x64,amd64,14.51,bundle] 1789750905" "\n"
+        "#time=1dd478f62c17718\n"
+        '"DisplayName"="Microsoft Visual C++ v14 Redistributable (x64)"\n'
+    )
+    # The x86 bundle rides along in a Proton prefix from the game's own
+    # installer and says nothing about the x64 runtime being present.
+    REAL_X86 = (
+        r"[Software\\Classes\\Installer\\Dependencies\\"
+        r"VC,redist.x86,x86,14.34,bundle] 1789655807" "\n"
+        "#time=1dd46b1f83ad638\n"
+    )
+
+    def _prefix(self, registry):
+        compat = tempfile.mkdtemp(dir=TEST_ROOT)
+        os.makedirs(os.path.join(compat, "pfx"), exist_ok=True)
+        if registry is not None:
+            with open(os.path.join(compat, "pfx", "system.reg"), "w",
+                      encoding="utf-8") as fh:
+                fh.write("WINE REGISTRY Version 2\n\n" + registry)
+        return compat
+
+    def test_installed_runtime_is_recognised(self):
+        compat = self._prefix(self.REAL_X86 + "\n" + self.REAL_X64)
+        self.assertTrue(main._me_m3_has_vcredist(compat))
+
+    def test_x86_alone_does_not_count(self):
+        # Getting this wrong would skip the runtime on a fresh prefix and
+        # leave ASI support quietly broken, which is worse than the wait.
+        compat = self._prefix(self.REAL_X86)
+        self.assertFalse(main._me_m3_has_vcredist(compat))
+
+    def test_a_fresh_prefix_needs_the_runtime(self):
+        self.assertFalse(main._me_m3_has_vcredist(self._prefix("")))
+
+    def test_a_missing_registry_needs_the_runtime(self):
+        # No prefix at all must not read as "already done".
+        self.assertFalse(main._me_m3_has_vcredist(self._prefix(None)))
+        self.assertFalse(
+            main._me_m3_has_vcredist(os.path.join(TEST_ROOT, "no-such-prefix")))
+
+    def test_a_mention_outside_a_key_does_not_count(self):
+        # The same string appears again deep in the uninstall records, on
+        # value lines. Only a key line means the runtime is registered.
+        body = '"BundleProviderKey"="VC,redist.x64,amd64,14.51,bundle"\n'
+        self.assertFalse(main._me_m3_has_vcredist(self._prefix(body)))
+
+    def test_a_future_runtime_version_still_counts(self):
+        # The version in the key tracks whatever aka.ms/vc14 serves, so
+        # this must not be pinned to the 14.51 seen today.
+        body = (
+            r"[Software\\Classes\\Installer\\Dependencies\\"
+            r"VC,redist.x64,amd64,15.02,bundle] 1789750905" "\n"
+        )
+        self.assertTrue(main._me_m3_has_vcredist(self._prefix(body)))
+
+    def test_an_unreadable_registry_needs_the_runtime(self):
+        compat = self._prefix(self.REAL_X64)
+        with mock.patch("builtins.open", side_effect=OSError("boom")):
+            self.assertFalse(main._me_m3_has_vcredist(compat))
+
+
 class TestMassEffectM3Verdict(unittest.TestCase):
     """M3 never exits, so a run ends when its log says so. Lines below are
     copied from the real run that installed the LE1 Community Patch."""

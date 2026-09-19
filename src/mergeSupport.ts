@@ -50,8 +50,9 @@ export const MERGE_STEP_EXPLAINER =
   "This downloads it from Nexus Mods (about 70 MB, by Mgamerz) and sets it " +
   "up inside this game's own Windows environment, where the plugin runs it " +
   "for you in the background. You will never have to open it.\n\n" +
-  "It takes about ten minutes, most of it downloading. You can leave this " +
-  "menu while it works.\n\n" +
+  "The first time takes about ten minutes, most of it a Windows runtime " +
+  "this game needs. After that it is quick. You can leave this menu " +
+  "while it works.\n\n" +
   "It is somebody else's program, which is why this is a button rather than " +
   "something that happens on its own. You can remove it again below, and " +
   "removing it leaves any mods it installed in place.";
@@ -64,11 +65,14 @@ export const MERGE_NEEDED_NOTE =
   "skipped with a note rather than installed.";
 
 /** Shown on the button while the step runs. Measured on a Legion Go 2:
- * 610 seconds from a clean prefix, nearly all of it the download. Ten
- * minutes of "Setting up" with nothing else on screen is indistinguishable
- * from a hang, and this plugin's audience is people on a couch who cannot
- * go and read a log. */
-export const MERGE_STEP_BUSY = "Setting up, this takes about ten minutes…";
+ * 605 seconds from a clean prefix, of which the 68 MB download was about
+ * ten and the Windows runtime install was the rest. A prefix that already
+ * has that runtime skips it and finishes in about a minute, so this says
+ * "up to" rather than promising the long case every time. Ten minutes of
+ * "Setting up" with nothing else on screen is indistinguishable from a
+ * hang, and this plugin's audience is people on a couch who cannot go and
+ * read a log. */
+export const MERGE_STEP_BUSY = "Setting up, this takes up to ten minutes…";
 
 /** Progress text while the step runs, keyed by the phase the backend
  * emits. It is a long job (a 70 MB download, then a runtime install

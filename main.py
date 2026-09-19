@@ -13128,6 +13128,32 @@ def _me_m3_programdata(compat: str) -> str:
     )
 
 
+def _me_m3_has_vcredist(compat: str) -> bool:
+    """Does this prefix already have the Visual C++ x64 runtime?
+
+    Worth asking, because running the installer to find out costs ten
+    minutes. Once the runtime is registered, a re-run detects it, does
+    nothing useful, and still overran the ten minute budget on every
+    measured attempt, so it was killed and the setup reported success
+    anyway. That was the whole of the wait the user was staring at.
+
+    The bundle key is what the installer itself writes on success, so
+    this asks the same question by the same name.
+    """
+    reg = os.path.join(compat, "pfx", "system.reg")
+    try:
+        with open(reg, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                # e.g. [Software\Classes\Installer\Dependencies\VC,redist.x64,amd64,14.51,bundle]
+                if line.startswith("[") and "VC,redist.x64,amd64," in line:
+                    return True
+    except OSError:
+        # No prefix or no registry yet means no runtime, and the caller
+        # is about to install one.
+        return False
+    return False
+
+
 def _me_m3_log_dir(compat: str) -> str:
     return os.path.join(_me_m3_programdata(compat), "logs")
 
@@ -13209,6 +13235,52 @@ async def _me_m3_reg(proton: str, compat: str, steam_root: str,
         proc.kill()
         return -1
     return proc.returncode or 0
+
+
+async def _me_m3_install_vcredist(proton: str, compat: str,
+                                  steam_root: str) -> str:
+    """Put the Visual C++ x64 runtime in the prefix. Slow, and once only.
+
+    Returns a message if the download failed, which is worth stopping
+    for, and '' otherwise. The install itself is not fatal: Mod Manager
+    reads the registry, and a prefix that already has the runtime passes
+    regardless.
+    """
+    vc = os.path.join(DOWNLOADS_DIR, "vc_redist.x64.exe")
+    verr = await _me_m3_fetch_vcredist(vc)
+    if verr:
+        return verr
+    await _emit_progress(ME_M3_MOD_ID, "installing", 80)
+    try:
+        env = _host_env({
+            "STEAM_COMPAT_CLIENT_INSTALL_PATH": steam_root,
+            "STEAM_COMPAT_DATA_PATH": compat,
+            "WINEDEBUG": "-all",
+        })
+        proc = await asyncio.create_subprocess_exec(
+            "python3", proton, "run", vc,
+            "/install", "/quiet", "/norestart",
+            env=env, stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+        )
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=ME_M3_INSTALL_TIMEOUT)
+        except asyncio.TimeoutError:
+            # Kill it rather than walk away. A runtime installer left
+            # running outlives the setup, holds the prefix against the
+            # next Mod Manager run, and looks to anything scanning for
+            # Windows processes like a modding tool mid-write: it
+            # blocked a deploy an hour after the setup had "finished".
+            decky.logger.warning(
+                "merge support: the runtime installer overran, stopping it")
+            try:
+                proc.kill()
+            except (OSError, ProcessLookupError):
+                pass
+            await _me_m3_stop_wineserver(proton, compat)
+    except OSError as e:
+        decky.logger.warning(f"merge support: vc redist run: {e}")
+    return ""
 
 
 async def _me_m3_write_registry(proton: str, compat: str,
@@ -24002,42 +24074,22 @@ query CollectionInstructions($slug: String!) {
         # 4. The Visual C++ runtime, which Legendary Edition ASI support
         #    needs. Same file and switches Mod Manager itself would use.
         await _emit_progress(ME_M3_MOD_ID, "installing", 70)
-        vc = os.path.join(DOWNLOADS_DIR, "vc_redist.x64.exe")
-        verr = await _me_m3_fetch_vcredist(vc)
-        if verr:
-            return await _fail("runtime", verr)
-        await _emit_progress(ME_M3_MOD_ID, "installing", 80)
-        try:
-            env = _host_env({
-                "STEAM_COMPAT_CLIENT_INSTALL_PATH": steam_root,
-                "STEAM_COMPAT_DATA_PATH": compat,
-                "WINEDEBUG": "-all",
-            })
-            proc = await asyncio.create_subprocess_exec(
-                "python3", proton, "run", vc,
-                "/install", "/quiet", "/norestart",
-                env=env, stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
-            )
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=600)
-            except asyncio.TimeoutError:
-                # Kill it rather than walk away. A runtime installer left
-                # running outlives the setup, holds the prefix against the
-                # next Mod Manager run, and looks to anything scanning for
-                # Windows processes like a modding tool mid-write: it
-                # blocked a deploy an hour after the setup had "finished".
-                decky.logger.warning(
-                    "merge support: the runtime installer overran, stopping it")
-                try:
-                    proc.kill()
-                except (OSError, ProcessLookupError):
-                    pass
-                await _me_m3_stop_wineserver(proton, compat)
-        except OSError as e:
-            # Not fatal on its own: Mod Manager checks the registry, and a
-            # prefix that already has the runtime passes anyway.
-            decky.logger.warning(f"merge support: vc redist run: {e}")
+        if _me_m3_has_vcredist(compat):
+            # Already there, so skip a 68 MB download and the longest
+            # step in the setup. This is what makes a re-run quick: the
+            # runtime only ever needs installing once per prefix, and
+            # re-running it was ten of the eleven minutes.
+            decky.logger.info(
+                "merge support: the prefix already has the Visual C++ "
+                "runtime, skipping it")
+            # Deliberately under 80. The panel reads 80 and above as "the
+            # runtime installer is running" and says so on the button,
+            # which would be a lie about a step that was just skipped.
+            await _emit_progress(ME_M3_MOD_ID, "installing", 78)
+        else:
+            verr = await _me_m3_install_vcredist(proton, compat, steam_root)
+            if verr:
+                return await _fail("runtime", verr)
 
         store = settings.setdefault("me_merge_support", {})
         store.update({"version": version, "file_id": file_id,
