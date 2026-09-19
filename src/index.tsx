@@ -820,7 +820,11 @@ function CurrentGameSection() {
   }, [game?.appId]);
 
   const onInstallFramework = async () => {
-    if (!game?.framework?.nexusModId) return;
+    // The SAME question the button's disabled prop asks. Asking a
+    // different one here turned a greyed-out button into a button that
+    // silently did nothing, which is worse: Michael clicked it and
+    // "nothing, is it even working?".
+    if (!game?.framework || !frameworkInstallable(game.framework)) return;
     setFrameworkBusy(true);
     try {
       // Same reason as the multi-framework path: a loader installs fine
@@ -835,7 +839,8 @@ function CurrentGameSection() {
       const result = game.framework.installAsMod
         ? await installLatest(
             game,
-            game.framework.nexusModId,
+            // installAsMod means it IS a Nexus mod, so the id is there.
+            game.framework.nexusModId ?? 0,
             game.framework.name
           )
         : await installFramework(

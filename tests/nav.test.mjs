@@ -1875,3 +1875,27 @@ test("no game ships a Step 1 that cannot be pressed", () => {
       "Step 1 would be greyed out forever:\n" + bad.join("\n")
   );
 });
+
+test("the framework button and its handler ask the same question", () => {
+  // They did not. The disabled prop was fixed to use frameworkInstallable
+  // and the click handler was left asking for a Nexus mod id, so Mass
+  // Effect's Step 1 became pressable and silently did nothing. Michael:
+  // "I clicked it a few minutes ago and nothing, is it even working?"
+  // A button that lies about being available is worse than one that is
+  // honestly greyed out.
+  const code = readCode("index.tsx");
+  const handler = code.slice(
+    code.indexOf("const onInstallFramework"),
+    code.indexOf("const onInstallFramework") + 400
+  );
+  assert.match(
+    handler,
+    /frameworkInstallable\(/,
+    "onInstallFramework guards on something other than frameworkInstallable"
+  );
+  assert.doesNotMatch(
+    handler,
+    /!game\?\.framework\?\.nexusModId/,
+    "onInstallFramework still bails out on a missing Nexus mod id"
+  );
+});
