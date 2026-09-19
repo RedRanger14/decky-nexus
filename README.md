@@ -63,7 +63,6 @@ appear in the plugin until they do.
 - Dragon's Dogma 2
 - Final Fantasy XII: The Zodiac Age
 - Horizon Forbidden West
-- Mass Effect Legendary Edition
 - Middle-earth: Shadow of Mordor
 - Middle-earth: Shadow of War
 - Nier: Automata
