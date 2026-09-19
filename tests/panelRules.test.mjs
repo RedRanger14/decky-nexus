@@ -4,10 +4,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  BG3_MOD_LIMIT_STEPS,
   autoOffGroups,
   autoOffNote,
   autoOffSummary,
+  BG3_MOD_LIMIT_STEPS,
   bg3ModLimitNote,
   bg3ModLimitOptions,
   bg3ModLimitSelected,
@@ -26,6 +26,7 @@ import {
   failingProblem,
   fileConflictProblem,
   fitReportBody,
+  frameworkInstallable,
   frameworkStepNumbers,
   ghostPluginProblem,
   healthVerdict,
@@ -39,8 +40,8 @@ import {
   lastRunSummary,
   launchOptionsAppliedNote,
   launchWaitNotice,
-  loadOrderProblem,
   loadersInstalledNote,
+  loadOrderProblem,
   maskCoopPassword,
   missingMasterProblem,
   pauseAllControl,
@@ -1832,4 +1833,33 @@ test("the store page actually consults the plan", () => {
     /width: "300px"|width: "150px"/,
     "no fixed header widths may survive - they are the overflow"
   );
+});
+
+// --- Step 1 must be pressable for every game that has a framework -------
+// Mass Effect's Bink bypass has no Nexus mod id: it is the compiled
+// LEBinkProxy from the ME3Tweaks repo, pinned by hash. The panel asked
+// "does it have a mod id" and greyed the button out forever. It went
+// unnoticed because the button only renders when the framework is
+// MISSING, and the bypass had been installed by another route, so it took
+// a reset to uncover a button that had never worked once.
+test("a framework that fetches its own loader is installable", () => {
+  assert.equal(
+    frameworkInstallable({ installKind: "masseffectBink" }),
+    true
+  );
+  // Even though it has no mod id at all.
+  assert.equal(
+    frameworkInstallable({ installKind: "masseffectBink", nexusModId: 0 }),
+    true
+  );
+});
+
+test("an ordinary framework still needs its mod page", () => {
+  assert.equal(frameworkInstallable({ nexusModId: 2014 }), true);
+  assert.equal(frameworkInstallable({ installKind: "smapi", nexusModId: 2400 }), true);
+  assert.equal(frameworkInstallable({ installKind: "copyRoot", nexusModId: 107 }), true);
+  // Nothing to download and no kind that supplies one: not installable.
+  assert.equal(frameworkInstallable({ installKind: "copyRoot" }), false);
+  assert.equal(frameworkInstallable({}), false);
+  assert.equal(frameworkInstallable(undefined), false);
 });

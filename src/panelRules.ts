@@ -1475,3 +1475,26 @@ export function storeHeaderMinWidth(plan: StoreHeaderPlan): number {
     STORE_HEADER_EDGE
   );
 }
+
+/** Install kinds that fetch the loader themselves instead of from a Nexus
+ * mod page. Mass Effect's Bink bypass is the compiled LEBinkProxy from the
+ * ME3Tweaks repository, pinned by hash, so it has no mod id. */
+const SELF_SOURCED_FRAMEWORK_KINDS = new Set(["masseffectBink"]);
+
+/** Can Step 1 actually install this game's framework?
+ *
+ * The panel used to ask "does it have a Nexus mod id", which is not the
+ * same question. Mass Effect's Bink bypass has none, so its Install button
+ * was permanently greyed out. Nobody noticed because the bypass had been
+ * installed by an earlier route, and the panel only renders the button
+ * when it is missing: it took a reset to uncover a button that had never
+ * worked. Michael: "I cant do step 1 as its greyed out".
+ */
+export function frameworkInstallable(fw?: {
+  nexusModId?: number;
+  installKind?: string;
+}): boolean {
+  if (!fw) return false;
+  if (SELF_SOURCED_FRAMEWORK_KINDS.has(fw.installKind ?? "")) return true;
+  return Boolean(fw.nexusModId);
+}

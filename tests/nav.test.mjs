@@ -1835,3 +1835,43 @@ test("removing Mod Manager is inside the explanation, not beside the steps", () 
     "the remove button is rendered in more than one place"
   );
 });
+
+test("no game ships a Step 1 that cannot be pressed", () => {
+  // Mass Effect did. Its Bink bypass has no Nexus mod id (it is fetched
+  // from the ME3Tweaks repo, pinned by hash) and the panel greyed the
+  // Install button out on exactly that test. The button only renders when
+  // the framework is MISSING, so it survived every session in which the
+  // bypass happened to already be installed, and it took a reset to
+  // uncover a button that had never worked once.
+  const games = readCode("games.ts");
+  const bad = [];
+  for (const m of games.matchAll(/^\s{4}framework:\s*\{/gm)) {
+    const open = m.index + games.slice(m.index).indexOf("{");
+    const bounds = enclosingObject(games, open);
+    if (!bounds) continue;
+    const block = games.slice(bounds[0], bounds[1]);
+    // Frostbite games (Battlefront II) never reach this button: their
+    // Step 1 is our own mod compiler on a different branch, and its
+    // "framework" has no mod id because it is not a Nexus mod at all.
+    // The enclosing GAME object, walked properly: indexOf on "\n  " also
+    // matches every 4-space indented line, which found the line above the
+    // framework rather than the game and so excluded nothing.
+    const gameBounds = enclosingObject(games, bounds[0] - 1);
+    const gameBlock = gameBounds ? games.slice(gameBounds[0], gameBounds[1]) : "";
+    if (/frostbite:\s*true/.test(gameBlock)) continue;
+    const hasId = /nexusModId:\s*[1-9]/.test(block);
+    // Kinds that fetch their own loader need no mod page. Keep in step
+    // with SELF_SOURCED_FRAMEWORK_KINDS in panelRules.ts.
+    const selfSourced = /installKind:\s*"masseffectBink"/.test(block);
+    if (!hasId && !selfSourced) {
+      const named = block.split("\n").find((l) => /name:/.test(l));
+      bad.push((named ?? block.slice(0, 60)).trim());
+    }
+  }
+  assert.deepEqual(
+    bad,
+    [],
+    "these frameworks have no mod id and no kind that supplies one, so " +
+      "Step 1 would be greyed out forever:\n" + bad.join("\n")
+  );
+});

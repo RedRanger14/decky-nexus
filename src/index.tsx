@@ -125,6 +125,7 @@ import {
   slotPressure,
   troubleshootingCount,
 
+  frameworkInstallable,
   frameworkStepNumbers,
   bg3ModLimitOptions,
   bg3ModLimitSelected,
@@ -839,7 +840,9 @@ function CurrentGameSection() {
           )
         : await installFramework(
             game.nexusDomain,
-            game.framework.nexusModId,
+            // Unused by kinds that fetch their own loader (the Bink
+            // bypass), and those have no mod id at all.
+            game.framework.nexusModId ?? 0,
             game.installDirName,
             game.framework.installKind ?? "smapi",
             game.framework.detectFile,
@@ -1458,7 +1461,7 @@ function CurrentGameSection() {
                 <ButtonItem
                   label={`Step ${fwSteps.install}`}
                   layout="below"
-                  disabled={frameworkBusy || !game.framework.nexusModId}
+                  disabled={frameworkBusy || !frameworkInstallable(game.framework)}
                   description={`Most ${game.displayName} mods require ${game.framework.name}. Downloads from Nexus Mods (author gets the credit).`}
                   onClick={onInstallFramework}
                 >
