@@ -104,7 +104,9 @@ import {
   setApiKey,
   setBg3ModuleCap,
   buildReport,
+  getPluginUpdate,
 } from "./api";
+import type { PluginUpdate } from "./pluginUpdate";
 import {
   crashHuntVerdict,
   crashSuspect,
@@ -4264,9 +4266,16 @@ function DownloadsButton() {
   );
 }
 
-/** QAM shortcut to the full-screen Updates page, with a pending count. */
+/** QAM shortcut to the full-screen Updates page, with a pending count.
+ *
+ * The plugin's own update counts here too. Michael asked for that twice:
+ * an update you can only get by going to Desktop Mode and pasting a
+ * command is not an update this audience will ever apply, and the button
+ * that already means "things you can bring up to date" is where someone
+ * would look for it. */
 function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
   const [count, setCount] = useState<number | undefined>();
+  const [selfUpdate, setSelfUpdate] = useState<PluginUpdate | undefined>();
   useEffect(() => {
     let stale = false;
     setCount(undefined);
@@ -4277,6 +4286,20 @@ function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
       stale = true;
     };
   }, [scopedGame?.appId]);
+  useEffect(() => {
+    let stale = false;
+    // Not scoped to a game, so it is asked once rather than on every
+    // game switch. The backend caches it for six hours besides.
+    getPluginUpdate()
+      .then((u) => {
+        if (!stale && u?.update_available) setSelfUpdate(u);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, []);
+  const pending = (count ?? 0) + (selfUpdate ? 1 : 0);
   return (
     <PanelSectionRow>
       <DialogButton
@@ -4287,7 +4310,7 @@ function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
               pushOurPage(UPDATES_ROUTE);
         }}
       >
-        {count ? `⬆ Updates · ${count} available` : "Updates"}
+        {pending ? `⬆ Updates · ${pending} available` : "Updates"}
       </DialogButton>
     </PanelSectionRow>
   );

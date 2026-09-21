@@ -14118,6 +14118,65 @@ class TestFrameworkFlattenSubdirRelative(unittest.TestCase):
         self.assertIn('detect_rel.split("/")[0].lower()', fn)
 
 
+class TestPluginSelfUpdate(unittest.TestCase):
+    """Is there a newer build, and may it be installed?
+
+    Decky Loader owns the plugin folder and runs as root, and it exposes
+    utilities/install_plugin over its own websocket router, which is the
+    route its store uses. So the plugin can be updated from Gaming Mode
+    after all. The README claimed for months that it could not be,
+    confusing "this plugin cannot write that folder" with "it cannot
+    happen"; Michael pushed back twice and was right.
+
+    This half only decides what to offer. Offering the wrong artifact is
+    the dangerous mistake, because the loader installs what it is handed.
+    """
+
+    def test_no_module_level_function_is_defined_twice(self):
+        """A second def with the same name silently replaces the first.
+
+        This is not hypothetical: _plugin_update_newer was written with
+        its own _version_tuple, which was shadowed by the one declared
+        further down, and the only symptom was a TypeError on a version
+        string the surviving one could not parse. In a file this long,
+        nothing else will catch it.
+        """
+        with open(main.__file__, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        seen, dupes = {}, []
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name in seen:
+                    dupes.append(f"{node.name} at lines {seen[node.name]} and {node.lineno}")
+                seen[node.name] = node.lineno
+        self.assertEqual(dupes, [], "shadowed definitions: " + "; ".join(dupes))
+
+    def test_a_newer_version_is_an_update_and_nothing_else_is(self):
+        self.assertTrue(main._plugin_update_newer("1.11.1", "1.11.2"))
+        self.assertFalse(main._plugin_update_newer("1.11.2", "1.11.2"))
+        self.assertFalse(main._plugin_update_newer("1.11.2", "1.11.1"))
+
+    def test_nine_is_not_newer_than_eleven(self):
+        # The plugin went 1.9.8 to 1.10.0 to 1.11.x, so a string compare
+        # would have offered a downgrade the day this shipped.
+        self.assertTrue(main._plugin_update_newer("1.9.9", "1.11.0"))
+        self.assertFalse(main._plugin_update_newer("1.11.0", "1.9.9"))
+        self.assertTrue(main._plugin_update_newer("1.9.8", "1.10.0"))
+
+    def test_a_dev_build_ahead_of_the_store_is_left_alone(self):
+        self.assertFalse(main._plugin_update_newer("1.12.0", "1.11.2"))
+
+    def test_rubbish_versions_do_not_raise(self):
+        for bad in ("", "   ", "abc", "..", "v..x"):
+            self.assertFalse(main._plugin_update_newer("1.0.0", bad), bad)
+            main._version_tuple(bad)
+        self.assertEqual(main._version_tuple("v1.11.2"), (1, 11, 2))
+        self.assertEqual(main._version_tuple("1.11.2-beta"), (1, 11, 2))
+
+    def test_versions_of_different_lengths_compare(self):
+        self.assertTrue(main._plugin_update_newer("1.11", "1.11.1"))
+        self.assertFalse(main._plugin_update_newer("1.11.1", "1.11"))
+
 class TestSteamLibraryVdfLocations(unittest.TestCase):
     """Steam writes libraryfolders.vdf to two different places.
 

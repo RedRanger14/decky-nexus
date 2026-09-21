@@ -306,6 +306,18 @@ export const checkUpdates = callable<
   { ok: boolean; updates?: Record<string, UpdateInfo>; error?: string }
 >("check_updates");
 
+export const getPluginUpdate = callable<
+  [],
+  {
+    ok: boolean;
+    current: string;
+    update_available: boolean;
+    version?: string;
+    artifact?: string;
+    hash?: string;
+  }
+>("get_plugin_update");
+
 export const getTrendingMods = callable<
   [game_domain: string, count: number, app_id: number],
   ModsResult

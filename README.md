@@ -245,12 +245,20 @@ release, checks it is complete before removing the old version, and restarts
 Decky. Your installed mods, API key and settings live outside the plugin
 folder and are not touched.
 
-There is no automatic update yet, and the plugin cannot update itself:
-Decky's plugin folder is owned by root, which is why installing needs your
-password in the first place. Automatic updates need this plugin to be served
-from a Decky store, which is planned but does not exist yet. Until then,
-check [Releases](https://github.com/RedRanger14/decky-nexus/releases) when
-you fancy it. Nothing breaks by staying on an older version.
+From v1.11.3 the plugin updates itself from Gaming Mode: open the Quick
+Access Menu, press **Updates**, and a plugin update appears above your mod
+updates. Decky asks you to confirm, then downloads it, checks it against
+the published SHA-256 and installs it. No Desktop Mode, no terminal, no
+password.
+
+The older paragraph here said this was impossible because Decky's plugin
+folder is owned by root. The folder is, but Decky Loader owns it and runs
+as root, so the plugin does not write it: it asks Decky to, through the
+same mechanism Decky's own store uses.
+
+The Konsole line above still works and is the way to install in the first
+place, or to recover if an update ever goes wrong. Nothing breaks by
+staying on an older version.
 
 ### If you would rather not run a script
 

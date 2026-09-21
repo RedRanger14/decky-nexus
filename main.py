@@ -688,6 +688,106 @@ def _hd2_next_free_number(data_dir: str, archive_hash: str,
     return n
 
 
+# ---- Updating the plugin itself ---------------------------------------
+# Decky Loader owns the plugin folder and runs as root, so it is the one
+# thing on the device that can replace this plugin. It exposes that over
+# its own websocket router as utilities/install_plugin, which is exactly
+# what its store uses: the loader downloads the artifact, checks it
+# against the SHA-256 it was given, and unzips it into place.
+#
+# So the plugin cannot write to its own folder, but it can ASK. The
+# README said for months that self-updating was impossible because the
+# folder is root-owned, which confused "cannot write it myself" with
+# "cannot happen". Michael pushed back on that twice and was right.
+#
+# This half only answers "is there a newer one, and what is its hash".
+# The frontend does the asking, because the loader's router lives there.
+PLUGIN_STORE_INDEX = ("https://raw.githubusercontent.com/RedRanger14/"
+                      "decky-nexus/main/store/plugins.json")
+PLUGIN_UPDATE_TTL = 6 * 60 * 60
+
+
+def _plugin_update_newer(current: str, latest: str) -> bool:
+    """Only ever true for a strictly newer build.
+
+    Equal or older is not an update. A dev build ahead of the store must
+    not be offered a downgrade, which is what a plain string compare
+    would do the moment 1.9.9 met 1.11.0.
+
+    Uses the file's existing _version_tuple rather than a second copy.
+    The first draft of this defined its own and was silently shadowed by
+    that one, because it is declared further down; the only symptom was a
+    TypeError on a version string neither of them could parse.
+    """
+    if not latest:
+        return False
+    have, want = _version_tuple(current), _version_tuple(latest)
+    if have is None or want is None:
+        # A version that cannot be read is not something to act on. The
+        # general helper falls back to "different means newer", which is
+        # fine for a mod file and wrong for replacing the plugin.
+        return False
+    width = max(len(have), len(want))
+    have += (0,) * (width - len(have))
+    want += (0,) * (width - len(want))
+    return want > have
+
+
+class _PluginUpdateCache:
+    at = 0.0
+    data = None
+
+
+async def _fetch_plugin_update() -> dict:
+    """The newest published build, from the same store index Decky reads.
+
+    Returns {} when it cannot be read. The index carries the artifact URL
+    and its SHA-256 already, which is precisely what the loader wants, so
+    nothing here has to trust a filename or guess a download link.
+    """
+    now = time.time()
+    if _PluginUpdateCache.data is not None and (
+            now - _PluginUpdateCache.at) < PLUGIN_UPDATE_TTL:
+        return _PluginUpdateCache.data
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as session:
+            async with session.get(PLUGIN_STORE_INDEX, ssl=SSL_CONTEXT) as r:
+                if r.status != 200:
+                    return {}
+                index = json.loads(await r.text())
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, OSError):
+        return {}
+    out = {}
+    try:
+        for entry in index:
+            if entry.get("name") != decky.DECKY_PLUGIN_NAME:
+                continue
+            newest = None
+            for v in entry.get("versions") or []:
+                if not v.get("name") or not v.get("hash") or not v.get("artifact"):
+                    continue
+                if newest is None or _version_tuple(v["name"]) > _version_tuple(
+                        newest["name"]):
+                    newest = v
+            if newest:
+                out = {"version": str(newest["name"]),
+                       "hash": str(newest["hash"]),
+                       "artifact": str(newest["artifact"])}
+            break
+    except (AttributeError, TypeError):
+        return {}
+    # An artifact served from anywhere else is not ours to install, and
+    # the loader would happily fetch whatever it was handed.
+    if out and not out["artifact"].startswith(
+            "https://github.com/RedRanger14/decky-nexus/releases/download/"):
+        return {}
+    _PluginUpdateCache.at = now
+    _PluginUpdateCache.data = out
+    return out
+
+
 def _steam_libraries() -> list:
     """Every Steam library's steamapps dir, the main one first.
 
@@ -26502,6 +26602,28 @@ query CollectionInstructions($slug: String!) {
 
         decky.logger.info(f"frosty: reset {game_domain} to vanilla")
         return {"ok": True}
+
+    async def get_plugin_update(self) -> dict:
+        """Is there a newer build of this plugin, and what is its hash?
+
+        The frontend hands the answer to Decky Loader, which is the only
+        thing on the device that may write the plugin folder. Never
+        raises and never blocks the panel: no answer simply means no
+        update is offered.
+        """
+        current = APP_VERSION
+        newest = await _fetch_plugin_update()
+        if not newest:
+            return {"ok": False, "current": current, "update_available": False}
+        available = _plugin_update_newer(current, newest["version"])
+        return {
+            "ok": True,
+            "current": current,
+            "update_available": available,
+            "version": newest["version"],
+            "artifact": newest["artifact"],
+            "hash": newest["hash"],
+        }
 
     async def get_game_status(
         self, install_dir: str, mods_subdir: str, framework_file: str = "",

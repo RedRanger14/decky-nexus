@@ -11,10 +11,17 @@ import { useEffect, useState } from "react";
 
 import { showModal } from "@decky/ui";
 
-import { dismissUpdate, installFramework } from "./api";
+import { dismissUpdate, getPluginUpdate, installFramework } from "./api";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { installLatest } from "./install";
 import { PendingUpdate, scanUpdates } from "./updates";
+import {
+  PluginUpdate,
+  pluginUpdateBlocked,
+  pluginUpdateBody,
+  pluginUpdateLabel,
+  requestPluginUpdate,
+} from "./pluginUpdate";
 import {
   PAGE_SCROLLER,
   PRIMARY_BUTTON_CLASS,
@@ -27,6 +34,16 @@ const Scroller: any = ScrollPanelGroup;
 export function UpdatesPage() {
   const [pending, setPending] = useState<PendingUpdate[] | undefined>();
   const [busy, setBusy] = useState(false);
+  // The plugin's own update. It sits above the mods because it is the one
+  // update that used to require Desktop Mode and a terminal, which for
+  // this audience meant it never happened.
+  const [self, setSelf] = useState<PluginUpdate | undefined>();
+  const [selfSent, setSelfSent] = useState(false);
+  useEffect(() => {
+    getPluginUpdate()
+      .then((u) => setSelf(u?.update_available ? u : undefined))
+      .catch(() => {});
+  }, []);
 
   const rescan = () => scanUpdates().then(setPending);
   useEffect(() => {
@@ -186,10 +203,53 @@ export function UpdatesPage() {
           pin their versions on purpose.
         </div>
 
+        {self && (
+          <Focusable
+            style={{
+              margin: "0 0 14px",
+              padding: "10px 12px",
+              borderRadius: "6px",
+              background: "rgba(218, 142, 53, 0.12)",
+              border: "1px solid rgba(218, 142, 53, 0.35)",
+              maxWidth: "560px",
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: "2px" }}>
+              {pluginUpdateLabel(self)}
+            </div>
+            <div style={{ fontSize: "12.5px", opacity: 0.8, marginBottom: "8px" }}>
+              {pluginUpdateBlocked(self) || pluginUpdateBody(self)}
+            </div>
+            {!pluginUpdateBlocked(self) && (
+              <DialogButton
+                className={PRIMARY_BUTTON_CLASS}
+                disabled={selfSent}
+                onClick={async () => {
+                  setSelfSent(true);
+                  const err = await requestPluginUpdate(self);
+                  if (err) {
+                    setSelfSent(false);
+                    toaster.toast({ title: "Nexus Mods", body: err });
+                    return;
+                  }
+                  // Decky takes it from here: its own prompt, its own
+                  // download and hash check, then it restarts the plugin.
+                  toaster.toast({
+                    title: "Nexus Mods",
+                    body: "Decky will ask you to confirm the update.",
+                  });
+                }}
+              >
+                {selfSent ? "Waiting for Decky…" : "⬆ Update the plugin"}
+              </DialogButton>
+            )}
+          </Focusable>
+        )}
+
         {pending === undefined && (
           <div style={{ opacity: 0.8 }}>Checking your mods…</div>
         )}
-        {pending !== undefined && pending.length === 0 && (
+        {pending !== undefined && pending.length === 0 && !self && (
           <div style={{ opacity: 0.8 }}>Everything is up to date ✓</div>
         )}
 
