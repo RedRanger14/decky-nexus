@@ -695,23 +695,38 @@ def _steam_libraries() -> list:
     libraryfolders.vdf. The first bug report from a real user was Witcher 3
     on a microSD showing "game not found", because only the main library was
     ever searched. Read fresh each time: SD cards come and go between calls.
+
+    Both known locations of that file are read, because Steam does not
+    always write both. See the comment below.
     """
     main = os.path.dirname(STEAM_COMMON)
     libs = [main]
     seen = {os.path.realpath(main)}
-    try:
-        with open(os.path.join(main, "libraryfolders.vdf"),
-                  encoding="utf-8", errors="replace") as f:
-            text = f.read()
+    # Steam keeps this file in two places and does not always write both.
+    # steamapps/ is the classic spot and the only one this read for a
+    # year; config/ is where a current client puts it. A Steam Deck has
+    # both, which is why every device test passed while a desktop Linux
+    # install with only config/ reported "game not found" for a game on a
+    # second drive (issue #31, Bazzite, 2026-09-20).
+    steam_root = os.path.dirname(main)
+    for vdf in (os.path.join(main, "libraryfolders.vdf"),
+                os.path.join(steam_root, "config", "libraryfolders.vdf")):
+        try:
+            with open(vdf, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
         for m in re.finditer(r'"path"\s+"([^"]+)"', text):
-            steamapps = os.path.join(m.group(1), "steamapps")
+            # VDF escapes backslashes. Linux paths have none, but a
+            # library on a Windows-formatted drive comes through as
+            # D:\Games and must not keep the doubling.
+            steamapps = os.path.join(
+                m.group(1).replace("\\\\", "\\"), "steamapps")
             real = os.path.realpath(steamapps)
             if real in seen or not os.path.isdir(steamapps):
                 continue
             seen.add(real)
             libs.append(steamapps)
-    except OSError:
-        pass
     return libs
 
 
@@ -26500,6 +26515,16 @@ query CollectionInstructions($slug: String!) {
             "mods_path": mods_path,
             "mods_dir_exists": os.path.isdir(mods_path),
         }
+        if not installed:
+            # Name the libraries actually searched. Issue #31 was a game
+            # on a second drive that was never looked at, and the log said
+            # only that the default path did not exist, which reads like a
+            # missing game rather than a missing library. One line here
+            # tells the difference without asking the reporter for more.
+            decky.logger.info(
+                f"{install_dir!r} not found; searched "
+                f"{[os.path.join(lib, 'common') for lib in _steam_libraries()]}"
+            )
         # A new-format ContentCatalog kills a downgraded Skyrim at boot with
         # no visible cause, and this used to be repaired only if the user
         # thought to open the Health page - which nobody does when the game

@@ -14118,6 +14118,139 @@ class TestFrameworkFlattenSubdirRelative(unittest.TestCase):
         self.assertIn('detect_rel.split("/")[0].lower()', fn)
 
 
+class TestSteamLibraryVdfLocations(unittest.TestCase):
+    """Steam writes libraryfolders.vdf to two different places.
+
+    steamapps/libraryfolders.vdf is the classic location and was the only
+    one read for a year. config/libraryfolders.vdf is where a current
+    client puts it. A Steam Deck has both, so every test on the author's
+    hardware passed while samxu29 on Bazzite reported BG3 on a second
+    drive as "Game install folder not found" (issue #31, 2026-09-20),
+    with the plugin falling back to the default library path. Their
+    workaround was to symlink the game into the default library, which is
+    exactly what someone does when only one library is ever searched.
+    """
+
+    def _world(self, where):
+        """A main library plus a second drive, with the vdf in `where`:
+        "steamapps", "config", "both" or "neither"."""
+        world = tempfile.mkdtemp(prefix="steam-vdf-")
+        self.addCleanup(shutil.rmtree, world, ignore_errors=True)
+        root = os.path.join(world, "root")
+        main_apps = os.path.join(root, "steamapps")
+        second_apps = os.path.join(world, "seconddrive", "steamapps")
+        os.makedirs(os.path.join(main_apps, "common"))
+        os.makedirs(os.path.join(second_apps, "common"))
+        os.makedirs(os.path.join(root, "config"))
+        q = chr(34)
+        nl = chr(10)
+        vdf = (
+            q + "libraryfolders" + q + nl + "{" + nl
+            + '  "0"' + nl + "  {" + nl
+            + '    "path"    ' + q + root.replace(os.sep, "/") + q + nl
+            + "  }" + nl
+            + '  "1"' + nl + "  {" + nl
+            + '    "path"    ' + q
+            + os.path.join(world, "seconddrive").replace(os.sep, "/") + q + nl
+            + "  }" + nl + "}" + nl
+        )
+        targets = {
+            "steamapps": [os.path.join(main_apps, "libraryfolders.vdf")],
+            "config": [os.path.join(root, "config", "libraryfolders.vdf")],
+            "both": [os.path.join(main_apps, "libraryfolders.vdf"),
+                     os.path.join(root, "config", "libraryfolders.vdf")],
+            "neither": [],
+        }[where]
+        for t in targets:
+            with open(t, "w", encoding="utf-8") as fh:
+                fh.write(vdf)
+        old = main.STEAM_COMMON
+        main.STEAM_COMMON = os.path.join(main_apps, "common")
+        self.addCleanup(setattr, main, "STEAM_COMMON", old)
+        return main_apps, second_apps
+
+    def _libs(self):
+        return [os.path.realpath(p) for p in main._steam_libraries()]
+
+    def test_the_config_copy_alone_is_enough(self):
+        # This is issue #31. Before the fix this returned the main
+        # library only, and the game on the second drive was invisible.
+        main_apps, second_apps = self._world("config")
+        libs = self._libs()
+        self.assertIn(os.path.realpath(second_apps), libs)
+        self.assertEqual(libs[0], os.path.realpath(main_apps),
+                         "the main library must still come first")
+
+    def test_the_steamapps_copy_alone_still_works(self):
+        # The old behaviour, which must not regress: this is what every
+        # Deck has been relying on.
+        main_apps, second_apps = self._world("steamapps")
+        self.assertIn(os.path.realpath(second_apps), self._libs())
+
+    def test_both_copies_do_not_produce_a_duplicate(self):
+        # The usual case on a Deck. Reading two files that list the same
+        # libraries must not scan the second drive twice.
+        main_apps, second_apps = self._world("both")
+        libs = self._libs()
+        self.assertEqual(len(libs), len(set(libs)), libs)
+        self.assertEqual(sorted(libs),
+                         sorted({os.path.realpath(main_apps),
+                                 os.path.realpath(second_apps)}))
+
+    def test_no_vdf_at_all_is_still_the_main_library(self):
+        main_apps, _second = self._world("neither")
+        self.assertEqual(self._libs(), [os.path.realpath(main_apps)])
+
+    def test_a_library_listed_but_not_mounted_is_skipped(self):
+        # An SD card that has been removed. Listing it would make every
+        # lookup stat a dead path.
+        main_apps, second_apps = self._world("both")
+        shutil.rmtree(os.path.dirname(second_apps))
+        self.assertEqual(self._libs(), [os.path.realpath(main_apps)])
+
+    def test_a_windows_drive_path_is_unescaped(self):
+        # VDF doubles backslashes. A library on an NTFS drive comes
+        # through as D:\\Games and must not keep the doubling.
+        world = tempfile.mkdtemp(prefix="steam-vdf-esc-")
+        self.addCleanup(shutil.rmtree, world, ignore_errors=True)
+        root = os.path.join(world, "root")
+        main_apps = os.path.join(root, "steamapps")
+        second = os.path.join(world, "games")
+        os.makedirs(os.path.join(main_apps, "common"))
+        os.makedirs(os.path.join(second, "steamapps", "common"))
+        q, nl, bs = chr(34), chr(10), chr(92)
+        escaped = second.replace(bs, bs + bs)
+        with open(os.path.join(main_apps, "libraryfolders.vdf"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(q + "libraryfolders" + q + nl + "{" + nl
+                     + '  "0"' + nl + "  {" + nl
+                     + '    "path"    ' + q + escaped + q + nl
+                     + "  }" + nl + "}" + nl)
+        old = main.STEAM_COMMON
+        main.STEAM_COMMON = os.path.join(main_apps, "common")
+        self.addCleanup(setattr, main, "STEAM_COMMON", old)
+        libs = [os.path.realpath(p) for p in main._steam_libraries()]
+        self.assertIn(
+            os.path.realpath(os.path.join(second, "steamapps")), libs,
+            "an escaped path did not resolve to a real library")
+
+    def test_a_game_on_the_second_drive_is_found(self):
+        # The end to end shape of the report: browsing worked, installing
+        # said the folder was missing, because _game_dir fell back to the
+        # main library.
+        _main_apps, second_apps = self._world("config")
+        game = os.path.join(second_apps, "common", "Baldurs Gate 3")
+        os.makedirs(game)
+        self.assertEqual(os.path.realpath(main._game_dir("Baldurs Gate 3")),
+                         os.path.realpath(game))
+
+    def test_a_missing_game_still_falls_back_to_the_main_library(self):
+        # The fallback is what produces a readable path in the error and
+        # in get_game_status, so it must not become empty.
+        self._world("config")
+        self.assertTrue(main._game_dir("Nothing Installed Here"))
+
+
 class TestSteamLibraries(unittest.TestCase):
     """Games on an SD card or a second drive live in another Steam library,
     listed in libraryfolders.vdf. The first bug report from a real user was
