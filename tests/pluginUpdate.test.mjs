@@ -188,9 +188,12 @@ test("a refusal from Decky is reported rather than swallowed", async () => {
 // Decky" until he closed it. Cancelling Decky's prompt would have been the
 // same dead end, because nothing tells the page either happened.
 
-test("a wait that is long enough to be useful and short enough to recover", () => {
-  assert.ok(UPDATE_WAIT_MS >= 10_000, "too short to survive a slow prompt");
-  assert.ok(UPDATE_WAIT_MS <= 60_000, "a cancel must not strand the button");
+test("a wait short enough that cancelling is not a punishment", () => {
+  // Michael cancelled a prompt and found 25 seconds too long to wait for
+  // the button to come back. Decky's prompt appears in about a second,
+  // so this only has to cover that.
+  assert.ok(UPDATE_WAIT_MS >= 2_000, "too short to cover the prompt appearing");
+  assert.ok(UPDATE_WAIT_MS <= 10_000, "a cancel must not mean a long wait");
 });
 
 test("the update counts as landed once the running version catches up", () => {

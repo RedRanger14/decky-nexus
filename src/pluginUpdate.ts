@@ -165,13 +165,17 @@ export async function requestPluginUpdate(u: PluginUpdate): Promise<string> {
 /** How long to leave the button saying "waiting" before letting it be
  * pressed again.
  *
- * Decky's confirmation prompt can be cancelled, and nothing tells us
- * when it was. Without this the button stayed disabled for good: Michael
- * hit that after a successful update, and cancelling would have been the
- * same dead end. Long enough not to fight a slow prompt, short enough
- * that a cancel is not the end of the road.
+ * Decky's confirmation prompt can be cancelled and nothing tells us when
+ * it was, so the only way back is a clock. Without one the button stayed
+ * disabled for good.
+ *
+ * Six seconds: Michael cancelled a prompt and found twenty-five too long
+ * to sit there. The prompt itself appears in about one, so this only has
+ * to cover that. The cost of being brief is that the button goes live
+ * again a few seconds into a real install, which is harmless: the poll
+ * below flips it to "Updated" as soon as the new version is running.
  */
-export const UPDATE_WAIT_MS = 25_000;
+export const UPDATE_WAIT_MS = 6_000;
 
 /** Whether the update request has visibly finished.
  *

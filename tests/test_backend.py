@@ -14181,10 +14181,56 @@ class TestPluginSelfUpdate(unittest.TestCase):
                          "force was not passed through to the fetch")
 
     def test_the_cache_is_short_enough_to_be_useful(self):
-        # A stale "no update" is indistinguishable from a broken feature,
-        # and this is checked every time the panel opens.
-        self.assertLessEqual(main.PLUGIN_UPDATE_TTL, 30 * 60)
-        self.assertGreaterEqual(main.PLUGIN_UPDATE_TTL, 60)
+        """A stale "no update" is indistinguishable from a broken feature.
+
+        Six hours hid a whole day of releases. Fifteen minutes still left
+        the QAM button saying nothing while the Updates page, which asks
+        fresh, showed an update: installing one restarts the plugin, and
+        the fresh process caches "up to date" moments before the next
+        build is published. The fetch is about a kilobyte.
+        """
+        self.assertLessEqual(main.PLUGIN_UPDATE_TTL, 120)
+        self.assertGreaterEqual(main.PLUGIN_UPDATE_TTL, 15)
+
+    def test_release_notes_are_not_refetched_for_a_version(self):
+        """The check now runs about once a minute, and GitHub's
+        unauthenticated rate limit is 60 an hour. Notes for a published
+        version never change, so asking twice is pure waste."""
+        calls = []
+
+        class Resp:
+            status = 200
+            async def json(self):
+                calls.append(1)
+                return {"body": "## Heading" + chr(10) + "- a change"}
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+
+        class Session:
+            def get(self, *a, **k):
+                return Resp()
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+
+        main._PLUGIN_NOTES_CACHE.clear()
+        loop = asyncio.new_event_loop()
+        try:
+            with mock.patch.object(main.aiohttp, "ClientSession",
+                                   lambda *a, **k: Session()):
+                first = loop.run_until_complete(
+                    main._fetch_plugin_release_notes("9.9.9"))
+                second = loop.run_until_complete(
+                    main._fetch_plugin_release_notes("9.9.9"))
+        finally:
+            loop.close()
+            main._PLUGIN_NOTES_CACHE.clear()
+        self.assertEqual(first, second)
+        self.assertIn("a change", first)
+        self.assertEqual(len(calls), 1, "notes were fetched twice")
 
     def test_a_release_notes_version_cannot_shape_the_url(self):
         """The version is pasted into a GitHub API URL.

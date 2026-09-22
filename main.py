@@ -704,12 +704,17 @@ def _hd2_next_free_number(data_dir: str, archive_hash: str,
 # The frontend does the asking, because the loader's router lives there.
 PLUGIN_STORE_INDEX = ("https://raw.githubusercontent.com/RedRanger14/"
                       "decky-nexus/main/store/plugins.json")
-# Short, because this is the answer to "is there an update", and a stale
-# no is indistinguishable from a broken feature. It was six hours, and
-# Michael updated to 1.11.4, which made the plugin restart and cache
-# "1.11.4 is newest" a moment before 1.11.5 was published. Pressing
-# Updates then showed nothing for the rest of the day.
-PLUGIN_UPDATE_TTL = 15 * 60
+# A minute. Long enough that opening and closing the panel does not
+# refetch, short enough that the answer is effectively live.
+#
+# This was six hours, then fifteen minutes, and both were wrong for the
+# same reason. Installing an update restarts the plugin, the fresh
+# process checks immediately, and it caches "you are up to date" moments
+# before the next build is published. Fifteen minutes still left the QAM
+# button showing no update while the Updates page, which asks fresh,
+# showed one. The fetch is about a kilobyte; hoarding it was never worth
+# being wrong about.
+PLUGIN_UPDATE_TTL = 60
 
 
 def _plugin_update_newer(current: str, latest: str) -> bool:
@@ -747,6 +752,9 @@ PLUGIN_RELEASE_API = ("https://api.github.com/repos/RedRanger14/"
                       "decky-nexus/releases/tags/")
 
 
+_PLUGIN_NOTES_CACHE: dict = {}
+
+
 async def _fetch_plugin_release_notes(version: str) -> str:
     """What is in the update, from the release it came from.
 
@@ -756,6 +764,11 @@ async def _fetch_plugin_release_notes(version: str) -> str:
     """
     if not version or not re.fullmatch(r"[0-9][0-9.]{0,15}", version):
         return ""
+    # A published release's notes do not change, and the update check now
+    # runs about once a minute. Without this, leaving an update pending
+    # would burn GitHub's unauthenticated rate limit on the same answer.
+    if version in _PLUGIN_NOTES_CACHE:
+        return _PLUGIN_NOTES_CACHE[version]
     try:
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=20)
@@ -772,7 +785,10 @@ async def _fetch_plugin_release_notes(version: str) -> str:
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, OSError):
         return ""
     # Bounded: this lands in a panel, not a browser.
-    return body[:4000]
+    body = body[:4000]
+    if body:
+        _PLUGIN_NOTES_CACHE[version] = body
+    return body
 
 
 async def _fetch_plugin_update(force: bool = False) -> dict:
