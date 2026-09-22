@@ -195,7 +195,12 @@ export function updateLanded(offered: string, running?: string): boolean {
 export function formatReleaseNotes(md?: string, maxLines = 40): string[] {
   if (!md) return [];
   const out: string[] = [];
-  let skipping = false;
+  // Everything before the first heading is the release notes' standing
+  // preamble: what the plugin is, and that it needs Premium. True, and
+  // worthless to somebody who already has it installed and is looking at
+  // an update prompt. It also filled the whole collapsed view, pushing
+  // the actual changes behind "Show more".
+  let skipping = /^##+\s/m.test(md);
   for (const raw of md.replace(/\r/g, "").split("\n")) {
     const line = raw.trimEnd();
     if (/^##+\s/.test(line)) {

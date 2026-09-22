@@ -287,3 +287,26 @@ test("carriage returns from a GitHub body do not survive", () => {
   assert.ok(lines.includes("HEADING"));
   assert.ok(lines.includes("- one"));
 });
+
+test("the standing preamble is dropped, so changes are what you see first", () => {
+  // Every release body opens with the same paragraph about what the
+  // plugin is and that it needs Premium. Both true, both worthless to
+  // somebody who already has it installed, and together they filled the
+  // whole collapsed view and pushed the actual changes behind "Show more".
+  const lines = formatReleaseNotes(REAL_NOTES);
+  const joined = lines.join("\n");
+  assert.doesNotMatch(joined, /unofficial, community-built/);
+  assert.doesNotMatch(joined, /Premium/);
+  // The first thing shown is the first real heading.
+  assert.equal(lines[0], "THE PLUGIN NOW UPDATES ITSELF");
+});
+
+test("notes with no headings at all are still shown rather than swallowed", () => {
+  // A release written as a plain paragraph must not come back empty:
+  // skipping the preamble only makes sense when there is a heading to
+  // skip TO.
+  const plain = "Fixed a crash when opening the panel.\nAlso tidied the log.";
+  const lines = formatReleaseNotes(plain);
+  assert.ok(lines.length >= 1, "plain notes were dropped entirely");
+  assert.match(lines.join("\n"), /Fixed a crash/);
+});
