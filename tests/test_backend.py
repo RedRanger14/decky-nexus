@@ -14200,9 +14200,9 @@ class TestPluginSelfUpdate(unittest.TestCase):
 
         class Resp:
             status = 200
-            async def json(self):
+            async def text(self):
                 calls.append(1)
-                return {"body": "## Heading" + chr(10) + "- a change"}
+                return "## Heading" + chr(10) + "- a change"
             async def __aenter__(self):
                 return self
             async def __aexit__(self, *a):
@@ -14231,6 +14231,28 @@ class TestPluginSelfUpdate(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertIn("a change", first)
         self.assertEqual(len(calls), 1, "notes were fetched twice")
+
+    def test_notes_do_not_come_from_a_rate_limited_api(self):
+        """The notes host must be the one that already works.
+
+        api.github.com allows 60 unauthenticated requests an hour PER IP,
+        shared by every device behind it. On 2026-09-22 the Legion got
+        HTTP 403 with remaining=0 and showed an update with no notes at
+        all, while the store index on raw.githubusercontent.com answered
+        fine from the same machine, seconds apart.
+        """
+        self.assertNotIn("api.github.com", main.PLUGIN_NOTES_BASE)
+        self.assertTrue(
+            main.PLUGIN_NOTES_BASE.startswith(
+                "https://raw.githubusercontent.com/"),
+            main.PLUGIN_NOTES_BASE)
+        # And no CODE may reach for it either. Comments are exempt: the
+        # one above PLUGIN_NOTES_BASE names the host precisely so nobody
+        # wires it back in.
+        with open(main.__file__, encoding="utf-8") as fh:
+            code = [ln for ln in fh if not ln.lstrip().startswith("#")]
+        offenders = [ln.strip() for ln in code if "api.github.com" in ln]
+        self.assertEqual(offenders, [], offenders)
 
     def test_a_release_notes_version_cannot_shape_the_url(self):
         """The version is pasted into a GitHub API URL.

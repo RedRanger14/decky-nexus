@@ -11,7 +11,14 @@ this must be generated from the actual release artifact rather than written
 by hand. `name` must match plugin.json's name, which is the folder Decky
 installs into.
 
-Usage:  python tools/makestore.py dist/Nexus-Mods-0.259.0.zip
+Also copies the release notes to store/notes/<version>.md, which is
+where the plugin reads them from. NOT the GitHub API: that allows 60
+unauthenticated requests an hour per IP, shared by every device behind
+it, and on 2026-09-22 the Legion got HTTP 403 with remaining=0 and
+showed an update with no notes at all. raw.githubusercontent.com serves
+the store index already and has no such limit.
+
+Usage:  python tools/makestore.py dist/Nexus-Mods-0.259.0.zip [notes.md]
 """
 import hashlib
 import io
@@ -99,7 +106,27 @@ def check_zip(zip_path: str, plugin_name: str, version: str) -> list:
     return problems
 
 
-def main(zip_path: str) -> int:
+def write_notes(version: str, notes_path: str) -> str:
+    """Put the release notes where the plugin can read them.
+
+    Returns a status line. A missing notes file is not fatal: an update
+    with no notes still installs, it just says less.
+    """
+    if not notes_path:
+        return "no notes file given, so store/notes was left alone"
+    if not os.path.isfile(notes_path):
+        return f"notes file not found, skipped: {notes_path}"
+    with io.open(notes_path, encoding="utf-8") as f:
+        body = f.read()
+    out_dir = os.path.join("store", "notes")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, f"{version}.md")
+    with io.open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(body)
+    return f"{out} ({len(body)} chars)"
+
+
+def main(zip_path: str, notes_path: str = "") -> int:
     if not os.path.isfile(zip_path):
         print("no such file:", zip_path)
         return 1
@@ -170,8 +197,9 @@ def main(zip_path: str) -> int:
     print(f"store/plugins + store/plugins.json: {plug['name']} v{version}")
     print(f"  sha256   {digest}")
     print(f"  artifact {entry['versions'][0]['artifact']}")
+    print(f"  notes    {write_notes(version, notes_path)}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    sys.exit(main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else ""))

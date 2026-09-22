@@ -748,8 +748,17 @@ class _PluginUpdateCache:
     data = None
 
 
-PLUGIN_RELEASE_API = ("https://api.github.com/repos/RedRanger14/"
-                      "decky-nexus/releases/tags/")
+# Served from the same host as the store index, which already works on
+# every device that can see an update at all.
+#
+# This used api.github.com. That allows 60 unauthenticated requests an
+# hour PER IP, shared by every device behind it, and the Legion hit
+# HTTP 403 with remaining=0: it offered an update with no notes, while
+# the store index on raw.githubusercontent.com answered fine. A user
+# facing feature cannot sit on a budget that a phone on the same wifi
+# can exhaust.
+PLUGIN_NOTES_BASE = ("https://raw.githubusercontent.com/RedRanger14/"
+                     "decky-nexus/main/store/notes/")
 
 
 _PLUGIN_NOTES_CACHE: dict = {}
@@ -774,14 +783,16 @@ async def _fetch_plugin_release_notes(version: str) -> str:
             timeout=aiohttp.ClientTimeout(total=20)
         ) as session:
             async with session.get(
-                f"{PLUGIN_RELEASE_API}v{version}",
-                headers={"Accept": "application/vnd.github+json",
-                         "User-Agent": f"decky-nexus/{APP_VERSION}"},
+                f"{PLUGIN_NOTES_BASE}{version}.md",
+                headers={"User-Agent": f"decky-nexus/{APP_VERSION}"},
                 ssl=SSL_CONTEXT,
             ) as r:
+                # A release published before notes were staged has no
+                # file. Not an error: the update installs regardless, it
+                # just says less.
                 if r.status != 200:
                     return ""
-                body = (await r.json()).get("body") or ""
+                body = await r.text()
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, OSError):
         return ""
     # Bounded: this lands in a panel, not a browser.
