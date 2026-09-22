@@ -307,7 +307,10 @@ export const checkUpdates = callable<
 >("check_updates");
 
 export const getPluginUpdate = callable<
-  [],
+  /** force: skip the backend's cache. The Updates page passes true,
+   * because somebody opening it is asking now; the QAM's passive count
+   * does not, because it runs on every panel open. */
+  [force?: boolean],
   {
     ok: boolean;
     current: string;

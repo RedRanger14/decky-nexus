@@ -14151,6 +14151,41 @@ class TestPluginSelfUpdate(unittest.TestCase):
                 seen[node.name] = node.lineno
         self.assertEqual(dupes, [], "shadowed definitions: " + "; ".join(dupes))
 
+    def test_a_forced_check_ignores_the_cache(self):
+        """Opening the Updates page must ask now, not remember.
+
+        This is the bug Michael hit: he updated to 1.11.4, which restarts
+        the plugin, which re-checked and cached "1.11.4 is newest" a
+        moment before 1.11.5 was published. With a six hour cache and no
+        way past it, pressing Updates showed nothing at all, which looks
+        exactly like the feature being broken.
+        """
+        plugin = main.Plugin()
+        calls = []
+
+        async def fake_index(force=False):
+            calls.append(force)
+            return {"version": "9.9.9", "hash": "h",
+                    "artifact": "https://github.com/RedRanger14/decky-nexus"
+                                "/releases/download/v9.9.9/x.zip"}
+
+        loop = asyncio.new_event_loop()
+        try:
+            with mock.patch.object(main, "_fetch_plugin_update", fake_index),                  mock.patch.object(main, "_fetch_plugin_release_notes",
+                                   mock.AsyncMock(return_value="")):
+                loop.run_until_complete(plugin.get_plugin_update())
+                loop.run_until_complete(plugin.get_plugin_update(True))
+        finally:
+            loop.close()
+        self.assertEqual(calls, [False, True],
+                         "force was not passed through to the fetch")
+
+    def test_the_cache_is_short_enough_to_be_useful(self):
+        # A stale "no update" is indistinguishable from a broken feature,
+        # and this is checked every time the panel opens.
+        self.assertLessEqual(main.PLUGIN_UPDATE_TTL, 30 * 60)
+        self.assertGreaterEqual(main.PLUGIN_UPDATE_TTL, 60)
+
     def test_a_release_notes_version_cannot_shape_the_url(self):
         """The version is pasted into a GitHub API URL.
 

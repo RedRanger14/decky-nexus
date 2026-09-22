@@ -53,7 +53,9 @@ export function UpdatesPage() {
     selfSentAt > 0 && now - selfSentAt < UPDATE_WAIT_MS && !selfDone;
   const notes = formatReleaseNotes(self?.notes);
   useEffect(() => {
-    getPluginUpdate()
+    // Forced: opening this page is somebody asking now, and a cached
+    // "no update" is indistinguishable from the feature being broken.
+    getPluginUpdate(true)
       .then((u) => setSelf(u?.update_available ? u : undefined))
       .catch(() => {});
   }, []);

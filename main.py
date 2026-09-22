@@ -704,7 +704,12 @@ def _hd2_next_free_number(data_dir: str, archive_hash: str,
 # The frontend does the asking, because the loader's router lives there.
 PLUGIN_STORE_INDEX = ("https://raw.githubusercontent.com/RedRanger14/"
                       "decky-nexus/main/store/plugins.json")
-PLUGIN_UPDATE_TTL = 6 * 60 * 60
+# Short, because this is the answer to "is there an update", and a stale
+# no is indistinguishable from a broken feature. It was six hours, and
+# Michael updated to 1.11.4, which made the plugin restart and cache
+# "1.11.4 is newest" a moment before 1.11.5 was published. Pressing
+# Updates then showed nothing for the rest of the day.
+PLUGIN_UPDATE_TTL = 15 * 60
 
 
 def _plugin_update_newer(current: str, latest: str) -> bool:
@@ -770,7 +775,7 @@ async def _fetch_plugin_release_notes(version: str) -> str:
     return body[:4000]
 
 
-async def _fetch_plugin_update() -> dict:
+async def _fetch_plugin_update(force: bool = False) -> dict:
     """The newest published build, from the same store index Decky reads.
 
     Returns {} when it cannot be read. The index carries the artifact URL
@@ -778,7 +783,7 @@ async def _fetch_plugin_update() -> dict:
     nothing here has to trust a filename or guess a download link.
     """
     now = time.time()
-    if _PluginUpdateCache.data is not None and (
+    if not force and _PluginUpdateCache.data is not None and (
             now - _PluginUpdateCache.at) < PLUGIN_UPDATE_TTL:
         return _PluginUpdateCache.data
     try:
@@ -26635,7 +26640,7 @@ query CollectionInstructions($slug: String!) {
         decky.logger.info(f"frosty: reset {game_domain} to vanilla")
         return {"ok": True}
 
-    async def get_plugin_update(self) -> dict:
+    async def get_plugin_update(self, force: bool = False) -> dict:
         """Is there a newer build of this plugin, and what is its hash?
 
         The frontend hands the answer to Decky Loader, which is the only
@@ -26644,7 +26649,10 @@ query CollectionInstructions($slug: String!) {
         update is offered.
         """
         current = APP_VERSION
-        newest = await _fetch_plugin_update()
+        # `force` is for somebody who has deliberately opened the Updates
+        # page. The panel's own passive check uses the cache, because it
+        # runs every time the panel opens.
+        newest = await _fetch_plugin_update(force)
         if not newest:
             return {"ok": False, "current": current, "update_available": False}
         available = _plugin_update_newer(current, newest["version"])
