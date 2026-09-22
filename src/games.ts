@@ -1467,28 +1467,33 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     appId: 524220,
     displayName: "NieR:Automata",
     nexusDomain: "nierautomata", // verified live: nexusmods.com/nierautomata
-    installDirName: "NieRAutomata",
-    // The game reads loose .dat/.dtt out of data/ in preference to its
-    // .cpk archives, which is how every texture and model mod works.
+    installDirName: "NieRAutomata", // verified on device
+    // The game reads loose files out of data/ in preference to its .cpk
+    // archives, which is how every character and outfit mod works.
     modsSubdir: "data",
+    // Mods are bare files, not folders. Verified by downloading 2B -
+    // Shinobi Outfit (mod 360, file 1921) on the device: the archive is
+    // pl000d.dtt and pl000d.dat and nothing else.
+    //
+    // Nothing the game shipped is overwritten. data/ holds only .cpk
+    // archives until a mod adds a loose file beside them, so the loose
+    // file shadows the archive's copy and uninstalling is a delete.
+    flatModExtensions: [".dat", ".dtt"],
     moddedSaveWarning: false,
-    processName: "NieRAutomata.exe", // TODO verify comm under Proton
-    // Deliberately the default folder mode, NOT dataDir. dataDir carries
-    // Bethesda assumptions this game does not share (Plugins.txt, FOMOD,
-    // archive invalidation), and its loose files would have to REPLACE
-    // files the game shipped, which nothing here backs up yet. Folder
-    // mode cannot touch a vanilla file, so the worst case is a mod that
-    // does not load rather than an install that cannot be undone.
+    processName: "NieRAutomata.exe", // verified on device
     underConstruction:
-      "NieR:Automata support has only just started, and mods will not " +
-      "work yet. Browsing, searching and downloading are the parts that " +
-      "are done.\n\n" +
-      "Installing is not. This game's mods are loose files that replace " +
-      "files inside its data folder, and that is not wired up here, so " +
-      "anything you install lands in a folder the game does not read. " +
-      "Nothing is overwritten and nothing is broken by trying, it simply " +
-      "will not appear in game.\n\n" +
-      "It is listed so the groundwork can be tested. Requested in issue #25.",
+      "NieR:Automata support is new and has not been played on a device " +
+      "yet. Character, outfit and model mods are the ones that should " +
+      "work: they are loose files that drop into the game's data " +
+      "folder, and this installs them there and removes them cleanly.\n\n" +
+      "Mods that need Special K will not work. The HD Texture Pack is " +
+      "the popular one, and it injects textures through a separate tool " +
+      "rather than adding files the game reads, so it needs setting up " +
+      "outside the plugin.\n\n" +
+      "Two mods that change the same character replace each other, " +
+      "because they ship the same file name. That is how the game works " +
+      "rather than something the plugin can pick apart. Requested in " +
+      "issue #25.",
   },
   1328670: {
     appId: 1328670,

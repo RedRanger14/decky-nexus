@@ -14132,6 +14132,24 @@ class TestPluginSelfUpdate(unittest.TestCase):
     the dangerous mistake, because the loader installs what it is handed.
     """
 
+    def test_no_test_class_is_defined_twice(self):
+        """A shadowed test class stops running, silently.
+
+        Adding a second TestFlatFileMods for NieR replaced the Cyberpunk
+        suite of the same name: both looked fine, and only pyflakes
+        noticed. In a file this long nothing else would have.
+        """
+        with open(os.path.join(os.path.dirname(__file__), "test_backend.py"),
+                  encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        seen, dupes = {}, []
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                if node.name in seen:
+                    dupes.append(f"{node.name} at lines {seen[node.name]} and {node.lineno}")
+                seen[node.name] = node.lineno
+        self.assertEqual(dupes, [], "shadowed test classes: " + "; ".join(dupes))
+
     def test_no_module_level_function_is_defined_twice(self):
         """A second def with the same name silently replaces the first.
 
@@ -14300,6 +14318,122 @@ class TestPluginSelfUpdate(unittest.TestCase):
     def test_versions_of_different_lengths_compare(self):
         self.assertTrue(main._plugin_update_newer("1.11", "1.11.1"))
         self.assertFalse(main._plugin_update_newer("1.11.1", "1.11"))
+
+class TestNierFlatFileInstall(unittest.TestCase):
+    """Games whose mods are loose files, not folders.
+
+    NieR:Automata is the first game to use flatModExtensions, and the
+    branch it reaches had no behavioural test at all before this: only a
+    source-shape assertion about the Helldivers renumbering beside it. So
+    the whole path is exercised here against the real shape of a real
+    mod, taken from 2B - Shinobi Outfit (mod 360, file 1921), which is
+    two bare files and nothing else:
+
+        pl000d.dtt   101 MB
+        pl000d.dat    26 KB
+
+    They go into data/, which otherwise holds only the game's .cpk
+    archives. Nothing the game shipped is overwritten: the loose file
+    shadows the archive's copy, so uninstalling is a delete.
+    """
+
+    EXTS = [".dat", ".dtt"]
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(dir=TEST_ROOT)
+        self.install = os.path.join(self.root, "NieRAutomata")
+        self.data = os.path.join(self.install, "data")
+        os.makedirs(self.data)
+        # What the game ships. These must survive everything below.
+        for n in ("data000.cpk", "data012.cpk"):
+            with open(os.path.join(self.data, n), "wb") as f:
+                f.write(b"vanilla " + n.encode())
+        self.plugin = main.Plugin()
+        # install_mod refuses before it does anything without a key.
+        settings = main._load_settings()
+        settings["api_key"] = "test-key"
+        settings.setdefault("installed", {})["nierautomata"] = {}
+        main._save_settings(settings)
+
+    def _archive(self, names, tag=b"mod"):
+        path = os.path.join(self.root, "mod-%d.zip" % len(os.listdir(self.root)))
+        with zipfile.ZipFile(path, "w") as z:
+            for n in names:
+                z.writestr(n, tag + b":" + n.encode())
+        return path
+
+    def _install(self, archive, mod_id=360, file_id=1921, name="2B Shinobi Outfit"):
+        async def fake_download(*a, **k):
+            return "", archive
+
+        with mock.patch.object(main, "_download_archive", fake_download):
+            return run(self.plugin.install_mod(
+                "nierautomata", mod_id, file_id, "x.zip", name, "1.2",
+                self.install, "data", "", "", "folder", 524220, "", "starred",
+                "", "", "", "", self.EXTS))
+
+    def _vanilla_intact(self):
+        for n in ("data000.cpk", "data012.cpk"):
+            p = os.path.join(self.data, n)
+            self.assertTrue(os.path.isfile(p), n)
+            with open(p, "rb") as f:
+                self.assertTrue(f.read().startswith(b"vanilla"), n)
+
+    def test_loose_files_land_flat_in_the_data_folder(self):
+        res = self._install(self._archive(["pl000d.dat", "pl000d.dtt"]))
+        self.assertTrue(res.get("ok"), res)
+        for n in ("pl000d.dat", "pl000d.dtt"):
+            self.assertTrue(os.path.isfile(os.path.join(self.data, n)), n)
+        self._vanilla_intact()
+
+    def test_files_nested_in_the_archive_still_land_flat(self):
+        # Authors zip a folder as often as not. The game reads data/, so a
+        # mod that installed to data/2B Shinobi/pl000d.dat would do
+        # nothing at all and look installed.
+        res = self._install(self._archive(
+            ["2B Shinobi Outfit/pl000d.dat", "2B Shinobi Outfit/pl000d.dtt"]))
+        self.assertTrue(res.get("ok"), res)
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "pl000d.dat")))
+        self.assertFalse(
+            os.path.isdir(os.path.join(self.data, "2B Shinobi Outfit")),
+            "the archive's folder was copied instead of flattened")
+
+    def test_files_of_other_kinds_are_left_out(self):
+        # Readmes and screenshots must not be dropped into data/.
+        res = self._install(self._archive(
+            ["pl000d.dat", "readme.txt", "preview.png"]))
+        self.assertTrue(res.get("ok"), res)
+        self.assertTrue(os.path.isfile(os.path.join(self.data, "pl000d.dat")))
+        for n in ("readme.txt", "preview.png"):
+            self.assertFalse(os.path.isfile(os.path.join(self.data, n)), n)
+
+    def test_uninstall_removes_exactly_what_it_installed(self):
+        self._install(self._archive(["pl000d.dat", "pl000d.dtt"]))
+        folder = None
+        settings = main._load_settings()
+        for key, rec in settings["installed"]["nierautomata"].items():
+            folder = key
+        self.assertIsNotNone(folder, "nothing was recorded")
+        res = run(self.plugin.uninstall_mod(
+            "nierautomata", self.install, "data", folder, "folder", 524220))
+        self.assertTrue(res.get("ok"), res)
+        for n in ("pl000d.dat", "pl000d.dtt"):
+            self.assertFalse(os.path.isfile(os.path.join(self.data, n)), n)
+        # The point of a per-file record: the game's own archives stay.
+        self._vanilla_intact()
+
+    def test_a_second_mod_touching_the_same_file_is_recorded_separately(self):
+        # Two outfit mods commonly ship the same pl000d pair. Removing the
+        # second must not leave the first's record claiming a file that is
+        # gone, nor delete anything belonging to the game.
+        self._install(self._archive(["pl000d.dat"], tag=b"first"))
+        self._install(self._archive(["pl000d.dat"], tag=b"second"),
+                      mod_id=735, file_id=9001, name="Black Pearl Suit")
+        with open(os.path.join(self.data, "pl000d.dat"), "rb") as f:
+            self.assertTrue(f.read().startswith(b"second"),
+                            "the later mod did not win")
+        self._vanilla_intact()
+
 
 class TestSteamLibraryVdfLocations(unittest.TestCase):
     """Steam writes libraryfolders.vdf to two different places.
