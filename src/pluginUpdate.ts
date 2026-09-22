@@ -26,6 +26,8 @@ export interface PluginUpdate {
   version?: string;
   artifact?: string;
   hash?: string;
+  /** The release body, as published. Markdown, and possibly empty. */
+  notes?: string;
 }
 
 /** The loader's websocket router, as the loader's own frontend uses it.
@@ -158,4 +160,67 @@ export async function requestPluginUpdate(u: PluginUpdate): Promise<string> {
   } catch (e) {
     return `Decky refused the update: ${String(e)}`;
   }
+}
+
+/** How long to leave the button saying "waiting" before letting it be
+ * pressed again.
+ *
+ * Decky's confirmation prompt can be cancelled, and nothing tells us
+ * when it was. Without this the button stayed disabled for good: Michael
+ * hit that after a successful update, and cancelling would have been the
+ * same dead end. Long enough not to fight a slow prompt, short enough
+ * that a cancel is not the end of the road.
+ */
+export const UPDATE_WAIT_MS = 25_000;
+
+/** Whether the update request has visibly finished.
+ *
+ * "Finished" means the running version is now at least the one that was
+ * offered. Checked rather than assumed, because after Decky installs the
+ * update it restarts the plugin, and this page belongs to the instance
+ * being replaced: it cannot rely on being told.
+ */
+export function updateLanded(offered: string, running?: string): boolean {
+  if (!offered || !running) return false;
+  return !isNewerVersion(running, offered);
+}
+
+/** Release notes, flattened into lines a panel can show.
+ *
+ * Deliberately not a Markdown renderer. It strips the handful of marks
+ * the release notes actually use, keeps headings and bullets legible as
+ * text, and drops the trailing legal line and the install instructions,
+ * which are the two sections nobody reading an update prompt needs.
+ */
+export function formatReleaseNotes(md?: string, maxLines = 40): string[] {
+  if (!md) return [];
+  const out: string[] = [];
+  let skipping = false;
+  for (const raw of md.replace(/\r/g, "").split("\n")) {
+    const line = raw.trimEnd();
+    if (/^##+\s/.test(line)) {
+      const heading = line.replace(/^##+\s*/, "").trim();
+      // The two sections that are noise here: the reader is already
+      // installing it, and the footer is boilerplate.
+      skipping = /^(installing|supported games)$/i.test(heading);
+      if (!skipping) out.push(heading.toUpperCase());
+      continue;
+    }
+    if (skipping) continue;
+    if (/^---+$/.test(line)) break; // the footer rule ends the useful part
+    const text = line
+      .replace(/^[-*]\s+/, "- ")
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .trim();
+    if (!text) {
+      if (out.length && out[out.length - 1] !== "") out.push("");
+      continue;
+    }
+    out.push(text);
+    if (out.length >= maxLines) break;
+  }
+  while (out.length && out[out.length - 1] === "") out.pop();
+  return out;
 }

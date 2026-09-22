@@ -5,13 +5,16 @@ import test from "node:test";
 
 import {
   DECKY_INSTALL_TYPE_UPDATE,
+  UPDATE_WAIT_MS,
   canSelfUpdate,
+  formatReleaseNotes,
   isNewerVersion,
   pluginUpdateBlocked,
   pluginUpdateBody,
   pluginUpdateLabel,
   requestPluginUpdate,
   trustedArtifact,
+  updateLanded,
   versionParts,
 } from "../.test-build/pluginUpdate.js";
 
@@ -136,7 +139,7 @@ test("the copy says what will happen and what will not", () => {
   assert.match(body, /1\.11\.1/, "it says which version you are on");
   assert.match(body, /confirm/i, "Decky asks before installing");
   assert.match(body, /mods, API key and settings are not/i);
-  assert.doesNotMatch(body, /—/, "no em dashes");
+  assert.doesNotMatch(body, /\u2014/, "no em dashes");
 });
 
 // --- the call itself -----------------------------------------------------
@@ -178,4 +181,109 @@ test("a refusal from Decky is reported rather than swallowed", async () => {
   );
   assert.match(await err, /Decky refused/);
   assert.match(await err, /boom/);
+});
+
+// --- recovering from a prompt that was cancelled, or an update that landed ---
+// Michael updated to 1.11.4 successfully and the page sat on "Waiting for
+// Decky" until he closed it. Cancelling Decky's prompt would have been the
+// same dead end, because nothing tells the page either happened.
+
+test("a wait that is long enough to be useful and short enough to recover", () => {
+  assert.ok(UPDATE_WAIT_MS >= 10_000, "too short to survive a slow prompt");
+  assert.ok(UPDATE_WAIT_MS <= 60_000, "a cancel must not strand the button");
+});
+
+test("the update counts as landed once the running version catches up", () => {
+  assert.equal(updateLanded("1.11.4", "1.11.4"), true);
+  // Ahead is landed too: a dev build installed over the top still means
+  // there is nothing left to do.
+  assert.equal(updateLanded("1.11.4", "1.11.5"), true);
+  assert.equal(updateLanded("1.11.4", "1.11.3"), false, "still on the old build");
+});
+
+test("landing is never claimed without both versions", () => {
+  assert.equal(updateLanded("1.11.4", undefined), false);
+  assert.equal(updateLanded("1.11.4", ""), false);
+  assert.equal(updateLanded("", "1.11.4"), false);
+});
+
+// --- release notes ------------------------------------------------------
+// "it would also be great if we could put what is in the update somewhere
+// as part of it" - so the notes travel with the update, not just the
+// version number.
+
+const REAL_NOTES = [
+  "An unofficial, community-built Decky Loader plugin.",
+  "",
+  "## The plugin now updates itself",
+  "",
+  "Open the Quick Access Menu, press **Updates**, and a plugin update",
+  "appears. No `Desktop Mode`, no terminal.",
+  "",
+  "## Also in this release",
+  "",
+  "- Beginnings of NieR:Automata, requested in [issue #25](https://x/25).",
+  "- The log now names every Steam library it searched.",
+  "",
+  "## Installing",
+  "",
+  "Download `Nexus-Mods-1.11.4.zip` below.",
+  "",
+  "---",
+  "",
+  "Not affiliated with Nexus Mods or Valve.",
+].join("\n");
+
+test("nothing is shown when there are no notes", () => {
+  assert.deepEqual(formatReleaseNotes(undefined), []);
+  assert.deepEqual(formatReleaseNotes(""), []);
+});
+
+test("headings survive and the noise sections do not", () => {
+  const lines = formatReleaseNotes(REAL_NOTES);
+  const joined = lines.join("\n");
+  assert.ok(lines.includes("THE PLUGIN NOW UPDATES ITSELF"));
+  assert.ok(lines.includes("ALSO IN THIS RELEASE"));
+  // Already installing it, so these two say nothing useful here.
+  assert.doesNotMatch(joined, /INSTALLING/);
+  assert.doesNotMatch(joined, /Nexus-Mods-1\.11\.4\.zip/);
+  // The footer rule ends the useful part.
+  assert.doesNotMatch(joined, /Not affiliated/);
+});
+
+test("markdown marks are stripped rather than shown raw", () => {
+  const joined = formatReleaseNotes(REAL_NOTES).join("\n");
+  assert.doesNotMatch(joined, /\*\*/, "bold markers left in");
+  assert.doesNotMatch(joined, /`/, "code ticks left in");
+  assert.doesNotMatch(joined, /\]\(http/, "raw link syntax left in");
+  // The link's text is what a reader needs, not its URL.
+  assert.match(joined, /issue #25/);
+  assert.doesNotMatch(joined, /https:\/\/x\/25/);
+  // Bullets stay recognisable as bullets.
+  assert.match(joined, /- Beginnings of NieR:Automata/);
+});
+
+test("the notes are bounded, because this is a panel not a browser", () => {
+  const huge = Array.from({ length: 500 }, (_, i) => `line ${i}`).join("\n");
+  assert.ok(formatReleaseNotes(huge).length <= 40);
+  assert.equal(formatReleaseNotes(huge, 5).length, 5);
+});
+
+test("blank lines are kept as separators but never doubled or trailing", () => {
+  const lines = formatReleaseNotes(REAL_NOTES);
+  assert.notEqual(lines[lines.length - 1], "", "trailing blank left behind");
+  for (let i = 1; i < lines.length; i++) {
+    assert.ok(
+      !(lines[i] === "" && lines[i - 1] === ""),
+      `two blank lines in a row at ${i}`
+    );
+  }
+});
+
+test("carriage returns from a GitHub body do not survive", () => {
+  const crlf = "## Heading\r\n\r\n- one\r\n- two\r\n";
+  const lines = formatReleaseNotes(crlf);
+  for (const l of lines) assert.doesNotMatch(l, /\r/, JSON.stringify(l));
+  assert.ok(lines.includes("HEADING"));
+  assert.ok(lines.includes("- one"));
 });

@@ -17,10 +17,13 @@ import { installLatest } from "./install";
 import { PendingUpdate, scanUpdates } from "./updates";
 import {
   PluginUpdate,
+  UPDATE_WAIT_MS,
+  formatReleaseNotes,
   pluginUpdateBlocked,
   pluginUpdateBody,
   pluginUpdateLabel,
   requestPluginUpdate,
+  updateLanded,
 } from "./pluginUpdate";
 import {
   PAGE_SCROLLER,
@@ -38,12 +41,40 @@ export function UpdatesPage() {
   // update that used to require Desktop Mode and a terminal, which for
   // this audience meant it never happened.
   const [self, setSelf] = useState<PluginUpdate | undefined>();
-  const [selfSent, setSelfSent] = useState(false);
+  // When the request went to Decky, not whether it did. Decky's prompt
+  // can be cancelled and nothing tells us, so a one-way "sent" flag left
+  // the button disabled for good: Michael hit that after a successful
+  // update, and a cancel would have been the same dead end.
+  const [selfSentAt, setSelfSentAt] = useState(0);
+  const [selfDone, setSelfDone] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const selfWaiting =
+    selfSentAt > 0 && now - selfSentAt < UPDATE_WAIT_MS && !selfDone;
+  const notes = formatReleaseNotes(self?.notes);
   useEffect(() => {
     getPluginUpdate()
       .then((u) => setSelf(u?.update_available ? u : undefined))
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    if (!selfSentAt || selfDone) return;
+    // Decky restarts the plugin once it has installed the update, and
+    // this page belongs to the instance being replaced, so it is never
+    // told. Asking is the only way to know it landed, and the call
+    // failing mid-swap is expected rather than an error.
+    const id = setInterval(() => {
+      setNow(Date.now());
+      getPluginUpdate()
+        .then((u) => {
+          if (u?.current && self?.version && updateLanded(self.version, u.current)) {
+            setSelfDone(true);
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(id);
+  }, [selfSentAt, selfDone, self?.version]);
 
   const rescan = () => scanUpdates().then(setPending);
   useEffect(() => {
@@ -215,34 +246,77 @@ export function UpdatesPage() {
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: "2px" }}>
-              {pluginUpdateLabel(self)}
+              {selfDone ? `Updated to v${self.version} ✓` : pluginUpdateLabel(self)}
             </div>
             <div style={{ fontSize: "12.5px", opacity: 0.8, marginBottom: "8px" }}>
-              {pluginUpdateBlocked(self) || pluginUpdateBody(self)}
+              {selfDone
+                ? "Decky has installed it. Close this page and reopen the panel to see the new version."
+                : pluginUpdateBlocked(self) || pluginUpdateBody(self)}
             </div>
-            {!pluginUpdateBlocked(self) && (
-              <DialogButton
-                className={PRIMARY_BUTTON_CLASS}
-                disabled={selfSent}
-                onClick={async () => {
-                  setSelfSent(true);
-                  const err = await requestPluginUpdate(self);
-                  if (err) {
-                    setSelfSent(false);
-                    toaster.toast({ title: "Nexus Mods", body: err });
-                    return;
-                  }
-                  // Decky takes it from here: its own prompt, its own
-                  // download and hash check, then it restarts the plugin.
-                  toaster.toast({
-                    title: "Nexus Mods",
-                    body: "Decky will ask you to confirm the update.",
-                  });
+
+            {!selfDone && notes.length > 0 && (
+              <div
+                style={{
+                  fontSize: "12px",
+                  opacity: 0.85,
+                  margin: "0 0 10px",
+                  padding: "8px 10px",
+                  borderRadius: "4px",
+                  background: "rgba(0, 0, 0, 0.22)",
+                  maxHeight: notesOpen ? "none" : "92px",
+                  overflow: "hidden",
                 }}
               >
-                {selfSent ? "Waiting for Decky…" : "⬆ Update the plugin"}
-              </DialogButton>
+                <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                  What is in this update
+                </div>
+                {notes.map((line, i) =>
+                  line === "" ? (
+                    <div key={i} style={{ height: "6px" }} />
+                  ) : (
+                    <div
+                      key={i}
+                      style={{
+                        marginBottom: "2px",
+                        fontWeight: /^[A-Z0-9 ,'()-]+$/.test(line) ? 600 : 400,
+                        opacity: /^[A-Z0-9 ,'()-]+$/.test(line) ? 0.9 : 0.8,
+                      }}
+                    >
+                      {line}
+                    </div>
+                  )
+                )}
+              </div>
             )}
+
+            <Focusable style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {!selfDone && !pluginUpdateBlocked(self) && (
+                <DialogButton
+                  className={PRIMARY_BUTTON_CLASS}
+                  disabled={selfWaiting}
+                  onClick={async () => {
+                    setSelfSentAt(Date.now());
+                    const err = await requestPluginUpdate(self);
+                    if (err) {
+                      setSelfSentAt(0);
+                      toaster.toast({ title: "Nexus Mods", body: err });
+                      return;
+                    }
+                    toaster.toast({
+                      title: "Nexus Mods",
+                      body: "Decky will ask you to confirm the update.",
+                    });
+                  }}
+                >
+                  {selfWaiting ? "Waiting for Decky…" : "⬆ Update the plugin"}
+                </DialogButton>
+              )}
+              {!selfDone && notes.length > 0 && (
+                <DialogButton onClick={() => setNotesOpen((v) => !v)}>
+                  {notesOpen ? "Show less" : "Show more"}
+                </DialogButton>
+              )}
+            </Focusable>
           </Focusable>
         )}
 

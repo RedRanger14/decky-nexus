@@ -738,6 +738,38 @@ class _PluginUpdateCache:
     data = None
 
 
+PLUGIN_RELEASE_API = ("https://api.github.com/repos/RedRanger14/"
+                      "decky-nexus/releases/tags/")
+
+
+async def _fetch_plugin_release_notes(version: str) -> str:
+    """What is in the update, from the release it came from.
+
+    Michael asked for this after updating and having no idea what he had
+    just installed. Failure is silent and harmless: an update with no
+    notes still installs, it just says less.
+    """
+    if not version or not re.fullmatch(r"[0-9][0-9.]{0,15}", version):
+        return ""
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=20)
+        ) as session:
+            async with session.get(
+                f"{PLUGIN_RELEASE_API}v{version}",
+                headers={"Accept": "application/vnd.github+json",
+                         "User-Agent": f"decky-nexus/{APP_VERSION}"},
+                ssl=SSL_CONTEXT,
+            ) as r:
+                if r.status != 200:
+                    return ""
+                body = (await r.json()).get("body") or ""
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, OSError):
+        return ""
+    # Bounded: this lands in a panel, not a browser.
+    return body[:4000]
+
+
 async def _fetch_plugin_update() -> dict:
     """The newest published build, from the same store index Decky reads.
 
@@ -26616,6 +26648,10 @@ query CollectionInstructions($slug: String!) {
         if not newest:
             return {"ok": False, "current": current, "update_available": False}
         available = _plugin_update_newer(current, newest["version"])
+        # Only fetched when there is something to install, so the usual
+        # case costs nothing.
+        notes = (await _fetch_plugin_release_notes(newest["version"])
+                 if available else "")
         return {
             "ok": True,
             "current": current,
@@ -26623,6 +26659,7 @@ query CollectionInstructions($slug: String!) {
             "version": newest["version"],
             "artifact": newest["artifact"],
             "hash": newest["hash"],
+            "notes": notes,
         }
 
     async def get_game_status(

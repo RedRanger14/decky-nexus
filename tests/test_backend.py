@@ -14151,6 +14151,27 @@ class TestPluginSelfUpdate(unittest.TestCase):
                 seen[node.name] = node.lineno
         self.assertEqual(dupes, [], "shadowed definitions: " + "; ".join(dupes))
 
+    def test_a_release_notes_version_cannot_shape_the_url(self):
+        """The version is pasted into a GitHub API URL.
+
+        It comes from a fetched index, so it is not the user's to set, but
+        it is still the one field here that becomes part of a request.
+        Anything that is not a plain dotted number is refused before a
+        connection is opened, which is why this returns "" with no network
+        stub in place.
+        """
+        loop = asyncio.new_event_loop()
+        try:
+            for bad in ("", "  ", "../../other/repo", "1.0/../x", "latest",
+                        "1.0?foo=bar", "1.0#frag", "v1.0", "1" * 40,
+                        "1.0 2.0", "1.0%2e", "1.0\n"):
+                self.assertEqual(
+                    loop.run_until_complete(
+                        main._fetch_plugin_release_notes(bad)),
+                    "", repr(bad))
+        finally:
+            loop.close()
+
     def test_a_newer_version_is_an_update_and_nothing_else_is(self):
         self.assertTrue(main._plugin_update_newer("1.11.1", "1.11.2"))
         self.assertFalse(main._plugin_update_newer("1.11.2", "1.11.2"))
