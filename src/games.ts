@@ -1463,6 +1463,33 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       logicModsSubdir: "Subnautica2/Content/Paks/LogicMods",
     },
   },
+  524220: {
+    appId: 524220,
+    displayName: "NieR:Automata",
+    nexusDomain: "nierautomata", // verified live: nexusmods.com/nierautomata
+    installDirName: "NieRAutomata",
+    // The game reads loose .dat/.dtt out of data/ in preference to its
+    // .cpk archives, which is how every texture and model mod works.
+    modsSubdir: "data",
+    moddedSaveWarning: false,
+    processName: "NieRAutomata.exe", // TODO verify comm under Proton
+    // Deliberately the default folder mode, NOT dataDir. dataDir carries
+    // Bethesda assumptions this game does not share (Plugins.txt, FOMOD,
+    // archive invalidation), and its loose files would have to REPLACE
+    // files the game shipped, which nothing here backs up yet. Folder
+    // mode cannot touch a vanilla file, so the worst case is a mod that
+    // does not load rather than an install that cannot be undone.
+    underConstruction:
+      "NieR:Automata support has only just started, and mods will not " +
+      "work yet. Browsing, searching and downloading are the parts that " +
+      "are done.\n\n" +
+      "Installing is not. This game's mods are loose files that replace " +
+      "files inside its data folder, and that is not wired up here, so " +
+      "anything you install lands in a folder the game does not read. " +
+      "Nothing is overwritten and nothing is broken by trying, it simply " +
+      "will not appear in game.\n\n" +
+      "It is listed so the groundwork can be tested. Requested in issue #25.",
+  },
   1328670: {
     appId: 1328670,
     displayName: "Mass Effect Legendary Edition",

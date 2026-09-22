@@ -189,6 +189,26 @@
     ]
   },
   {
+    "appId": "524220",
+    "displayName": "NieR:Automata",
+    "nexusDomain": "nierautomata",
+    "installDirName": "NieRAutomata",
+    "modsSubdir": "data",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "553850",
     "displayName": "Helldivers 2",
     "nexusDomain": "helldivers2",

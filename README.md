@@ -53,6 +53,7 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
+- NieR:Automata
 
 ### Requested, not started
 
@@ -65,7 +66,6 @@ appear in the plugin until they do.
 - Horizon Forbidden West
 - Middle-earth: Shadow of Mordor
 - Middle-earth: Shadow of War
-- Nier: Automata
 - Skyrim VR
 - The Blood of Dawnwalker
 - GTA V
