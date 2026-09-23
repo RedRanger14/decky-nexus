@@ -14530,6 +14530,84 @@ class TestNierFlatFileInstall(unittest.TestCase):
         self.assertEqual(self._record().get("warning"), "",
                          "a clean reinstall kept a stale warning")
 
+    # --- refusing, and saying what it is -------------------------------
+    # LodMod's refusal read "No loadable mod files found in this archive
+    # (expected .dat, .dtt)" in a toast. Accurate, gone in seconds, and no
+    # use to anyone. Each shape below is a real NieR mod's file listing.
+
+    LODMOD = ["LodMod.ini", "LodMod.dll"]
+    HD_TEXTURES = (["Read me.txt", "SK_Res/inject/textures/x.ini"]
+                   + [f"SK_Res/inject/textures/{i:08X}.dds" for i in range(40)])
+    PODS = [f"SK_Res/inject/textures/pods/{i:08X}.dds" for i in range(11)]
+    NAMH = ["2B NAMH INSTALL.namh"]
+    RESHADE = ["NieR Fantasy ReShade.ini", "Shaders/Tonemap.fx", "Shaders/Common.fxh"]
+
+    def reason(self, paths, name="The Mod"):
+        return main._flat_refusal_reason(paths, self.EXTS, name)
+
+    def test_a_dll_mod_is_called_a_program(self):
+        r = self.reason(self.LODMOD, "LodMod")
+        self.assertIn("LodMod is a program", r)
+        self.assertIn(".dat and .dtt", r)
+
+    def test_a_special_k_pack_is_called_one(self):
+        self.assertIn("Special K texture pack", self.reason(self.HD_TEXTURES))
+        self.assertIn("Special K texture pack", self.reason(self.PODS))
+
+    def test_a_namh_recipe_and_a_reshade_preset_are_named(self):
+        self.assertIn("install recipe for NAMH", self.reason(self.NAMH))
+        self.assertIn("ReShade preset", self.reason(self.RESHADE))
+
+    def test_anything_else_says_what_it_contains(self):
+        r = self.reason(["movie/cutscene_01.usm", "movie/cutscene_02.usm"])
+        self.assertIn(".usm", r)
+        self.assertNotIn("Special K", r)
+
+    def test_no_reason_uses_an_em_dash(self):
+        for paths in (self.LODMOD, self.HD_TEXTURES, self.NAMH, self.RESHADE, ["x.usm"]):
+            self.assertNotIn("—", self.reason(paths))
+
+    def _block(self, listing, exts=None):
+        async def fake_listing(*a, **k):
+            return listing
+        with mock.patch.object(main, "_mod_file_listing", fake_listing):
+            return run(self.plugin.get_install_block(
+                "nierautomata", 165, 1, "LodMod", "folder", 524220,
+                self.EXTS if exts is None else exts))
+
+    @staticmethod
+    def _tree(paths):
+        return [{"type": "file", "path": p, "name": p.split("/")[-1]} for p in paths]
+
+    def test_the_page_is_told_before_the_click(self):
+        b = self._block(self._tree(self.LODMOD))
+        self.assertTrue(b["blocked"])
+        self.assertTrue(b["refused"], "a certain refusal looked like a conflict")
+        self.assertIn("LodMod is a program", b["reason"])
+
+    def test_an_installable_file_is_not_blocked(self):
+        b = self._block(self._tree(["pl000d.dat", "pl000d.dtt", "readme.txt"]))
+        self.assertFalse(b["blocked"])
+
+    def test_no_listing_means_no_verdict(self):
+        # Nexus does not publish a listing for every file. Refusing on no
+        # evidence would lock out perfectly good mods.
+        self.assertFalse(self._block(None)["blocked"])
+
+    def test_a_game_that_is_not_flat_is_unchanged(self):
+        self.assertFalse(self._block(self._tree(self.LODMOD), exts=[])["blocked"])
+
+    def test_refused_after_the_click_says_the_same_thing(self):
+        res = self._install(self._archive(self.LODMOD), mod_id=165, file_id=1,
+                            name="LodMod")
+        self.assertFalse(res.get("ok"))
+        self.assertTrue(res.get("refused"), "the page cannot tell this will always fail")
+        self.assertIn("LodMod is a program", res.get("error", ""))
+        # Nothing went into the game.
+        for root, _d, names in os.walk(self.data):
+            for n in names:
+                self.assertTrue(n.endswith(".cpk"), os.path.join(root, n))
+
     # --- the routing rule, against the game's own index -----------------
     # Sampled from the real archive TOCs on the Legion (3,563 files, all
     # 24 .cpk, 2026-09-23), where the router agreed with the game on every

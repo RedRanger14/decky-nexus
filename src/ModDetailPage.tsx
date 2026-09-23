@@ -133,6 +133,12 @@ export function ModDetailPage() {
   // a refusal: a byte signature often survives a patch, and it is the
   // author's mod, not ours to veto.
   const [stale, setStale] = useState<string | undefined>();
+  // Files this game cannot load anything from, by file id, with the reason.
+  // Per file, not per mod: ANDROIDS REMASTERED's PODS file is Special K
+  // textures only and will always be refused, while its 2BS file installs.
+  // Kept on the page because Michael, on LodMod's refusal: "the fact it was
+  // a toast is not ideal as its fleeting".
+  const [refused, setRefused] = useState<Record<number, string>>({});
   // Extra required files pulled in from the same mod page. Kept on the page
   // rather than in a toast: if one FAILED, the game will not start and the
   // user needs to be able to read why after the toast has gone.
@@ -216,6 +222,7 @@ export function ModDetailPage() {
     setImageFull(false);
     setBlocked(undefined);
     setStale(undefined);
+    setRefused({});
     getModFiles(s.game.nexusDomain, s.mod.modId).then((r) => {
       setFiles(r);
       // Ask up front whether this would be refused. Michael: "lets just put
@@ -229,9 +236,13 @@ export function ModDetailPage() {
         first.file_id,
         s.mod.name,
         String(modeParams(s.game)[0] ?? ""),
-        s.game.appId
+        s.game.appId,
+        s.game.flatModExtensions ?? []
       ).then((b) => {
-        if (b.blocked && b.reason) setBlocked(b.reason);
+        if (b.refused && b.reason) {
+          const reason = b.reason;
+          setRefused((prev) => ({ ...prev, [first.file_id]: reason }));
+        } else if (b.blocked && b.reason) setBlocked(b.reason);
         else if (b.warning) setStale(b.warning);
       });
     });
@@ -522,6 +533,15 @@ export function ModDetailPage() {
           title: "Install blocked",
           body: "Details on the mod page.",
         });
+      } else if (result.refused) {
+        // Will fail every time, so the reason stays on this file where it
+        // can be read, and the toast only points at it.
+        const reason = result.error ?? "Nothing in this file can be installed.";
+        setRefused((prev) => ({ ...prev, [file.file_id]: reason }));
+        toaster.toast({
+          title: "Can't install this file",
+          body: "Details on the mod page.",
+        });
       } else {
         toaster.toast({ title: "Install failed", body: result.error ?? "Unknown error" });
       }
@@ -593,9 +613,13 @@ export function ModDetailPage() {
   // Curated incompatibility: nothing in this mod can run here, so the
   // button is off and the page says why - BEFORE a download, not after.
   const incompatible = game.incompatibleMods?.[mod.modId];
+  // The same box for a file this game cannot load anything from, learned
+  // from its listing before the click or from a refusal after it.
+  const primaryRefused = primaryFile ? refused[primaryFile.file_id] : undefined;
+  const notInstallable = incompatible ?? primaryRefused;
   const primaryDisabled =
     installingFileId !== undefined || !primaryFile || upToDate ||
-    incompatible !== undefined;
+    notInstallable !== undefined;
   // While the main file installs, the button IS the progress bar - the
   // same fill language as the collection rows and the QAM tool button.
   // All files + (Uninstall) + Go to downloads. The hero above them takes
@@ -1237,10 +1261,10 @@ export function ModDetailPage() {
             }
           />
         )}
-      {incompatible && (
+      {notInstallable && (
         <WarningBox
           title="Not installable on this device"
-          body={incompatible}
+          body={notInstallable}
         />
       )}
       {blocked && (
@@ -1259,7 +1283,7 @@ export function ModDetailPage() {
       )}
       {!blocked && stale && (
         <WarningBox
-          title="Built for a different version of the game"
+          title="Worth knowing"
           body={stale}
         />
       )}
@@ -1331,11 +1355,12 @@ export function ModDetailPage() {
         {files?.files?.map((file) => {
           const busy = installingFileId === file.file_id;
           const done = installedFileIds.has(file.file_id);
+          const why = refused[file.file_id];
           return (
             <Focusable
               key={file.file_id}
               onActivate={() => {
-                if (installingFileId === undefined) onInstall(file);
+                if (installingFileId === undefined && !why) onInstall(file);
               }}
               style={{
                 background: "rgba(255, 255, 255, 0.06)",
@@ -1366,10 +1391,22 @@ export function ModDetailPage() {
                   fontSize: "12px",
                   marginTop: "2px",
                   color: done ? ACCENT_SUCCESS : NEXUS_ORANGE,
+                  opacity: why && !busy && !done ? 0.8 : 1,
                 }}
               >
-                {busy ? progressText : done ? "Installed ✓" : "Install"}
+                {busy
+                  ? progressText
+                  : done
+                  ? "Installed ✓"
+                  : why
+                  ? "Can't install"
+                  : "Install"}
               </div>
+              {why && !busy && !done && (
+                <div style={{ fontSize: "11px", marginTop: "2px", opacity: 0.75 }}>
+                  {why}
+                </div>
+              )}
             </Focusable>
           );
         })}

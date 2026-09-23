@@ -8839,17 +8839,18 @@ def _remember_natives(game_domain: str, mod_id: int, has_dll: bool):
     _save_settings(settings)
 
 
-async def _mod_ships_dll(game_domain: str, mod_id: int, file_id: int):
-    """Does this mod ship code? True, False, or None for cannot-tell.
+async def _mod_file_listing(game_domain: str, mod_id: int, file_id: int):
+    """What a mod file's archive contains, read from Nexus's published
+    listing so nothing has to be downloaded. The listing's `children`
+    tree, or None when there is no listing to read.
 
-    None is NOT False for the caller's purposes - it means there is no
-    evidence either way, and a rule that acts on no evidence is the bug
-    this replaced.
+    None means "cannot tell", never "empty". Nexus does not publish a
+    listing for every file, and a caller that treats a missing listing
+    as a mod with nothing in it would refuse a perfectly good install.
+    Split out of the FromSoft DLL check so flat-file games can ask the
+    same question before the click.
     """
     settings = _load_settings()
-    fact = settings.get("native_facts", {}).get(game_domain, {}).get(str(mod_id))
-    if fact is not None:
-        return bool(fact)
     headers = _api_headers(settings.get("api_key"))
     url = f"{NEXUS_API_BASE}/v1/games/{game_domain}/mods/{mod_id}/files.json"
     try:
@@ -8873,11 +8874,78 @@ async def _mod_ships_dll(game_domain: str, mod_id: int, file_id: int):
                     return None
                 preview = await r.json(content_type=None)
     except Exception as e:  # noqa: BLE001 - no evidence, so no action
-        decky.logger.debug(f"dll check failed for {game_domain}/{mod_id}: {e}")
+        decky.logger.debug(f"file listing failed for {game_domain}/{mod_id}: {e}")
         return None
     if not isinstance(preview, dict):
         return None
-    return _preview_has_dll(preview.get("children") or [])
+    return preview.get("children") or []
+
+
+def _listing_paths(node) -> list:
+    """Every file path in a content-listing tree."""
+    out = []
+    for c in node if isinstance(node, list) else [node]:
+        if not isinstance(c, dict):
+            continue
+        if c.get("type") == "directory":
+            out.extend(_listing_paths(c.get("children") or []))
+        elif c.get("path") or c.get("name"):
+            out.append(c.get("path") or c.get("name"))
+    return out
+
+
+def _flat_refusal_reason(paths: list, exts, mod_name: str) -> str:
+    """Why an archive with nothing this game loads cannot be installed,
+    in terms of what it actually is.
+
+    "No loadable mod files found (expected .dat, .dtt)" was accurate and
+    told the user nothing they could act on. LodMod is a DLL; the HD
+    Texture Pack is Special K textures; plenty of NieR mods ship only a
+    NAMH recipe. Each of those is a different answer to "why not", and
+    none of them is "this plugin is broken".
+    """
+    want = " and ".join(sorted({e.lower() for e in exts})) or "mod"
+    lowered = [p.replace("\\", "/").lower() for p in paths]
+    exts_seen = {os.path.splitext(p)[1] for p in lowered}
+    textures = [p for p in lowered if p.endswith(".dds") or "sk_res/" in p
+                or "far_res/" in p or "/inject/textures/" in p]
+    programs = [p for p in lowered if p.endswith((".dll", ".exe", ".asi"))]
+    shaders = [p for p in lowered if p.endswith((".fx", ".fxh"))]
+    name = mod_name or "This mod"
+    tail = (f" This plugin installs mods for this game that are {want} "
+            "files, and this has none.")
+    if programs:
+        return (f"{name} is a program (a DLL or executable), not files the "
+                "game loads, so it has to be set up outside the plugin."
+                + tail)
+    if textures and len(textures) * 2 >= len(lowered):
+        return (f"{name} is a Special K texture pack. Special K is a "
+                "separate tool this plugin does not set up." + tail)
+    if shaders or (lowered and all("reshade" in p for p in lowered)):
+        return (f"{name} is a ReShade preset. ReShade is a separate "
+                "injector this plugin does not set up for this game." + tail)
+    if exts_seen and exts_seen <= {".namh"}:
+        return (f"{name} is only an install recipe for NAMH, another mod "
+                "manager, rather than the mod's files." + tail)
+    kinds = ", ".join(sorted(e for e in exts_seen if e)) or "no files"
+    return f"{name} contains {kinds}.{tail}"
+
+
+async def _mod_ships_dll(game_domain: str, mod_id: int, file_id: int):
+    """Does this mod ship code? True, False, or None for cannot-tell.
+
+    None is NOT False for the caller's purposes - it means there is no
+    evidence either way, and a rule that acts on no evidence is the bug
+    this replaced.
+    """
+    settings = _load_settings()
+    fact = settings.get("native_facts", {}).get(game_domain, {}).get(str(mod_id))
+    if fact is not None:
+        return bool(fact)
+    children = await _mod_file_listing(game_domain, mod_id, file_id)
+    if children is None:
+        return None
+    return _preview_has_dll(children)
 
 
 def _remember_regulation(game_domain: str, mod_id: int, has_regulation: bool):
@@ -16586,6 +16654,7 @@ query Link($slug: String!, $domainName: String!) {
     async def get_install_block(
         self, game_domain: str, mod_id: int, file_id: int, mod_name: str,
         install_mode: str = "", app_id: int = 0,
+        flat_extensions: list = None,
     ) -> dict:
         """Would installing this be refused, and why - asked before the click.
 
@@ -16598,6 +16667,26 @@ query Link($slug: String!, $domainName: String!) {
         whose listing Nexus has not published: better a working install
         button than a warning that might be wrong.
         """
+        if flat_extensions and install_mode != "me3":
+            # A flat-file game loads only certain file types. If the file's
+            # published listing has none of them, the install is certain to
+            # be refused, so say so on the page instead of after the click.
+            # Michael, on LodMod: the refusal read well, "but the fact it
+            # was a toast is not ideal as its fleeting".
+            exts = tuple(str(e).lower() for e in flat_extensions)
+            children = await _mod_file_listing(
+                game_domain, int(mod_id), int(file_id))
+            if children is None:
+                return {"ok": True, "blocked": False}
+            paths = _listing_paths(children)
+            if paths and not any(p.lower().endswith(exts) for p in paths):
+                return {
+                    "ok": True,
+                    "blocked": True,
+                    "refused": True,
+                    "reason": _flat_refusal_reason(paths, exts, mod_name),
+                }
+            return {"ok": True, "blocked": False}
         if install_mode != "me3":
             return {"ok": True, "blocked": False}
         try:
@@ -18775,24 +18864,37 @@ query Link($slug: String!, $domainName: String!) {
                             "so the injector loads under Proton."
                         ),
                     }
+                # What the archive IS, for the refusal, read before
+                # scratch goes.
+                leftover = [
+                    os.path.relpath(os.path.join(r, n), scratch)
+                    for r, _d, ns in os.walk(scratch) for n in ns
+                ]
                 _force_rmtree(scratch)
                 if is_reshade:
                     return {
                         "ok": False,
+                        "refused": True,
                         "error": (
                             "This is a ReShade preset, not a game mod - it "
                             "needs the ReShade injector, which this plugin "
                             "does not install for this game."
                         ),
                     }
-                expected = (
-                    "hash.patch_N files" if hd2_layout
-                    else ", ".join(flat_extensions)
-                )
+                if hd2_layout:
+                    return {
+                        "ok": False,
+                        "refused": True,
+                        "error": "No loadable mod files found in this "
+                        "archive (expected hash.patch_N files)",
+                    }
+                # `refused` tells the page this will fail every time, so it
+                # keeps the reason on the file instead of flashing a toast.
                 return {
                     "ok": False,
-                    "error": "No loadable mod files found in this archive "
-                    f"(expected {expected})",
+                    "refused": True,
+                    "error": _flat_refusal_reason(
+                        leftover, flat_extensions or [], mod_name),
                 }
             if hd2_layout:
                 variants = _hd2_variant_groups(flat)

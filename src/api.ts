@@ -87,6 +87,10 @@ export interface InstallResult {
   ok: boolean;
   folder?: string;
   error?: string;
+  /** The archive holds nothing this game loads, so it will be refused
+   * every time. The page keeps the reason on the file rather than in a
+   * toast, which is gone before it can be read. */
+  refused?: boolean;
   /** Archive is a desktop modding tool (xEdit, patchers) - not
    * installable on-device; collections show it as skipped, not failed. */
   unsupported_tool?: boolean;
@@ -344,13 +348,20 @@ export const getInstallBlock = callable<
     file_id: number,
     mod_name: string,
     install_mode: string,
-    app_id: number
+    app_id: number,
+    /** A flat-file game's loadable types. With them the backend reads the
+     * file's published listing and says, before the download, when there
+     * is nothing in it this game loads. */
+    flat_extensions?: string[]
   ],
   {
     ok: boolean;
     blocked: boolean;
     reason?: string;
     owner?: string;
+    /** Certain to be refused, whatever the user does: nothing in the file
+     * is something this game loads. Not a conflict to clear up. */
+    refused?: boolean;
     /** Installable, but built before the game's current patch. */
     warning?: string;
   }

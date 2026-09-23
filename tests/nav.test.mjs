@@ -1315,12 +1315,19 @@ test("a curated-incompatible mod is badged and its install is off", () => {
     /const incompatible = game\.incompatibleMods\?\.\[mod\.modId\]/.test(page),
     "the mod page never looks at the incompatible list"
   );
+  // The box and the disabled button now also cover a file whose listing
+  // shows nothing the game loads, so they read `notInstallable`. The chain
+  // is asserted link by link, so an incompatible mod still turns both on.
   assert.ok(
-    /incompatible !== undefined;/.test(page),
+    /const notInstallable = incompatible \?\? /.test(page),
+    "the curated incompatible list no longer feeds the not-installable state"
+  );
+  assert.ok(
+    /notInstallable !== undefined;/.test(page),
     "the install button stays enabled for an incompatible mod"
   );
   assert.ok(
-    /\{incompatible && \(/.test(page),
+    /\{notInstallable && \(/.test(page),
     "the mod page shows no box for an incompatible mod"
   );
 });
@@ -1920,4 +1927,46 @@ test("the merge step reads progress from the backend, not the downloads store", 
     /getDownloads\(\)/,
     "the merge step is reading the downloads store again"
   );
+});
+
+// --- a refusal is read on the page, not in a toast ------------------------
+// Michael, on LodMod: the refusal read well, "but the fact it was a toast
+// is not ideal as its fleeting, can we put a warning under the mod".
+
+test("a refused install keeps its reason on the file, not only in a toast", () => {
+  const page = readCode("ModDetailPage.tsx");
+  const i = page.indexOf("} else if (result.refused) {");
+  assert.ok(i >= 0, "no branch for a refused install result");
+  const branch = page.slice(i, page.indexOf("} else {", i));
+  assert.match(branch, /setRefused\(/, "the reason is not kept on the page");
+  assert.match(branch, /file\.file_id/, "the reason is not tied to the file tried");
+});
+
+test("the page asks before the click, with the game's loadable file types", () => {
+  const page = readCode("ModDetailPage.tsx");
+  const i = page.indexOf("getInstallBlock(");
+  assert.ok(i >= 0);
+  const call = page.slice(i, page.indexOf(").then(", i));
+  // Without these the backend cannot tell a DLL mod from a model mod, and
+  // the refusal only appears after the download.
+  assert.match(call, /flatModExtensions/);
+  const after = page.slice(i, i + 800);
+  assert.match(after, /b\.refused/, "a certain refusal is not told apart from a conflict");
+});
+
+test("a refused file cannot be pressed again, and says why where it sits", () => {
+  const page = readCode("ModDetailPage.tsx");
+  assert.match(page, /installingFileId === undefined && !why\) onInstall\(file\)/,
+    "a file known to fail is still installable from its row");
+  assert.match(page, /"Can't install"/);
+  assert.match(page, /notInstallable !== undefined/,
+    "the primary button stays live for a file known to fail");
+});
+
+test("the shared warning box no longer calls every note a version problem", () => {
+  // One box carries staleness, ReShade's anti-cheat note, Frostbite build
+  // mismatches and what an install left out. Titled for staleness alone, it
+  // told a mod missing its Special K textures that it was the wrong version.
+  assert.ok(!readCode("ModDetailPage.tsx").includes(
+    'title="Built for a different version of the game"'));
 });
