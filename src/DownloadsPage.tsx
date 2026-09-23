@@ -687,6 +687,8 @@ export function DownloadsPage() {
                           .join(" · ")
                       : d.phase === "extracting"
                       ? "⚙ Installing…"
+                      : d.phase === "converting"
+                      ? `⚙ Converting textures · ${d.percent}%`
                       : d.phase === "paused"
                       ? "⏸ Paused"
                       : d.phase === "queued"

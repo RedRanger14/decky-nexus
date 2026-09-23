@@ -1487,14 +1487,13 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     moddedSaveWarning: false,
     processName: "NieRAutomata.exe", // verified on device
     underConstruction:
-      "NieR:Automata support is new and has not been played on a device " +
-      "yet. Character, outfit and model mods are the ones that should " +
-      "work: they are loose files that drop into the game's data " +
-      "folder, and this installs them there and removes them cleanly.\n\n" +
-      "Mods that need Special K will not work. The HD Texture Pack is " +
-      "the popular one, and it injects textures through a separate tool " +
-      "rather than adding files the game reads, so it needs setting up " +
-      "outside the plugin.\n\n" +
+      "NieR:Automata support is new. Character, outfit and model mods " +
+      "are loose files that drop into the game's data folder, and this " +
+      "installs them there and removes them cleanly.\n\n" +
+      "Special K texture packs, like the HD Texture Pack, are built into " +
+      "the game's own files during the install instead, because Special " +
+      "K itself crashes this game on SteamOS. That takes a few minutes " +
+      "and far more disk space than the download.\n\n" +
       "Two mods that change the same character replace each other, " +
       "because they ship the same file name. That is how the game works " +
       "rather than something the plugin can pick apart. Requested in " +

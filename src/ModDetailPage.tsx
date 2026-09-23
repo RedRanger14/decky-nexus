@@ -561,6 +561,8 @@ export function ModDetailPage() {
         ? "Extracting…"
         : progress.phase === "compiling"
         ? `Compiling… ${progress.percent}%`
+        : progress.phase === "converting"
+        ? `Converting textures… ${progress.percent}%`
         : "Installing…"
       : "Installing…";
 

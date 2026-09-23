@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import sys
 import tempfile
 import time
@@ -14464,8 +14465,10 @@ class TestNierFlatFileInstall(unittest.TestCase):
         # The part the game can use still goes in.
         self.assertTrue(os.path.isfile(self._at("pl", "pl020d.dat")))
         note = res.get("warning") or ""
-        self.assertIn("3 texture files were not installed", note)
-        self.assertIn("Special K", note)
+        # These placeholder files hold no real textures, so the textures
+        # cannot be built in (TestNierTexturePacks covers the case where
+        # they can), and the note says so rather than dropping them.
+        self.assertIn("3 of the 3 replacement textures did not match", note)
         # And it survives the page closing: the record carries it.
         self.assertEqual(self._record().get("warning"), note)
         # Nothing of Special K's leaks into the game folder.
@@ -14638,6 +14641,435 @@ class TestNierFlatFileInstall(unittest.TestCase):
         naive = {n: n[:2] for n in self.GAME_INDEX_SAMPLE}
         wrong = [n for n, f in self.GAME_INDEX_SAMPLE.items() if naive[n] != f]
         self.assertGreaterEqual(len(wrong), 8, wrong)
+
+
+# ---- a small but real NieR, for the texture pack conversion -------------
+
+def _utf_table(cols, rows):
+    """An @UTF table: cols [(name, type)] with type 0xA string, 4 u32,
+    6 u64; every column stored per row."""
+
+    strings = bytearray(b"<NULL>\x00")
+    at = {}
+
+    def s(v):
+        if v not in at:
+            at[v] = len(strings)
+            strings.extend(v.encode() + b"\x00")
+        return at[v]
+
+    width = {0xA: 4, 4: 4, 6: 8}
+    fmt = {0xA: ">I", 4: ">I", 6: ">Q"}
+    desc = b"".join(bytes([0x50 | t]) + struct.pack(">I", s(n)) for n, t in cols)
+    rowlen = sum(width[t] for _n, t in cols)
+    body = bytearray()
+    for r in rows:
+        for n, t in cols:
+            v = r[n]
+            body += struct.pack(fmt[t], s(v) if t == 0xA else v)
+    rows_off = 0x18 + len(desc)
+    str_off = rows_off + len(body)
+    table = bytearray(struct.pack(">HHIIIHHI", 1, rows_off, str_off,
+                              str_off + len(strings), 0, len(cols), rowlen,
+                              len(rows)))
+    table += desc + body + strings
+    return b"@UTF" + struct.pack(">I", len(table)) + bytes(table)
+
+
+def _cpk(files):
+    """A .cpk holding [(dir, name, bytes)], stored uncompressed. A None
+    for the bytes makes the size-0 placeholder row the real ones have."""
+
+    toc_off = 0x800
+    rows, blobs, pos = [], [], 0
+    for d, n, b in files:
+        rows.append((d, n, b, pos))
+        if b:
+            blobs.append((pos, b))
+            pos += (len(b) + 0x7FF) // 0x800 * 0x800
+    probe = _utf_table(
+        [("DirName", 0xA), ("FileName", 0xA), ("FileSize", 4),
+         ("ExtractSize", 4), ("FileOffset", 6)],
+        [{"DirName": d, "FileName": n, "FileSize": len(b or b""),
+          "ExtractSize": len(b or b""), "FileOffset": 0}
+         for d, n, b, _p in rows])
+    content_off = toc_off + (0x10 + len(probe) + 0x7FF) // 0x800 * 0x800
+    toc = _utf_table(
+        [("DirName", 0xA), ("FileName", 0xA), ("FileSize", 4),
+         ("ExtractSize", 4), ("FileOffset", 6)],
+        [{"DirName": d, "FileName": n, "FileSize": len(b or b""),
+          "ExtractSize": len(b or b""),
+          # FileOffset counts from min(TocOffset, ContentOffset).
+          "FileOffset": content_off - toc_off + p}
+         for d, n, b, p in rows])
+    hdr = _utf_table([("TocOffset", 6), ("ContentOffset", 6), ("TocSize", 6)],
+                     [{"TocOffset": toc_off, "ContentOffset": content_off,
+                       "TocSize": len(toc)}])
+    out = bytearray(b"CPK " + b"\x00" * 12 + hdr)
+    out += b"\x00" * (toc_off - len(out))
+    out += b"TOC " + b"\x00" * 12 + toc
+    out += b"\x00" * (content_off - len(out))
+    for p, b in blobs:
+        out += b"\x00" * (content_off + p - len(out))
+        out += b
+    return bytes(out)
+
+
+def _dat(files):
+    """A NieR DAT archive of [(name, bytes)]."""
+
+    c = len(files)
+    nlen = max(len(n) for n, _b in files) + 1
+    off_t = 32
+    ext_t = off_t + 4 * c
+    name_t = ext_t + 4 * c
+    size_t = name_t + 4 + nlen * c
+    size_t = (size_t + 3) // 4 * 4
+    first = (size_t + 4 * c + 15) // 16 * 16
+    offs, body, pos = [], bytearray(), first
+    for _n, b in files:
+        pos = (pos + 15) // 16 * 16
+        body += b"\x00" * (pos - first - len(body))
+        offs.append(pos)
+        body += b
+        pos += len(b)
+    head = bytearray(first)
+    head[:4] = b"DAT\x00"
+    struct.pack_into("<6I", head, 4, c, off_t, ext_t, name_t, size_t, 0)
+    struct.pack_into(f"<{c}I", head, off_t, *offs)
+    for i, (n, _b) in enumerate(files):
+        head[ext_t + 4 * i: ext_t + 4 * i + 3] = n.rsplit(".", 1)[1].encode()[:3]
+        head[name_t + 4 + nlen * i: name_t + 4 + nlen * i + len(n)] = n.encode()
+    struct.pack_into("<I", head, name_t, nlen)
+    struct.pack_into(f"<{c}I", head, size_t, *[len(b) for _n, b in files])
+    return bytes(head + body)
+
+
+def _dds(w, h, seed, dxgi=None, mips=1):
+    """A block-compressed DDS: legacy DXT1, or DX10 with a DXGI format."""
+
+    head = bytearray(128)
+    head[:4] = b"DDS "
+    struct.pack_into("<IIII", head, 4, 124, 0x1007, h, w)
+    struct.pack_into("<I", head, 28, mips)
+    struct.pack_into("<II", head, 76, 32, 0x4)
+    head[84:88] = b"DX10" if dxgi is not None else b"DXT1"
+    block = 8 if dxgi is None or dxgi in (70, 71, 72, 79, 80, 81) else 16
+    if dxgi is not None:
+        head += struct.pack("<5I", dxgi, 3, 0, 1, 0)
+    data, cw, ch = bytearray(), w, h
+    for m in range(mips):
+        n = max(1, (cw + 3) // 4) * max(1, (ch + 3) // 4) * block
+        data += bytes((seed * 31 + m * 7 + i) & 0xFF for i in range(n))
+        cw, ch = max(1, cw // 2), max(1, ch // 2)
+    return bytes(head + data)
+
+
+def _wta_wtp(textures, formats):
+    """A texture index and its data, textures on 4096-byte boundaries."""
+
+    c = len(textures)
+    wtp, offs = bytearray(), []
+    for t in textures:
+        wtp += b"\x00" * (-len(wtp) % 4096)
+        offs.append(len(wtp))
+        wtp += t
+    off_a = 32
+    size_a, flag_a, id_a = off_a + 4 * c, off_a + 8 * c, off_a + 12 * c
+    info_a = off_a + 16 * c
+    wta = bytearray(info_a + 20 * c)
+    wta[:4] = b"WTB\x00"
+    struct.pack_into("<7I", wta, 4, 1, c, off_a, size_a, flag_a, id_a, info_a)
+    struct.pack_into(f"<{c}I", wta, off_a, *offs)
+    struct.pack_into(f"<{c}I", wta, size_a, *[len(t) for t in textures])
+    struct.pack_into(f"<{c}I", wta, id_a, *range(1000, 1000 + c))
+    for i, f in enumerate(formats):
+        struct.pack_into("<5I", wta, info_a + 20 * i, f, 3, 0, 1, 0)
+    return bytes(wta), bytes(wtp)
+
+
+class TestNierTexturePacks(unittest.TestCase):
+    """Special K texture packs, built into NieR's own files.
+
+    The HD Texture Pack (mod 5) is SK_Res/inject/textures/XXXXXXXX.dds,
+    each named for the texture it replaces, and Special K itself crashes
+    NieR before its first frame under Proton 11 on the Legion. So each
+    replacement goes into the game file that holds the original: its .dtt
+    (texture data) and .dat (texture index) are rebuilt and written loose
+    under data/, where the game reads them in place of its archives. Done
+    by hand first: 277 of 279 matched, 295 files, and the game read them.
+
+    The game here is small but real in format: a .cpk holding the model
+    archive pl/pl0000.dtt (two textures and a mesh) and pl/pl0000.dat
+    (the texture index), so every step runs the code the device runs.
+    """
+
+    EXTS = [".dat", ".dtt"]
+    SK = "SK_Res/inject/textures/NieRAutomata.exe/Pack/2B/"
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(dir=TEST_ROOT)
+        self.install = os.path.join(self.root, "NieRAutomata")
+        self.data = os.path.join(self.install, "data")
+        os.makedirs(self.data)
+        # Texture 0 an ordinary BC1 at 16x16, texture 1 an sRGB one with
+        # two mips (so the hash must cover the top level only).
+        self.tex0 = _dds(16, 16, seed=1)
+        self.tex1 = _dds(32, 8, seed=2, dxgi=72, mips=2)
+        wta, wtp = _wta_wtp([self.tex0, self.tex1], [71, 72])
+        self.dtt = _dat([("pl0000.wtp", wtp), ("pl0000.wmb", b"WMB3" + b"m" * 60)])
+        self.dat = _dat([("pl0000.wta", wta), ("pl0000.mot", b"mot" * 9)])
+        self.cpk_bytes = _cpk([
+            ("pl", "pl0000.dtt", self.dtt), ("pl", "pl0000.dat", self.dat),
+            # The shape of wd1/g10720.dtt: a row with nothing in it.
+            ("wd1", "g10720.dtt", None),
+            ("em", "em1000.dat", _dat([("x.bin", b"e" * 40)])),
+        ])
+        with open(os.path.join(self.data, "data000.cpk"), "wb") as f:
+            f.write(self.cpk_bytes)
+        self.h1 = f"{main._sk_hash(self.tex1):08X}"
+        self.h0 = f"{main._sk_hash(self.tex0):08X}"
+        # The replacement: four times the size, BC7 (98), no sRGB.
+        self.new1 = _dds(64, 16, seed=9, dxgi=98)
+        self.plugin = main.Plugin()
+        settings = main._load_settings()
+        settings["api_key"] = "test-key"
+        settings.setdefault("installed", {})["nierautomata"] = {}
+        main._save_settings(settings)
+
+    def _zip(self, entries):
+        path = os.path.join(self.root, "pack-%d.zip" % len(os.listdir(self.root)))
+        with zipfile.ZipFile(path, "w") as z:
+            for n, b in entries:
+                z.writestr(n, b)
+        return path
+
+    def _install(self, archive, mod_id=5, file_id=1108, name="HD Texture Pack"):
+        async def fake_download(*a, **k):
+            return "", archive
+
+        with mock.patch.object(main, "_download_archive", fake_download):
+            return run(self.plugin.install_mod(
+                "nierautomata", mod_id, file_id, "x.zip", name, "1.03",
+                self.install, "data", "", "", "folder", 524220, "", "starred",
+                "", "", "", "", self.EXTS))
+
+    def _pack(self, extra=()):
+        return self._zip([(self.SK + f"{self.h1}.dds", self.new1),
+                          ("SK_Res/desktop.ini", b"[.ShellClassInfo]"),
+                          ("Read me.txt", b"install with Special K")] + list(extra))
+
+    def _read(self, *rel):
+        with open(os.path.join(self.data, *rel), "rb") as f:
+            return f.read()
+
+    def _textures(self):
+        """(wta, [texture bytes]) as the game would read the loose pair."""
+        dtt = dict(main._dat_read(self._read("pl", "pl0000.dtt")))
+        dat = dict(main._dat_read(self._read("pl", "pl0000.dat")))
+        idx = main._wta_read(dat["pl0000.wta"])
+        wtp = dtt["pl0000.wtp"]
+        return dat["pl0000.wta"], idx, [
+            wtp[o: o + s] for o, s in zip(idx["offsets"], idx["sizes"])]
+
+    def _records(self):
+        return main._load_settings()["installed"]["nierautomata"]
+
+    def _only_cpk_in_data(self):
+        for root, _d, names in os.walk(self.data):
+            for n in names:
+                self.assertTrue(n.endswith(".cpk"), os.path.join(root, n))
+
+    # --- the pieces --------------------------------------------------
+
+    def test_crc32c_is_the_standard_one(self):
+        # The published check value for CRC-32C (Castagnoli).
+        self.assertEqual(main._crc32c(b"123456789"), 0xE3069283)
+
+    def test_the_hash_covers_the_top_level_only(self):
+        # Special K hashes stride * (h // 4 + h % 4) bytes of the top mip.
+        top = 8 * 8 * 2  # 32 wide: 8 blocks of 8 bytes (BC1), 8 high: 2 rows
+        self.assertEqual(main._sk_hash(self.tex1),
+                         main._crc32c(self.tex1[148:148 + top]))
+
+    def test_a_rebuild_with_nothing_replaced_is_identical(self):
+        self.assertEqual(main._dat_write(self.dtt, {}), self.dtt)
+        self.assertEqual(main._dat_write(self.dat, {}), self.dat)
+
+    def test_empty_rows_are_not_files(self):
+        # The first converter took a size-0 row for an alias of the file
+        # its offset points at, which is just the next file: 893 index
+        # entries for 29 files that hold nothing.
+        names = [e["name"] for e in main._cpk_files(
+            os.path.join(self.data, "data000.cpk"))]
+        self.assertIn("pl0000.dtt", names)
+        self.assertNotIn("g10720.dtt", names)
+
+    def test_every_texture_in_the_game_is_indexed(self):
+        idx = main._nier_texture_index(self.data)
+        self.assertEqual(idx[self.h0], [["data000.cpk", "pl", "pl0000.dtt", 0]])
+        self.assertEqual(idx[self.h1], [["data000.cpk", "pl", "pl0000.dtt", 4096]])
+
+    def test_the_index_is_kept_until_the_game_changes(self):
+        main._nier_texture_index(self.data)
+        with mock.patch.object(main, "_cpk_files", side_effect=AssertionError):
+            main._nier_texture_index(self.data)  # from the kept copy
+        # A game update rewrites the archives.
+        with open(os.path.join(self.data, "data001.cpk"), "wb") as f:
+            f.write(_cpk([("em", "em2000.dat", _dat([("y.bin", b"y")]))]))
+        with mock.patch.object(main, "_cpk_files", side_effect=ValueError("reread")):
+            self.assertEqual(main._nier_texture_index(self.data), {})
+
+    # --- installing a pack --------------------------------------------
+
+    def test_a_pack_is_built_into_the_game_files(self):
+        res = self._install(self._pack())
+        self.assertTrue(res.get("ok"), res)
+        self.assertNotIn("warning", res, "everything matched, so nothing to say")
+        wta, idx, tex = self._textures()
+        # The replacement is in, whole, and the other texture untouched.
+        self.assertEqual(tex[1], self.new1)
+        self.assertEqual(tex[0], self.tex0)
+        self.assertTrue(all(o % 4096 == 0 for o in idx["offsets"]))
+        # The index says BC7, in the original's sRGB colour space (99),
+        # and the untouched one keeps its own format.
+        fmt = lambda i: struct.unpack_from("<I", wta, idx["info_a"] + 20 * i)[0]
+        self.assertEqual((fmt(0), fmt(1)), (71, 99))
+        # Everything else in both archives survives.
+        dtt = dict(main._dat_read(self._read("pl", "pl0000.dtt")))
+        self.assertEqual(dtt["pl0000.wmb"], b"WMB3" + b"m" * 60)
+        dat = dict(main._dat_read(self._read("pl", "pl0000.dat")))
+        self.assertEqual(dat["pl0000.mot"], b"mot" * 9)
+        # Recorded, so uninstall knows them. No Special K files anywhere.
+        rec = self._records()["HD Texture Pack"]
+        self.assertEqual(sorted(rec["files"]), ["pl/pl0000.dat", "pl/pl0000.dtt"])
+        self.assertEqual(rec.get("warning"), "")
+        for root, _d, names in os.walk(self.install):
+            for n in names:
+                self.assertFalse(n.endswith((".dds", ".ini", ".part")), n)
+        # The game's own archive is never touched.
+        with open(os.path.join(self.data, "data000.cpk"), "rb") as f:
+            self.assertEqual(f.read(), self.cpk_bytes)
+
+    def test_uninstall_puts_the_game_back(self):
+        self._install(self._pack())
+        res = run(self.plugin.uninstall_mod(
+            "nierautomata", self.install, "data", "HD Texture Pack", "folder",
+            524220))
+        self.assertTrue(res.get("ok"), res)
+        self._only_cpk_in_data()
+        self.assertFalse(os.path.isdir(os.path.join(self.data, "pl")))
+
+    def test_a_texture_the_game_does_not_have_is_named(self):
+        res = self._install(self._pack(
+            [(self.SK + "DEADBEEF.dds", _dds(8, 8, seed=5))]))
+        self.assertTrue(res.get("ok"), res)
+        self.assertIn("1 of the 2 replacement textures did not match", res["warning"])
+        self.assertEqual(self._textures()[2][1], self.new1, "the match still went in")
+
+    def test_a_pack_that_matches_nothing_installs_nothing(self):
+        res = self._install(self._zip([(self.SK + "DEADBEEF.dds", _dds(8, 8, seed=5))]))
+        self.assertTrue(res.get("ok"), res)
+        self.assertIn("did not match", res["warning"])
+        self._only_cpk_in_data()
+
+    def test_a_file_another_mod_owns_is_left_alone_and_named(self):
+        self._install(self._zip([("pl0000.dat", b"outfit"), ("pl0000.dtt", b"outfit")]),
+                      mod_id=360, file_id=1921, name="2B Shinobi Outfit")
+        res = self._install(self._pack())
+        self.assertTrue(res.get("ok"), res)
+        self.assertIn("2B Shinobi Outfit already replaces it", res["warning"])
+        self.assertEqual(self._read("pl", "pl0000.dtt"), b"outfit")
+        self.assertEqual(self._records()["2B Shinobi Outfit"]["files"],
+                         ["pl/pl0000.dat", "pl/pl0000.dtt"])
+
+    def test_textures_for_the_mods_own_model_go_into_that_model(self):
+        # ANDROIDS REMASTERED: a model of its own, with Special K textures
+        # made for THAT model, not the game's.
+        own_tex = _dds(16, 16, seed=40)
+        wta, wtp = _wta_wtp([own_tex], [71])
+        own_dtt = _dat([("pl0000.wtp", wtp), ("pl0000.wmb", b"ANDROIDS")])
+        own_dat = _dat([("pl0000.wta", wta)])
+        better = _dds(64, 64, seed=41, dxgi=98)
+        res = self._install(self._zip([
+            ("pl0000.dtt", own_dtt), ("pl0000.dat", own_dat),
+            (self.SK + f"{main._sk_hash(own_tex):08X}.dds", better)]),
+            mod_id=30, file_id=1440, name="ANDROIDS REMASTERED")
+        self.assertTrue(res.get("ok"), res)
+        self.assertNotIn("warning", res)
+        _wta, _idx, tex = self._textures()
+        self.assertEqual(tex, [better], "patched into the mod's own model")
+        dtt = dict(main._dat_read(self._read("pl", "pl0000.dtt")))
+        self.assertEqual(dtt["pl0000.wmb"], b"ANDROIDS")
+        self.assertEqual(sorted(self._records()["ANDROIDS REMASTERED"]["files"]),
+                         ["pl/pl0000.dat", "pl/pl0000.dtt"])
+
+    def test_a_later_mod_takes_its_files_over(self):
+        # Pack first, outfit second: the outfit's file wins, and removing
+        # the pack must not delete it.
+        self._install(self._pack())
+        self._install(self._zip([("pl0000.dat", b"outfit"), ("pl0000.dtt", b"outfit")]),
+                      mod_id=360, file_id=1921, name="2B Shinobi Outfit")
+        pack = self._records()["HD Texture Pack"]
+        self.assertEqual(pack["files"], [])
+        self.assertIn("2B Shinobi Outfit replaced 2 of this mod's files", pack["warning"])
+        run(self.plugin.uninstall_mod(
+            "nierautomata", self.install, "data", "HD Texture Pack", "folder", 524220))
+        self.assertEqual(self._read("pl", "pl0000.dtt"), b"outfit")
+
+    def test_not_enough_space_is_said_before_anything_is_written(self):
+        with mock.patch.object(main, "_nier_plan_bytes", return_value=10 ** 15):
+            res = self._install(self._pack())
+        self.assertFalse(res.get("ok"))
+        self.assertIn("Converting this pack needs about 1000000.0 GB",
+                      res.get("error", ""))
+        self._only_cpk_in_data()
+        self.assertEqual(self._records(), {})
+
+    def test_a_failure_part_way_leaves_nothing_behind(self):
+        real = main._dat_write
+        calls = []
+
+        def flaky(original, replaced):
+            calls.append(1)
+            if len(calls) == 2:  # the .dtt is written, then the .dat fails
+                raise OSError("No space left on device")
+            return real(original, replaced)
+
+        with mock.patch.object(main, "_dat_write", flaky):
+            res = self._install(self._pack())
+        self.assertFalse(res.get("ok"))
+        self.assertIn("failed part way", res.get("error", ""))
+        self._only_cpk_in_data()
+
+    # --- before the click ------------------------------------------------
+
+    def _block(self, paths):
+        async def fake_listing(*a, **k):
+            return [{"type": "file", "path": p, "name": p.split("/")[-1]}
+                    for p in paths]
+        with mock.patch.object(main, "_mod_file_listing", fake_listing), \
+                mock.patch.object(main, "_game_dir", lambda _d: self.install):
+            return run(self.plugin.get_install_block(
+                "nierautomata", 5, 1108, "HD Texture Pack", "folder", 524220,
+                self.EXTS))
+
+    def test_a_pack_is_no_longer_refused_and_says_what_it_takes(self):
+        b = self._block(["Read me.txt", self.SK + f"{self.h1}.dds",
+                         self.SK + "DEADBEEF.dds"])
+        self.assertFalse(b["blocked"])
+        self.assertNotIn("refused", b)
+        self.assertIn("1 game file", b["warning"])
+        self.assertIn("GB of free space", b["warning"])
+        self.assertNotIn("—", b["warning"])
+
+    def test_another_game_still_refuses_a_special_k_pack(self):
+        async def fake_listing(*a, **k):
+            return [{"type": "file", "path": self.SK + "0000000A.dds"}]
+        with mock.patch.object(main, "_mod_file_listing", fake_listing):
+            b = run(self.plugin.get_install_block(
+                "cyberpunk2077", 1, 1, "Pack", "folder", 1091500, [".archive"]))
+        self.assertTrue(b["blocked"])
 
 
 class TestSteamLibraryVdfLocations(unittest.TestCase):

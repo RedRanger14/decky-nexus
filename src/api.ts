@@ -198,6 +198,8 @@ export interface InstallProgress {
     /** Frostbite games: converting and compiling, which takes minutes. The
      * message says which stage, because a silent wait reads as a hang. */
     | "compiling"
+    /** NieR: Special K textures being built into the game's own files. */
+    | "converting"
     | "paused"
     | "cancelled"
     | "done"

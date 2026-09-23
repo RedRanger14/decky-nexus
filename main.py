@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import struct
+import socket
 import ssl
 import threading
 import time
@@ -709,6 +710,7 @@ _FLAT_NOISE_EXTS = {
     # files. It is instructions for another tool, not part of the mod.
     ".namh",
 }
+_FLAT_NOISE_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
 
 
 def _flat_variant_name(srcs: list, scratch: str) -> dict:
@@ -746,7 +748,9 @@ def _flat_skip_note(scratch: str, placed: dict) -> str:
     for root, _dirs, names in os.walk(scratch):
         for n in names:
             ext = os.path.splitext(n)[1].lower()
-            if ext in _FLAT_NOISE_EXTS:
+            # desktop.ini rides along inside the HD Texture Pack's SK_Res;
+            # it is Explorer's, not the mod's.
+            if ext in _FLAT_NOISE_EXTS or n.lower() in _FLAT_NOISE_NAMES:
                 continue
             rel = os.path.relpath(os.path.join(root, n), scratch)
             rel = rel.replace(os.sep, "/").lower()
@@ -793,6 +797,791 @@ def _flat_skip_note(scratch: str, placed: dict) -> str:
             f"({', '.join(sorted(variants))}). Only one can be in the game "
             f"at a time, and the one installed is {', '.join(sorted(kept))}. "
             "For another, install that version on its own.")
+    return " ".join(parts)
+
+
+# ---- NieR:Automata texture packs, converted into the game's own files -----
+# NieR's HD Texture Pack, its most downloaded mod, is a folder of Special K
+# replacements: SK_Res/inject/textures/XXXXXXXX.dds, each named for the
+# texture it replaces. Special K 26.9.17 crashes NieR before the first frame
+# under Proton 11 on the Legion, three configurations over (see the spike
+# notes), so it is not something to hand users. Instead the install puts each
+# replacement into the game's own files: find which .dtt holds the texture
+# with that hash, rebuild that .dtt (texture data) and its .dat (the texture
+# index) with the new one in, and write both as loose files under data/,
+# which the game reads in place of its archives and uninstall removes like
+# any other flat mod. Proven by hand first, 2026-09-23: 277 of the pack's
+# 279 textures matched, 295 game files rebuilt in about two minutes, and
+# the game read twelve of them in the Bunker and ran fine.
+#
+# The name is Special K's top_crc32: CRC32C of the texture's top mip level
+# as the game hands it to Direct3D, stride * (h // 4 + h % 4) bytes for a
+# block-compressed format, from SK's d3d11_tex_util.cpp. Reproduced on three
+# of the pack's textures before anything was built on it.
+
+NIER_TEXTURE_INDEX = os.path.join(
+    decky.DECKY_PLUGIN_RUNTIME_DIR, "nier-texture-index.json")
+# Special K's own file naming: the hash, optionally "_" and a checksum.
+_SK_TEXTURE_RE = re.compile(r"^([0-9A-Fa-f]{8})(?:_[0-9A-Fa-f]{8})?\.dds$")
+
+_CRC32C_TABLE = []
+
+
+def _crc32c(data) -> int:
+    """CRC32C, in hardware through the kernel where it can be.
+
+    Decky's Python has AF_ALG, measured at 7,161 MB/s on the Legion. The
+    table fallback is correct and roughly a thousand times slower: fine for
+    a test's few hundred bytes, not for indexing a whole game.
+    """
+    try:
+        with socket.socket(socket.AF_ALG, socket.SOCK_SEQPACKET) as s:
+            s.bind(("hash", "crc32c"))
+            op, _ = s.accept()
+            with op:
+                op.sendall(data)
+                return struct.unpack("<I", op.recv(4))[0]
+    except (AttributeError, OSError):
+        pass
+    if not _CRC32C_TABLE:
+        for i in range(256):
+            c = i
+            for _ in range(8):
+                c = (c >> 1) ^ 0x82F63B78 if c & 1 else c >> 1
+            _CRC32C_TABLE.append(c)
+    crc = 0xFFFFFFFF
+    for b in bytes(data):
+        crc = _CRC32C_TABLE[(crc ^ b) & 0xFF] ^ (crc >> 8)
+    return crc ^ 0xFFFFFFFF
+
+
+# CRI .cpk archives. A "CPK " chunk holds an @UTF table (the header) and a
+# "TOC " chunk an @UTF table with a row per file. @UTF is big-endian.
+_UTF_FMT = {0: ">B", 1: ">b", 2: ">H", 3: ">h", 4: ">I", 5: ">i", 6: ">Q",
+            7: ">q", 8: ">f"}
+_UTF_LEN = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 8, 7: 8, 8: 4, 0xA: 4,
+            0xB: 8}
+
+
+def _utf_read(blob: bytes, base: int = 0) -> list:
+    """An @UTF table as a list of row dicts."""
+    if blob[base: base + 4] != b"@UTF":
+        raise ValueError("not an @UTF table")
+    o = base + 8
+    rows_off, str_off, data_off, _name, ncols, rowlen, nrows = \
+        struct.unpack_from(">HIIIHHI", blob, o + 2)
+    rows_off, str_off, data_off = rows_off + o, str_off + o, data_off + o
+
+    def cstr(at):
+        end = blob.index(b"\x00", str_off + at)
+        return blob[str_off + at: end].decode("utf-8", "replace")
+
+    def value(typ, at):
+        if typ in _UTF_FMT:
+            return struct.unpack_from(_UTF_FMT[typ], blob, at)[0]
+        if typ == 0xA:
+            return cstr(struct.unpack_from(">I", blob, at)[0])
+        if typ == 0xB:
+            d_at, d_len = struct.unpack_from(">II", blob, at)
+            return blob[data_off + d_at: data_off + d_at + d_len]
+        raise ValueError(f"@UTF type {typ:#x}")
+
+    cols, p = [], o + 0x18
+    for _ in range(ncols):
+        flags = blob[p]
+        name = cstr(struct.unpack_from(">I", blob, p + 1)[0])
+        p += 5
+        storage, typ, const = flags & 0xF0, flags & 0x0F, None
+        if storage == 0x30:  # a constant, stored in the column itself
+            const = value(typ, p)
+            p += _UTF_LEN[typ]
+        cols.append((name, storage, typ, const))
+    rows = []
+    for r in range(nrows):
+        at, row = rows_off + r * rowlen, {}
+        for name, storage, typ, const in cols:
+            if storage == 0x50:  # per row
+                row[name] = value(typ, at)
+                at += _UTF_LEN[typ]
+            else:
+                row[name] = const
+        rows.append(row)
+    return rows
+
+
+def _cpk_files(path: str) -> list:
+    """[{dir, name, offset, size, extract}] for every non-empty file in a
+    .cpk, offsets absolute within it.
+
+    Size-0 rows are empty placeholders, and they are skipped. The first
+    version of this took one to be an alias of whatever file its offset
+    pointed at, which is simply the NEXT file: wd1/g10720.dtt "became"
+    g10812's model (the names inside it said so), its .dat is an empty
+    archive, and 893 index entries pointed at 29 files that hold nothing.
+    """
+    with open(path, "rb") as f:
+        head = f.read(0x800)
+        if head[:4] != b"CPK ":
+            raise ValueError("not a CPK")
+        hdr = _utf_read(head, 0x10)[0]
+        toc_off, content_off = int(hdr["TocOffset"]), int(hdr["ContentOffset"])
+        toc_size = int(hdr.get("TocSize") or 0)
+        f.seek(toc_off)
+        toc = f.read(toc_size + 0x10 if toc_size else 64 * 1024 * 1024)
+    if toc[:4] != b"TOC ":
+        raise ValueError("TOC chunk missing")
+    base = min(toc_off, content_off)
+    out = []
+    for row in _utf_read(toc, 0x10):
+        size = int(row.get("FileSize") or 0)
+        if not size:
+            continue
+        out.append({
+            "dir": row.get("DirName") or "",
+            "name": row.get("FileName") or "",
+            "offset": base + int(row["FileOffset"]),
+            "size": size,
+            "extract": int(row.get("ExtractSize") or size),
+        })
+    return out
+
+
+def _crilayla(data: bytes) -> bytes:
+    """Decompress CRI's CRILAYLA, which most of NieR's .dat files are in.
+
+    "CRILAYLA", uncompressed size, compressed length (u32 LE each), the
+    stream, then 0x100 raw bytes that become the start of the output. The
+    stream is read BACKWARDS, most significant bit first, and the output
+    is written from the end towards the front.
+    """
+    if data[:8] != b"CRILAYLA":
+        return data
+    usize, hdr = struct.unpack_from("<II", data, 8)
+    out = bytearray(usize + 0x100)
+    out[:0x100] = data[0x10 + hdr: 0x10 + hdr + 0x100]
+    state = {"pos": len(data) - 0x100 - 1, "pool": 0, "left": 0}
+    end, done = 0x100 + usize - 1, 0
+
+    def bits(n):
+        v = got = 0
+        while got < n:
+            if not state["left"]:
+                state["pool"] = data[state["pos"]]
+                state["left"] = 8
+                state["pos"] -= 1
+            take = min(state["left"], n - got)
+            left = state["left"]
+            v = (v << take) | ((state["pool"] >> (left - take)) & ((1 << take) - 1))
+            state["left"] -= take
+            got += take
+        return v
+
+    while done < usize:
+        if bits(1):
+            ref = end - done + bits(13) + 3
+            length = 3
+            for n in (2, 3, 5, 8):
+                step = bits(n)
+                length += step
+                if step != (1 << n) - 1:
+                    break
+            else:
+                while True:
+                    step = bits(8)
+                    length += step
+                    if step != 255:
+                        break
+            for _ in range(length):
+                out[end - done] = out[ref]
+                ref -= 1
+                done += 1
+        else:
+            out[end - done] = bits(8)
+            done += 1
+    return bytes(out)
+
+
+def _cpk_read(path: str, entry: dict) -> bytes:
+    """One file's bytes out of a .cpk, decompressed if it was stored so."""
+    with open(path, "rb") as f:
+        f.seek(entry["offset"])
+        raw = f.read(entry["size"])
+    return _crilayla(raw) if entry["extract"] != entry["size"] else raw
+
+
+def _dat_read(blob: bytes) -> list:
+    """A NieR DAT archive (.dat, .dtt) as [(name, bytes)] in its order."""
+    if blob[:4] != b"DAT\x00":
+        raise ValueError("not a DAT archive")
+    count, off_t, _ext_t, name_t, size_t = struct.unpack_from("<5I", blob, 4)
+    offs = struct.unpack_from(f"<{count}I", blob, off_t)
+    sizes = struct.unpack_from(f"<{count}I", blob, size_t)
+    nlen = struct.unpack_from("<I", blob, name_t)[0]
+    out = []
+    for i in range(count):
+        raw = blob[name_t + 4 + nlen * i: name_t + 4 + nlen * (i + 1)]
+        out.append((raw.split(b"\x00")[0].decode("utf-8", "replace"),
+                    blob[offs[i]: offs[i] + sizes[i]]))
+    return out
+
+
+def _align(n: int, a: int) -> int:
+    return (n + a - 1) // a * a
+
+
+def _dat_write(original: bytes, replaced: dict) -> bytes:
+    """The archive again with some files' bytes replaced, by name.
+
+    Everything before the first file (header, tables, the name hash map)
+    is copied verbatim, since names and order do not change; only the
+    offset and size tables are rewritten. Files keep the 16-byte alignment.
+    A rebuild with nothing replaced is byte-identical to the original, for
+    every archive tried.
+    """
+    count, off_t, _ext_t, _name_t, size_t = struct.unpack_from("<5I", original, 4)
+    offs = struct.unpack_from(f"<{count}I", original, off_t)
+    osizes = struct.unpack_from(f"<{count}I", original, size_t)
+    head, body = bytearray(original[:offs[0]]), bytearray()
+    new_offs, new_sizes, pos = [], [], offs[0]
+    for name, data in _dat_read(original):
+        data = replaced.get(name, data)
+        pos = _align(pos, 16)
+        body += b"\x00" * (pos - offs[0] - len(body))
+        new_offs.append(pos)
+        new_sizes.append(len(data))
+        body += data
+        pos += len(data)
+    struct.pack_into(f"<{count}I", head, off_t, *new_offs)
+    struct.pack_into(f"<{count}I", head, size_t, *new_sizes)
+    # pl000d.dat pads its end to 16 bytes and pl000d.dtt does not. Do
+    # whatever the original did.
+    if len(original) > offs[-1] + osizes[-1]:
+        body += b"\x00" * (_align(pos, 16) - pos)
+    return bytes(head + body)
+
+
+def _wta_read(blob: bytes) -> dict:
+    """A .wta, the texture index in a .dat: each texture's offset and size
+    inside the .wtp, and a 20-byte DX10 header each (DXGI format first)."""
+    if blob[:4] != b"WTB\x00":
+        raise ValueError("not a WTA")
+    _ver, count, off_a, size_a, _flag_a, _id_a, info_a = \
+        struct.unpack_from("<7I", blob, 4)
+    return {
+        "count": count,
+        "offsets": list(struct.unpack_from(f"<{count}I", blob, off_a)),
+        "sizes": list(struct.unpack_from(f"<{count}I", blob, size_a)),
+        "off_a": off_a, "size_a": size_a, "info_a": info_a,
+    }
+
+
+_BC8_FOURCC = {b"DXT1", b"ATI1", b"BC4U", b"BC4S"}           # 8-byte blocks
+_BC16_FOURCC = {b"DXT3", b"DXT5", b"ATI2", b"BC5U", b"BC5S"}  # 16-byte blocks
+_DXGI_BC8 = {70, 71, 72, 79, 80, 81}
+_DXGI_BPP = {2: 16, 10: 8, 24: 4, 28: 4, 29: 4, 87: 4, 88: 4, 91: 4}
+_FOURCC_DXGI = {b"DXT1": 71, b"DXT3": 74, b"DXT5": 77, b"ATI1": 80,
+                b"BC4U": 80, b"ATI2": 83, b"BC5U": 83}
+# UNORM and sRGB siblings of the block formats texture packs use.
+_SRGB_OF = {71: 72, 74: 75, 77: 78, 98: 99}
+_UNORM_OF = {v: k for k, v in _SRGB_OF.items()}
+
+
+def _dds_shape(head: bytes) -> dict:
+    """What a DDS header says: header length, data length, top-mip length
+    as Special K hashes it (0 when SK never hashes it), and its format."""
+    if head[:4] != b"DDS " or len(head) < 128:
+        raise ValueError("not a DDS")
+    h, w = struct.unpack_from("<II", head, 12)
+    mips = struct.unpack_from("<I", head, 28)[0] or 1
+    caps2 = struct.unpack_from("<I", head, 112)[0]
+    pf_flags, bitcount = struct.unpack_from("<I", head, 80)[0], \
+        struct.unpack_from("<I", head, 88)[0]
+    fourcc = head[84:88]
+    hlen, faces, block, bpp, dxgi = 128, 6 if caps2 & 0x200 else 1, 0, 0, None
+    if fourcc == b"DX10":
+        hlen = 148
+        dxgi, _dim, misc, arr = struct.unpack_from("<IIII", head, 128)
+        faces = (6 if misc & 4 else 1) * max(1, arr)
+        if 70 <= dxgi <= 84 or 94 <= dxgi <= 99:
+            block = 8 if dxgi in _DXGI_BC8 else 16
+        else:
+            bpp = _DXGI_BPP.get(dxgi, 4)
+    elif fourcc in _BC8_FOURCC:
+        block = 8
+    elif fourcc in _BC16_FOURCC:
+        block = 16
+    else:
+        bpp = max(1, bitcount // 8) if pf_flags & 0x40 or bitcount else 4
+    total, cw, ch = 0, w, h
+    for _ in range(mips):
+        if block:
+            total += max(1, (cw + 3) // 4) * max(1, (ch + 3) // 4) * block
+        else:
+            total += cw * ch * bpp
+        cw, ch = max(1, cw // 2), max(1, ch // 2)
+    # Cubemaps and arrays are never hashed by SK, nor is anything that is
+    # not block-compressed.
+    top = (max(1, (w + 3) // 4) * block * (h // 4 + h % 4)
+           if block and faces == 1 else 0)
+    fmt = dxgi if dxgi is not None else _FOURCC_DXGI.get(fourcc)
+    return {"head": hlen, "data": total * faces, "top": top, "format": fmt}
+
+
+def _sk_hash(dds: bytes) -> int:
+    """Special K's top_crc32 for a whole DDS file, or -1 if it has none."""
+    s = _dds_shape(dds[:148])
+    if not s["top"]:
+        return -1
+    return _crc32c(dds[s["head"]: s["head"] + s["top"]])
+
+
+def _wtp_textures(read, base: int, length: int) -> list:
+    """[(offset_in_wtp, header)] for every DDS in a .wtp, walked from the
+    headers alone, `read(pos, n)` reading the container.
+
+    Textures start on 4096-byte boundaries. If a size ever comes out short
+    of the next header, the walk steps boundary by boundary until it finds
+    one, so a size it gets wrong costs time, not a texture.
+    """
+    out, pos = [], 0
+    while pos < length:
+        head = read(base + pos, 148)
+        if head[:4] != b"DDS " or len(head) < 128:
+            pos = _align(pos + 1, 4096)
+            continue
+        out.append((pos, head))
+        s = _dds_shape(head)
+        pos = _align(pos + s["head"] + s["data"], 4096)
+    return out
+
+
+def _dtt_texture_hashes(read, base: int) -> list:
+    """[(sk_hash, offset_in_wtp)] for the textures in the .dtt at `base`."""
+    hdr = read(base, 24)
+    if hdr[:4] != b"DAT\x00":
+        return []
+    count, off_t, ext_t, _n, size_t = struct.unpack_from("<5I", hdr, 4)
+    offs = struct.unpack_from(f"<{count}I", read(base + off_t, 4 * count))
+    sizes = struct.unpack_from(f"<{count}I", read(base + size_t, 4 * count))
+    exts = read(base + ext_t, 4 * count)
+    out = []
+    for k in range(count):
+        if exts[4 * k: 4 * k + 3] != b"wtp":
+            continue
+        wbase = base + offs[k]
+        for woff, head in _wtp_textures(read, wbase, sizes[k]):
+            s = _dds_shape(head)
+            if s["top"]:
+                out.append((_crc32c(read(wbase + woff + s["head"], s["top"])),
+                            woff))
+    return out
+
+
+def _nier_cpk_signature(data_dir: str) -> list:
+    # The folder is part of it: two copies of the game (two libraries, or
+    # two tests) can have archives of identical names and sizes.
+    sig = [os.path.abspath(data_dir)]
+    for p in sorted(glob.glob(os.path.join(data_dir, "*.cpk"))):
+        st = os.stat(p)
+        sig.append([os.path.basename(p), st.st_size, int(st.st_mtime)])
+    return sig
+
+
+def _nier_texture_index(data_dir: str) -> dict:
+    """"XXXXXXXX" -> [[cpk, dir, dtt name, offset in wtp], ...] for every
+    texture in the game's own archives. About five seconds for all 21,380
+    on the Legion, so it is kept, and rebuilt only when the archives
+    change (a game update)."""
+    sig = _nier_cpk_signature(data_dir)
+    try:
+        with open(NIER_TEXTURE_INDEX, encoding="utf-8") as f:
+            cached = json.load(f)
+        if cached.get("signature") == sig:
+            return cached["index"]
+    except (OSError, ValueError, KeyError, AttributeError):
+        pass
+    index = {}
+    for name, _size, _mtime in sig[1:]:
+        path = os.path.join(data_dir, name)
+        try:
+            files = _cpk_files(path)
+        except (OSError, ValueError, KeyError, struct.error) as e:
+            # One unreadable archive costs the textures in it, not the pack.
+            decky.logger.warning(f"NieR texture index skipped {name}: {e}")
+            continue
+        with open(path, "rb") as f:
+            def read(pos, n):
+                f.seek(pos)
+                return f.read(n)
+            for e in files:
+                # Every .dtt in the game is stored uncompressed, so its
+                # textures can be hashed where they lie.
+                if not e["name"].endswith(".dtt") or e["extract"] != e["size"]:
+                    continue
+                try:
+                    hashes = _dtt_texture_hashes(read, e["offset"])
+                except (ValueError, struct.error) as err:
+                    decky.logger.warning(
+                        f"NieR texture index skipped {e['dir']}/{e['name']}: {err}")
+                    continue
+                for h, woff in hashes:
+                    index.setdefault(f"{h:08X}", []).append(
+                        [name, e["dir"], e["name"], woff])
+    try:
+        os.makedirs(os.path.dirname(NIER_TEXTURE_INDEX), exist_ok=True)
+        with open(NIER_TEXTURE_INDEX + ".part", "w", encoding="utf-8") as f:
+            json.dump({"signature": sig, "index": index}, f)
+        os.replace(NIER_TEXTURE_INDEX + ".part", NIER_TEXTURE_INDEX)
+    except OSError as e:
+        decky.logger.warning(f"could not keep the NieR texture index: {e}")
+    return index
+
+
+def _sk_texture_files(scratch: str) -> dict:
+    """"XXXXXXXX" -> path, for the Special K replacements in an archive."""
+    found = {}
+    for root, _dirs, names in os.walk(scratch):
+        rel_root = os.path.relpath(root, scratch).replace(os.sep, "/").lower()
+        if "inject/textures" not in rel_root + "/":
+            continue
+        for n in names:
+            m = _SK_TEXTURE_RE.match(n)
+            if m:
+                found.setdefault(m.group(1).upper(), os.path.join(root, n))
+    return found
+
+
+def _sk_texture_names(paths: list) -> list:
+    """The Special K replacement hashes a file listing holds."""
+    out = []
+    for p in paths:
+        norm = p.replace("\\", "/").lower()
+        m = _SK_TEXTURE_RE.match(norm.rsplit("/", 1)[-1])
+        if m and "inject/textures/" in norm:
+            out.append(m.group(1).upper())
+    return out
+
+
+def _nier_texture_plan(data_dir: str, textures: dict, own_files: list,
+                       others: dict) -> dict:
+    """Which game files to rebuild with which replacements.
+
+    `textures` is hash -> the replacement's path (or bytes length, when
+    only estimating from a listing), `own_files` the data/-relative paths
+    this same install just placed, `others` data/-relative path (lowered)
+    -> the name of another installed mod that owns it.
+
+    A texture this mod's OWN files hold is patched into those files: that
+    is ANDROIDS REMASTERED, whose Special K textures are for the model it
+    ships, not for the game's. Otherwise it goes into the game's copy,
+    except where this mod ships its own version of that file (it replaced
+    the file wholesale) or another mod owns it (installing over that
+    would change a mod the user can no longer cleanly remove).
+    """
+    own_lower = {r.lower() for r in own_files}
+    own_hashes = {}
+    for rel in own_files:
+        if not rel.lower().endswith(".dtt"):
+            continue
+        path = os.path.join(data_dir, *rel.split("/"))
+        try:
+            with open(path, "rb") as f:
+                def read(pos, n):
+                    f.seek(pos)
+                    return f.read(n)
+                hashes = _dtt_texture_hashes(read, 0)
+        except (OSError, ValueError, struct.error):
+            continue
+        d, name = rel.rsplit("/", 1) if "/" in rel else ("", rel)
+        for h, woff in hashes:
+            own_hashes.setdefault(f"{h:08X}", []).append([None, d, name, woff])
+    index = _nier_texture_index(data_dir) if (
+        set(textures) - set(own_hashes)) else {}
+    targets, unmatched, skipped = {}, [], {}
+    for h, src in sorted(textures.items()):
+        locs = own_hashes.get(h) or index.get(h)
+        if not locs:
+            unmatched.append(h)
+            continue
+        for cpk, d, name, woff in locs:
+            rel = f"{d}/{name}"
+            if cpk is not None:
+                if rel.lower() in own_lower:
+                    continue  # this mod ships its own copy of that file
+                owner = others.get(rel.lower())
+                if owner:
+                    skipped[rel] = owner
+                    continue
+            t = targets.setdefault(rel, {"cpk": cpk, "dir": d, "dtt": name,
+                                         "by_offset": {}})
+            t["by_offset"][woff] = src
+    return {"targets": targets, "unmatched": unmatched, "skipped": skipped}
+
+
+def _nier_cpk_where(data_dir: str) -> dict:
+    where = {}
+    for cpk in sorted(glob.glob(os.path.join(data_dir, "*.cpk"))):
+        try:
+            files = _cpk_files(cpk)
+        except (OSError, ValueError, KeyError, struct.error):
+            continue
+        for e in files:
+            where.setdefault(f"{e['dir']}/{e['name']}", (cpk, e))
+    return where
+
+
+def _nier_plan_bytes(data_dir: str, plan: dict, where: dict = None) -> int:
+    """Disk the plan will write: each rebuilt file, plus the replacements."""
+    where = where if where is not None else _nier_cpk_where(data_dir)
+    total = 0
+    for rel, t in plan["targets"].items():
+        for part in (rel, rel[:-4] + ".dat"):
+            if t["cpk"] is None:
+                try:
+                    total += os.path.getsize(os.path.join(data_dir, *part.split("/")))
+                except OSError:
+                    pass
+            elif part in where:
+                total += where[part][1]["extract"]
+        for src in t["by_offset"].values():
+            total += src if isinstance(src, int) else os.path.getsize(src)
+    return total
+
+
+def _texture_patch(wta: bytes, wtp: bytes, replacements: dict) -> tuple:
+    """New (wta, wtp) with DDS files put in by texture index.
+
+    Textures keep their 4096-byte alignment in the .wtp. Each replacement's
+    DXGI format goes into the index's per-texture DX10 header, which is
+    where the game reads it, in the ORIGINAL's colour space: the game makes
+    its own views from this index and its shaders expect the original's
+    interpretation, so a BC7_UNORM_SRGB standing in for a BC1_UNORM would
+    otherwise be linearised a second time.
+    """
+    t = _wta_read(wta)
+    out, offsets, sizes, formats = bytearray(), [], [], {}
+    for i in range(t["count"]):
+        if i in replacements:
+            dds = replacements[i]
+            fmt = _dds_shape(dds[:148])["format"]
+            if fmt is not None and t["info_a"]:
+                orig = struct.unpack_from("<I", wta, t["info_a"] + 20 * i)[0]
+                formats[i] = (_SRGB_OF.get(fmt, fmt) if orig in _UNORM_OF
+                              else _UNORM_OF.get(fmt, fmt))
+        else:
+            dds = wtp[t["offsets"][i]: t["offsets"][i] + t["sizes"][i]]
+        pos = _align(len(out), 4096)
+        out += b"\x00" * (pos - len(out))
+        offsets.append(pos)
+        sizes.append(len(dds))
+        out += dds
+    new = bytearray(wta)
+    struct.pack_into(f"<{t['count']}I", new, t["off_a"], *offsets)
+    struct.pack_into(f"<{t['count']}I", new, t["size_a"], *sizes)
+    for i, fmt in formats.items():
+        struct.pack_into("<I", new, t["info_a"] + 20 * i, fmt)
+    return bytes(new), bytes(out)
+
+
+def _nier_apply_textures(data_dir: str, plan: dict, state: dict) -> dict:
+    """Rebuild and write every planned file. Runs in a thread; `state`
+    carries done/total for the progress bar.
+
+    Returns {"written": [...], "problems": [...], "used": set of paths}.
+    Each file is written to .part and renamed, so a file is only ever the
+    old one or the whole new one. On an exception, what was written so far
+    is listed in state["written"] for the caller to clear up.
+    """
+    where = _nier_cpk_where(data_dir)
+    written, problems, used = state.setdefault("written", []), [], set()
+    state["total"] = len(plan["targets"])
+    state["done"] = 0
+    for rel, t in sorted(plan["targets"].items()):
+        dat_rel = rel[:-4] + ".dat"
+
+        def load(part):
+            if t["cpk"] is None:
+                p = os.path.join(data_dir, *part.split("/"))
+                if os.path.isfile(p):
+                    with open(p, "rb") as f:
+                        return f.read()
+                return None
+            return _cpk_read(*where[part]) if part in where else None
+
+        dtt_b, dat_b = load(rel), load(dat_rel)
+        state["done"] += 1
+        if dtt_b is None or dat_b is None:
+            problems.append(f"{rel}: its .dat was not found")
+            continue
+        dtt = dict(_dat_read(dtt_b))
+        dat = dict(_dat_read(dat_b))
+        wtp_name = next((n for n in dtt if n.endswith(".wtp")), None)
+        wta_name = next((n for n in dat if n.endswith(".wta")), None)
+        if not wtp_name or not wta_name:
+            problems.append(f"{rel}: no texture index")
+            continue
+        idx = _wta_read(dat[wta_name])
+        repl = {}
+        for woff, src in t["by_offset"].items():
+            if woff in idx["offsets"]:
+                with open(src, "rb") as f:
+                    repl[idx["offsets"].index(woff)] = f.read()
+                used.add(src)
+            else:
+                problems.append(f"{rel}: texture at {woff} is not in its index")
+        if not repl:
+            continue
+        new_wta, new_wtp = _texture_patch(dat[wta_name], dtt[wtp_name], repl)
+        for part, orig, swap in ((rel, dtt_b, {wtp_name: new_wtp}),
+                                 (dat_rel, dat_b, {wta_name: new_wta})):
+            blob = _dat_write(orig, swap)
+            dst = os.path.join(data_dir, *part.split("/"))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(dst + ".part", "wb") as f:
+                f.write(blob)
+            os.replace(dst + ".part", dst)
+            if part not in written:
+                written.append(part)
+    return {"written": written, "problems": problems, "used": used}
+
+
+async def _nier_install_textures(mod_id: int, data_dir: str, textures: dict,
+                                 own_files: list, others: dict) -> tuple:
+    """Convert Special K textures into the game's files, with progress.
+
+    Returns (written, note, error). On an error, files that were this
+    conversion's alone are removed again; files the mod itself placed and
+    the conversion improved stay, since each is a whole, working file.
+    """
+    await _emit_progress(mod_id, "converting", 0,
+                         "Finding the game files these textures belong to")
+    try:
+        plan = await asyncio.to_thread(
+            _nier_texture_plan, data_dir, textures, own_files, others)
+        if plan["targets"]:
+            need = await asyncio.to_thread(_nier_plan_bytes, data_dir, plan)
+            free = shutil.disk_usage(data_dir).free
+            floor = _user_prefs()["min_free_gb"] * (1 << 30)
+            if free - need < floor:
+                return [], "", (
+                    f"Converting this pack needs about {need / 1e9:.1f} GB "
+                    f"of free space and there is {free / 1e9:.1f} GB, less "
+                    "the minimum kept free in Settings. Free some space and "
+                    "try again.")
+    except (OSError, ValueError, struct.error) as e:
+        decky.logger.exception("NieR texture plan failed")
+        return [], "", f"The textures could not be matched to the game: {e}"
+    state = {}
+    task = asyncio.ensure_future(
+        asyncio.to_thread(_nier_apply_textures, data_dir, plan, state))
+    while not task.done():
+        await asyncio.wait({task}, timeout=1.0)
+        total, done = state.get("total") or 0, state.get("done") or 0
+        if total:
+            await _emit_progress(
+                mod_id, "converting", int(done * 100 / total),
+                f"Building textures into game files: {done} of {total}")
+    try:
+        result = task.result()
+    except Exception as e:  # noqa: BLE001 - reported, and cleaned up
+        decky.logger.exception("NieR texture conversion failed")
+        own = {r.lower() for r in own_files}
+        for rel in state.get("written") or []:
+            if rel.lower() in own:
+                continue
+            try:
+                os.remove(os.path.join(data_dir, *rel.split("/")))
+            except OSError:
+                pass
+        return [], "", f"Converting the textures failed part way: {e}"
+    decky.logger.info(
+        f"NieR textures: {len(textures)} in, {len(plan['targets'])} game "
+        f"files, {len(result['written'])} written, "
+        f"{len(plan['unmatched'])} unmatched {plan['unmatched'][:5]}, "
+        f"{len(plan['skipped'])} left to other mods, "
+        f"problems {result['problems'][:5]}")
+    return (result["written"],
+            _nier_texture_note(plan, len(textures), result["problems"]), "")
+
+
+def _take_over_files(installed: dict, record_key: str, rels: list,
+                     new_name: str) -> list:
+    """Hand paths this install just wrote over from any other record.
+
+    A flat-file uninstall deletes every path its record lists. Two NieR
+    mods can write the same file (a 2B outfit and the HD Texture Pack both
+    rebuild pl/pl0000.dtt), and without this, uninstalling the OLDER one
+    deleted the newer one's file out from under it. The older record gets
+    a note, because its version of those files is gone. Returns the names
+    of the records that gave files up.
+    """
+    mine = {r.lower() for r in rels}
+    losers = []
+    for key, rec in installed.items():
+        if key == record_key or rec.get("mode") != "files":
+            continue
+        files = rec.get("files") or []
+        kept = [f for f in files if f.lower() not in mine]
+        if len(kept) == len(files):
+            continue
+        rec["files"] = kept
+        lost = len(files) - len(kept)
+        note = (f"{new_name} replaced {lost} of this mod's files. "
+                "Uninstall that and install this again to put them back.")
+        rec["warning"] = " ".join(
+            n for n in (rec.get("warning") or "", note) if n)
+        losers.append(rec.get("name") or key)
+    return losers
+
+
+def _nier_pack_estimate_note(install_path: str, hashes: list) -> str:
+    """Before the click: what installing a Special K pack will involve.
+
+    Sized from the listing's file names alone, which ARE the hashes, so
+    the space figure is the real one for this copy of the game. "" when
+    the game is not found or nothing in the pack matches it.
+    """
+    data_dir = os.path.join(install_path or "", "data")
+    if not install_path or not glob.glob(os.path.join(data_dir, "*.cpk")):
+        return ""
+    # Replacement sizes are not in the listing; the rebuilt game files
+    # dominate anyway (12.4 GB of them against 558 MB of textures).
+    plan = _nier_texture_plan(data_dir, {h: 0 for h in hashes}, [], {})
+    if not plan["targets"]:
+        return ""
+    need = _nier_plan_bytes(data_dir, plan)
+    n = len(plan["targets"])
+    return (
+        "This is a Special K texture pack. The plugin builds its textures "
+        f"into the game's own files instead: {n} game file"
+        f"{'s' if n != 1 else ''}, about {need / 1e9:.1f} GB of free space "
+        "needed, and a few minutes after the download. Uninstalling "
+        "removes them all.")
+
+
+def _nier_texture_note(plan: dict, total: int, problems: list) -> str:
+    """What a texture conversion left out, said plainly. "" when nothing."""
+    parts = []
+    missed = len(plan["unmatched"])
+    if missed:
+        parts.append(
+            f"{missed} of the {total} replacement texture"
+            f"{'s' if total != 1 else ''} did not match any texture in this "
+            "copy of the game, so "
+            f"{'they were' if missed != 1 else 'it was'} left out.")
+    if plan["skipped"]:
+        owners = sorted(set(plan["skipped"].values()))
+        n = len({r.rsplit('.', 1)[0] for r in plan["skipped"]})
+        parts.append(
+            f"{n} game file{'s' if n != 1 else ''} this pack improves "
+            f"{'were' if n != 1 else 'was'} left alone because "
+            f"{', '.join(owners)} already replace{'s' if len(owners) == 1 else ''} "
+            f"{'them' if n != 1 else 'it'}. Uninstall that first and install "
+            f"this again to include {'them' if n != 1 else 'it'}.")
+    if problems:
+        parts.append(
+            f"{len(problems)} texture{'s' if len(problems) != 1 else ''} could "
+            "not be placed and kept the game's own.")
     return " ".join(parts)
 
 
@@ -16679,6 +17468,22 @@ query Link($slug: String!, $domainName: String!) {
             if children is None:
                 return {"ok": True, "blocked": False}
             paths = _listing_paths(children)
+            sk = (_sk_texture_names(paths)
+                  if game_domain == "nierautomata" else [])
+            if sk:
+                # Installable: the textures are converted into the game's
+                # own files. That takes minutes and many times the
+                # download's size on disk (the HD Texture Pack: 558 MB in,
+                # 12.4 GB out), which is worth knowing before the click.
+                try:
+                    note = await asyncio.to_thread(
+                        _nier_pack_estimate_note, _game_dir("NieRAutomata"), sk)
+                except Exception as e:  # noqa: BLE001 - a note, not a gate
+                    decky.logger.debug(f"texture pack estimate failed: {e}")
+                    note = ""
+                if note:
+                    return {"ok": True, "blocked": False, "warning": note}
+                return {"ok": True, "blocked": False}
             if paths and not any(p.lower().endswith(exts) for p in paths):
                 return {
                     "ok": True,
@@ -18789,7 +19594,11 @@ query Link($slug: String!, $domainName: String!) {
                             flat.append(os.path.join(root, n))
                     elif n.lower().endswith(exts):
                         flat.append(os.path.join(root, n))
-            if not flat:
+            # Special K textures, which NieR gets converted into its own
+            # files rather than refused.
+            sk_textures = (_sk_texture_files(scratch)
+                           if game_domain == "nierautomata" else {})
+            if not flat and not sk_textures:
                 is_reshade = hd2_layout and any(
                     "reshade" in n.lower() or n.lower().endswith(".ini")
                     for _r, _d, names in os.walk(scratch) for n in names
@@ -18993,9 +19802,43 @@ query Link($slug: String!, $domainName: String!) {
                     shutil.move(src, dst)
                     moved.append(rel)
                     placed[src] = rel
+            convert_note = ""
+            if sk_textures:
+                others = {
+                    f.lower(): r.get("name") or k
+                    for k, r in (_load_settings().get("installed", {})
+                                 .get(game_domain, {})).items()
+                    if k != _safe_name(mod_name)
+                    for f in (r.get("files") or [])
+                }
+                written, convert_note, err = await _nier_install_textures(
+                    mod_id, mods_path, sk_textures, list(moved), others)
+                if err and not moved:
+                    # A pure texture pack with nothing converted has
+                    # nothing to record.
+                    _force_rmtree(scratch)
+                    try:
+                        os.remove(archive_path)
+                    except OSError:
+                        pass
+                    await _emit_progress(mod_id, "error", 0, err)
+                    return {"ok": False, "error": err}
+                if err:
+                    convert_note = err
+                for rel in written:
+                    if rel not in moved:
+                        moved.append(rel)
+                # In the game now, or accounted for in convert_note: either
+                # way not "Special K textures that were not installed".
+                for p in sk_textures.values():
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
             # Before scratch goes: whatever is still in it did not go in,
             # and the user should hear what that was.
             skip_note = "" if hd2_layout else _flat_skip_note(scratch, placed)
+            skip_note = " ".join(n for n in (convert_note, skip_note) if n)
             _force_rmtree(scratch)
             try:
                 os.remove(archive_path)
@@ -19006,6 +19849,8 @@ query Link($slug: String!, $domainName: String!) {
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
             )
+            if game_domain == "nierautomata":
+                _take_over_files(installed, record_key, moved, mod_name)
             _new_record = {
                 "mod_id": mod_id,
                 "file_id": file_id,
