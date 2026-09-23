@@ -15042,6 +15042,50 @@ class TestNierTexturePacks(unittest.TestCase):
         self.assertIn("failed part way", res.get("error", ""))
         self._only_cpk_in_data()
 
+    def test_names_are_read_the_way_special_k_reads_them(self):
+        # The four real oddities in the HD Texture Pack. The first run
+        # through the plugin found 275 textures where the manual run had
+        # 279, because the strict pattern dropped all four.
+        tex = os.path.join(self.root, "names", "SK_Res", "inject", "textures")
+        os.makedirs(tex)
+        for n in ("38BFD9BA 2k.dds", "38BFD9BA.dds", "722D71642.dds",
+                  "722D7164.dds", "937E19F2old.dds", "2E4CB26E .dds",
+                  "notes.dds", "ABCDEF01.DDS"):
+            with open(os.path.join(tex, n), "wb") as f:
+                f.write(n.encode())
+        found = main._sk_texture_files(os.path.join(self.root, "names"))
+        self.assertEqual(
+            {h: os.path.basename(p) for h, p in found.items()},
+            # Where two share a hash, the exactly named one is meant.
+            {"38BFD9BA": "38BFD9BA.dds", "722D7164": "722D7164.dds",
+             "937E19F2": "937E19F2old.dds", "2E4CB26E": "2E4CB26E .dds",
+             "ABCDEF01": "ABCDEF01.DDS"})
+
+    def test_listing_sizes_are_read(self):
+        self.assertEqual(main._listing_size("302 B"), 302)
+        self.assertEqual(main._listing_size("1.5 kB"), 1536)
+        self.assertEqual(main._listing_size("2 MB"), 2 << 20)
+        self.assertEqual(main._listing_size(None), 0)
+        self.assertEqual(main._listing_size("big"), 0)
+        tree = [{"type": "directory", "path": "SK_Res", "children": [
+            {"type": "file", "path": "SK_Res/inject/textures/38BFD9BA 2k.dds",
+             "size": "4 MB"},
+            {"type": "file", "path": "SK_Res/inject/textures/38BFD9BA.dds",
+             "size": "1 MB"}]},
+            {"type": "file", "path": "Read me.txt", "size": "302 B"}]
+        self.assertEqual(main._sk_texture_sizes(tree), {"38BFD9BA": 1 << 20})
+
+    def test_the_estimate_counts_a_texture_once_per_file_it_goes_into(self):
+        # A second model that shares texture 1, as the city's buildings
+        # share their concrete.
+        wta, wtp = _wta_wtp([self.tex1], [72])
+        with open(os.path.join(self.data, "data002.cpk"), "wb") as f:
+            f.write(_cpk([("bg", "bg0001.dtt", _dat([("bg0001.wtp", wtp)])),
+                          ("bg", "bg0001.dat", _dat([("bg0001.wta", wta)]))]))
+        note = main._nier_pack_estimate_note(self.install, {self.h1: 10 ** 9})
+        self.assertIn("2 game files", note)
+        self.assertIn("about 2.0 GB", note)
+
     # --- before the click ------------------------------------------------
 
     def _block(self, paths):

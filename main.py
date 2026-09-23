@@ -822,7 +822,9 @@ def _flat_skip_note(scratch: str, placed: dict) -> str:
 NIER_TEXTURE_INDEX = os.path.join(
     decky.DECKY_PLUGIN_RUNTIME_DIR, "nier-texture-index.json")
 # Special K's own file naming: the hash, optionally "_" and a checksum.
-_SK_TEXTURE_RE = re.compile(r"^([0-9A-Fa-f]{8})(?:_[0-9A-Fa-f]{8})?\.dds$")
+_SK_TEXTURE_RE = re.compile(
+    r"^([0-9A-Fa-f]{8})(?:_[0-9A-Fa-f]{8})?\.dds$", re.IGNORECASE)
+_SK_TEXTURE_LOOSE_RE = re.compile(r"^([0-9A-Fa-f]{8}).*\.dds$", re.IGNORECASE)
 
 _CRC32C_TABLE = []
 
@@ -1237,29 +1239,83 @@ def _nier_texture_index(data_dir: str) -> dict:
     return index
 
 
+def _sk_texture_key(name: str) -> tuple:
+    """(hash, exact) for a replacement's file name, or ("", False).
+
+    Special K reads the leading hex digits of the name, and authors lean
+    on that: the HD Texture Pack has "38BFD9BA 2k.dds" beside
+    38BFD9BA.dds, "722D71642.dds" beside 722D7164.dds, and
+    "937E19F2old.dds" and "2E4CB26E .dds" as the only copies of theirs.
+    So the first eight digits are the hash, and where two files share
+    one, the exactly named file is the one meant.
+    """
+    m = _SK_TEXTURE_RE.match(name)
+    if m:
+        return m.group(1).upper(), True
+    m = _SK_TEXTURE_LOOSE_RE.match(name)
+    if m:
+        return m.group(1).upper(), False
+    return "", False
+
+
 def _sk_texture_files(scratch: str) -> dict:
     """"XXXXXXXX" -> path, for the Special K replacements in an archive."""
-    found = {}
+    found, exact = {}, set()
     for root, _dirs, names in os.walk(scratch):
         rel_root = os.path.relpath(root, scratch).replace(os.sep, "/").lower()
         if "inject/textures" not in rel_root + "/":
             continue
-        for n in names:
-            m = _SK_TEXTURE_RE.match(n)
-            if m:
-                found.setdefault(m.group(1).upper(), os.path.join(root, n))
+        for n in sorted(names):
+            h, is_exact = _sk_texture_key(n)
+            if not h or (h in found and (h in exact or not is_exact)):
+                continue
+            found[h] = os.path.join(root, n)
+            if is_exact:
+                exact.add(h)
     return found
 
 
-def _sk_texture_names(paths: list) -> list:
-    """The Special K replacement hashes a file listing holds."""
-    out = []
-    for p in paths:
-        norm = p.replace("\\", "/").lower()
-        m = _SK_TEXTURE_RE.match(norm.rsplit("/", 1)[-1])
-        if m and "inject/textures/" in norm:
-            out.append(m.group(1).upper())
-    return out
+_LISTING_UNITS = {"b": 1, "kb": 1 << 10, "kib": 1 << 10, "mb": 1 << 20,
+                  "mib": 1 << 20, "gb": 1 << 30, "gib": 1 << 30}
+
+
+def _listing_size(text) -> int:
+    """Bytes from a content listing's size, which reads "1.33 MB". 0 when
+    it is missing or unreadable."""
+    m = re.match(r"^\s*([\d.]+)\s*([a-zA-Z]*)\s*$", str(text or ""))
+    if not m:
+        return 0
+    try:
+        return int(float(m.group(1)) * _LISTING_UNITS.get(m.group(2).lower(), 1))
+    except ValueError:
+        return 0
+
+
+def _sk_texture_sizes(node) -> dict:
+    """"XXXXXXXX" -> size in bytes, for the Special K replacements a
+    content listing holds, by the same rule as the archive itself."""
+    found, exact = {}, set()
+    stack = list(node) if isinstance(node, list) else [node]
+    files = []
+    while stack:
+        c = stack.pop()
+        if not isinstance(c, dict):
+            continue
+        if c.get("type") == "directory":
+            stack.extend(c.get("children") or [])
+        elif c.get("path") or c.get("name"):
+            files.append(c)
+    for c in sorted(files, key=lambda c: c.get("path") or c.get("name") or ""):
+        norm = (c.get("path") or c.get("name")).replace("\\", "/").lower()
+        h, is_exact = _sk_texture_key(norm.rsplit("/", 1)[-1])
+        if not h or "inject/textures/" not in norm:
+            continue
+        if h in found and (h in exact or not is_exact):
+            continue
+        found[h] = _listing_size(c.get("size"))
+        if is_exact:
+            exact.add(h)
+    return found
 
 
 def _nier_texture_plan(data_dir: str, textures: dict, own_files: list,
@@ -1534,19 +1590,20 @@ def _take_over_files(installed: dict, record_key: str, rels: list,
     return losers
 
 
-def _nier_pack_estimate_note(install_path: str, hashes: list) -> str:
+def _nier_pack_estimate_note(install_path: str, sizes: dict) -> str:
     """Before the click: what installing a Special K pack will involve.
 
-    Sized from the listing's file names alone, which ARE the hashes, so
-    the space figure is the real one for this copy of the game. "" when
-    the game is not found or nothing in the pack matches it.
+    Sized from the listing, whose file names ARE the hashes, so the plan
+    is the real one for this copy of the game. Each replacement counts
+    once per game file it goes into: a texture every ruined building
+    shares is written into every one of them, and leaving that out made
+    the first estimate 9.2 GB for a pack that needs 13. "" when the game
+    is not found or nothing in the pack matches it.
     """
     data_dir = os.path.join(install_path or "", "data")
     if not install_path or not glob.glob(os.path.join(data_dir, "*.cpk")):
         return ""
-    # Replacement sizes are not in the listing; the rebuilt game files
-    # dominate anyway (12.4 GB of them against 558 MB of textures).
-    plan = _nier_texture_plan(data_dir, {h: 0 for h in hashes}, [], {})
+    plan = _nier_texture_plan(data_dir, dict(sizes), [], {})
     if not plan["targets"]:
         return ""
     need = _nier_plan_bytes(data_dir, plan)
@@ -1576,7 +1633,8 @@ def _nier_texture_note(plan: dict, total: int, problems: list) -> str:
             f"{n} game file{'s' if n != 1 else ''} this pack improves "
             f"{'were' if n != 1 else 'was'} left alone because "
             f"{', '.join(owners)} already replace{'s' if len(owners) == 1 else ''} "
-            f"{'them' if n != 1 else 'it'}. Uninstall that first and install "
+            f"{'them' if n != 1 else 'it'}. Uninstall "
+            f"{'that' if len(owners) == 1 else 'those'} first and install "
             f"this again to include {'them' if n != 1 else 'it'}.")
     if problems:
         parts.append(
@@ -17468,8 +17526,8 @@ query Link($slug: String!, $domainName: String!) {
             if children is None:
                 return {"ok": True, "blocked": False}
             paths = _listing_paths(children)
-            sk = (_sk_texture_names(paths)
-                  if game_domain == "nierautomata" else [])
+            sk = (_sk_texture_sizes(children)
+                  if game_domain == "nierautomata" else {})
             if sk:
                 # Installable: the textures are converted into the game's
                 # own files. That takes minutes and many times the
