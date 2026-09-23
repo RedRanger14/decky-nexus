@@ -1475,9 +1475,14 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // Shinobi Outfit (mod 360, file 1921) on the device: the archive is
     // pl000d.dtt and pl000d.dat and nothing else.
     //
-    // Nothing the game shipped is overwritten. data/ holds only .cpk
-    // archives until a mod adds a loose file beside them, so the loose
-    // file shadows the archive's copy and uninstalling is a delete.
+    // They do NOT go flat into data/. The game reads a loose override only
+    // at the path its own archives keep that file under, so pl000d.dat
+    // belongs in data/pl/. The backend routes each file there by domain
+    // (_nier_data_rel), checked against all 3,563 files in the game's
+    // archive index. v1.12.0 flattened them and the outfit never showed.
+    //
+    // Nothing the game shipped is overwritten: data/ holds only .cpk
+    // archives until a mod adds a folder beside them.
     flatModExtensions: [".dat", ".dtt"],
     moddedSaveWarning: false,
     processName: "NieRAutomata.exe", // verified on device

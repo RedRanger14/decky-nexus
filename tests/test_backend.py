@@ -14320,21 +14320,19 @@ class TestPluginSelfUpdate(unittest.TestCase):
         self.assertFalse(main._plugin_update_newer("1.11.1", "1.11"))
 
 class TestNierFlatFileInstall(unittest.TestCase):
-    """Games whose mods are loose files, not folders.
+    """NieR:Automata mods are loose files, and WHERE they go is the whole job.
 
-    NieR:Automata is the first game to use flatModExtensions, and the
-    branch it reaches had no behavioural test at all before this: only a
-    source-shape assertion about the Helldivers renumbering beside it. So
-    the whole path is exercised here against the real shape of a real
-    mod, taken from 2B - Shinobi Outfit (mod 360, file 1921), which is
-    two bare files and nothing else:
+    v1.12.0 installed 2B - Shinobi Outfit (mod 360, file 1921) into data/,
+    flat, and Michael loaded a save as 2B and saw her ordinary outfit. The
+    game keeps every asset in its .cpk archives under a folder named for
+    the kind of asset, and only reads a loose override from that same
+    path. The mod's own page says "Extract files to (root)/data/pl". The
+    first version of this suite asserted the flat layout, so it passed on
+    exactly the install that did not work.
 
-        pl000d.dtt   101 MB
-        pl000d.dat    26 KB
-
-    They go into data/, which otherwise holds only the game's .cpk
-    archives. Nothing the game shipped is overwritten: the loose file
-    shadows the archive's copy, so uninstalling is a delete.
+    The archive really is two bare files, pl000d.dtt and pl000d.dat, and
+    data/ holds only the game's .cpk archives until a mod adds a folder
+    beside them. Nothing the game shipped is overwritten.
     """
 
     EXTS = [".dat", ".dtt"]
@@ -14372,67 +14370,106 @@ class TestNierFlatFileInstall(unittest.TestCase):
                 self.install, "data", "", "", "folder", 524220, "", "starred",
                 "", "", "", "", self.EXTS))
 
+    def _at(self, *rel):
+        return os.path.join(self.data, *rel)
+
     def _vanilla_intact(self):
         for n in ("data000.cpk", "data012.cpk"):
-            p = os.path.join(self.data, n)
+            p = self._at(n)
             self.assertTrue(os.path.isfile(p), n)
             with open(p, "rb") as f:
                 self.assertTrue(f.read().startswith(b"vanilla"), n)
 
-    def test_loose_files_land_flat_in_the_data_folder(self):
+    def test_the_real_mod_lands_where_the_game_reads_it(self):
         res = self._install(self._archive(["pl000d.dat", "pl000d.dtt"]))
         self.assertTrue(res.get("ok"), res)
         for n in ("pl000d.dat", "pl000d.dtt"):
-            self.assertTrue(os.path.isfile(os.path.join(self.data, n)), n)
+            self.assertTrue(os.path.isfile(self._at("pl", n)), n)
+            # The exact failure Michael saw: present, and in the wrong place.
+            self.assertFalse(os.path.isfile(self._at(n)),
+                             f"{n} was flattened into data/, which the game ignores")
         self._vanilla_intact()
 
-    def test_files_nested_in_the_archive_still_land_flat(self):
-        # Authors zip a folder as often as not. The game reads data/, so a
-        # mod that installed to data/2B Shinobi/pl000d.dat would do
-        # nothing at all and look installed.
+    def test_the_folder_an_author_zipped_is_not_copied(self):
+        # Authors wrap files in a folder named after the mod as often as
+        # not. data/2B Shinobi Outfit/pl000d.dat would be read by nothing.
         res = self._install(self._archive(
             ["2B Shinobi Outfit/pl000d.dat", "2B Shinobi Outfit/pl000d.dtt"]))
         self.assertTrue(res.get("ok"), res)
-        self.assertTrue(os.path.isfile(os.path.join(self.data, "pl000d.dat")))
-        self.assertFalse(
-            os.path.isdir(os.path.join(self.data, "2B Shinobi Outfit")),
-            "the archive's folder was copied instead of flattened")
+        self.assertTrue(os.path.isfile(self._at("pl", "pl000d.dat")))
+        self.assertFalse(os.path.isdir(self._at("2B Shinobi Outfit")))
+
+    def test_an_archive_that_already_mirrors_the_game_is_respected(self):
+        res = self._install(self._archive(
+            ["NieRAutomata/data/pl/pl000d.dat", "NieRAutomata/data/pl/pl000d.dtt"]))
+        self.assertTrue(res.get("ok"), res)
+        self.assertTrue(os.path.isfile(self._at("pl", "pl000d.dat")))
+        self.assertFalse(os.path.isdir(self._at("NieRAutomata")))
+        self.assertFalse(os.path.isdir(self._at("data")), "data/data/ created")
 
     def test_files_of_other_kinds_are_left_out(self):
-        # Readmes and screenshots must not be dropped into data/.
         res = self._install(self._archive(
             ["pl000d.dat", "readme.txt", "preview.png"]))
         self.assertTrue(res.get("ok"), res)
-        self.assertTrue(os.path.isfile(os.path.join(self.data, "pl000d.dat")))
-        for n in ("readme.txt", "preview.png"):
-            self.assertFalse(os.path.isfile(os.path.join(self.data, n)), n)
+        self.assertTrue(os.path.isfile(self._at("pl", "pl000d.dat")))
+        for root, _d, names in os.walk(self.data):
+            for n in names:
+                self.assertNotIn(n, ("readme.txt", "preview.png"))
 
     def test_uninstall_removes_exactly_what_it_installed(self):
         self._install(self._archive(["pl000d.dat", "pl000d.dtt"]))
-        folder = None
         settings = main._load_settings()
-        for key, rec in settings["installed"]["nierautomata"].items():
-            folder = key
-        self.assertIsNotNone(folder, "nothing was recorded")
+        recs = settings["installed"]["nierautomata"]
+        self.assertEqual(len(recs), 1)
+        folder, rec = next(iter(recs.items()))
+        self.assertEqual(sorted(rec["files"]), ["pl/pl000d.dat", "pl/pl000d.dtt"])
         res = run(self.plugin.uninstall_mod(
             "nierautomata", self.install, "data", folder, "folder", 524220))
         self.assertTrue(res.get("ok"), res)
-        for n in ("pl000d.dat", "pl000d.dtt"):
-            self.assertFalse(os.path.isfile(os.path.join(self.data, n)), n)
-        # The point of a per-file record: the game's own archives stay.
+        self.assertFalse(os.path.exists(self._at("pl", "pl000d.dat")))
+        # The folder was ours, and it goes when it is empty: data/ is
+        # back to exactly what the game shipped.
+        self.assertFalse(os.path.isdir(self._at("pl")), "empty pl/ left behind")
         self._vanilla_intact()
 
-    def test_a_second_mod_touching_the_same_file_is_recorded_separately(self):
-        # Two outfit mods commonly ship the same pl000d pair. Removing the
-        # second must not leave the first's record claiming a file that is
-        # gone, nor delete anything belonging to the game.
+    def test_a_second_mod_on_the_same_character_wins(self):
         self._install(self._archive(["pl000d.dat"], tag=b"first"))
         self._install(self._archive(["pl000d.dat"], tag=b"second"),
                       mod_id=735, file_id=9001, name="Black Pearl Suit")
-        with open(os.path.join(self.data, "pl000d.dat"), "rb") as f:
-            self.assertTrue(f.read().startswith(b"second"),
-                            "the later mod did not win")
+        with open(self._at("pl", "pl000d.dat"), "rb") as f:
+            self.assertTrue(f.read().startswith(b"second"))
         self._vanilla_intact()
+
+    # --- the routing rule, against the game's own index -----------------
+    # Sampled from the real archive TOCs on the Legion (3,563 files, all
+    # 24 .cpk, 2026-09-23), where the router agreed with the game on every
+    # one. Every exception to "first two letters" is here, because those
+    # are the ones a plausible-looking rule gets wrong.
+    GAME_INDEX_SAMPLE = {
+        "pl000d.dat": "pl", "pl000d.dtt": "pl", "pl0000.dat": "pl",
+        "pl0100.dat": "pl", "em1000.dat": "em", "wp0000.dat": "wp",
+        "bg0000.dat": "bg", "ui0000.dat": "ui", "um0000.dat": "um",
+        "ba0000.dat": "ba", "et0000.dat": "et", "it0000.dat": "it",
+        "bh0000.dat": "bh",
+        "qa0000.dat": "quest", "qb0000.dat": "quest", "qc0000.dat": "quest",
+        "qe0000.dat": "quest", "qf0000.dat": "quest",
+        "tx0000.dat": "txtmess", "co0000.dat": "core", "fo0000.dat": "font",
+        "pf0000.dat": "phf", "ga0000.dat": "wda", "sh0000.dat": "it",
+    }
+
+    def test_every_asset_kind_goes_to_the_game_folder(self):
+        for name, folder in self.GAME_INDEX_SAMPLE.items():
+            self.assertEqual(
+                main._nier_data_rel(os.path.join("/s", name), "/s"),
+                f"{folder}/{name}", name)
+
+    def test_the_prefix_rule_alone_would_have_been_wrong(self):
+        # Proof that the exception table earns its place: a text or font
+        # mod routed by first-two-letters goes somewhere the game never
+        # reads, exactly the failure this whole suite is about.
+        naive = {n: n[:2] for n in self.GAME_INDEX_SAMPLE}
+        wrong = [n for n, f in self.GAME_INDEX_SAMPLE.items() if naive[n] != f]
+        self.assertGreaterEqual(len(wrong), 8, wrong)
 
 
 class TestSteamLibraryVdfLocations(unittest.TestCase):

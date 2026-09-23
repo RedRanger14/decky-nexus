@@ -643,6 +643,64 @@ def _hd2_variant_groups(paths: list) -> dict:
     return groups
 
 
+# ---- NieR:Automata loose files ------------------------------------------
+# The game keeps every asset inside its .cpk archives under a folder named
+# for the kind of asset, and it only reads a loose override from that SAME
+# path: data/pl/pl000d.dat, not data/pl000d.dat. v1.12.0 dropped every file
+# flat into data/, which the game never looks at, so 2B - Shinobi Outfit
+# installed cleanly, recorded cleanly, and changed nothing on screen. The
+# mod's own page says "Extract files to (root)/data/pl".
+#
+# Mostly the folder is the file's first two letters, but not always. Read
+# from the game's own archive index on the Legion, 3,563 files across all
+# 24 .cpk, 2026-09-23: bg em um ba et wp ui pl it bh keep their prefix, and
+# these do not. Guessing the prefix rule alone would have sent every quest,
+# text and font mod to a folder the game ignores.
+NIER_PREFIX_DIRS = {
+    "tx": "txtmess",
+    "co": "core",
+    "fo": "font",
+    "pf": "phf",
+    "ga": "wda",
+    "sh": "it",
+}
+# Folders the game's archives actually use, from the same index. Only used
+# to recognise an archive that already ships the folder.
+NIER_DATA_DIRS = {
+    "bg", "em", "um", "ba", "et", "wp", "ui", "pl", "it", "bh",
+    "quest", "txtmess", "core", "font", "phf", "wda",
+}
+
+
+def _nier_prefix_dir(name: str) -> str:
+    prefix = name[:2].lower()
+    if prefix.startswith("q"):
+        return "quest"  # qa qb qc qe qf all live in quest/
+    return NIER_PREFIX_DIRS.get(prefix, prefix)
+
+
+def _nier_data_rel(src: str, scratch: str) -> str:
+    """Where under data/ a loose NieR file belongs, as a relative path.
+
+    An archive that already mirrors the game's layout is respected: from
+    its last data/ folder, or from the first folder the game itself uses.
+    A bare file, which is how most mods ship, goes where the game keeps a
+    file of that name.
+    """
+    parts = os.path.relpath(src, scratch).replace(os.sep, "/").split("/")
+    name = parts[-1]
+    dirs = [p for p in parts[:-1] if p not in ("", ".")]
+    lowered = [d.lower() for d in dirs]
+    if "data" in lowered:
+        after = dirs[len(lowered) - 1 - lowered[::-1].index("data") + 1:]
+        if after:
+            return "/".join([after[0].lower()] + after[1:] + [name])
+    for i, d in enumerate(lowered):
+        if d in NIER_DATA_DIRS:
+            return "/".join([d] + dirs[i + 1:] + [name])
+    return f"{_nier_prefix_dir(name)}/{name}"
+
+
 def _hd2_patch_groups(paths: list) -> dict:
     """Group extracted files into (folder, hash, number) -> [(suffix, path)].
 
@@ -18721,11 +18779,21 @@ query Link($slug: String!, $domainName: String!) {
             else:
                 for src in flat:
                     name = os.path.basename(src)
-                    dst = os.path.join(mods_path, name)
+                    rel = name
+                    if game_domain == "nierautomata":
+                        # NieR reads a loose file only at the path its own
+                        # archives keep it under (data/pl/pl000d.dat), so
+                        # flattening it into data/ installed mods that did
+                        # nothing. Every other flat game really is flat.
+                        rel = _nier_data_rel(src, scratch)
+                        if not _safe_rel_path(rel):
+                            rel = f"{_nier_prefix_dir(name)}/{name}"
+                    dst = os.path.join(mods_path, *rel.split("/"))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
                     if os.path.isfile(dst):
                         os.remove(dst)
                     shutil.move(src, dst)
-                    moved.append(name)
+                    moved.append(rel)
             _force_rmtree(scratch)
             try:
                 os.remove(archive_path)
@@ -25998,13 +26066,15 @@ query CollectionInstructions($slug: String!) {
             install_path = _game_dir(install_dir)
             base = os.path.join(install_path, *rec["target"].split("/"))
             if rec.get("mode") == "files":
-                for name in rec.get("files") or []:
-                    if not _safe_rel_path(name) or "/" in name:
-                        continue
-                    try:
-                        os.remove(os.path.join(base, name))
-                    except OSError:
-                        pass
+                # Through the shared helper, which takes sub-paths and prunes
+                # the folders it empties. This loop used to skip any name
+                # containing "/" and then drop the record regardless. That
+                # was harmless while every files-mode game was flat; NieR's
+                # files live in data/pl/ and the like, so its uninstall
+                # removed nothing while reporting the mod gone, leaving the
+                # game loading a mod the user had taken out. Flat names are
+                # handled exactly as before.
+                _remove_files_record(game_domain, folder, install_path, settings)
             else:
                 real = rec.get("folder") or folder
                 if (
