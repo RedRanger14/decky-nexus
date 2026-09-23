@@ -14440,6 +14440,96 @@ class TestNierFlatFileInstall(unittest.TestCase):
             self.assertTrue(f.read().startswith(b"second"))
         self._vanilla_intact()
 
+    # --- saying what was left out -------------------------------------
+    # "It should at least tell you what it left out." ANDROIDS REMASTERED
+    # (mod 30) ships its model beside Special K textures under
+    # SK_Res/inject/textures, and some of its older files pack two
+    # versions under the same names. Both used to disappear silently.
+
+    def _record(self):
+        recs = main._load_settings()["installed"]["nierautomata"]
+        self.assertEqual(len(recs), 1, recs)
+        return next(iter(recs.values()))
+
+    SK = "SK_Res/inject/textures/NieRAutomata.exe/Androids Remastered/"
+
+    def test_special_k_textures_are_named_not_dropped(self):
+        # The real shape of ANDROIDS REMASTERED file 1440 (9S).
+        res = self._install(self._archive([
+            "pl020d.dat", "pl020d.dtt",
+            self.SK + "6CA5DB71.dds", self.SK + "AD7701DA.dds",
+            self.SK + "F1904A20.dds"]), mod_id=30, file_id=1440,
+            name="ANDROIDS REMASTERED")
+        self.assertTrue(res.get("ok"), res)
+        # The part the game can use still goes in.
+        self.assertTrue(os.path.isfile(self._at("pl", "pl020d.dat")))
+        note = res.get("warning") or ""
+        self.assertIn("3 texture files were not installed", note)
+        self.assertIn("Special K", note)
+        # And it survives the page closing: the record carries it.
+        self.assertEqual(self._record().get("warning"), note)
+        # Nothing of Special K's leaks into the game folder.
+        for root, _d, names in os.walk(self.data):
+            for n in names:
+                self.assertFalse(n.endswith(".dds"), os.path.join(root, n))
+
+    def test_a_clean_mod_says_nothing(self):
+        res = self._install(self._archive(["pl000d.dat", "pl000d.dtt"]))
+        self.assertTrue(res.get("ok"), res)
+        self.assertNotIn("warning", res)
+        self.assertEqual(self._record().get("warning"), "")
+
+    def test_readmes_and_screenshots_are_not_worth_a_warning(self):
+        res = self._install(self._archive(
+            ["pl000d.dat", "readme.txt", "Read me.md", "preview.png",
+             "shot.jpg", "2B NAMH INSTALL.namh"]))
+        self.assertTrue(res.get("ok"), res)
+        self.assertNotIn("warning", res)
+
+    def test_two_versions_with_the_same_names_are_reported(self):
+        # ANDROIDS REMASTERED file 641: FEATHERS and NO FEATHERS, same
+        # pl000d pair in each. Only one can be in the game.
+        path = os.path.join(self.root, "variants.zip")
+        with zipfile.ZipFile(path, "w") as z:
+            for v in ("FEATHERS", "NO FEATHERS"):
+                for n in ("pl000d.dat", "pl000d.dtt"):
+                    z.writestr(f"{v}/{n}", v.encode() + b":" + n.encode())
+        res = self._install(path)
+        self.assertTrue(res.get("ok"), res)
+        note = res.get("warning") or ""
+        self.assertIn("more than one version", note)
+        self.assertIn("FEATHERS", note)
+        self.assertIn("NO FEATHERS", note)
+        # The note must name the version that is REALLY in the game.
+        with open(self._at("pl", "pl000d.dat"), "rb") as f:
+            actual = f.read().split(b":")[0].decode()
+        self.assertIn(f"the one installed is {actual}.", note)
+
+    def test_versions_are_named_by_the_folder_that_differs(self):
+        # An outer wrapper folder is common. Naming the wrapper twice
+        # would tell the user nothing.
+        path = os.path.join(self.root, "wrapped.zip")
+        with zipfile.ZipFile(path, "w") as z:
+            for v in ("FEATHERS", "NO FEATHERS"):
+                z.writestr(f"2B VANILLA/{v}/pl000d.dat", v.encode())
+        note = self._install(path).get("warning") or ""
+        self.assertIn("(FEATHERS, NO FEATHERS)", note)
+        self.assertNotIn("2B VANILLA", note)
+
+    def test_program_files_are_named(self):
+        res = self._install(self._archive(["pl000d.dat", "LodMod.dll", "LodMod.ini"]))
+        self.assertTrue(res.get("ok"), res)
+        note = res.get("warning") or ""
+        self.assertIn("1 program file was not installed", note)
+        self.assertIn("1 .ini", note)
+
+    def test_reinstalling_a_clean_file_clears_an_old_note(self):
+        self._install(self._archive(["pl000d.dat", self.SK + "87F0B90C.dds"]))
+        self.assertTrue(self._record().get("warning"))
+        self._install(self._archive(["pl000d.dat", "pl000d.dtt"]))
+        self.assertEqual(self._record().get("warning"), "",
+                         "a clean reinstall kept a stale warning")
+
     # --- the routing rule, against the game's own index -----------------
     # Sampled from the real archive TOCs on the Legion (3,563 files, all
     # 24 .cpk, 2026-09-23), where the router agreed with the game on every

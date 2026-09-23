@@ -701,6 +701,101 @@ def _nier_data_rel(src: str, scratch: str) -> str:
     return f"{_nier_prefix_dir(name)}/{name}"
 
 
+# Files an archive ships that nobody reads: skipped without a word.
+_FLAT_NOISE_EXTS = {
+    ".txt", ".md", ".pdf", ".nfo", ".url", ".rtf", ".htm", ".html", ".doc",
+    ".docx", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+    # NAMH, the NieR mod hub, ships its own install recipe beside the
+    # files. It is instructions for another tool, not part of the mod.
+    ".namh",
+}
+
+
+def _flat_variant_name(srcs: list, scratch: str) -> dict:
+    """For sources that land on the same file, the folder that tells
+    them apart: where their paths first differ. An archive that wraps
+    FEATHERS and NO FEATHERS in one outer folder must still name them
+    FEATHERS and NO FEATHERS, not the outer folder twice."""
+    split = [os.path.relpath(s, scratch).replace(os.sep, "/").split("/")
+             for s in srcs]
+    i = 0
+    while all(len(p) > i + 1 for p in split) and len({p[i] for p in split}) == 1:
+        i += 1
+    return {s: (p[i] if len(p) > i + 1 else "(top level)")
+            for s, p in zip(srcs, split)}
+
+
+def _flat_skip_note(scratch: str, placed: dict) -> str:
+    """What a flat install left out, said plainly. "" when nothing was.
+
+    Call it after the files have been moved and before scratch is
+    removed: anything still in scratch did not go in. `placed` maps each
+    source path that went in to the relative path it went to, in the
+    order it was placed.
+
+    A flat install takes the file types the game loads and ignores the
+    rest. Mostly the rest is a readme. When it is not, the mod is quietly
+    incomplete, which is the ALOT failure again: it looks installed and
+    is not all there. ANDROIDS REMASTERED ships its NieR model beside
+    three to twelve Special K textures under SK_Res/inject/textures, and
+    those were dropped without a mention. Some of its older files also
+    pack two versions under the same names, FEATHERS and NO FEATHERS, and
+    one silently replaced the other.
+    """
+    special_k, programs, other = 0, 0, {}
+    for root, _dirs, names in os.walk(scratch):
+        for n in names:
+            ext = os.path.splitext(n)[1].lower()
+            if ext in _FLAT_NOISE_EXTS:
+                continue
+            rel = os.path.relpath(os.path.join(root, n), scratch)
+            rel = rel.replace(os.sep, "/").lower()
+            if (ext == ".dds" or "sk_res/" in rel or "far_res/" in rel
+                    or "/inject/textures/" in rel):
+                special_k += 1
+            elif ext in (".dll", ".exe", ".asi"):
+                programs += 1
+            else:
+                key = ext or "(no extension)"
+                other[key] = other.get(key, 0) + 1
+
+    # Two files in one archive with the same destination: only one can be
+    # in the game, and the later one replaced the earlier.
+    by_dest = {}
+    for src, rel in placed.items():
+        by_dest.setdefault(rel.lower(), []).append(src)
+    variants, kept = set(), set()
+    for srcs in by_dest.values():
+        if len(srcs) < 2:
+            continue
+        names = _flat_variant_name(srcs, scratch)
+        variants.update(names.values())
+        kept.add(names[srcs[-1]])
+
+    parts = []
+    if special_k:
+        parts.append(
+            f"{special_k} texture file{'s were' if special_k != 1 else ' was'} "
+            "not installed. They are Special K texture replacements, and "
+            "Special K is a separate tool this plugin does not set up, so "
+            "the mod may not look exactly like its screenshots.")
+    if programs:
+        parts.append(
+            f"{programs} program file{'s were' if programs != 1 else ' was'} "
+            "not installed (a DLL or executable). This plugin does not add "
+            "programs to this game.")
+    if other:
+        kinds = ", ".join(f"{c} {e}" for e, c in sorted(other.items()))
+        parts.append(f"Also not installed: {kinds}.")
+    if variants:
+        parts.append(
+            "This archive holds more than one version of the same files "
+            f"({', '.join(sorted(variants))}). Only one can be in the game "
+            f"at a time, and the one installed is {', '.join(sorted(kept))}. "
+            "For another, install that version on its own.")
+    return " ".join(parts)
+
+
 def _hd2_patch_groups(paths: list) -> dict:
     """Group extracted files into (folder, hash, number) -> [(suffix, path)].
 
@@ -18751,6 +18846,7 @@ query Link($slug: String!, $domainName: String!) {
             )
             os.makedirs(mods_path, exist_ok=True)
             moved = []
+            placed = {}
             if hd2_layout:
                 # Renumber per archive hash instead of overwriting: HD2
                 # loads <hash>.patch_0, patch_1, ... in sequence, so two
@@ -18794,6 +18890,10 @@ query Link($slug: String!, $domainName: String!) {
                         os.remove(dst)
                     shutil.move(src, dst)
                     moved.append(rel)
+                    placed[src] = rel
+            # Before scratch goes: whatever is still in it did not go in,
+            # and the user should hear what that was.
+            skip_note = "" if hd2_layout else _flat_skip_note(scratch, placed)
             _force_rmtree(scratch)
             try:
                 os.remove(archive_path)
@@ -18817,6 +18917,9 @@ query Link($slug: String!, $domainName: String!) {
                 "mode": "files",
                 "target": mods_subdir,
                 "files": moved,
+                # Always present, so reinstalling a clean file clears a
+                # note an older one left.
+                "warning": skip_note,
             }
             installed[record_key] = _merge_install_record(
                 installed.get(record_key), _new_record
@@ -18824,10 +18927,13 @@ query Link($slug: String!, $domainName: String!) {
             _save_settings(settings)
             decky.logger.info(
                 f"installed {mod_name!r}: {len(moved)} flat files -> "
-                f"{mods_subdir!r}"
+                f"{mods_subdir!r}" + (f" ({skip_note})" if skip_note else "")
             )
             await _emit_progress(mod_id, "done", 100)
-            return {"ok": True, "folder": record_key}
+            out = {"ok": True, "folder": record_key}
+            if skip_note:
+                out["warning"] = skip_note
+            return out
 
         # Archives that ship the mods DIRECTORY itself (Bannerlord zips
         # rooted at Modules/, Stardew at Mods/, BepInEx at plugins/):
