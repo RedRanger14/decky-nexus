@@ -2432,9 +2432,22 @@ function AllInstalledModsSection() {
     ).then((results) => setByGame(results.filter((r) => r.mods.length > 0)));
   };
   useEffect(refresh, []);
+  // Re-read on every QAM open, as the per-game section does.
+  const qamVisible = useQuickAccessVisible();
+  useEffect(() => {
+    if (qamVisible) refresh();
+  }, [qamVisible]);
 
   if (!byGame || byGame.length === 0) return null;
   const total = byGame.reduce((n, r) => n + r.mods.length, 0);
+  // This is the panel a user gets away from a game's page (the plugin's own
+  // pages included), and Michael opened it there after quitting Valheim:
+  // the per-game summary of what the loader complained about never showed.
+  const troubled = byGame.flatMap(({ game, mods }) =>
+    mods
+      .filter((m) => m.enabled && m.load_problem)
+      .map((m) => ({ game, mod: m }))
+  );
 
   const onToggle = async (
     game: SupportedGame,
@@ -2457,6 +2470,21 @@ function AllInstalledModsSection() {
 
   return (
     <PanelSection title="Installed Mods">
+      {troubled.length > 0 && (
+        <PanelSectionRow>
+          <Field
+            label={`⚠ ${troubled.length} mod${
+              troubled.length === 1 ? "" : "s"
+            } had problems last launch`}
+            description={
+              troubled
+                .map(({ game, mod }) => `${mod.name ?? mod.folder} (${game.displayName})`)
+                .join(", ") +
+              ". Manage my mods says what each one hit, with its switch."
+            }
+          />
+        </PanelSectionRow>
+      )}
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={() => setExpanded(!expanded)}>
           {expanded ? "▾" : "▸"} {total} mod{total === 1 ? "" : "s"} ·{" "}
@@ -2483,9 +2511,14 @@ function AllInstalledModsSection() {
                 <ToggleField
                   label={mod.name ?? mod.folder}
                   description={
-                    mod.tracked
+                    (mod.tracked
                       ? `v${mod.version}${mod.enabled ? "" : " · disabled"}`
-                      : "not installed by this plugin"
+                      : "not installed by this plugin") +
+                    (mod.enabled && mod.load_state
+                      ? mod.load_state === "failed"
+                        ? " · did not load ⚠"
+                        : " · errors last launch ⚠"
+                      : "")
                   }
                   checked={mod.enabled}
                   disabled={busyFolder === mod.folder}

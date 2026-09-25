@@ -519,3 +519,11 @@ test("the warning copy carries no em dashes", () => {
   const w = getStrandingWarning("palworld", MOD_CONFIG_MENU);
   assert.doesNotMatch(w, /—/);
 });
+
+test("Valheim: Bounties 3.0.18 goes in switched off, a newer file would not", async () => {
+  const { collectionAutoOff } = await import("../.test-build/compat.js");
+  const off = collectionAutoOff("valheim", [{ modId: 1401, fileId: 18119 }, { modId: 387, fileId: 21836 }], "snvpr8");
+  assert.deepEqual(off.map((o) => [o.modId, o.fileId]), [[1401, 18119]]);
+  assert.match(off[0].reason, /older Epic Loot/);
+  assert.deepEqual(collectionAutoOff("valheim", [{ modId: 1401, fileId: 99999 }]), []);
+});

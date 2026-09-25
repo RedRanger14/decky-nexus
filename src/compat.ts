@@ -161,6 +161,23 @@ export interface CollectionOffMod {
 
 export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
   {
+    nexusDomain: "valheim",
+    modId: 1401, // Bounties (Digitalroot)
+    name: "Bounties",
+    // Version-scoped: 3.0.18 (Nov 2024) is the only file on the page. On
+    // the Legion, 2026-09-25, Valheim 1.0.15: every launch logged "Field
+    // not found: Heightmap/Biome EpicLoot.Adventure.BountyTargetConfig.
+    // Biome", against Epic Loot 0.14.13 AND against the 0.14.5 that
+    // "Valheim Collection" itself pins. Epic Loot has moved on under it.
+    // Switched off, that collection's launch was clean. A newer Bounties
+    // file will not match and installs as normal.
+    fileIds: [18119],
+    reason:
+      "This version of Bounties was built for an older Epic Loot, and on " +
+      "this version of Valheim it fails when the game starts (seen on " +
+      "this device). Everything else in the collection works without it.",
+  },
+  {
     nexusDomain: "palworld",
     modId: 524, // One of a Kind - Pal Variant Overhaul
     name: "One of a Kind - Pal Variant Overhaul",
