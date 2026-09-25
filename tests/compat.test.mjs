@@ -540,3 +540,20 @@ test("Valheim Enhanced: the three mods that fail every frame go in switched off"
   // A newer Adventure Backpacks is not convicted by this.
   assert.deepEqual(collectionAutoOff("valheim", [{ modId: 2204, fileId: 20000 }]), []);
 });
+
+test("Valheim Enhanced installs with exactly its six broken mods off", async () => {
+  const { collectionAutoOff } = await import("../.test-build/compat.js");
+  // The collection's pinned files, as the API lists them (2026-09-25).
+  const pinned = [
+    [1737, 17700], [2204, 18085], [2890, 18190], [2887, 17768], [1594, 17796],
+    [348, 17500], [2906, 18103], [1606, 14642], [2903, 18148], [2866, 18044],
+    [2141, 18086], [2901, 18207], [2067, 18142], [359, 16550], [2909, 18210],
+    [1138, 18076], [200, 18160], [1587, 7180], [2033, 16257], [2547, 18200],
+    [2447, 18136], [1806, 18072], [2509, 18089], [425, 18165], [1455, 18169],
+    [2536, 17995], [1030, 17848], [2150, 18000], [1042, 18100], [441, 15604],
+    [2875, 17693],
+  ].map(([modId, fileId]) => ({ modId, fileId }));
+  assert.deepEqual(
+    collectionAutoOff("valheim", pinned, "aevgug").map((o) => o.modId).sort((a, b) => a - b),
+    [425, 2067, 2204, 2875, 2887, 2906]);
+});

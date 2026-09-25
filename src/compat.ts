@@ -203,6 +203,35 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
   },
   {
     nexusDomain: "valheim",
+    modId: 2067, // Forsaken Powers Plus
+    name: "Forsaken Powers Plus",
+    // 1.3.8: its Player.Update patch calls a Character.Message overload
+    // 1.0.16 removed. 19,148 failures in one session, and because the
+    // player update stopped there every frame, no interacting, no manual
+    // pickup, no hotbar. Switched off, all three came back (Michael, on
+    // the Legion).
+    fileIds: [18142],
+    reason:
+      "This version breaks the player's update on the current version of " +
+      "Valheim, so you cannot interact with anything, pick things up or " +
+      "use the hotbar (seen on this device). Everything else in the " +
+      "collection works without it.",
+  },
+  {
+    nexusDomain: "valheim",
+    modId: 425, // Valheim Recycle
+    name: "Valheim Recycle",
+    // 4.0.0: its crafting screen patch calls an ItemData.GetTooltip
+    // overload 1.0.16 removed, 1,740 failures in one session. Switched off
+    // with Forsaken Powers Plus, crafting worked normally.
+    fileIds: [18165],
+    reason:
+      "This version fails in the crafting screen on the current version " +
+      "of Valheim, over and over (seen on this device). Everything else in " +
+      "the collection works without it.",
+  },
+  {
+    nexusDomain: "valheim",
     modId: 2204, // Adventure Backpacks
     name: "Adventure Backpacks",
     fileIds: [18085], // 1.7.9: 2,896 failures, invalid patch of crafting

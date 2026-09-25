@@ -27501,7 +27501,11 @@ query CollectionInstructions($slug: String!) {
             why = (f"Switched off by the plugin: it failed {n:,} times in "
                    "your last session, which usually means it was made for "
                    "an older version of the game or of a mod it builds on. "
-                   "Switch it back on here if you want to try it again.")
+                   # Not "here": the mod page has no switch, and a
+                   # collection's mods are switched under the collection in
+                   # My Mods (Michael, reading it on the mod page).
+                   "To try it again, switch it back on in My Mods, under "
+                   "its collection if it came with one.")
             r = await self.set_mod_enabled(
                 install_dir, mods_subdir, folder, False, "folder",
                 game_domain, app_id, "", "starred", why)
