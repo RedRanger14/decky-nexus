@@ -11341,6 +11341,246 @@ def _norm_mod_id(mod_id: str) -> str:
     return re.sub(r"[^a-z0-9]", "", mod_id.lower())
 
 
+# ---- BepInEx's own log: which mod broke, in its words ---------------------
+# Valheim, 2026-09-25: BetterUI (last updated 2021) loaded, failed inside
+# the start screen, and left it unable to start a world, while 6,600 errors
+# piled up in BepInEx/LogOutput.log. After a collection, Quick Stack did not
+# load at all ("incompatible with: virtuacode.valheim.trashitems") and
+# Bounties errored against a newer Epic Loot. Michael played and reported
+# "all seemed to work". Every one of those was in the log, by name.
+#
+# The log names a failed plugin by name, version and GUID, and an error by
+# the MVID of the assembly that threw it ("(at <925cad85...>:0)", which is
+# BetterUI.dll's module id, checked on the Legion). A plugin's DLL declares
+# its GUID, name and version together in its [BepInPlugin] attribute, so
+# that exact byte run finds the one DLL a log line means. The GUID alone
+# does not: Jotunn's appears in eight other mods, which depend on it.
+
+_BEPINEX_LOADING_RE = re.compile(
+    r"Loading \[(?P<name>.+) (?P<ver>\S+)\] \((?P<guid>[^)]+)\)")
+_BEPINEX_FAILED_RE = re.compile(
+    r"Could not load \[(?P<name>.+) (?P<ver>\S+)\] \((?P<guid>[^)]+)\) "
+    r"because (?P<reason>.+)$")
+_BEPINEX_ENTRY_RE = re.compile(r"^\[(?P<level>\w+)\s*:\s*(?P<source>[^\]]*)\]\s?(?P<msg>.*)$")
+_MVID_RE = re.compile(r"\(at <([0-9a-f]{32})>")
+# Exceptions that mean "made for a different build of the game": the thing
+# the mod changes is no longer there.
+_OUTDATED_EXCEPTIONS = ("MissingFieldException", "MissingMethodException",
+                        "TypeLoadException", "Undefined target method")
+_MVID_CACHE: dict = {}
+_BEPINEX_CACHE: dict = {}
+
+
+def _dotnet_mvid(path: str) -> str:
+    """A .NET assembly's module version id, as Mono prints it in a stack
+    trace (32 hex digits, .NET byte order). "" for anything unreadable."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = (path, st.st_size, int(st.st_mtime))
+    if key in _MVID_CACHE:
+        return _MVID_CACHE[key]
+    mvid = ""
+    try:
+        with open(path, "rb") as f:
+            b = f.read()
+        pe = struct.unpack_from("<I", b, 0x3C)[0]
+        if b[pe:pe + 4] == b"PE\0\0":
+            nsec = struct.unpack_from("<H", b, pe + 6)[0]
+            opt = pe + 24
+            magic = struct.unpack_from("<H", b, opt)[0]
+            dd = opt + (96 if magic == 0x10B else 112)
+            cli_rva = struct.unpack_from("<I", b, dd + 14 * 8)[0]
+            sec = opt + struct.unpack_from("<H", b, pe + 20)[0]
+            secs = [struct.unpack_from("<IIII", b, sec + 40 * i + 8)
+                    for i in range(nsec)]
+
+            def off(rva):
+                for vsize, va, rsize, raw in secs:
+                    if va <= rva < va + max(vsize, rsize):
+                        return rva - va + raw
+                raise ValueError("rva outside every section")
+
+            md = off(struct.unpack_from("<I", b, off(cli_rva) + 8)[0])
+            if b[md:md + 4] == b"BSJB":
+                p = md + 16 + struct.unpack_from("<I", b, md + 12)[0] + 2
+                n = struct.unpack_from("<H", b, p)[0]
+                p += 2
+                for _ in range(n):
+                    o, _sz = struct.unpack_from("<II", b, p)
+                    e = b.index(b"\0", p + 8)
+                    name = b[p + 8:e]
+                    p = (e + 4) & ~3
+                    if name == b"#GUID":
+                        g = b[md + o: md + o + 16]
+                        # Mono prints the Guid's .NET form, whose first
+                        # three fields are little-endian.
+                        mvid = (g[3::-1] + g[5:3:-1] + g[7:5:-1] + g[8:]).hex()
+                        break
+    except (OSError, ValueError, struct.error, IndexError):
+        mvid = ""
+    _MVID_CACHE[key] = mvid
+    return mvid
+
+
+def _ser_string(s: str) -> bytes:
+    """A string as a custom attribute blob stores it (ECMA-335 SerString)."""
+    b = s.encode("utf-8")
+    n = len(b)
+    if n < 0x80:
+        return bytes([n]) + b
+    if n < 0x4000:
+        return bytes([0x80 | (n >> 8), n & 0xFF]) + b
+    return bytes([0xC0 | (n >> 24), (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF]) + b
+
+
+def _bepinex_plugin_dlls(plugins_dir: str) -> list:
+    """[(folder, path)] for every DLL under BepInEx/plugins, folder being
+    the mod's top-level directory there (or the DLL itself, when loose)."""
+    out = []
+    for root, _dirs, names in os.walk(plugins_dir):
+        for n in names:
+            if n.lower().endswith(".dll"):
+                p = os.path.join(root, n)
+                rel = os.path.relpath(p, plugins_dir).replace(os.sep, "/")
+                out.append((rel.split("/")[0], p))
+    return out
+
+
+def _parse_bepinex_log(lines: list) -> dict:
+    """{"loaded": [(name, ver, guid)], "failed": [(name, ver, guid, reason)],
+    "errors": [(source, message, [mvid, ...])]} from LogOutput.log."""
+    loaded, failed, errors = [], [], []
+    current = None
+    for raw in lines:
+        line = raw.rstrip("\r\n")
+        m = _BEPINEX_ENTRY_RE.match(line)
+        if m:
+            current = None
+            msg, level = m.group("msg"), m.group("level").lower()
+            source = m.group("source").strip()
+            f = _BEPINEX_FAILED_RE.search(msg)
+            if f:
+                failed.append((f.group("name"), f.group("ver"),
+                               f.group("guid"), f.group("reason").strip()))
+                continue
+            lo = _BEPINEX_LOADING_RE.search(msg)
+            if lo and source == "BepInEx":
+                loaded.append((lo.group("name"), lo.group("ver"), lo.group("guid")))
+                continue
+            if level in ("error", "fatal"):
+                current = [source, msg.strip(), []]
+                errors.append(current)
+            continue
+        if current is not None:
+            current[2].extend(_MVID_RE.findall(line))
+    return {"loaded": loaded, "failed": failed, "errors": errors}
+
+
+def _bepinex_problems(install_path: str) -> dict:
+    """What BepInEx's last launch said about each installed mod folder.
+
+    {"available", "stale", "problems": {folder: {"state", "detail"}}}.
+    "stale" means mods were added, removed or switched off since that
+    launch, so the log describes a setup that no longer exists and nothing
+    is reported from it: after Michael removed Trash Items, Quick Stack's
+    "incompatible with Trash Items" was no longer true.
+    """
+    log = os.path.join(install_path, "BepInEx", "LogOutput.log")
+    plugins = os.path.join(install_path, "BepInEx", "plugins")
+    disabled = _disabled_dir(plugins)
+    try:
+        st = os.stat(log)
+    except OSError:
+        return {"available": False, "stale": False, "problems": {}}
+    changed = max((os.stat(p).st_mtime for p in (plugins, disabled)
+                   if os.path.isdir(p)), default=0)
+    if changed > st.st_mtime:
+        return {"available": True, "stale": True, "problems": {}}
+    key = (install_path, st.st_mtime, st.st_size, changed)
+    if key in _BEPINEX_CACHE:
+        return _BEPINEX_CACHE[key]
+    with open(log, "r", encoding="utf-8", errors="replace") as f:
+        parsed = _parse_bepinex_log(f.read().splitlines())
+    dlls = _bepinex_plugin_dlls(plugins)
+    blobs = {}
+
+    def folder_declaring(name, ver, guid):
+        want = _ser_string(guid) + _ser_string(name) + _ser_string(ver)
+        for folder, path in dlls:
+            if path not in blobs:
+                try:
+                    with open(path, "rb") as fh:
+                        blobs[path] = fh.read()
+                except OSError:
+                    blobs[path] = b""
+            if want in blobs[path]:
+                return folder
+        return None
+
+    by_mvid = {}
+    for folder, path in dlls:
+        mv = _dotnet_mvid(path)
+        if mv:
+            by_mvid.setdefault(mv, folder)
+    names_by_guid = {g: n for n, _v, g in parsed["loaded"]}
+    names_by_guid.update({g: n for n, _v, g, _r in parsed["failed"]})
+    # A plugin's own logger is named for it, so "[Error :Digitalroot.
+    # ValheimBounties]" is that plugin even with no stack trace.
+    by_source = {}
+    for name, ver, guid in parsed["loaded"]:
+        folder = folder_declaring(name, ver, guid)
+        if folder:
+            for s in (name, guid):
+                by_source[_norm_mod_id(s)] = folder
+    problems = {}
+    for name, ver, guid, reason in parsed["failed"]:
+        folder = folder_declaring(name, ver, guid)
+        if not folder:
+            continue
+        m = re.match(r"it (?:is incompatible with|has missing dependencies):\s*(.+)$",
+                     reason)
+        if m and "incompatible" in reason:
+            others = ", ".join(names_by_guid.get(g.strip(), g.strip())
+                               for g in m.group(1).split(","))
+            detail = f"Did not load: it cannot run alongside {others}."
+        elif m:
+            detail = ("Did not load: it needs "
+                      f"{m.group(1).strip()}, which is not installed.")
+        else:
+            detail = f"Did not load: {reason}"
+        problems[folder] = {"state": "failed", "detail": detail[:240]}
+    counts, first, outdated = {}, {}, set()
+    for source, message, mvids in parsed["errors"]:
+        folder = next((by_mvid[m] for m in mvids if m in by_mvid), None)
+        if folder is None:
+            folder = by_source.get(_norm_mod_id(source))
+        if not folder or folder in problems:
+            continue
+        counts[folder] = counts.get(folder, 0) + 1
+        first.setdefault(folder, message)
+        if any(x in message for x in _OUTDATED_EXCEPTIONS):
+            outdated.add(folder)
+    for folder, n in counts.items():
+        if folder in outdated:
+            detail = ("Errors last launch: it looks made for an older "
+                      "version of the game, which no longer has what it "
+                      "changes. Switching it off is the likely fix.")
+        else:
+            # The exception's name, for whoever reads the log next; the
+            # sentence is for the player.
+            kind = re.match(r"^([A-Za-z.]*(?:Exception|Error))\b", first[folder])
+            detail = (f"Hit {n} error{'s' if n != 1 else ''} last launch, so "
+                      "part of it may not be working"
+                      + (f" ({kind.group(1)})." if kind else "."))
+        problems[folder] = {"state": "errors", "detail": detail}
+    result = {"available": True, "stale": False, "problems": problems}
+    _BEPINEX_CACHE.clear()
+    _BEPINEX_CACHE[key] = result
+    return result
+
+
 def _parse_smapi_log(lines: list):
     """Parse SMAPI-latest.txt into per-mod load outcomes (format verified on
     device, SMAPI 4.5.2). Loaded mods appear under 'Loaded N mods:' as
@@ -26702,12 +26942,29 @@ query CollectionInstructions($slug: String!) {
                     "collection_slug": rec.get("collection_slug") or "",
                 }
             )
+        # What BepInEx said about each mod last launch, on the row itself:
+        # "all seemed to work" was the most anyone could tell otherwise.
+        load_log = {}
+        if mods_subdir.replace("\\", "/").strip("/").lower() == "bepinex/plugins":
+            try:
+                report = await asyncio.to_thread(_bepinex_problems, install_path)
+            except (OSError, ValueError) as e:
+                decky.logger.warning(f"BepInEx log unreadable: {e}")
+                report = {"available": False, "stale": False, "problems": {}}
+            load_log = {"available": report["available"],
+                        "stale": report["stale"]}
+            for r in results:
+                p = report["problems"].get(r["folder"]) if r["enabled"] else None
+                if p:
+                    r["load_problem"] = p["detail"]
+                    r["load_state"] = p["state"]
         # Stable alphabetical order regardless of enabled state - toggling a
         # mod must not make it jump around the list.
         results.sort(key=lambda m: (m["name"] or m["folder"]).lower())
         settings_now = _load_settings()
         return {
             "ok": True,
+            **({"load_log": load_log} if load_log else {}),
             "mods": results,
             "collections": settings_now.get("collections", {}).get(
                 game_domain, {}

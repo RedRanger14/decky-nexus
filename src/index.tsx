@@ -2811,13 +2811,39 @@ function InstalledModsSection() {
           />
         </PanelSectionRow>
       )}
+      {/* Every mod the loader complained about, however far down the list:
+          the rows below stop at five, and on Valheim the two that broke
+          were rows 20 and 21. */}
+      {(() => {
+        const troubled = (mods ?? []).filter(
+          (m) => m.enabled && m.load_problem
+        );
+        if (troubled.length === 0) return null;
+        return (
+          <PanelSectionRow>
+            <Field
+              label={`⚠ ${troubled.length} mod${
+                troubled.length === 1 ? "" : "s"
+              } had problems last launch`}
+              description={
+                troubled.map((m) => m.name ?? m.folder).join(", ") +
+                ". Manage my mods says what each one hit, with its switch."
+              }
+            />
+          </PanelSectionRow>
+        );
+      })()}
       {/* Collections make this list enormous - cap the QAM at 5 rows and
           hand the rest to the full-screen manager. */}
       {(mods ?? []).slice(0, 5).map((mod) => {
         const load = mod.enabled ? loadStateFor(mod.folder) : undefined;
         const update = updates?.[mod.folder];
         const badge =
-          (load === undefined
+          (mod.enabled && mod.load_state
+            ? mod.load_state === "failed"
+              ? " · did not load ⚠"
+              : " · errors last launch ⚠"
+            : load === undefined
             ? ""
             : load.state === "loaded"
             ? " · loaded ✓"

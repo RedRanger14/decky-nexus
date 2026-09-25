@@ -165,6 +165,11 @@ export interface InstalledMod {
    * this, so "why is this disabled?" gets answered by turning it back on -
    * which is how a device ended up not booting. */
   disabled_reason?: string;
+  /** What the mod loader said about this mod on the last launch, when it
+   * was a problem (BepInEx games): it did not load, or it hit errors.
+   * Nothing here after mods change, until the next launch. */
+  load_problem?: string;
+  load_state?: "failed" | "errors";
   /** "collection" when installed as part of a collection */
   source?: string;
   /** Which collection (registered via registerCollection) */
@@ -187,6 +192,9 @@ export interface InstalledResult {
   collections?: Record<string, InstalledCollectionInfo>;
   /** slug -> pending manual decisions (the Finish-setup queue) */
   attention?: Record<string, AttentionItem[]>;
+  /** Whether a loader log was read at all, and whether mods changed since
+   * it was written (BepInEx games). */
+  load_log?: { available: boolean; stale: boolean };
   error?: string;
 }
 

@@ -227,6 +227,21 @@ function ModRow({
             {mod.warning}
           </div>
         )}
+        {/* What the game's mod loader said on the last launch. Valheim:
+            BetterUI broke the start screen and Quick Stack never loaded,
+            and in game both looked like "all seemed to work". */}
+        {mod.enabled && mod.load_problem && (
+          <div
+            style={{
+              fontSize: "11px",
+              marginTop: "2px",
+              lineHeight: 1.3,
+              color: NEXUS_ORANGE,
+            }}
+          >
+            ⚠ {mod.load_problem}
+          </div>
+        )}
         {busy && busyNote ? (
           <div
             style={{

@@ -23795,3 +23795,135 @@ class TestThunderstoreRequirementLinks(unittest.TestCase):
         raw = [{"modName": "Jotunn", "modId": "42",
                 "url": "https://thunderstore.io/c/valheim/p/ValheimModding/Jotunn/"}]
         self.assertEqual(main._normalize_requirements(raw)[0]["modId"], 42)
+
+
+def _fake_dotnet_dll(raw_mvid: bytes, extra: bytes = b"") -> bytes:
+    """The smallest PE a CLI reader accepts: one section holding a CLI
+    header and a metadata root whose #GUID stream starts with `raw_mvid`.
+    `extra` rides along after it, as an attribute blob would."""
+    sec_rva, sec_raw = 0x2000, 0x200
+    cli_off = 0                      # within the section
+    md_off = 0x48
+    version = b"v4.0.30319\x00\x00"  # 12 bytes, a multiple of 4
+    guid_rel = 0x20 + len(version) + 16 + 8
+    stream_hdr = struct.pack("<II", guid_rel, 16) + b"#GUID\x00\x00\x00"
+    md = (b"BSJB" + struct.pack("<HHI", 1, 1, 0) + struct.pack("<I", len(version))
+          + version + struct.pack("<HH", 0, 1) + stream_hdr)
+    md += b"\x00" * (guid_rel - len(md)) + raw_mvid
+    cli = struct.pack("<IHH", 0x48, 2, 5) + struct.pack("<II", sec_rva + md_off, len(md))
+    section = bytearray(0x400)
+    section[cli_off:cli_off + len(cli)] = cli
+    section[md_off:md_off + len(md)] = md
+    section = bytes(section) + extra
+    pe = 0x80
+    head = bytearray(sec_raw)
+    head[:2] = b"MZ"
+    struct.pack_into("<I", head, 0x3C, pe)
+    head[pe:pe + 4] = b"PE\x00\x00"
+    opt_size = 224
+    struct.pack_into("<HHIIIHH", head, pe + 4, 0x14C, 1, 0, 0, 0, opt_size, 0x2102)
+    opt = pe + 24
+    struct.pack_into("<H", head, opt, 0x10B)
+    struct.pack_into("<II", head, opt + 96 + 14 * 8, sec_rva + cli_off, 0x48)
+    s = opt + opt_size
+    head[s:s + 8] = b".text\x00\x00\x00"
+    struct.pack_into("<IIII", head, s + 8, len(section), sec_rva, len(section), sec_raw)
+    return bytes(head) + section
+
+
+class TestBepInExLogReader(unittest.TestCase):
+    """What BepInEx said last launch, on the mod's own row.
+
+    Valheim on the Legion, 2026-09-25: BetterUI broke the start screen,
+    Quick Stack never loaded, Unrestricted Portals threw on every world
+    load, and Michael reported "all seemed to work". All of it was in
+    BepInEx/LogOutput.log. The log lines below are the real ones.
+    """
+
+    BETTERUI_RAW = bytes.fromhex("85ad5c929d58844283fafbda1876b30d")
+    BETTERUI_MVID = "925cad85589d428483fafbda1876b30d"  # as the log prints it
+
+    @staticmethod
+    def _decl(guid, name, ver):
+        return (main._ser_string(guid) + main._ser_string(name)
+                + main._ser_string(ver))
+
+    def setUp(self):
+        main._BEPINEX_CACHE.clear()
+        self.game = os.path.join(tempfile.mkdtemp(dir=TEST_ROOT), "Valheim")
+        self.plugins = os.path.join(self.game, "BepInEx", "plugins")
+        os.makedirs(self.plugins)
+
+    def _dll(self, folder, name, raw_mvid, extra=b""):
+        d = os.path.join(self.plugins, folder)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, name), "wb") as f:
+            f.write(_fake_dotnet_dll(raw_mvid, extra))
+
+    def _log(self, text):
+        p = os.path.join(self.game, "BepInEx", "LogOutput.log")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        # The launch happened after the mods went in.
+        future = time.time() + 5
+        os.utime(p, (future, future))
+
+    def test_the_module_id_is_read_the_way_mono_prints_it(self):
+        self._dll("BetterUI", "BetterUI.dll", self.BETTERUI_RAW)
+        self.assertEqual(
+            main._dotnet_mvid(os.path.join(self.plugins, "BetterUI", "BetterUI.dll")),
+            self.BETTERUI_MVID)
+
+    def test_an_outdated_mod_is_named_from_its_stack_trace(self):
+        self._dll("BetterUI", "BetterUI.dll", self.BETTERUI_RAW)
+        self._log(
+            "[Error  : Unity Log] MissingFieldException: Field not found: "
+            "UnityEngine.UI.Text .FejdStartup.m_versionLabel Due to: Could not find field in class\n"
+            "Stack trace:\n"
+            f"BetterUI.GameClasses.BetterFejdStartup.AddWaterMark (FejdStartup& __instance) (at <{self.BETTERUI_MVID}>:0)\n"
+            "(wrapper dynamic-method) FejdStartup.DMD<FejdStartup::SetupGui>(FejdStartup)\n\n"
+            "[Error  : Unity Log] NullReferenceException: Object reference not set to an instance of an object\n"
+            "Stack trace:\n"
+            "SteamworksMatchmaking.Tick () (at <62066124cb204e3c9a89c7a2e23a9918>:0)\n")
+        p = main._bepinex_problems(self.game)["problems"]
+        self.assertEqual(list(p), ["BetterUI"], "the game's own error was pinned on a mod")
+        self.assertEqual(p["BetterUI"]["state"], "errors")
+        self.assertIn("older version of the game", p["BetterUI"]["detail"])
+
+    def test_a_mod_that_did_not_load_is_found_by_its_declaration(self):
+        qs = ("goldenrevolver.quick_stack_store",
+              "Quick Stack - Store - Sort - Trash - Restock", "1.4.15")
+        self._dll("Quick Stack", "QuickStackStore.dll", bytes(16), self._decl(*qs))
+        # Another mod that merely mentions its GUID (a soft dependency),
+        # the way eight mods mention Jotunn's.
+        self._dll("Other", "Other.dll", b"\x01" * 16, main._ser_string(qs[0]))
+        self._log(
+            "[Info   :   BepInEx] Loading [Trash Items Mod 1.2.8] (virtuacode.valheim.trashitems)\n"
+            "[Error  :   BepInEx] Could not load [Quick Stack - Store - Sort - Trash - Restock 1.4.15] "
+            "(goldenrevolver.quick_stack_store) because it is incompatible with: "
+            "virtuacode.valheim.trashitems\n")
+        p = main._bepinex_problems(self.game)["problems"]
+        self.assertEqual(list(p), ["Quick Stack"])
+        self.assertEqual(p["Quick Stack"]["state"], "failed")
+        self.assertIn("cannot run alongside Trash Items Mod", p["Quick Stack"]["detail"])
+
+    def test_nothing_is_said_after_the_mods_change(self):
+        self._dll("BetterUI", "BetterUI.dll", self.BETTERUI_RAW)
+        self._log(f"[Error  : Unity Log] MissingFieldException: x\n(at <{self.BETTERUI_MVID}>:0)\n")
+        past = time.time() - 60
+        os.utime(os.path.join(self.game, "BepInEx", "LogOutput.log"), (past, past))
+        r = main._bepinex_problems(self.game)
+        self.assertTrue(r["stale"])
+        self.assertEqual(r["problems"], {})
+
+    def test_the_row_carries_it(self):
+        self._dll("BetterUI", "BetterUI.dll", self.BETTERUI_RAW)
+        self._log(f"[Error  : Unity Log] MissingMethodException: x\n(at <{self.BETTERUI_MVID}>:0)\n")
+        with mock.patch.object(main, "_game_dir", lambda _d: self.game), \
+                mock.patch.object(main, "_game_paths", lambda _d, s: (
+                    self.game, self.plugins, main._disabled_dir(self.plugins))):
+            r = run(main.Plugin().get_installed_mods(
+                "valheim", "Valheim", "BepInEx/plugins"))
+        row = next(m for m in r["mods"] if m["folder"] == "BetterUI")
+        self.assertEqual(row["load_state"], "errors")
+        self.assertEqual(r["load_log"], {"available": True, "stale": False})
