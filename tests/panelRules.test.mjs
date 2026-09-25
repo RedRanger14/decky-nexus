@@ -1888,3 +1888,29 @@ test("an ordinary framework still needs its mod page", () => {
   assert.equal(frameworkInstallable({}), false);
   assert.equal(frameworkInstallable(undefined), false);
 });
+
+test("a mod you already had at another version is named (Valheim, Epic Loot)", async () => {
+  const { pinnedVersionDiffs } = await import("../.test-build/panelRules.js");
+  const files = [
+    { modId: 387, fileId: 22100, modName: "Epic Loot", version: "0.14.5" },
+    { modId: 1401, fileId: 18119, modName: "Bounties", version: "3.0.18" },
+    { modId: 1138, fileId: 22900, modName: "Jotunn", version: "2.30.0" },
+    { modId: 3605, fileId: 23245, modName: "BepInExPack_Valheim", version: "5.4.2351" },
+    { modId: 92, fileId: 22144, modName: "Equipment and Quick Slots", version: "3.1.3" },
+  ];
+  const installed = [
+    { mod_id: 387, file_id: 23239, version: "0.14.13", collection_slug: "" },
+    // Installed by THIS collection: its own file, not a clash.
+    { mod_id: 1401, file_id: 18000, version: "3.0.17", collection_slug: "snvpr8" },
+    { mod_id: 1138, file_id: 22970, version: "2.30.2", collection_slug: "" },
+    // A loader is Step 1's business.
+    { mod_id: 3605, file_id: 21340, version: "5.4.2350" },
+    // Same file: nothing to say.
+    { mod_id: 92, file_id: 22144, version: "3.1.3" },
+  ];
+  const d = pinnedVersionDiffs(files, installed, "snvpr8", new Set([3605]));
+  assert.deepEqual(d.map((x) => [x.modName, x.have, x.pinned]), [
+    ["Epic Loot", "0.14.13", "0.14.5"],
+    ["Jotunn", "2.30.2", "2.30.0"],
+  ]);
+});

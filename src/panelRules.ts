@@ -1507,3 +1507,70 @@ export function frameworkInstallable(fw?: {
   if (SELF_SOURCED_FRAMEWORK_KINDS.has(fw.installKind ?? "")) return true;
   return Boolean(fw.nexusModId);
 }
+
+/** Mods you already had that the collection pins at a different file.
+ *
+ * A collection counts a mod as done when ANY version of it is installed,
+ * so its pinned file never goes in. Valheim, 2026-09-25: "Valheim
+ * Collection" pins Epic Loot 0.14.5, the user already had 0.14.13, and the
+ * collection's Bounties, built against 0.14.5, errored on the newer one.
+ * The curator's versions are what was put together; a different one can
+ * stop the mods that lean on it. Returned per mod (its first pinned file)
+ * so the page can offer the collection's versions in one tap.
+ *
+ * Loaders are excluded (Step 1 owns them), and so are mods this same
+ * collection installed: those are its own files, not a clash.
+ */
+export function pinnedVersionDiffs(
+  files: {
+    modId: number;
+    fileId: number;
+    modName: string;
+    fileName?: string;
+    version?: string;
+    optional?: boolean;
+  }[],
+  installed: {
+    mod_id?: number;
+    file_id?: number;
+    version?: string;
+    collection_slug?: string;
+  }[],
+  slug: string,
+  loaderIds: Set<number>
+): {
+  modId: number;
+  fileId: number;
+  modName: string;
+  fileName: string;
+  pinned: string;
+  have: string;
+}[] {
+  const pinnedByMod = new Map<number, Set<number>>();
+  for (const f of files) {
+    if (!pinnedByMod.has(f.modId)) pinnedByMod.set(f.modId, new Set());
+    pinnedByMod.get(f.modId)!.add(f.fileId);
+  }
+  const mine = new Map<number, (typeof installed)[number]>();
+  for (const m of installed) {
+    if (m.mod_id !== undefined && m.file_id !== undefined) mine.set(m.mod_id, m);
+  }
+  const out: ReturnType<typeof pinnedVersionDiffs> = [];
+  const seen = new Set<number>();
+  for (const f of files) {
+    if (seen.has(f.modId) || loaderIds.has(f.modId)) continue;
+    const have = mine.get(f.modId);
+    if (!have || have.collection_slug === slug) continue;
+    if (pinnedByMod.get(f.modId)!.has(have.file_id!)) continue;
+    seen.add(f.modId);
+    out.push({
+      modId: f.modId,
+      fileId: f.fileId,
+      modName: f.modName,
+      fileName: f.fileName ?? "",
+      pinned: f.version ?? "",
+      have: have.version ?? "",
+    });
+  }
+  return out;
+}

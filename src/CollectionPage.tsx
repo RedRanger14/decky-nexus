@@ -34,7 +34,8 @@ import {
   splitOutstanding,
   launchOptionsAppliedNote,
   loadersInstalledNote,
-  unavailableNote,} from "./panelRules";
+  unavailableNote,
+  pinnedVersionDiffs,} from "./panelRules";
 
 import {
   bg3DisableBrokenDeps,
@@ -115,6 +116,7 @@ import {
   ACTION_ROW,
   actionColumnWidth,
   BLUE_BUTTON_CLASS,
+  NEXUS_ORANGE,
   PAGE_SCROLLER,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
@@ -157,6 +159,12 @@ export function CollectionPage() {
     };
   }, []);
   const [installedIds, setInstalledIds] = useState<Set<number>>(new Set());
+  // The installed rows themselves, for which FILE of a mod is in: the ids
+  // alone cannot tell a collection's pinned version from the user's own.
+  const [installedRows, setInstalledRows] = useState<
+    { mod_id?: number; file_id?: number; version?: string; collection_slug?: string }[]
+  >([]);
+  const [swapping, setSwapping] = useState(false);
   // Every Nexus id that IS one of this game's mod loaders. They never go
   // through the ordinary installer, so they are held out of the download
   // queue - but they are NOT assumed installed. See splitOutstanding.
@@ -308,6 +316,7 @@ export function CollectionPage() {
             )
           : []
       );
+      setInstalledRows(r.mods ?? []);
       setInstalledIds(
         new Set([
           ...(r.mods ?? [])
@@ -940,6 +949,52 @@ export function CollectionPage() {
     ),
     loaderIds
   ).mods;
+  // Mods the user already had, at a version other than the one this
+  // collection pins. Counted as installed, so the pinned file never went
+  // in: Valheim's Bounties broke on the user's newer Epic Loot this way.
+  const versionDiffs = pinnedVersionDiffs(
+    (detail?.files ?? []).filter(
+      (f) => !f.domain || f.domain === game.nexusDomain
+    ),
+    installedRows,
+    collection.slug,
+    loaderIds
+  );
+  const useCollectionVersions = async () => {
+    if (swapping || versionDiffs.length === 0) return;
+    setSwapping(true);
+    const failed: string[] = [];
+    try {
+      for (const d of versionDiffs) {
+        try {
+          const r = await installPinned(
+            game,
+            d.modId,
+            d.fileId,
+            d.fileName,
+            d.modName,
+            d.pinned,
+            collection.slug,
+            ""
+          );
+          if (!r.ok) failed.push(d.modName);
+        } catch {
+          failed.push(d.modName);
+        }
+      }
+    } finally {
+      setSwapping(false);
+      refreshInstalled();
+    }
+    toaster.toast({
+      title: failed.length
+        ? `${versionDiffs.length - failed.length} of ${versionDiffs.length} switched`
+        : `Now using the collection's version${versionDiffs.length === 1 ? "" : "s"}`,
+      body: failed.length
+        ? `Could not switch: ${failed.join(", ")}`
+        : "Launch the game to check everything loads",
+    });
+  };
   // "Resume" only makes sense for a run THIS page started - already
   // owning some of a collection's mods individually is not a resume.
   const partialFromRun = runIsOurs && !run!.running && run!.finished > 0;
@@ -2339,6 +2394,48 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               })()}
             </div>
           )}
+        {versionDiffs.length > 0 && !installing && (
+          <Focusable
+            onActivate={useCollectionVersions}
+            style={{
+              fontSize: "12.5px",
+              margin: "-6px 0 12px",
+              padding: "8px 10px",
+              borderRadius: "4px",
+              lineHeight: 1.45,
+              background: "rgba(218, 142, 53, 0.12)",
+              border: "1px solid rgba(218, 142, 53, 0.4)",
+            }}
+          >
+            <div>
+              ⚠ {versionDiffs.length} mod
+              {versionDiffs.length === 1 ? "" : "s"} you already had{" "}
+              {versionDiffs.length === 1 ? "is" : "are"} a different version
+              from the one this collection was put together with:{" "}
+              {versionDiffs
+                .slice(0, 6)
+                .map(
+                  (d) =>
+                    `${d.modName} (yours ${d.have || "?"}, the collection's ${
+                      d.pinned || "?"
+                    })`
+                )
+                .join(", ")}
+              {versionDiffs.length > 6
+                ? ` and ${versionDiffs.length - 6} more`
+                : ""}
+              . Other mods in the collection can depend on its exact
+              versions.
+            </div>
+            <div style={{ marginTop: "6px", fontWeight: 700, color: NEXUS_ORANGE }}>
+              {swapping
+                ? "Switching…"
+                : `Press to use the collection's version${
+                    versionDiffs.length === 1 ? "" : "s"
+                  }`}
+            </div>
+          </Focusable>
+        )}
         {brokenSkips.length > 0 && !installing && (
           <div
             style={{
