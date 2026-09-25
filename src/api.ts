@@ -1038,6 +1038,19 @@ export const getInstalledMods = callable<
   InstalledResult
 >("get_installed_mods");
 
+/** After a session: switch off the mods BepInEx says failed constantly,
+ * with the reason on each. Called when the game exits. */
+export const parkFailingMods = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    mods_subdir: string,
+    app_id: number,
+    process_name: string
+  ],
+  { ok: boolean; parked?: { name: string; errors: number }[]; error?: string }
+>("park_failing_mods");
+
 export const setModEnabled = callable<
   [
     install_dir: string,

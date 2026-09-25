@@ -26993,6 +26993,9 @@ query CollectionInstructions($slug: String!) {
                         "source": (rec or {}).get("source") or "",
                         "collection_slug": (rec or {}).get("collection_slug")
                         or "",
+                        **({"disabled_reason": rec["disabled_reason"]}
+                           if not enabled and (rec or {}).get("disabled_reason")
+                           else {}),
                     }
                 )
 
@@ -27379,6 +27382,17 @@ query CollectionInstructions($slug: String!) {
         if os.path.isdir(dst):
             return {"ok": False, "error": f"{folder} already exists in {dst_base}"}
         os.rename(src, dst)
+        # Why the PLUGIN switched it off, kept for My Mods and the mod page.
+        # Folder mods dropped it: BetterUI's reason never reached a row.
+        if game_domain:
+            settings = _load_settings()
+            frec = settings.get("installed", {}).get(game_domain, {}).get(folder)
+            if frec is not None:
+                if enabled:
+                    frec.pop("disabled_reason", None)
+                elif reason:
+                    frec["disabled_reason"] = str(reason)
+                _save_settings(settings)
         # Launcher-selected modules (Bannerlord): keep LauncherData.xml in
         # step so the launcher doesn't re-run a disabled module.
         if rec and rec.get("moduleId") and rec.get("launcherXml"):
@@ -27389,6 +27403,60 @@ query CollectionInstructions($slug: String!) {
             )
         decky.logger.info(f"{'enabled' if enabled else 'disabled'} mod {folder!r}")
         return {"ok": True}
+
+    async def park_failing_mods(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        app_id: int = 0, process_name: str = "",
+    ) -> dict:
+        """After a session: switch off every mod BepInEx says failed
+        constantly, with the reason on the mod. Called when the game exits.
+
+        The default is that the plugin deals with it. On Valheim Enhanced
+        three mods failed 25,000 times between them, left the player stuck
+        in first person, and the first fix offered was a button. Michael:
+        "These problem mods should be disabled ... so the user doesnt have
+        to do anything." Only CONSTANT failure counts (a mod failing every
+        frame), never a single startup error, and never while the game is
+        still running. Returns {"parked": [{"name", "errors"}]}.
+        """
+        if mods_subdir.replace("\\", "/").strip("/").lower() != "bepinex/plugins":
+            return {"ok": True, "parked": []}
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        # The exit notification can arrive while the process is still
+        # tearing down. Mod folders are not touched until it has gone.
+        for _ in range(40):
+            if not process_name or not await _is_process_running(process_name):
+                break
+            await asyncio.sleep(0.5)
+        else:
+            return {"ok": True, "parked": [], "still_running": True}
+        install_path = _game_dir(install_dir)
+        report = await asyncio.to_thread(_bepinex_problems, install_path)
+        if report["stale"]:
+            return {"ok": True, "parked": []}
+        records = _load_settings().get("installed", {}).get(game_domain, {})
+        parked = []
+        for folder, p in sorted(report["problems"].items(),
+                                key=lambda kv: -kv[1].get("count", 0)):
+            n = p.get("count", 0)
+            if p["state"] != "errors" or n < BEPINEX_CONSTANT_ERRORS:
+                continue
+            name = (records.get(folder) or {}).get("name") or folder
+            why = (f"Switched off by the plugin: it failed {n:,} times in "
+                   "your last session, which usually means it was made for "
+                   "an older version of the game or of a mod it builds on. "
+                   "Switch it back on here if you want to try it again.")
+            r = await self.set_mod_enabled(
+                install_dir, mods_subdir, folder, False, "folder",
+                game_domain, app_id, "", "starred", why)
+            if r.get("ok"):
+                parked.append({"name": name, "errors": n})
+        if parked:
+            _BEPINEX_CACHE.clear()
+            decky.logger.info(
+                f"{game_domain}: switched off after the session: {parked}")
+        return {"ok": True, "parked": parked}
 
     async def set_all_mods_enabled(
         self,

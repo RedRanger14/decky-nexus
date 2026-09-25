@@ -77,6 +77,7 @@ import {
   enforceSkips,
   fixLoadOrder,
   getInstalledCount,
+  parkFailingMods,
   getLoadOrderState,
   getPrefixRuntimeState,
   getScriptExtenderState,
@@ -2405,80 +2406,59 @@ function CurrentGameSection() {
   );
 }
 
-/** Mods the loader complained about last launch, worst first, with one
- * press to switch off the ones failing constantly. Valheim Enhanced left
- * the player stuck in first person under a "Some text." overlay: three mods
- * failed 25,000 times between them, beside six that hit one error each. */
-const CONSTANT_ERRORS = 100;
+/** What the mod loader said about the last session: mods the plugin
+ * switched off because they failed constantly (it does that itself when
+ * the game closes), and mods that still had problems. Information only.
+ * Michael: the answer to a problem mod is not a button, it is the plugin
+ * dealing with it. */
 function LoadProblemsSummary({
   items,
-  onChanged,
+  parked,
 }: {
   items: { game: SupportedGame; mod: InstalledMod; showGame?: boolean }[];
-  onChanged: () => void;
+  parked: { game: SupportedGame; mod: InstalledMod; showGame?: boolean }[];
 }) {
-  const [busy, setBusy] = useState(false);
-  if (items.length === 0) return null;
+  if (items.length === 0 && parked.length === 0) return null;
+  const label = (i: (typeof items)[number]) =>
+    (i.mod.name ?? i.mod.folder) + (i.showGame ? ` (${i.game.displayName})` : "");
   const sorted = [...items].sort(
     (a, b) => (b.mod.load_errors ?? 0) - (a.mod.load_errors ?? 0)
   );
-  const constant = sorted.filter(
-    (i) => (i.mod.load_errors ?? 0) >= CONSTANT_ERRORS
-  );
-  const label = (i: (typeof items)[number]) =>
-    (i.mod.name ?? i.mod.folder) + (i.showGame ? ` (${i.game.displayName})` : "");
-  const switchOff = async () => {
-    setBusy(true);
-    const failed: string[] = [];
-    try {
-      for (const i of constant) {
-        const r = await toggleMod(i.game, i.mod.folder, false);
-        if (!r.ok) failed.push(label(i));
-      }
-    } finally {
-      setBusy(false);
-      onChanged();
-    }
-    toaster.toast({
-      title: failed.length
-        ? `Could not switch off ${failed.join(", ")}`
-        : `Switched off ${constant.length} mod${constant.length === 1 ? "" : "s"}`,
-      body: "Switch any back on in Manage my mods",
-    });
-  };
   return (
     <>
-      <PanelSectionRow>
-        <Field
-          label={`⚠ ${items.length} mod${
-            items.length === 1 ? "" : "s"
-          } had problems last launch`}
-          description={
-            (constant.length > 0
-              ? `Failing constantly: ${constant.map(label).join(", ")}. `
-              : "") +
-            (sorted.length > constant.length
-              ? `${constant.length > 0 ? "Also: " : ""}${sorted
-                  .slice(constant.length)
-                  .map(label)
-                  .join(", ")}. `
-              : "") +
-            "Manage my mods says what each one hit."
-          }
-        />
-      </PanelSectionRow>
-      {constant.length > 0 && (
+      {parked.length > 0 && (
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy} onClick={switchOff}>
-            {busy
-              ? "Switching off…"
-              : `Switch off the ${constant.length} failing constantly`}
-          </ButtonItem>
+          <Field
+            label={`Switched off ${parked.length} mod${
+              parked.length === 1 ? "" : "s"
+            } that kept failing`}
+            description={
+              parked.map(label).join(", ") +
+              ". Each one says why in Manage my mods, where it can be " +
+              "switched back on."
+            }
+          />
+        </PanelSectionRow>
+      )}
+      {sorted.length > 0 && (
+        <PanelSectionRow>
+          <Field
+            label={`⚠ ${sorted.length} mod${
+              sorted.length === 1 ? "" : "s"
+            } had problems last launch`}
+            description={
+              sorted.map(label).join(", ") +
+              ". Manage my mods says what each one hit."
+            }
+          />
         </PanelSectionRow>
       )}
     </>
   );
 }
+
+/** Switched off by the plugin after a session, as opposed to by the user. */
+const PLUGIN_PARKED_PREFIX = "Switched off by the plugin";
 
 function AllInstalledModsSection() {
   // Neutral/unsupported contexts: a collapsed accordion of every installed
@@ -2547,7 +2527,15 @@ function AllInstalledModsSection() {
     <PanelSection title="Installed Mods">
       <LoadProblemsSummary
         items={troubled.map((t) => ({ ...t, showGame: true }))}
-        onChanged={refresh}
+        parked={byGame.flatMap(({ game, mods }) =>
+          mods
+            .filter(
+              (m) =>
+                !m.enabled &&
+                m.disabled_reason?.startsWith(PLUGIN_PARKED_PREFIX)
+            )
+            .map((m) => ({ game, mod: m, showGame: true }))
+        )}
       />
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={() => setExpanded(!expanded)}>
@@ -2924,7 +2912,12 @@ function InstalledModsSection() {
         items={(mods ?? [])
           .filter((m) => m.enabled && m.load_problem)
           .map((m) => ({ game, mod: m }))}
-        onChanged={refresh}
+        parked={(mods ?? [])
+          .filter(
+            (m) =>
+              !m.enabled && m.disabled_reason?.startsWith(PLUGIN_PARKED_PREFIX)
+          )
+          .map((m) => ({ game, mod: m }))}
       />
       {/* Collections make this list enormous - cap the QAM at 5 rows and
           hand the rest to the full-screen manager. */}
@@ -4565,6 +4558,33 @@ export default definePlugin(() => {
     const game = getSupportedGame(e.unAppID);
     if (!game) return;
     if (!e.bRunning) {
+      // Mods that failed constantly this session go off now, not after
+      // the user notices and hunts for a switch: the plugin's job, not
+      // theirs (Valheim Enhanced, three mods, 25,000 failures).
+      if (game.modsSubdir.toLowerCase() === "bepinex/plugins") {
+        parkFailingMods(
+          game.nexusDomain,
+          game.installDirName,
+          game.modsSubdir,
+          game.appId,
+          game.processName ?? ""
+        )
+          .then((r) => {
+            const parked = r.ok ? r.parked ?? [] : [];
+            if (parked.length === 0) return;
+            notifyGameStateChanged();
+            toaster.toast({
+              title: `Switched off ${parked.length} mod${
+                parked.length === 1 ? "" : "s"
+              } that failed while you played`,
+              body:
+                parked.map((m) => m.name).join(", ") +
+                ". Each one says why in My Mods.",
+              duration: 12000,
+            });
+          })
+          .catch(() => {});
+      }
       // Bethesda games rewrite Plugins.txt themselves: Skyrim switched
       // two deliberately-skipped mods back on mid-run and crashed on the
       // next launch. Re-asserting on exit means whatever the game did to

@@ -527,3 +527,16 @@ test("Valheim: Bounties 3.0.18 goes in switched off, a newer file would not", as
   assert.match(off[0].reason, /older Epic Loot/);
   assert.deepEqual(collectionAutoOff("valheim", [{ modId: 1401, fileId: 99999 }]), []);
 });
+
+test("Valheim Enhanced: the three mods that fail every frame go in switched off", async () => {
+  const { collectionAutoOff } = await import("../.test-build/compat.js");
+  const pinned = [
+    { modId: 2906, fileId: 18103 }, { modId: 2875, fileId: 17693 },
+    { modId: 2204, fileId: 18085 }, { modId: 1138, fileId: 18076 },
+  ];
+  assert.deepEqual(
+    collectionAutoOff("valheim", pinned, "aevgug").map((o) => o.modId).sort(),
+    [2204, 2875, 2906]);
+  // A newer Adventure Backpacks is not convicted by this.
+  assert.deepEqual(collectionAutoOff("valheim", [{ modId: 2204, fileId: 20000 }]), []);
+});

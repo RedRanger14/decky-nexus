@@ -24075,3 +24075,40 @@ class TestBepInExBlamesWhereTheErrorStarted(TestBepInExLogReader):
         p = main._bepinex_problems(self.game)["problems"]["Adventure Backpacks"]
         self.assertEqual(p["count"], 150)
         self.assertIn("Failed 150 times while you played", p["detail"])
+
+
+class TestFailingModsAreParkedAfterASession(TestBepInExLogReader):
+    """The default is the plugin deals with it: a mod that failed every
+    frame goes off when the game closes, with its reason on the mod.
+    A single startup error never does."""
+
+    def test_constant_failure_is_switched_off_with_its_reason(self):
+        self._dll("Atzes Build Camera", "BuildCamera.dll", self.BETTERUI_RAW)
+        self._dll("Quiet", "Quiet.dll", bytes.fromhex("22" * 16))
+        quiet = main._dotnet_mvid(os.path.join(self.plugins, "Quiet", "Quiet.dll"))
+        block = (f"[Error  : Unity Log] NullReferenceException: x\nStack trace:\n"
+                 f"Build_Camera.Valheim_Build_Camera.UpdateCamera () (at <{self.BETTERUI_MVID}>:0)\n\n")
+        self._log(block * 120 + f"[Error  : Unity Log] NullReferenceException: y\nStack trace:\n"
+                  f"Quiet.Main.Awake () (at <{quiet}>:0)\n")
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["valheim"] = {
+            "Atzes Build Camera": {"name": "Atze's Build Camera", "mod_id": 2906},
+            "Quiet": {"name": "Quiet", "mod_id": 1},
+        }
+        main._save_settings(settings)
+        with mock.patch.object(main, "_game_dir", lambda _d: self.game), \
+                mock.patch.object(main, "_game_paths", lambda _d, s: (
+                    self.game, self.plugins, main._disabled_dir(self.plugins))):
+            r = run(main.Plugin().park_failing_mods(
+                "valheim", "Valheim", "BepInEx/plugins", 892970, ""))
+            rows = run(main.Plugin().get_installed_mods(
+                "valheim", "Valheim", "BepInEx/plugins"))["mods"]
+        self.assertEqual(r["parked"], [{"name": "Atze's Build Camera", "errors": 120}])
+        cam = next(m for m in rows if m["folder"] == "Atzes Build Camera")
+        self.assertFalse(cam["enabled"])
+        self.assertTrue(cam["disabled_reason"].startswith("Switched off by the plugin"))
+        self.assertTrue(next(m for m in rows if m["folder"] == "Quiet")["enabled"],
+                        "one startup error switched a mod off")
+        settings = main._load_settings()
+        settings["installed"].pop("valheim", None)
+        main._save_settings(settings)

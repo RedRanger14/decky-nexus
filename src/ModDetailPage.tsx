@@ -1294,6 +1294,11 @@ export function ModDetailPage() {
           Unrestricted Portals' error in My Mods, then opened the mod and
           found nothing: "not on the actual mod page where I think the info
           should be too". */}
+      {/* Switched off by the plugin (after a session it kept failing, or
+          as part of a collection): the reason belongs on the mod itself. */}
+      {installedCopy && !installedCopy.enabled && installedCopy.disabled_reason && (
+        <WarningBox title="Switched off" body={installedCopy.disabled_reason} />
+      )}
       {installedCopy?.enabled && installedCopy.load_problem && (
         <WarningBox
           title={

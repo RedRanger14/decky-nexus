@@ -160,6 +160,40 @@ export interface CollectionOffMod {
 }
 
 export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
+  // Valheim 1.0.16 (updated 2026-09-25). Valheim Enhanced (aevgug) pins
+  // these files, and on the Legion each failed every frame: together
+  // 25,000 errors in one session, the player stuck in first person. All
+  // file-scoped, so an updated release is not caught.
+  {
+    nexusDomain: "valheim",
+    modId: 2906, // Atze's Build Camera
+    name: "Atze's Build Camera",
+    fileIds: [18103], // 1.8: 12,076 failures, camera stuck in first person
+    reason:
+      "This version takes over the camera and fails on the current " +
+      "version of Valheim, leaving you stuck in first person (seen on " +
+      "this device). Everything else in the collection works without it.",
+  },
+  {
+    nexusDomain: "valheim",
+    modId: 2875, // Atze's Clock'n'Date Display
+    name: "Atze's Clock'n'Date Display",
+    fileIds: [17693], // 1.4.4.1: 10,220 failures, reads a removed field
+    reason:
+      "This version reads something the current version of Valheim no " +
+      "longer has, and fails every time it draws (seen on this device). " +
+      "Everything else in the collection works without it.",
+  },
+  {
+    nexusDomain: "valheim",
+    modId: 2204, // Adventure Backpacks
+    name: "Adventure Backpacks",
+    fileIds: [18085], // 1.7.9: 2,896 failures, invalid patch of crafting
+    reason:
+      "This version's change to crafting is rejected by the current " +
+      "version of Valheim and fails over and over (seen on this " +
+      "device). Everything else in the collection works without it.",
+  },
   {
     nexusDomain: "valheim",
     modId: 1401, // Bounties (Digitalroot)
