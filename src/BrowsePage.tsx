@@ -158,6 +158,21 @@ function usePinnedTop() {
   return { ref, height };
 }
 
+/** Focus item `index` of the grid inside `wrapper` (its first child), the
+ * way the rest of this page moves focus: DOM focus on the element the
+ * D-pad lands on, which Steam's navigator follows. */
+function focusGridItem(wrapper: HTMLElement | null, index: number) {
+  const item = wrapper?.firstElementChild?.children[index] as
+    | HTMLElement
+    | undefined;
+  if (!item) return;
+  const target = item.matches("[tabindex]")
+    ? item
+    : item.querySelector<HTMLElement>("[tabindex]");
+  target?.focus();
+  target?.scrollIntoView({ block: "nearest" });
+}
+
 /** Undo the scroll that autoFocus causes, so the page opens at its top. */
 function ScrollHeaderIntoView() {
   const ref = useRef<HTMLDivElement>(null);
@@ -713,6 +728,21 @@ export function BrowsePage() {
   useEffect(() => {
     pendingFocus.current = true;
   }, [isHome]);
+
+  // Issue #32: pressing Load more dropped the focus highlight, and from
+  // then on the D-pad scrolled the page instead of stepping between
+  // tiles. The mods button disabled itself while the page loaded, and
+  // Steam's navigator lets go of an element that becomes disabled, so the
+  // press itself left nothing focused. Now the button stays enabled (a
+  // second press while loading is ignored), and focus moves to the first
+  // tile of the new page once it arrives, which is where the user was
+  // heading.
+  const modGridRef = useRef<HTMLDivElement>(null);
+  const collectionGridRef = useRef<HTMLDivElement>(null);
+  const focusAfterLoad = useRef<{
+    grid: "mods" | "collections";
+    index: number;
+  } | null>(null);
   useEffect(() => {
     if (!pendingFocus.current) return;
     // Never yank focus away from the search box mid-typing - that blurs
@@ -764,8 +794,12 @@ export function BrowsePage() {
   const fetchCollectionsPage = (offset: number, append: boolean) => {
     getCollections(game.nexusDomain, 30, "", collectionsSort, offset).then(
       (r) => {
+        const page = (r.ok && r.collections) || [];
+        // Nothing new to move focus to, and a pending move would keep the
+        // button ignoring presses.
+        if (page.length === 0 && focusAfterLoad.current?.grid === "collections")
+          focusAfterLoad.current = null;
         if (!r.ok) return;
-        const page = r.collections ?? [];
         if (offset === 0) setAllHidden(r.adult_hidden ?? 0);
         setCollectionsHasMore(page.length >= 30);
         setAllCollections((prev) => (append ? [...prev, ...page] : page));
@@ -774,12 +808,14 @@ export function BrowsePage() {
   };
   useEffect(() => {
     if (!collectionsMode) return;
+    focusAfterLoad.current = null;
     setAllCollections([]);
     setCollectionsHasMore(true);
     fetchCollectionsPage(0, false);
   }, [collectionsMode, collectionsSort, game.appId]);
 
   const fetchPage = async (offset: number, append: boolean) => {
+    if (!append) focusAfterLoad.current = null;
     setLoading(true);
     try {
       const result = await getMods(
@@ -950,6 +986,24 @@ export function BrowsePage() {
 
   const hasMore =
     lastPageFull && total !== undefined && nextOffset.current < total;
+
+  useEffect(() => {
+    const want = focusAfterLoad.current;
+    if (!want) return;
+    const count = want.grid === "mods" ? mods.length : allCollections.length;
+    if (count <= want.index) {
+      // A page that brought nothing: focus never left the button, so
+      // leave it there rather than jumping later on some unrelated change.
+      if (want.grid === "mods" && !loading) focusAfterLoad.current = null;
+      return;
+    }
+    focusAfterLoad.current = null;
+    const wrapper =
+      want.grid === "mods" ? modGridRef.current : collectionGridRef.current;
+    // After Steam's own pass over the new nodes, as with the mode switch.
+    const timer = setTimeout(() => focusGridItem(wrapper, want.index), 60);
+    return () => clearTimeout(timer);
+  }, [mods, allCollections, loading]);
   // Curated recommendations take the hero slots (the "start here" mods -
   // libraries and loaders); games without curation fall back to trending.
   // Always TWO heroes: a single curated pick stretched across the whole
@@ -1243,6 +1297,7 @@ export function BrowsePage() {
               </div>
             </Focusable>
             <HiddenNote text={hiddenCollectionsNote(allHidden, false)} />
+            <div ref={collectionGridRef}>
             <Focusable
               autoFocus={true}
               style={{
@@ -1262,6 +1317,7 @@ export function BrowsePage() {
                 />
               ))}
             </Focusable>
+            </div>
             {allCollections.length === 0 && (
               <div style={{ opacity: 0.8, padding: "12px 0" }}>
                 Loading collections…
@@ -1271,9 +1327,17 @@ export function BrowsePage() {
               <Focusable style={{ margin: "14px auto 0", maxWidth: "320px" }}>
                 <ButtonItem
                   layout="below"
-                  onClick={() =>
-                    fetchCollectionsPage(allCollections.length, true)
-                  }
+                  onClick={() => {
+                    // The collections version never disabled itself, but
+                    // left focus on the button while the new cards landed
+                    // above it. Same move as the mods list (issue #32).
+                    if (focusAfterLoad.current) return;
+                    focusAfterLoad.current = {
+                      grid: "collections",
+                      index: allCollections.length,
+                    };
+                    fetchCollectionsPage(allCollections.length, true);
+                  }}
                 >
                   Load more ({allCollections.length} shown)
                 </ButtonItem>
@@ -1516,6 +1580,7 @@ export function BrowsePage() {
               </Focusable>
               </>
             ) : (
+            <div ref={modGridRef}>
             <Focusable
               autoFocus={!typedRecently()}
               style={{
@@ -1529,13 +1594,18 @@ export function BrowsePage() {
                 <ModTile key={mod.modId} mod={mod} game={game} blur={blurAdult} />
               ))}
             </Focusable>
+            </div>
             )}
             {hasMore && (
               <Focusable style={{ margin: "16px auto 0", maxWidth: "320px" }}>
                 <ButtonItem
                   layout="below"
-                  disabled={loading}
-                  onClick={() => fetchPage(nextOffset.current, true)}
+                  // Never disabled: see focusAfterLoad (issue #32).
+                  onClick={() => {
+                    if (loading) return;
+                    focusAfterLoad.current = { grid: "mods", index: mods.length };
+                    fetchPage(nextOffset.current, true);
+                  }}
                 >
                   {loading ? "Loading…" : `Load more (${mods.length} shown)`}
                 </ButtonItem>

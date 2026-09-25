@@ -1970,3 +1970,26 @@ test("the shared warning box no longer calls every note a version problem", () =
   assert.ok(!readCode("ModDetailPage.tsx").includes(
     'title="Built for a different version of the game"'));
 });
+
+test("Load more keeps focus, and hands it to the first new tile (#32)", () => {
+  // ahasley11: after pressing Load more with a controller the focus
+  // highlight vanished and the D-pad scrolled the page instead of stepping
+  // between tiles. The button disabled itself while the page loaded, and
+  // Steam's navigator lets go of an element that becomes disabled.
+  const page = read("BrowsePage.tsx");
+  const buttons = [...page.matchAll(/<ButtonItem[\s\S]*?<\/ButtonItem>/g)]
+    .map((m) => m[0])
+    .filter((b) => b.includes("Load more"));
+  assert.equal(buttons.length, 2, "expected the mods and collections Load more buttons");
+  for (const b of buttons) {
+    assert.ok(!/disabled=/.test(b),
+      "a Load more button can disable itself under the user's focus again");
+    assert.ok(/focusAfterLoad\.current = \{/.test(b),
+      "a Load more button no longer asks for focus to move to the new page");
+  }
+  assert.ok(/focusGridItem\(wrapper, want\.index\)/.test(page),
+    "nothing moves focus to the first newly loaded item");
+  assert.ok(page.includes("<div ref={modGridRef}>") &&
+    page.includes("<div ref={collectionGridRef}>"),
+    "a grid lost the wrapper focusGridItem finds its items through");
+});
