@@ -11363,6 +11363,15 @@ _BEPINEX_FAILED_RE = re.compile(
     r"because (?P<reason>.+)$")
 _BEPINEX_ENTRY_RE = re.compile(r"^\[(?P<level>\w+)\s*:\s*(?P<source>[^\]]*)\]\s?(?P<msg>.*)$")
 _MVID_RE = re.compile(r"\(at <([0-9a-f]{32})>")
+# Stack frames from these belong to the runtime a mod runs on, not to the
+# game or the mod: a mod's broken Harmony patch surfaces under HarmonyLib
+# and MonoMod frames, so they are looked through, not stopped at.
+_RUNTIME_FRAME_PREFIXES = (
+    "System.", "Mono.", "MonoMod.", "HarmonyLib.", "BepInEx.", "UnityEngine.",
+    "Steamworks.", "Microsoft.", "Newtonsoft.", "YamlDotNet.",
+)
+# A mod erroring this often is failing every frame, not once at startup.
+BEPINEX_CONSTANT_ERRORS = 100
 # Exceptions that mean "made for a different build of the game": the thing
 # the mod changes is no longer there.
 _OUTDATED_EXCEPTIONS = ("MissingFieldException", "MissingMethodException",
@@ -11478,8 +11487,31 @@ def _parse_bepinex_log(lines: list) -> dict:
                 errors.append(current)
             continue
         if current is not None:
-            current[2].extend(_MVID_RE.findall(line))
+            text = line.strip()
+            if (not text or text.startswith(("(wrapper", "Rethrow", "Stack trace"))
+                    or text.startswith("---")):
+                continue
+            mv = _MVID_RE.search(text)
+            frame = re.split(r"[ (:]", text, 1)[0]
+            current[2].append((frame, mv.group(1) if mv else ""))
     return {"loaded": loaded, "failed": failed, "errors": errors}
+
+
+def _blamed_frame_folder(frames: list, by_mvid: dict):
+    """The mod an error started in: the first stack frame that is not
+    the runtime (Harmony, MonoMod, Unity, System...). If that first frame
+    is the GAME's code, no mod is blamed, even with a mod further down.
+    Valheim's "Steamworks is not initialized" is thrown by the game when a
+    mod asks it for a setting during startup; it is harmless, and blaming
+    every mod beneath it put six innocent mods beside the three that were
+    actually failing 35,000 times."""
+    for frame, mv in frames:
+        if mv and mv in by_mvid:
+            return by_mvid[mv]
+        if frame.startswith(_RUNTIME_FRAME_PREFIXES):
+            continue
+        return None
+    return None
 
 
 def _bepinex_problems(install_path: str) -> dict:
@@ -11564,9 +11596,10 @@ def _bepinex_problems(install_path: str) -> dict:
             detail = f"Did not load: {reason}"
         problems[folder] = {"state": "failed", "detail": detail[:240]}
     counts, first, outdated = {}, {}, set()
-    for source, message, mvids in parsed["errors"]:
-        folder = next((by_mvid[m] for m in mvids if m in by_mvid), None)
-        if folder is None:
+    for source, message, frames in parsed["errors"]:
+        if frames:
+            folder = _blamed_frame_folder(frames, by_mvid)
+        else:
             folder = by_source.get(_norm_mod_id(source))
         if not folder or folder in problems:
             continue
@@ -11575,7 +11608,17 @@ def _bepinex_problems(install_path: str) -> dict:
         if any(x in message for x in _OUTDATED_EXCEPTIONS):
             outdated.add(folder)
     for folder, n in counts.items():
-        if folder in outdated:
+        if n >= BEPINEX_CONSTANT_ERRORS:
+            # The ones worth acting on first: on Valheim Enhanced, Build
+            # Camera failed 22,115 times and left the player stuck in first
+            # person, beside mods that had hit a single error at startup.
+            detail = (f"Failed {n:,} times while you played, so it is very "
+                      "likely behind anything going wrong in the game"
+                      + (", and it looks made for an older version of the "
+                         "game or of a mod it builds on" if folder in outdated
+                         else "")
+                      + ". Switching it off is the likely fix.")
+        elif folder in outdated:
             detail = ("Errors last launch: it looks made for an older "
                       "version of the game, or of a mod it builds on, which "
                       "no longer has what it changes. Switching it off is "
@@ -11587,7 +11630,7 @@ def _bepinex_problems(install_path: str) -> dict:
             detail = (f"Hit {n} error{'s' if n != 1 else ''} last launch, so "
                       "part of it may not be working"
                       + (f" ({kind.group(1)})." if kind else "."))
-        problems[folder] = {"state": "errors", "detail": detail}
+        problems[folder] = {"state": "errors", "detail": detail, "count": n}
     result = {"available": True, "stale": False, "problems": problems}
     _BEPINEX_CACHE.clear()
     _BEPINEX_CACHE[key] = result
@@ -27020,6 +27063,7 @@ query CollectionInstructions($slug: String!) {
                 if p:
                     r["load_problem"] = p["detail"]
                     r["load_state"] = p["state"]
+                    r["load_errors"] = p.get("count", 0)
         # Stable alphabetical order regardless of enabled state - toggling a
         # mod must not make it jump around the list.
         results.sort(key=lambda m: (m["name"] or m["folder"]).lower())

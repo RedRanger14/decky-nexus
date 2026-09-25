@@ -170,6 +170,9 @@ export interface InstalledMod {
    * Nothing here after mods change, until the next launch. */
   load_problem?: string;
   load_state?: "failed" | "errors";
+  /** How many errors the loader logged for it; in the thousands means it
+   * was failing every frame, not once at startup. */
+  load_errors?: number;
   /** "collection" when installed as part of a collection */
   source?: string;
   /** Which collection (registered via registerCollection) */

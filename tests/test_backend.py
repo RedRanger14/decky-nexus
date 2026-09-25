@@ -24035,3 +24035,43 @@ class TestSlowMirrorIsLeft(unittest.TestCase):
         # It resumed rather than starting the fast mirror from zero.
         self.assertTrue(fetches[-1][1].get("Range", "").startswith("bytes="))
         self.assertNotEqual(fetches[-1][1]["Range"], "bytes=0-")
+
+
+class TestBepInExBlamesWhereTheErrorStarted(TestBepInExLogReader):
+    """Valheim Enhanced, real lines: the game's own "Steamworks is not
+    initialized" blamed six mods that merely sat lower in the stack, beside
+    three that failed 25,000 times between them."""
+
+    MOD = bytes.fromhex("11" * 16)
+
+    def _mod_mvid(self):
+        path = os.path.join(self.plugins, "Dvergr Pieces", "DvergrPieces.dll")
+        return main._dotnet_mvid(path)
+
+    def test_the_game_throwing_under_a_mod_does_not_blame_the_mod(self):
+        self._dll("Dvergr Pieces", "DvergrPieces.dll", self.MOD)
+        mv = self._mod_mvid()
+        self._log(
+            "[Error  : Unity Log] InvalidOperationException: Steamworks is not initialized.\n"
+            "Stack trace:\n"
+            "Steamworks.InteropHelp.TestIfAvailableClient () (at <3a01345ad6fa4ca39e57ccc91aa85a50>:0)\n"
+            "PlatformPrefs.GetString (System.String name, System.String defaultValue) (at <6b0e7f1f5f5a412892310b48ab5bdab3>:0)\n"
+            "Localization.SetStartupLanguage () (at <bb4d49dab2ee4cfeadd34d1e6006ff2e>:0)\n"
+            f"DvergrPieces.Main.Awake () (at <{mv}>:0)\n")
+        self.assertEqual(main._bepinex_problems(self.game)["problems"], {})
+
+    def test_a_broken_patch_is_found_through_the_patching_library(self):
+        self._dll("Adventure Backpacks", "AdventureBackpacks.dll", self.MOD)
+        mv = main._dotnet_mvid(os.path.join(self.plugins, "Adventure Backpacks", "AdventureBackpacks.dll"))
+        block = (
+            "[Error  : Unity Log] InvalidProgramException: Invalid IL code in (wrapper dynamic-method) "
+            "Player:DMD<Player::HaveRequirementItems>\n"
+            "Stack trace:\n"
+            "System.RuntimeMethodHandle.GetFunctionPointer () (at <297b518d2c9f4ee5bb6b049e9ead4f70>:0)\n"
+            "MonoMod.RuntimeDetour.Platforms.DetourRuntimeILPlatform.GetNativeStart (System.Reflection.MethodBase method) (at <4e2760c7517c4ea79c633d67e84b319f>:0)\n"
+            "HarmonyLib.PatchFunctions.UpdateWrapper () (at <474744d65d8e460fa08cd5fd82b5d65f>:0)\n"
+            f"AdventureBackpacks.Patches.PlayerPatches.Postfix () (at <{mv}>:0)\n\n")
+        self._log(block * 150)
+        p = main._bepinex_problems(self.game)["problems"]["Adventure Backpacks"]
+        self.assertEqual(p["count"], 150)
+        self.assertIn("Failed 150 times while you played", p["detail"])

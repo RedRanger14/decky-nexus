@@ -2405,6 +2405,81 @@ function CurrentGameSection() {
   );
 }
 
+/** Mods the loader complained about last launch, worst first, with one
+ * press to switch off the ones failing constantly. Valheim Enhanced left
+ * the player stuck in first person under a "Some text." overlay: three mods
+ * failed 25,000 times between them, beside six that hit one error each. */
+const CONSTANT_ERRORS = 100;
+function LoadProblemsSummary({
+  items,
+  onChanged,
+}: {
+  items: { game: SupportedGame; mod: InstalledMod; showGame?: boolean }[];
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (items.length === 0) return null;
+  const sorted = [...items].sort(
+    (a, b) => (b.mod.load_errors ?? 0) - (a.mod.load_errors ?? 0)
+  );
+  const constant = sorted.filter(
+    (i) => (i.mod.load_errors ?? 0) >= CONSTANT_ERRORS
+  );
+  const label = (i: (typeof items)[number]) =>
+    (i.mod.name ?? i.mod.folder) + (i.showGame ? ` (${i.game.displayName})` : "");
+  const switchOff = async () => {
+    setBusy(true);
+    const failed: string[] = [];
+    try {
+      for (const i of constant) {
+        const r = await toggleMod(i.game, i.mod.folder, false);
+        if (!r.ok) failed.push(label(i));
+      }
+    } finally {
+      setBusy(false);
+      onChanged();
+    }
+    toaster.toast({
+      title: failed.length
+        ? `Could not switch off ${failed.join(", ")}`
+        : `Switched off ${constant.length} mod${constant.length === 1 ? "" : "s"}`,
+      body: "Switch any back on in Manage my mods",
+    });
+  };
+  return (
+    <>
+      <PanelSectionRow>
+        <Field
+          label={`⚠ ${items.length} mod${
+            items.length === 1 ? "" : "s"
+          } had problems last launch`}
+          description={
+            (constant.length > 0
+              ? `Failing constantly: ${constant.map(label).join(", ")}. `
+              : "") +
+            (sorted.length > constant.length
+              ? `${constant.length > 0 ? "Also: " : ""}${sorted
+                  .slice(constant.length)
+                  .map(label)
+                  .join(", ")}. `
+              : "") +
+            "Manage my mods says what each one hit."
+          }
+        />
+      </PanelSectionRow>
+      {constant.length > 0 && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" disabled={busy} onClick={switchOff}>
+            {busy
+              ? "Switching off…"
+              : `Switch off the ${constant.length} failing constantly`}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+    </>
+  );
+}
+
 function AllInstalledModsSection() {
   // Neutral/unsupported contexts: a collapsed accordion of every installed
   // mod, grouped by game. Full per-game tooling lives in the game's context.
@@ -2470,21 +2545,10 @@ function AllInstalledModsSection() {
 
   return (
     <PanelSection title="Installed Mods">
-      {troubled.length > 0 && (
-        <PanelSectionRow>
-          <Field
-            label={`⚠ ${troubled.length} mod${
-              troubled.length === 1 ? "" : "s"
-            } had problems last launch`}
-            description={
-              troubled
-                .map(({ game, mod }) => `${mod.name ?? mod.folder} (${game.displayName})`)
-                .join(", ") +
-              ". Manage my mods says what each one hit, with its switch."
-            }
-          />
-        </PanelSectionRow>
-      )}
+      <LoadProblemsSummary
+        items={troubled.map((t) => ({ ...t, showGame: true }))}
+        onChanged={refresh}
+      />
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={() => setExpanded(!expanded)}>
           {expanded ? "▾" : "▸"} {total} mod{total === 1 ? "" : "s"} ·{" "}
@@ -2856,25 +2920,12 @@ function InstalledModsSection() {
       {/* Every mod the loader complained about, however far down the list:
           the rows below stop at five, and on Valheim the two that broke
           were rows 20 and 21. */}
-      {(() => {
-        const troubled = (mods ?? []).filter(
-          (m) => m.enabled && m.load_problem
-        );
-        if (troubled.length === 0) return null;
-        return (
-          <PanelSectionRow>
-            <Field
-              label={`⚠ ${troubled.length} mod${
-                troubled.length === 1 ? "" : "s"
-              } had problems last launch`}
-              description={
-                troubled.map((m) => m.name ?? m.folder).join(", ") +
-                ". Manage my mods says what each one hit, with its switch."
-              }
-            />
-          </PanelSectionRow>
-        );
-      })()}
+      <LoadProblemsSummary
+        items={(mods ?? [])
+          .filter((m) => m.enabled && m.load_problem)
+          .map((m) => ({ game, mod: m }))}
+        onChanged={refresh}
+      />
       {/* Collections make this list enormous - cap the QAM at 5 rows and
           hand the rest to the full-screen manager. */}
       {(mods ?? []).slice(0, 5).map((mod) => {
