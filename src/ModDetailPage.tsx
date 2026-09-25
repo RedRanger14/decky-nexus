@@ -45,6 +45,7 @@ import {
   installLatest,
   installModWith,
   removeMod,
+  toggleMod,
 } from "./install";
 import { FomodWizardData, FomodWizardModal } from "./FomodWizard";
 
@@ -1287,6 +1288,33 @@ export function ModDetailPage() {
         <WarningBox
           title="Worth knowing"
           body={stale}
+        />
+      )}
+      {/* What the mod loader said about THIS mod last launch. Michael saw
+          Unrestricted Portals' error in My Mods, then opened the mod and
+          found nothing: "not on the actual mod page where I think the info
+          should be too". */}
+      {installedCopy?.enabled && installedCopy.load_problem && (
+        <WarningBox
+          title={
+            installedCopy.load_state === "failed"
+              ? "Did not load last time you played"
+              : "Had errors last time you played"
+          }
+          body={installedCopy.load_problem}
+          action={{
+            label: "Switch it off",
+            onClick: async () => {
+              const r = await toggleMod(game, installedCopy.folder, false);
+              if (!r.ok) {
+                toaster.toast({
+                  title: "Could not switch it off",
+                  body: r.error ?? "",
+                });
+              }
+              if (sel) refreshInstalled(sel);
+            },
+          }}
         />
       )}
       {files && !files.ok && (

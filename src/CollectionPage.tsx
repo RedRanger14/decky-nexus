@@ -116,7 +116,6 @@ import {
   ACTION_ROW,
   actionColumnWidth,
   BLUE_BUTTON_CLASS,
-  NEXUS_ORANGE,
   PAGE_SCROLLER,
   PRIMARY_BUTTON_CLASS,
   PRIMARY_BUTTON_CSS,
@@ -128,6 +127,7 @@ import {
   SectionHeading,
   StackedThumb,
   StatChip,
+  WarningBox,
 } from "./chrome";
 import { DownloadsButton } from "./DownloadsButton";
 
@@ -2394,25 +2394,16 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               })()}
             </div>
           )}
+        {/* A real button, not a pressable box: Michael pressed the first
+            version of this and said "it needs a CTA button because it
+            wasnt clear it was a clickable element". */}
         {versionDiffs.length > 0 && !installing && (
-          <Focusable
-            onActivate={useCollectionVersions}
-            style={{
-              fontSize: "12.5px",
-              margin: "-6px 0 12px",
-              padding: "8px 10px",
-              borderRadius: "4px",
-              lineHeight: 1.45,
-              background: "rgba(218, 142, 53, 0.12)",
-              border: "1px solid rgba(218, 142, 53, 0.4)",
-            }}
-          >
-            <div>
-              ⚠ {versionDiffs.length} mod
-              {versionDiffs.length === 1 ? "" : "s"} you already had{" "}
-              {versionDiffs.length === 1 ? "is" : "are"} a different version
-              from the one this collection was put together with:{" "}
-              {versionDiffs
+          <WarningBox
+            title={`${versionDiffs.length} of your mods ${
+              versionDiffs.length === 1 ? "is" : "are"
+            } not this collection's version`}
+            body={
+              versionDiffs
                 .slice(0, 6)
                 .map(
                   (d) =>
@@ -2420,21 +2411,21 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                       d.pinned || "?"
                     })`
                 )
-                .join(", ")}
-              {versionDiffs.length > 6
+                .join(", ") +
+              (versionDiffs.length > 6
                 ? ` and ${versionDiffs.length - 6} more`
-                : ""}
-              . Other mods in the collection can depend on its exact
-              versions.
-            </div>
-            <div style={{ marginTop: "6px", fontWeight: 700, color: NEXUS_ORANGE }}>
-              {swapping
+                : "") +
+              ". The collection's other mods can depend on its exact versions."
+            }
+            action={{
+              label: swapping
                 ? "Switching…"
-                : `Press to use the collection's version${
+                : `Use the collection's version${
                     versionDiffs.length === 1 ? "" : "s"
-                  }`}
-            </div>
-          </Focusable>
+                  }`,
+              onClick: useCollectionVersions,
+            }}
+          />
         )}
         {brokenSkips.length > 0 && !installing && (
           <div

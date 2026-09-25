@@ -12,6 +12,7 @@ import {
   Router,
   TextField,
   ToggleField,
+  useQuickAccessVisible,
   showModal,
   staticClasses,
 } from "@decky/ui";
@@ -2636,6 +2637,14 @@ function InstalledModsSection() {
   // Reset now lives in its own section, so this list has to be told when
   // one happens or it keeps listing mods that are already gone.
   useEffect(() => subscribeGameState(refresh), [game?.appId]);
+  // And every time the QAM opens. The panel is not always remounted, so
+  // what the mod loader said about the launch the user is IN never
+  // reached it: Michael opened the QAM in Valheim and saw nothing while
+  // My Mods showed Unrestricted Portals erroring.
+  const qamVisible = useQuickAccessVisible();
+  useEffect(() => {
+    if (qamVisible) refresh();
+  }, [qamVisible]);
 
   if (!game) return null;
 
