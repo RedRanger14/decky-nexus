@@ -11372,6 +11372,9 @@ _RUNTIME_FRAME_PREFIXES = (
 )
 # A mod erroring this often is failing every frame, not once at startup.
 BEPINEX_CONSTANT_ERRORS = 100
+_DMD_FRAME_RE = re.compile(r"^\(wrapper dynamic-method\) [\w.+]+\.DMD<([\w.+]+)::(\w+)>")
+_MISSING_MEMBER_RE = re.compile(
+    r"(?:Method|Field) not found: .*?\.(\w+)(?:\(|\s|$)")
 # Exceptions that mean "made for a different build of the game": the thing
 # the mod changes is no longer there.
 _OUTDATED_EXCEPTIONS = ("MissingFieldException", "MissingMethodException",
@@ -11488,6 +11491,11 @@ def _parse_bepinex_log(lines: list) -> dict:
             continue
         if current is not None:
             text = line.strip()
+            dmd = _DMD_FRAME_RE.match(text)
+            if dmd:
+                # Code a mod patched into the game: the only trace of it.
+                current[2].append(("~dmd", f"{dmd.group(1)}::{dmd.group(2)}"))
+                continue
             if (not text or text.startswith(("(wrapper", "Rethrow", "Stack trace"))
                     or text.startswith("---")):
                 continue
@@ -11506,6 +11514,8 @@ def _blamed_frame_folder(frames: list, by_mvid: dict):
     every mod beneath it put six innocent mods beside the three that were
     actually failing 35,000 times."""
     for frame, mv in frames:
+        if frame == "~dmd":
+            continue
         if mv and mv in by_mvid:
             return by_mvid[mv]
         if frame.startswith(_RUNTIME_FRAME_PREFIXES):
@@ -11596,9 +11606,54 @@ def _bepinex_problems(install_path: str) -> dict:
             detail = f"Did not load: {reason}"
         problems[folder] = {"state": "failed", "detail": detail[:240]}
     counts, first, outdated = {}, {}, set()
+    def blob(path):
+        if path not in blobs:
+            try:
+                with open(path, "rb") as fh:
+                    blobs[path] = fh.read()
+            except OSError:
+                blobs[path] = b""
+        return blobs[path]
+
+    patcher_cache = {}
+
+    def patcher_of(target, member):
+        """The one mod that patches game method `target` ("Type::Method")
+        and uses `member`, when a missing member is thrown from inside the
+        patched method and the trace names nobody. Valheim 1.0.16:
+        "Method not found: Character.Message" 19,148 times from Player.
+        Update broke interaction, pickup and the hotbar; Forsaken Powers
+        Plus is the only mod whose [HarmonyPatch] names Player.Update and
+        that calls Message. None when it is not exactly one."""
+        key = (target, member)
+        if key in patcher_cache:
+            return patcher_cache[key]
+        typ, meth = target.split("::", 1)
+        typ = typ.rsplit(".", 1)[-1].replace("+", "/")
+        strict_re = re.compile(
+            rb"[\x01-\x7f]" + re.escape(typ.encode())
+            + rb", [\w.]+, Version=[ -~]*?" + re.escape(_ser_string(meth)))
+        name = b"\x00" + member.encode() + b"\x00"
+        strict, loose = set(), set()
+        for folder, path in dlls:
+            b = blob(path)
+            if name not in b:
+                continue
+            if strict_re.search(b):
+                strict.add(folder)
+            elif _ser_string(meth) in b and typ.encode() + b"\x00" in b:
+                loose.add(folder)
+        pick = strict if strict else loose
+        patcher_cache[key] = next(iter(pick)) if len(pick) == 1 else None
+        return patcher_cache[key]
+
     for source, message, frames in parsed["errors"]:
         if frames:
             folder = _blamed_frame_folder(frames, by_mvid)
+            if folder is None and frames[0][0] == "~dmd":
+                m = _MISSING_MEMBER_RE.search(message)
+                if m:
+                    folder = patcher_of(frames[0][1], m.group(1))
         else:
             folder = by_source.get(_norm_mod_id(source))
         if not folder or folder in problems:

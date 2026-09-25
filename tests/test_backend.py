@@ -24112,3 +24112,42 @@ class TestFailingModsAreParkedAfterASession(TestBepInExLogReader):
         settings = main._load_settings()
         settings["installed"].pop("valheim", None)
         main._save_settings(settings)
+
+
+
+class TestErrorsInsidePatchedGameCode(TestBepInExLogReader):
+    """Valheim 1.0.16, real lines: 19,148 "Method not found: Character.
+    Message" thrown from Player.Update as a mod had patched it. The trace
+    names only the patched method, and the player could not interact, pick
+    things up or see the hotbar."""
+
+    @staticmethod
+    def _patch_attr(typ, meth):
+        qual = typ + ", assembly_valheim, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null"
+        return b"\x01\x00" + main._ser_string(qual) + main._ser_string(meth)
+
+    def test_the_one_mod_patching_that_method_and_using_that_member_is_named(self):
+        self._dll("Forsaken Powers Plus", "ForsakenPowersPlus.dll", bytes(16),
+                  self._patch_attr("Player", "Update") + b"\x00Message\x00")
+        # Patches the same method, never calls Message: not it.
+        self._dll("Extra Slots", "ExtraSlots.dll", b"\x01" * 16,
+                  self._patch_attr("Player", "Update") + b"\x00Other\x00")
+        # Calls Message, patches something else: not it either.
+        self._dll("Talky", "Talky.dll", b"\x02" * 16,
+                  self._patch_attr("Chat", "Update") + b"\x00Message\x00")
+        block = ("[Error  : Unity Log] MissingMethodException: Method not found: void "
+                 ".Character.Message(MessageHud/MessageType,string,int,UnityEngine.Sprite)\n"
+                 "Stack trace:\n(wrapper dynamic-method) Player.DMD<Player::Update>(Player)\n\n")
+        self._log(block * 120)
+        p = main._bepinex_problems(self.game)["problems"]
+        self.assertEqual(list(p), ["Forsaken Powers Plus"])
+        self.assertEqual(p["Forsaken Powers Plus"]["count"], 120)
+
+    def test_two_equal_suspects_blame_nobody(self):
+        for n in ("A", "B"):
+            self._dll(n, n + ".dll", n.encode() * 16,
+                      self._patch_attr("Player", "Update") + b"\x00Message\x00")
+        self._log("[Error  : Unity Log] MissingMethodException: Method not found: void "
+                  ".Character.Message(string)\nStack trace:\n"
+                  "(wrapper dynamic-method) Player.DMD<Player::Update>(Player)\n")
+        self.assertEqual(main._bepinex_problems(self.game)["problems"], {})

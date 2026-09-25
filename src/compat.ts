@@ -186,6 +186,23 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
   },
   {
     nexusDomain: "valheim",
+    modId: 2887, // Badgers HD Terrain 2.0
+    name: "Badgers HD Terrain 2.0",
+    // 1.1.0: its Terminal.InitTerminal postfix calls a ConsoleCommand
+    // constructor 1.0.16 removed, so the console never finished setting up
+    // and stayed on screen, a dark band over the lower third with its
+    // "Some text." placeholders, and the HUD failed 42,981 times behind it.
+    // Switched off alone, the band and the text were gone (Michael, on the
+    // Legion).
+    fileIds: [17768],
+    reason:
+      "This version breaks the game's console on the current version of " +
+      "Valheim, which then stays stuck over the screen with placeholder " +
+      "text (seen on this device). Everything else in the collection " +
+      "works without it.",
+  },
+  {
+    nexusDomain: "valheim",
     modId: 2204, // Adventure Backpacks
     name: "Adventure Backpacks",
     fileIds: [18085], // 1.7.9: 2,896 failures, invalid patch of crafting
