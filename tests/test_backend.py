@@ -23943,3 +23943,95 @@ class TestBepInExPluginLoggerErrors(TestBepInExLogReader):
         p = main._bepinex_problems(self.game)["problems"]
         self.assertEqual(list(p), ["Digitalroot.Valheim.Bounties"])
         self.assertIn("or of a mod it builds on", p["Digitalroot.Valheim.Bounties"]["detail"])
+
+
+class TestSlowMirrorIsLeft(unittest.TestCase):
+    """Valheim Enhanced sat at 98%: its pinned 714 MB texture file came
+    from "Nexus CDN", first in the mirror list, at 13 KB/s, while Amsterdam
+    served the same file at 10.95 MB/s. A download that crawls moves to the
+    next mirror and resumes from the byte it reached."""
+
+    SIZE = 40 * 1024 * 1024
+
+    def setUp(self):
+        main._DL_PAUSED = False
+        main._DL_CANCEL.clear()
+        main._DL_ACTIVE.clear()
+        self.requests = []
+        self.clock = [1000.0]
+        self.payload = bytes(range(256)) * (self.SIZE // 256)
+
+    def _session(self):
+        test = self
+
+        class Content:
+            def __init__(self, data, slow):
+                self.data, self.slow = data, slow
+
+            async def iter_chunked(self, n):
+                step = 64 * 1024 if self.slow else 1 << 20
+                for i in range(0, len(self.data), step):
+                    # A slow mirror: 64 KB every 2 seconds, 32 KB/s.
+                    test.clock[0] += 2.0 if self.slow else 0.01
+                    yield self.data[i:i + step]
+
+        class Resp:
+            def __init__(self, status, data=b"", headers=None, js=None, slow=False):
+                self.status, self._js = status, js
+                self.headers = headers or {}
+                self.content = Content(data, slow)
+
+            async def json(self, content_type=None):
+                return self._js
+
+            async def text(self):
+                return ""
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        class Session:
+            closed = False
+
+            def get(self, url, headers=None, timeout=None, **k):
+                test.requests.append((url, dict(headers or {})))
+                if "download_link" in url:
+                    return Resp(200, js=[
+                        {"short_name": "Nexus CDN", "URI": "https://cdn.example/slow/f.7z"},
+                        {"short_name": "Amsterdam", "URI": "https://ams.example/fast/f.7z"},
+                    ])
+                start = int((headers or {}).get("Range", "bytes=0-")[6:-1] or 0)
+                body = test.payload[start:]
+                hdrs = {"Content-Length": str(len(body))}
+                status = 200
+                if start:
+                    status = 206
+                    hdrs["Content-Range"] = f"bytes {start}-{test.SIZE - 1}/{test.SIZE}"
+                return Resp(status, body, hdrs, slow="slow" in url)
+
+        return Session()
+
+    def test_a_crawling_mirror_is_left_and_the_download_resumes(self):
+        session = self._session()
+
+        async def fake_session():
+            return session
+
+        with mock.patch.object(main, "_http_session", fake_session), \
+                mock.patch.object(main.time, "monotonic", lambda: self.clock[0]), \
+                mock.patch.object(main, "_emit_progress", mock.AsyncMock()):
+            err, path = run(main._download_archive(
+                "valheim", 1030, 17848, "slowmirror-test.7z", "key"))
+        self.assertEqual(err, "")
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), self.payload, "bytes lost or doubled at the switch")
+        os.remove(path)
+        fetches = [(u, h) for u, h in self.requests if "download_link" not in u]
+        self.assertIn("slow", fetches[0][0])
+        self.assertIn("fast", fetches[-1][0])
+        # It resumed rather than starting the fast mirror from zero.
+        self.assertTrue(fetches[-1][1].get("Range", "").startswith("bytes="))
+        self.assertNotEqual(fetches[-1][1]["Range"], "bytes=0-")

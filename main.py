@@ -12732,6 +12732,13 @@ def _collection_summary(n: dict, game_domain: str, blocked_slugs) -> dict:
         "totalSize": int(rev.get("totalSize") or 0),
     }
 
+# A download averaging under SLOW_MIRROR_BPS over SLOW_MIRROR_WINDOW seconds
+# moves to the next mirror (see the download loop). Only for downloads with
+# more than SLOW_MIRROR_MIN_LEFT still to come, and never when the user has
+# capped the speed near the floor themselves.
+SLOW_MIRROR_BPS = 256 * 1024
+SLOW_MIRROR_WINDOW = 15
+SLOW_MIRROR_MIN_LEFT = 16 * 1024 * 1024
 DOWNLOAD_STALL_SECONDS = 45
 
 # How many transport failures to absorb before giving up on a file. Three
@@ -13023,15 +13030,23 @@ async def _download_archive(
         if links is None:
             return last_err, ""
         if not links or not isinstance(links, list):
-            return "Nexus Mods returned no download locations", ""
-        found = links[0].get("URI") or links[0].get("uri")
+            return "Nexus Mods returned no download locations", []
+        # Every mirror, not just the first: see SLOW_MIRROR_BPS.
+        found = [
+            (str(l.get("short_name") or l.get("name") or "mirror"),
+             l.get("URI") or l.get("uri"))
+            for l in links if isinstance(l, dict)
+        ]
+        found = [(n, u) for n, u in found if u]
         if not found:
-            return "Nexus Mods returned a malformed download link", ""
+            return "Nexus Mods returned a malformed download link", []
         return "", found
 
-    err, uri = await _resolve_uri()
+    err, mirrors = await _resolve_uri()
     if err:
         return err, ""
+    mirror_idx = 0
+    uri = mirrors[0][1]
 
     prefs = _user_prefs()
     cap_bytes = prefs["speed_cap_mbps"] * (1 << 20)
@@ -13087,9 +13102,10 @@ async def _download_archive(
                     if resp.status == 403:
                         # The CDN link outlived its welcome (long pause,
                         # slow retry) - mint a fresh one and go again.
-                        err, uri = await _resolve_uri()
+                        err, mirrors = await _resolve_uri()
                         if err:
                             return err, ""
+                        uri = mirrors[min(mirror_idx, len(mirrors) - 1)][1]
                         continue
                     if resp.status in (416,):
                         # Range not satisfiable: our .part disagrees with
@@ -13124,6 +13140,19 @@ async def _download_archive(
                     last_done = done
                     ema_bps = 0.0
                     chunk_count = 0
+                    # A mirror too slow to be worth waiting on. Valheim
+                    # Enhanced pins an ARCHIVED 714 MB texture file, and
+                    # "Nexus CDN" (always first in the list) served it at
+                    # 13 KB/s, a day's download, while Amsterdam measured
+                    # 10.95 MB/s and Prague 7.49 MB/s from the same Legion
+                    # a minute later. The collection sat at 98% with no
+                    # word. So a big download that averages under the floor
+                    # for a whole window moves to the next mirror and
+                    # resumes from the same byte. Each mirror is tried
+                    # once, so a slow connection cannot make it hop forever.
+                    window_t = time.monotonic()
+                    window_done = done
+                    slow_mirror = False
                     with open(
                         part_path, "ab" if mode == "append" else "wb"
                     ) as out:
@@ -13143,6 +13172,17 @@ async def _download_archive(
                                 disk_low = True
                                 break
                             now = time.monotonic()
+                            if now - window_t >= SLOW_MIRROR_WINDOW:
+                                window_bps = (done - window_done) / (now - window_t)
+                                if (
+                                    window_bps < SLOW_MIRROR_BPS
+                                    and mirror_idx + 1 < len(mirrors)
+                                    and (not total or total - done > SLOW_MIRROR_MIN_LEFT)
+                                    and not (cap_bytes and cap_bytes < SLOW_MIRROR_BPS * 2)
+                                ):
+                                    slow_mirror = True
+                                    break
+                                window_t, window_done = now, done
                             pct = int(done * 100 / total) if total else 0
                             if pct > last_pct or now - last_t >= 0.5:
                                 dt = max(now - last_t, 1e-3)
@@ -13164,6 +13204,15 @@ async def _download_archive(
                                     bps=ema_bps,
                                 )
                 if paused:
+                    continue
+                if slow_mirror:
+                    mirror_idx += 1
+                    decky.logger.info(
+                        f"download {game_domain}/{mod_id}: "
+                        f"{mirrors[mirror_idx - 1][0]} too slow, "
+                        f"switching to {mirrors[mirror_idx][0]} at "
+                        f"{done // 1048576} MB")
+                    uri = mirrors[mirror_idx][1]
                     continue
                 if disk_low:
                     # Deleted rather than kept for resume: low disk is the
