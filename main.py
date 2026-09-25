@@ -2623,16 +2623,48 @@ def _split_requirements(node: dict) -> dict:
     return {"requirements": _normalize_requirements(raw), "dlc": dlc}
 
 
+# Thunderstore packages that are ALSO on Nexus, by (community, namespace,
+# name), lowercased. Valheim mods routinely name their requirements with a
+# Thunderstore link: Epic Loot (387) lists BepInEx, JsonDotNet and Jotunn
+# that way, all three as external with modId 0, so the plugin could offer
+# none of them, and Epic Loot failed on the Legion with "missing
+# dependencies: com.ValheimModding.NewtonsoftJsonDetector". Each id below
+# was checked against the Nexus upload's own name and author.
+_THUNDERSTORE_ON_NEXUS = {
+    ("valheim", "denikson", "bepinexpack_valheim"): 3605,
+    ("valheim", "valheimmodding", "jotunn"): 1138,
+    ("valheim", "valheimmodding", "jsondotnet"): 3661,
+}
+_THUNDERSTORE_URL_RE = re.compile(
+    r"https?://(?:(?P<sub>[a-z0-9-]+)\.)?thunderstore\.io/"
+    r"(?:c/(?P<community>[a-z0-9-]+)/p|package)/"
+    r"(?P<ns>[^/?#]+)/(?P<name>[^/?#]+)", re.IGNORECASE)
+
+
+def _thunderstore_nexus_id(url: str) -> int:
+    """The Nexus mod id of a Thunderstore requirement link, or 0."""
+    m = _THUNDERSTORE_URL_RE.match((url or "").strip())
+    if not m:
+        return 0
+    community = (m.group("community") or m.group("sub") or "").lower()
+    return _THUNDERSTORE_ON_NEXUS.get(
+        (community, m.group("ns").lower(), m.group("name").lower()), 0)
+
+
 def _normalize_requirements(raw: list) -> list:
     """The v2 API returns requirement modId as a STRING, and external
     requirements (VC++ redist links etc.) come through as modId "0" with an
-    empty name - only real Nexus mods (modId > 0) are openable in-app."""
+    empty name - only real Nexus mods (modId > 0) are openable in-app.
+    A Thunderstore link to a package that is also on Nexus is resolved to
+    that Nexus mod (see _THUNDERSTORE_ON_NEXUS)."""
     reqs = []
     for r in raw or []:
         try:
             rid = int(r.get("modId") or 0)
         except (TypeError, ValueError):
             rid = 0
+        if not rid:
+            rid = _thunderstore_nexus_id(r.get("url") or "")
         reqs.append(
             {
                 "modName": r.get("modName") or "",

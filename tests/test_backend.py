@@ -23762,3 +23762,36 @@ class TestCopyRootThunderstorePackage(unittest.TestCase):
         _game, out = self._place({"skse64_2_02_06/skse64_loader.exe": b"MZ"},
                                  detect="skse64_loader.exe")
         self.assertEqual(out, {"skse64_loader.exe"})
+
+
+class TestThunderstoreRequirementLinks(unittest.TestCase):
+    """Valheim requirements often point at Thunderstore, not Nexus. Epic
+    Loot (387) lists all three of its own that way, each with modId 0, and
+    failed on the Legion for want of JsonDotNET. These are its real links,
+    from the live API on 2026-09-25."""
+
+    def test_epic_loots_requirements_resolve_to_nexus_mods(self):
+        raw = [
+            {"modName": "BepInEx", "modId": "0",
+             "url": "https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/"},
+            {"modName": "JsonDotNet", "modId": "0",
+             "url": "https://thunderstore.io/c/valheim/p/ValheimModding/JsonDotNET/"},
+            {"modName": "Jotunn", "modId": "0",
+             "url": "https://thunderstore.io/c/valheim/p/ValheimModding/Jotunn/"},
+        ]
+        self.assertEqual([r["modId"] for r in main._normalize_requirements(raw)],
+                         [3605, 3661, 1138])
+
+    def test_an_unknown_package_stays_external(self):
+        raw = [{"modName": "Something", "modId": "0",
+                "url": "https://thunderstore.io/c/valheim/p/Someone/Something/"}]
+        self.assertEqual(main._normalize_requirements(raw)[0]["modId"], 0)
+
+    def test_the_same_package_in_another_community_is_not_it(self):
+        self.assertEqual(main._thunderstore_nexus_id(
+            "https://thunderstore.io/c/lethal-company/p/ValheimModding/Jotunn/"), 0)
+
+    def test_a_nexus_id_is_never_overridden(self):
+        raw = [{"modName": "Jotunn", "modId": "42",
+                "url": "https://thunderstore.io/c/valheim/p/ValheimModding/Jotunn/"}]
+        self.assertEqual(main._normalize_requirements(raw)[0]["modId"], 42)
