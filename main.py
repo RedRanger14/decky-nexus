@@ -711,6 +711,9 @@ _FLAT_NOISE_EXTS = {
     ".namh",
 }
 _FLAT_NOISE_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
+# What a Thunderstore package carries beside its payload, lowercased.
+_THUNDERSTORE_META = {"manifest.json", "icon.png", "readme.md",
+                      "changelog.md", "license", "license.md", "license.txt"}
 
 
 def _flat_variant_name(srcs: list, scratch: str) -> dict:
@@ -2478,6 +2481,75 @@ def _force_rmtree(path: str) -> None:
         except OSError:
             pass
     shutil.rmtree(path)
+
+
+def _copy_root_payload(scratch: str, dest_root: str, detect_file: str,
+                       install_subdir: str = "") -> None:
+    """Move a copyRoot framework archive's payload into dest_root.
+
+    The archive is the game-dir payload, usually inside one wrapper
+    folder, which is flattened; see the notes below for which folders
+    count as a wrapper and which are real structure.
+    """
+    src = scratch
+    top = os.listdir(scratch)
+    # A Thunderstore package (the format Valheim's own BepInEx
+    # pack ships in, re-uploaded to Nexus as-is) keeps the
+    # payload in one folder beside manifest.json, icon.png and
+    # its readme. Those describe the package for a mod manager;
+    # the folder is what goes in the game. Counted as a wrapper
+    # only when manifest.json says it is one, so an ordinary
+    # archive's readme never decides anything.
+    if "manifest.json" in top:
+        payload = [
+            n for n in top
+            if n.lower() not in _THUNDERSTORE_META
+            or os.path.isdir(os.path.join(scratch, n))
+        ]
+        if len(payload) == 1:
+            top = payload
+    # Flatten a single version-wrapper folder (skse64_2_02_06/),
+    # but NOT a real structure dir: BLSE ships bin/... which is
+    # already game-root-relative - flattening it would dump
+    # Win64_Shipping_Client at the root. The detect file's first
+    # path component tells us which dirs are structural - taken
+    # RELATIVE to install_subdir when one is set, because the
+    # archive's layout is relative to where it lands: PalSchema
+    # ships PalSchema/dlls/main.dll destined for ue4ss/Mods, and
+    # comparing its wrapper against the full detect path's "Pal"
+    # would flatten away the folder that IS the mod.
+    detect_rel = detect_file
+    if install_subdir and detect_file.lower().startswith(
+        install_subdir.lower() + "/"
+    ):
+        detect_rel = detect_file[len(install_subdir) + 1:]
+    detect_root = detect_rel.split("/")[0].lower()
+    if (
+        len(top) == 1
+        and os.path.isdir(os.path.join(scratch, top[0]))
+        and top[0].lower() != detect_root
+    ):
+        src = os.path.join(scratch, top[0])
+    for root, _dirs, names in os.walk(src):
+        for name in names:
+            rel = os.path.relpath(os.path.join(root, name), src)
+            if not _safe_rel_path(rel):
+                continue
+            dst = os.path.join(dest_root, rel)
+            _makedirs_for(dst)
+            if os.path.isfile(dst):
+                os.remove(dst)
+            shutil.move(os.path.join(root, name), dst)
+            # .sh too: Valheim's loader starts from
+            # start_game_bepinex.sh, which its zip stores
+            # without the executable bit, and Steam cannot run
+            # a launch option it may not execute.
+            if (rel.lower().endswith((".exe", ".sh"))
+                    or "." not in os.path.basename(rel)):
+                try:
+                    os.chmod(dst, 0o755)
+                except OSError:
+                    pass
 
 
 def _normalize_perms(path: str) -> None:
@@ -21607,45 +21679,8 @@ query Link($slug: String!, $domainName: String!) {
                         install_path, *install_subdir.split("/")
                     )
                     os.makedirs(dest_root, exist_ok=True)
-                src = scratch
-                top = os.listdir(scratch)
-                # Flatten a single version-wrapper folder (skse64_2_02_06/),
-                # but NOT a real structure dir: BLSE ships bin/... which is
-                # already game-root-relative - flattening it would dump
-                # Win64_Shipping_Client at the root. The detect file's first
-                # path component tells us which dirs are structural - taken
-                # RELATIVE to install_subdir when one is set, because the
-                # archive's layout is relative to where it lands: PalSchema
-                # ships PalSchema/dlls/main.dll destined for ue4ss/Mods, and
-                # comparing its wrapper against the full detect path's "Pal"
-                # would flatten away the folder that IS the mod.
-                detect_rel = detect_file
-                if install_subdir and detect_file.lower().startswith(
-                    install_subdir.lower() + "/"
-                ):
-                    detect_rel = detect_file[len(install_subdir) + 1:]
-                detect_root = detect_rel.split("/")[0].lower()
-                if (
-                    len(top) == 1
-                    and os.path.isdir(os.path.join(scratch, top[0]))
-                    and top[0].lower() != detect_root
-                ):
-                    src = os.path.join(scratch, top[0])
-                for root, _dirs, names in os.walk(src):
-                    for name in names:
-                        rel = os.path.relpath(os.path.join(root, name), src)
-                        if not _safe_rel_path(rel):
-                            continue
-                        dst = os.path.join(dest_root, rel)
-                        _makedirs_for(dst)
-                        if os.path.isfile(dst):
-                            os.remove(dst)
-                        shutil.move(os.path.join(root, name), dst)
-                        if rel.lower().endswith(".exe") or "." not in os.path.basename(rel):
-                            try:
-                                os.chmod(dst, 0o755)
-                            except OSError:
-                                pass
+                _copy_root_payload(
+                    scratch, dest_root, detect_file, install_subdir)
                 _force_rmtree(scratch)
                 # detect_file may itself be a subpath relative to the game
                 # root (matches get_game_status).

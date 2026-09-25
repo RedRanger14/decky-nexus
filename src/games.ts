@@ -864,6 +864,59 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       tool: "proton_experimental",
     },
   },
+  892970: {
+    appId: 892970,
+    displayName: "Valheim",
+    nexusDomain: "valheim", // verified against the Nexus API: game id 3667
+    // Verified on the Legion 2026-09-25: steamapps/common/Valheim holds the
+    // NATIVE Linux build (valheim.x86_64, UnityPlayer.so) and nothing else
+    // but steam_appid.txt and two libdecor libraries.
+    installDirName: "Valheim",
+    modsSubdir: "BepInEx/plugins",
+    moddedSaveWarning: false,
+    processName: "valheim.x86_64",
+    framework: {
+      name: "BepInEx",
+      // Native, unlike Silksong and Subnautica, and deliberately so. The
+      // community pack ships a Linux loader of its own (libdoorstop_x64.so,
+      // started by start_game_bepinex.sh, which its readme gives as THE
+      // Linux setup), so there is no need to force the Windows build.
+      // Forcing it would also move the saves: the native build keeps
+      // characters and worlds in ~/.config/unity3d/IronGate/Valheim, the
+      // Windows one inside a Proton prefix, and a player switched over
+      // would find their characters gone.
+      detectFile: "start_game_bepinex.sh",
+      url: "thunderstore.io/c/valheim/p/denikson/BepInExPack_Valheim",
+      // BepInExPack_Valheim, the pack the community maintains for this
+      // game (Azumatt, Vapok, Margmas), re-uploaded to Nexus. Its archive
+      // was downloaded and read: a Thunderstore package, the payload in
+      // BepInExPack_Valheim/ beside manifest.json, icon.png and the readme.
+      nexusModId: 3605,
+      installKind: "copyRoot",
+      launchOptionsTemplate: '"{install_path}/start_game_bepinex.sh" %command%',
+      // Every top-level name in the pack's payload. None exist in a vanilla
+      // install. steam_appid.txt DOES (the game ships it), which is why this
+      // list is not Subnautica's.
+      cleanupPrefixes: [
+        "BepInEx",
+        "doorstop_libs",
+        "doorstop_config.ini",
+        ".doorstop_version",
+        "start_game_bepinex.sh",
+        "start_server_bepinex.sh",
+        "winhttp.dll",
+        "changelog.txt",
+      ],
+    },
+    // The pack, then Jotunn: the library a large share of Valheim mods
+    // are built on, and the top trending mod on the site.
+    recommendedModIds: [3605, 1138],
+    underConstruction:
+      "Valheim support is new and still being tested. Mods run through " +
+      "BepInEx, which the panel sets up in one step, and the game stays " +
+      "the native Linux version, so your characters and worlds stay " +
+      "where they are.",
+  },
   1623730: {
     appId: 1623730,
     displayName: "Palworld",

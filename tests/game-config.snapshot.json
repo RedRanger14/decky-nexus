@@ -253,6 +253,30 @@
     ]
   },
   {
+    "appId": "892970",
+    "displayName": "Valheim",
+    "nexusDomain": "valheim",
+    "installDirName": "Valheim",
+    "modsSubdir": "BepInEx/plugins",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "BepInEx",
+    "launchOptionsTemplate": "\"{install_path}/start_game_bepinex.sh\" %command%",
+    "prefixTools": [
+      "3605"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"BepInEx\", \"doorstop_libs\", \"doorstop_config.ini\", \".doorstop_version\", \"start_game_bepinex.sh\", \"start_server_bepinex.sh\", \"winhttp.dll\", \"changelog.txt\","
+    ]
+  },
+  {
     "appId": "1030300",
     "displayName": "Hollow Knight: Silksong",
     "nexusDomain": "hollowknightsilksong",

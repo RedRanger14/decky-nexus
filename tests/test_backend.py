@@ -23694,3 +23694,71 @@ class TestMassEffectResetTakesEverything(unittest.TestCase):
         window = src[i - 400:i + 80]
         self.assertIn("try:", window)
         self.assertIn("except Exception", window)
+
+
+class TestCopyRootThunderstorePackage(unittest.TestCase):
+    """Valheim's BepInEx pack (Nexus 3605) is a Thunderstore package: the
+    payload in BepInExPack_Valheim/, beside manifest.json, icon.png,
+    README.md and CHANGELOG.md. The layout below is the real archive's,
+    read on the Legion 2026-09-25. The old rule only unwrapped a lone
+    folder, so this would have installed as Valheim/BepInExPack_Valheim/
+    and the game would never have seen BepInEx.
+    """
+
+    PACK = {
+        "CHANGELOG.md": b"c", "README.md": b"r", "icon.png": b"i",
+        "manifest.json": b"{}",
+        "BepInExPack_Valheim/.doorstop_version": b"4",
+        "BepInExPack_Valheim/doorstop_config.ini": b"[General]",
+        "BepInExPack_Valheim/start_game_bepinex.sh": b"#!/bin/sh",
+        "BepInExPack_Valheim/start_server_bepinex.sh": b"#!/bin/sh",
+        "BepInExPack_Valheim/winhttp.dll": b"MZ",
+        "BepInExPack_Valheim/BepInEx/config/BepInEx.cfg": b"cfg",
+        "BepInExPack_Valheim/BepInEx/core/BepInEx.Preloader.dll": b"MZ",
+        "BepInExPack_Valheim/doorstop_libs/libdoorstop_x64.so": b"ELF",
+    }
+
+    def _place(self, files, detect="start_game_bepinex.sh"):
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        scratch, game = os.path.join(root, "scratch"), os.path.join(root, "Valheim")
+        os.makedirs(game)
+        for rel, blob in files.items():
+            p = os.path.join(scratch, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(blob)
+        main._copy_root_payload(scratch, game, detect)
+        out = set()
+        for r, _d, names in os.walk(game):
+            for n in names:
+                out.add(os.path.relpath(os.path.join(r, n), game).replace(os.sep, "/"))
+        return game, out
+
+    def test_the_package_folder_is_what_lands_in_the_game(self):
+        game, out = self._place(self.PACK)
+        self.assertIn("start_game_bepinex.sh", out)
+        self.assertIn("BepInEx/core/BepInEx.Preloader.dll", out)
+        self.assertIn("doorstop_libs/libdoorstop_x64.so", out)
+        self.assertFalse(any(o.startswith("BepInExPack_Valheim/") for o in out), out)
+        # The package's own description is for mod managers, not the game.
+        for meta in ("manifest.json", "icon.png", "README.md", "CHANGELOG.md"):
+            self.assertNotIn(meta, out)
+
+    @unittest.skipIf(os.name == "nt", "no executable bit on Windows")
+    def test_the_launcher_script_can_be_run(self):
+        # Steam runs "<game>/start_game_bepinex.sh" %command%; the zip
+        # stores it 0666.
+        game, _out = self._place(self.PACK)
+        self.assertTrue(os.access(os.path.join(game, "start_game_bepinex.sh"), os.X_OK))
+
+    def test_without_a_manifest_a_readme_still_counts_as_payload(self):
+        # An ordinary archive: a readme beside the folder is not grounds
+        # for unwrapping, which is exactly how it behaved before.
+        files = {"README.md": b"r", "skse64_2_02_06/skse64_loader.exe": b"MZ"}
+        _game, out = self._place(files, detect="skse64_loader.exe")
+        self.assertIn("skse64_2_02_06/skse64_loader.exe", out)
+
+    def test_a_lone_wrapper_is_still_flattened(self):
+        _game, out = self._place({"skse64_2_02_06/skse64_loader.exe": b"MZ"},
+                                 detect="skse64_loader.exe")
+        self.assertEqual(out, {"skse64_loader.exe"})
