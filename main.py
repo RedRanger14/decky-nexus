@@ -11366,7 +11366,11 @@ _MVID_RE = re.compile(r"\(at <([0-9a-f]{32})>")
 # Exceptions that mean "made for a different build of the game": the thing
 # the mod changes is no longer there.
 _OUTDATED_EXCEPTIONS = ("MissingFieldException", "MissingMethodException",
-                        "TypeLoadException", "Undefined target method")
+                        "TypeLoadException", "Undefined target method",
+                        # A plugin logging its own exception says only this
+                        # much: Bounties on Epic Loot 0.14, "Field not found:
+                        # ... EpicLoot.Adventure.BountyTargetConfig.Biome".
+                        "Field not found", "Method not found")
 _MVID_CACHE: dict = {}
 _BEPINEX_CACHE: dict = {}
 
@@ -11529,6 +11533,14 @@ def _bepinex_problems(install_path: str) -> dict:
     # A plugin's own logger is named for it, so "[Error :Digitalroot.
     # ValheimBounties]" is that plugin even with no stack trace.
     by_source = {}
+    # ...or for its DLL: Bounties registers as "Digitalroot's Bounties" and
+    # logs as "Digitalroot.ValheimBounties", from
+    # Digitalroot.Valheim.Bounties.dll. Missing this left Bounties' errors
+    # unreported on the Legion. First folder wins where DLL names repeat
+    # (every JSON library ships a Newtonsoft.Json.dll).
+    for folder, path in dlls:
+        by_source.setdefault(
+            _norm_mod_id(os.path.splitext(os.path.basename(path))[0]), folder)
     for name, ver, guid in parsed["loaded"]:
         folder = folder_declaring(name, ver, guid)
         if folder:
@@ -11565,8 +11577,9 @@ def _bepinex_problems(install_path: str) -> dict:
     for folder, n in counts.items():
         if folder in outdated:
             detail = ("Errors last launch: it looks made for an older "
-                      "version of the game, which no longer has what it "
-                      "changes. Switching it off is the likely fix.")
+                      "version of the game, or of a mod it builds on, which "
+                      "no longer has what it changes. Switching it off is "
+                      "the likely fix.")
         else:
             # The exception's name, for whoever reads the log next; the
             # sentence is for the player.

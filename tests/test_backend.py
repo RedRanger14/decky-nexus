@@ -23927,3 +23927,19 @@ class TestBepInExLogReader(unittest.TestCase):
         row = next(m for m in r["mods"] if m["folder"] == "BetterUI")
         self.assertEqual(row["load_state"], "errors")
         self.assertEqual(r["load_log"], {"available": True, "stale": False})
+
+
+class TestBepInExPluginLoggerErrors(TestBepInExLogReader):
+    """A plugin logging its own exception has no stack trace to follow,
+    only its logger's name. Bounties on the Legion, real lines."""
+
+    def test_a_plugin_logger_is_matched_by_its_dll(self):
+        self._dll("Digitalroot.Valheim.Bounties", "Digitalroot.Valheim.Bounties.dll", bytes(16))
+        self._log(
+            "[Info   :   BepInEx] Loading [Digitalroot's Bounties 3.0.18] (digitalroot.mods.bounties)\n"
+            "[Error  :Digitalroot.ValheimBounties] Message: Field not found: Heightmap/Biome "
+            "EpicLoot.Adventure.BountyTargetConfig.Biome Due to: Could not find field in class\n"
+            "[Error  :Digitalroot.ValheimBounties] Source: mscorlib\n")
+        p = main._bepinex_problems(self.game)["problems"]
+        self.assertEqual(list(p), ["Digitalroot.Valheim.Bounties"])
+        self.assertIn("or of a mod it builds on", p["Digitalroot.Valheim.Bounties"]["detail"])
