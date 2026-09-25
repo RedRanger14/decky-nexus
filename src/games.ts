@@ -1481,23 +1481,20 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // (_nier_data_rel), checked against all 3,563 files in the game's
     // archive index. v1.12.0 flattened them and the outfit never showed.
     //
-    // Nothing the game shipped is overwritten: data/ holds only .cpk
-    // archives until a mod adds a folder beside them.
+    // Nothing the game shipped is overwritten. data/ holds the .cpk
+    // archives plus loose movie/, sound/ and Enlighten/ files the game
+    // ships, but none of those are .dat or .dtt (checked on the Legion,
+    // 2026-09-25), and only those two kinds are ever installed.
     flatModExtensions: [".dat", ".dtt"],
     moddedSaveWarning: false,
     processName: "NieRAutomata.exe", // verified on device
-    underConstruction:
-      "NieR:Automata support is new. Character, outfit and model mods " +
-      "are loose files that drop into the game's data folder, and this " +
-      "installs them there and removes them cleanly.\n\n" +
-      "Special K texture packs, like the HD Texture Pack, are built into " +
-      "the game's own files during the install instead, because Special " +
-      "K itself crashes this game on SteamOS. That takes a few minutes " +
-      "and far more disk space than the download.\n\n" +
-      "Two mods that change the same character replace each other, " +
-      "because they ship the same file name. That is how the game works " +
-      "rather than something the plugin can pick apart. Requested in " +
-      "issue #25.",
+    // Out of construction 2026-09-25, after a session on the Legion Go 2:
+    // outfit, model and inventory mods played, and the HD Texture Pack
+    // installed through the plugin (Special K textures built into the
+    // game's own files, 295 of them, 3m36s) and uninstalled back to the
+    // game's own archives. Special K itself crashes NieR under Proton 11,
+    // which is why packs are converted rather than injected; the mod page
+    // says so before the click. Requested in issue #25.
   },
   1328670: {
     appId: 1328670,

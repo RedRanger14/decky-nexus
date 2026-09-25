@@ -17,7 +17,7 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Nineteen games. Every one unmarked below was installed, modded and played
+Twenty games. Every one unmarked below was installed, modded and played
 on real hardware before it shipped. That is what supported means here: not
 that the code has a config entry for it, but that someone finished a
 session with mods running.
@@ -30,21 +30,24 @@ session with mods running.
 6. Helldivers 2
 7. Mass Effect Legendary Edition †
 8. Mount & Blade II: Bannerlord
-9. Palworld
-10. Resident Evil 4
-11. Skyrim Special Edition
-12. Slay the Spire 2
-13. STAR WARS Battlefront II (2017)
-14. Stardew Valley
-15. Starfield \*
-16. Subnautica
-17. Subnautica 2
-18. Subnautica: Below Zero
-19. The Witcher 3
+9. NieR:Automata ‡
+10. Palworld
+11. Resident Evil 4
+12. Skyrim Special Edition
+13. Slay the Spire 2
+14. STAR WARS Battlefront II (2017)
+15. Stardew Valley
+16. Starfield \*
+17. Subnautica
+18. Subnautica 2
+19. Subnautica: Below Zero
+20. The Witcher 3
 
 \* Community added game. Not tested by author.
 
 † New. Played on a Deck, and mods that edit the game's own files install through an optional step in the panel. That step is newer than the rest.
+
+‡ New. Played on a Legion Go 2. Special K texture packs such as the HD Texture Pack are built into the game's own files during the install, since Special K itself does not run there.
 
 ### On the roadmap
 
@@ -53,7 +56,6 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
-- NieR:Automata
 
 ### Requested, not started
 

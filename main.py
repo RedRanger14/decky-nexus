@@ -19887,12 +19887,21 @@ query Link($slug: String!, $domainName: String!) {
                     if rel not in moved:
                         moved.append(rel)
                 # In the game now, or accounted for in convert_note: either
-                # way not "Special K textures that were not installed".
-                for p in sk_textures.values():
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+                # way not "Special K textures that were not installed". That
+                # includes the copies that lost to an exactly named twin
+                # ("38BFD9BA 2k.dds"): the first run through the plugin on
+                # the Legion reported those two as Special K files left out.
+                for root, _d, names in os.walk(scratch):
+                    rel_root = os.path.relpath(root, scratch).replace(
+                        os.sep, "/").lower()
+                    if "inject/textures" not in rel_root + "/":
+                        continue
+                    for n in names:
+                        if _sk_texture_key(n)[0]:
+                            try:
+                                os.remove(os.path.join(root, n))
+                            except OSError:
+                                pass
             # Before scratch goes: whatever is still in it did not go in,
             # and the user should hear what that was.
             skip_note = "" if hd2_layout else _flat_skip_note(scratch, placed)

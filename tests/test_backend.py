@@ -15061,6 +15061,17 @@ class TestNierTexturePacks(unittest.TestCase):
              "937E19F2": "937E19F2old.dds", "2E4CB26E": "2E4CB26E .dds",
              "ABCDEF01": "ABCDEF01.DDS"})
 
+    def test_a_duplicate_that_lost_is_not_reported_as_left_out(self):
+        # The first install through the plugin on the Legion ended its
+        # note with "2 texture files were not installed. They are Special
+        # K texture replacements": the two copies that lost to their
+        # exactly named twins.
+        res = self._install(self._pack(
+            [(self.SK + f"{self.h1} 2k.dds", _dds(8, 8, seed=6))]))
+        self.assertTrue(res.get("ok"), res)
+        self.assertNotIn("warning", res)
+        self.assertEqual(self._textures()[2][1], self.new1, "the exact name won")
+
     def test_listing_sizes_are_read(self):
         self.assertEqual(main._listing_size("302 B"), 302)
         self.assertEqual(main._listing_size("1.5 kB"), 1536)
