@@ -4673,6 +4673,45 @@ def _game_owned_name(game_domain: str, name: str) -> bool:
 # `needs_file` is looked for in the game's mods folder, so "have I got it?"
 # is a fact about the install rather than a guess. Mods listed here are
 # switched OFF when it is absent and restored when it appears.
+# Tools a game's mods need that the plugin cannot fetch (not on Nexus Mods).
+# A mod whose Nexus requirements link one of these is unsupported here: kept
+# off the store's home page and marked on its own page. `match` is a
+# fragment of the requirement link, lowercased.
+UNFETCHABLE_TOOLS = {
+    "reddeadredemption2": (
+        {
+            "name": "Lenny's Mod Loader",
+            "match": "rdr2mods.com/downloads/rdr2/tools/76-lennys-mod-loader",
+            "url": "https://www.rdr2mods.com/downloads/rdr2/tools/76-lennys-mod-loader-rdr/",
+            "effect": ("Installed without it, the mod does nothing, and the "
+                       "plugin cannot install it for you."),
+        },
+    ),
+    "newvegas": (
+        {
+            "name": "Vanilla UI+ (VUI+)",
+            "match": "moddb.com/mods/vanilla-ui-plus",
+            "url": "https://www.moddb.com/mods/vanilla-ui-plus/downloads/vanilla-ui-plus-nv",
+            "effect": ("Installed without it, the game stops at the main "
+                       "menu, and the plugin cannot install it for you."),
+        },
+    ),
+}
+_UNSUPPORTED_CACHE: dict = {}
+
+
+def _unfetchable_requirement(requirements: list, tools) -> str:
+    """The reason a mod cannot work here, from its requirements, or ""."""
+    for r in requirements or []:
+        if r.get("modId"):
+            continue  # a Nexus mod the plugin can install
+        url = (r.get("url") or "").lower()
+        for t in tools:
+            if t["match"] in url:
+                return f"Needs {t['name']}, which is not on Nexus Mods."
+    return ""
+
+
 MODS_NEEDING_EXTERNAL = {
     "newvegas": {
         # One HUD, Clean Vanilla Hud and the patch between them are the
@@ -24848,6 +24887,60 @@ query CollectionInstructions($slug: String!) {
             "errors": errors[:8],
         }
 
+    async def get_unsupported_mods(self, game_domain: str, mod_ids: list) -> dict:
+        """{mod_id: reason} for the mods among `mod_ids` this plugin cannot
+        make work on this game, answered in bulk for the store's home page.
+
+        Michael, 2026-09-26, on Online Content Unlocker heading RDR2's
+        store while it needs Lenny's Mod Loader, which is not on Nexus: "No
+        unsupported mods should appear in the hero banner or even the home
+        page at all". A mod counts when the curated table says so, or when
+        its own Nexus requirements name a tool this game cannot get
+        (UNFETCHABLE_TOOLS). One requirements query per 20 mods, kept for
+        the session."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        ids = []
+        for m in mod_ids or []:
+            try:
+                ids.append(int(m))
+            except (TypeError, ValueError):
+                continue
+        out = {}
+        curated = MODS_NEEDING_EXTERNAL.get(game_domain) or {}
+        tools = UNFETCHABLE_TOOLS.get(game_domain) or ()
+        todo = []
+        for i in ids:
+            if i in curated:
+                out[str(i)] = f"Needs {curated[i]['needs_name']}, which is not on Nexus Mods."
+                continue
+            key = (game_domain, i)
+            if key in _UNSUPPORTED_CACHE:
+                if _UNSUPPORTED_CACHE[key]:
+                    out[str(i)] = _UNSUPPORTED_CACHE[key]
+            elif tools:
+                todo.append(i)
+        if todo:
+            try:
+                api_key = _load_settings().get("api_key")
+                game_id = await _resolve_game_id(game_domain, api_key)
+                nodes = await _legacy_mods_in_batches(
+                    game_id, sorted(set(todo)), REQUIREMENT_FIELDS, api_key)
+            except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError,
+                    KeyError, ValueError) as e:
+                # Unknown is not unsupported: show the mods rather than hide
+                # them on a failed lookup.
+                decky.logger.debug(f"unsupported-mods lookup failed: {e}")
+                return {"ok": True, "unsupported": out}
+            for n in nodes:
+                mid = int(n.get("modId") or 0)
+                reason = _unfetchable_requirement(
+                    _split_requirements(n)["requirements"], tools)
+                _UNSUPPORTED_CACHE[(game_domain, mid)] = reason
+                if reason:
+                    out[str(mid)] = reason
+        return {"ok": True, "unsupported": out}
+
     async def get_mod_support(self, game_domain: str, mod_id: int) -> dict:
         """Whether this mod needs something we cannot install, and what.
 
@@ -24859,6 +24952,21 @@ query CollectionInstructions($slug: String!) {
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         entry = (MODS_NEEDING_EXTERNAL.get(game_domain) or {}).get(int(mod_id))
+        if not entry and UNFETCHABLE_TOOLS.get(game_domain):
+            # Not in the curated table, but its own requirements may name a
+            # tool this game cannot get (RDR2: Lenny's Mod Loader).
+            got = await self.get_unsupported_mods(game_domain, [int(mod_id)])
+            reason = (got.get("unsupported") or {}).get(str(int(mod_id)))
+            if reason:
+                tool = next((t for t in UNFETCHABLE_TOOLS[game_domain]
+                             if t["name"] in reason), None)
+                return {
+                    "ok": True,
+                    "supported": False,
+                    "needs_name": tool["name"] if tool else "",
+                    "url": tool["url"] if tool else "",
+                    "reason": reason + " " + (tool["effect"] if tool else ""),
+                }
         if not entry:
             return {"ok": True, "supported": True}
         return {

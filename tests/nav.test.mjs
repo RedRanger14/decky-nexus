@@ -960,8 +960,10 @@ test("frameworks never take a hero slot", () => {
     page.indexOf("const heroBlend"),
     page.indexOf("const heroMods")
   );
+  // The same filter also drops unsupported mods now, so match the
+  // framework half on its own.
   assert.ok(
-    /filter\(\(m\) => !fwIds\.has\(m\.modId\)\)/.test(blend),
+    /filter\(\(m\) => !fwIds\.has\(m\.modId\)/.test(blend),
     "frameworks are not filtered out of the hero blend"
   );
 });
@@ -1992,4 +1994,17 @@ test("Load more keeps focus, and hands it to the first new tile (#32)", () => {
   assert.ok(page.includes("<div ref={modGridRef}>") &&
     page.includes("<div ref={collectionGridRef}>"),
     "a grid lost the wrapper focusGridItem finds its items through");
+});
+
+test("unsupported mods never reach the store's home page", () => {
+  // Michael: "No unsupported mods should appear in the hero banner or even
+  // the home page at all".
+  const page = read("BrowsePage.tsx");
+  assert.ok(/!fwIds\.has\(m\.modId\) && !unsupported\[m\.modId\]/.test(page),
+    "the hero can show a mod the plugin cannot make work");
+  assert.ok(page.includes("mods={railNewest}") && page.includes("mods={railPopular}")
+    && /!unsupported\[t\.modId\]/.test(page),
+    "a home rail can show a mod the plugin cannot make work");
+  assert.ok(/unsupported=\{unsupported\[mod\.modId\]\}/.test(page),
+    "full lists no longer mark mods that cannot work here");
 });

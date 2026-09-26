@@ -20,6 +20,7 @@ import {
   getMods,
   getModsByIds,
   getShowAdult,
+  getUnsupportedMods,
   getTrendingMods,
   CollectionVerdictState,
   getCollectionVerdicts,
@@ -415,14 +416,41 @@ function HeroCard({
   );
 }
 
+/** "Not installable here", on a tile in a full list or search. */
+function UnsupportedBadge({ reason }: { reason: string }) {
+  return (
+    <div
+      title={reason}
+      style={{
+        position: "absolute",
+        left: "6px",
+        bottom: "6px",
+        padding: "2px 7px",
+        borderRadius: "3px",
+        fontSize: "10.5px",
+        fontWeight: 700,
+        letterSpacing: "0.3px",
+        background: "rgba(20, 22, 28, 0.88)",
+        color: "#f0a746",
+      }}
+    >
+      Not installable here
+    </div>
+  );
+}
+
 function ModTile({
   mod,
   game,
   blur,
+  unsupported,
 }: {
   mod: NexusMod;
   game: SupportedGame;
   blur?: boolean;
+  /** Why this mod cannot work here, when it cannot. Full lists and search
+   * still show such mods, marked; the home page never does. */
+  unsupported?: string;
 }) {
   const blurred = !!blur && mod.adultContent;
   return (
@@ -454,9 +482,12 @@ function ModTile({
             }}
           />
           {blurred && <AdultBadge />}
+          {unsupported && <UnsupportedBadge reason={unsupported} />}
         </div>
       ) : (
-        <div style={{ width: "100%", aspectRatio: "16 / 9", background: "#23262e" }} />
+        <div style={{ width: "100%", aspectRatio: "16 / 9", background: "#23262e", position: "relative" }}>
+          {unsupported && <UnsupportedBadge reason={unsupported} />}
+        </div>
       )}
       <div style={{ padding: "8px 10px" }}>
         <div
@@ -1016,6 +1047,40 @@ export function BrowsePage() {
   // band on a device where it was already installed and running. And even
   // uninstalled, a framework is Step 1's job; a hero tile saying "install
   // BLSE" duplicates the setup flow one screen away.
+  // Mods this plugin cannot make work on this game: never on the home
+  // page, marked in full lists and search. Michael, on RDR2's Online
+  // Content Unlocker heading the store while it needs Lenny's Mod Loader,
+  // which is not on Nexus: "No unsupported mods should appear in the hero
+  // banner or even the home page at all". Asked once per mod per game.
+  const [unsupported, setUnsupported] = useState<Record<number, string>>({});
+  const unsupportedAsked = useRef<{ game: number; ids: Set<number> }>({
+    game: 0,
+    ids: new Set(),
+  });
+  useEffect(() => {
+    const asked = unsupportedAsked.current;
+    if (asked.game !== game.appId) {
+      asked.game = game.appId;
+      asked.ids = new Set();
+      setUnsupported({});
+    }
+    const ids = [...recommended, ...trending, ...newest, ...popular, ...mods]
+      .map((m) => m.modId)
+      .filter((id) => !asked.ids.has(id));
+    if (ids.length === 0) return;
+    ids.forEach((id) => asked.ids.add(id));
+    getUnsupportedMods(game.nexusDomain, ids)
+      .then((r) => {
+        if (!r.ok || !r.unsupported) return;
+        const found: Record<number, string> = {};
+        for (const [k, v] of Object.entries(r.unsupported)) found[Number(k)] = v;
+        if (Object.keys(found).length > 0) {
+          setUnsupported((prev) => ({ ...prev, ...found }));
+        }
+      })
+      .catch(() => {});
+  }, [game.appId, recommended, trending, newest, popular, mods]);
+
   const fwIds = new Set([
     ...frameworkModIds(game),
     // Desktop tools the game's config names: HD2's two most-endorsed
@@ -1026,7 +1091,7 @@ export function BrowsePage() {
   const heroBlend = [
     ...recommended,
     ...trending.filter((t) => !recommended.some((r) => r.modId === t.modId)),
-  ].filter((m) => !fwIds.has(m.modId));
+  ].filter((m) => !fwIds.has(m.modId) && !unsupported[m.modId]);
   const heroMods = [
     ...heroBlend.filter((m) => !installedIds.has(m.modId)),
     ...heroBlend.filter((m) => installedIds.has(m.modId)),
@@ -1036,8 +1101,10 @@ export function BrowsePage() {
   );
   const heroTitle = heroIsCurated ? "Recommended" : "Trending now";
   const railTrending = trending.filter(
-    (t) => !heroMods.some((h) => h.modId === t.modId)
+    (t) => !heroMods.some((h) => h.modId === t.modId) && !unsupported[t.modId]
   );
+  const railNewest = newest.filter((m) => !unsupported[m.modId]);
+  const railPopular = popular.filter((m) => !unsupported[m.modId]);
   const railTitle = heroIsCurated ? "Trending now" : "Also trending";
   const pinned = usePinnedTop();
 
@@ -1453,7 +1520,7 @@ export function BrowsePage() {
             />
             <ModCarousel
               title="New mods"
-              mods={newest}
+              mods={railNewest}
               game={game}
               blur={blurAdult}
               onViewAll={() => {
@@ -1463,7 +1530,7 @@ export function BrowsePage() {
             />
             <ModCarousel
               title="All-time favourites"
-              mods={popular}
+              mods={railPopular}
               game={game}
               blur={blurAdult}
               onViewAll={() => {
@@ -1591,7 +1658,13 @@ export function BrowsePage() {
               }}
             >
               {mods.map((mod) => (
-                <ModTile key={mod.modId} mod={mod} game={game} blur={blurAdult} />
+                <ModTile
+                  key={mod.modId}
+                  mod={mod}
+                  game={game}
+                  blur={blurAdult}
+                  unsupported={unsupported[mod.modId]}
+                />
               ))}
             </Focusable>
             </div>

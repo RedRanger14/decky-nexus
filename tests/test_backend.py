@@ -24324,3 +24324,62 @@ class TestRdr2Routing(unittest.TestCase):
         raw = [{"modName": "Scripthook and Dinput8", "modId": "0",
                 "url": "http://dev-c.com/rdr2/scripthookrdr2/"}]
         self.assertEqual(main._normalize_requirements(raw)[0]["modId"], 1472)
+
+
+class TestUnsupportedModsStayOffTheHomePage(unittest.TestCase):
+    """RDR2's Online Content Unlocker (1688) headed the store while it
+    needs Lenny's Mod Loader, which is not on Nexus. Its real requirement
+    links, from the live API 2026-09-26."""
+
+    OCU = {"modId": "1688", "modRequirements": {"nexusRequirements": {"nodes": [
+        {"modName": "Lenny's Mod Loader", "modId": "0", "notes": "",
+         "url": "https://www.rdr2mods.com/downloads/rdr2/tools/76-lennys-mod-loader-rdr"},
+        {"modName": "Scripthook and Dinput8", "modId": "0", "notes": "",
+         "url": "http://dev-c.com/rdr2/scripthookrdr2/"}]}, "dlcRequirements": []}}
+    RAMPAGE = {"modId": "233", "modRequirements": {"nexusRequirements": {"nodes": [
+        {"modName": "ScriptHookRDR2 V2", "modId": "1472", "notes": "", "url": ""},
+        {"modName": "Online Content Unlocker", "modId": "1688", "notes": "", "url": ""}]},
+        "dlcRequirements": []}}
+
+    def setUp(self):
+        main._UNSUPPORTED_CACHE.clear()
+
+    def _ask(self, ids, nodes=None, fail=False):
+        async def fake_batches(game_id, mod_ids, fields, api_key=None):
+            if fail:
+                raise RuntimeError("down")
+            return [n for n in (nodes or []) if int(n["modId"]) in mod_ids]
+
+        async def fake_game_id(domain, api_key=None):
+            return 3024
+
+        with mock.patch.object(main, "_legacy_mods_in_batches", fake_batches), \
+                mock.patch.object(main, "_resolve_game_id", fake_game_id):
+            return run(main.Plugin().get_unsupported_mods("reddeadredemption2", ids))
+
+    def test_a_mod_needing_an_unfetchable_tool_is_named(self):
+        r = self._ask([1688, 233], [self.OCU, self.RAMPAGE])
+        self.assertEqual(list(r["unsupported"]), ["1688"])
+        self.assertIn("Lenny's Mod Loader", r["unsupported"]["1688"])
+
+    def test_requiring_that_mod_is_not_the_same_as_requiring_the_tool(self):
+        # Rampage lists Online Content Unlocker as a requirement, and works.
+        r = self._ask([233], [self.RAMPAGE])
+        self.assertEqual(r["unsupported"], {})
+
+    def test_a_failed_lookup_hides_nothing(self):
+        self.assertEqual(self._ask([1688], fail=True)["unsupported"], {})
+
+    def test_the_mod_page_says_why(self):
+        async def fake_batches(game_id, mod_ids, fields, api_key=None):
+            return [self.OCU]
+
+        async def fake_game_id(domain, api_key=None):
+            return 3024
+
+        with mock.patch.object(main, "_legacy_mods_in_batches", fake_batches), \
+                mock.patch.object(main, "_resolve_game_id", fake_game_id):
+            r = run(main.Plugin().get_mod_support("reddeadredemption2", 1688))
+        self.assertFalse(r["supported"])
+        self.assertEqual(r["needs_name"], "Lenny's Mod Loader")
+        self.assertIn("does nothing", r["reason"])

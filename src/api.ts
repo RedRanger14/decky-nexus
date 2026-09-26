@@ -1438,6 +1438,13 @@ export const getCollectionSupport = callable<
 // Whether ONE mod needs something Nexus does not host. Keyed by mod id so
 // the warning reaches a user who found it by browsing, not only someone
 // installing the collection it came from.
+/** Mods among these ids the plugin cannot make work on this game, with
+ * why: kept off the store's home page and marked in lists. */
+export const getUnsupportedMods = callable<
+  [game_domain: string, mod_ids: number[]],
+  { ok: boolean; unsupported?: Record<string, string>; error?: string }
+>("get_unsupported_mods");
+
 export const getModSupport = callable<
   [game_domain: string, mod_id: number],
   {
