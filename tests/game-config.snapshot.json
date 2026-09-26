@@ -355,6 +355,32 @@
     ]
   },
   {
+    "appId": "1174180",
+    "displayName": "Red Dead Redemption 2",
+    "nexusDomain": "reddeadredemption2",
+    "installDirName": "Red Dead Redemption 2",
+    "modsSubdir": "._nexus_mods_unused",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "ScriptHookRDR2",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dinput8=n,b\" %command%",
+    "prefixTools": [
+      "1472",
+      "1472"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"ScriptHookRDR2.dll\", \"sdk\"",
+      "\"dinput8.dll\""
+    ]
+  },
+  {
     "appId": "1237950",
     "displayName": "STAR WARS Battlefront II",
     "nexusDomain": "starwarsbattlefront22017",

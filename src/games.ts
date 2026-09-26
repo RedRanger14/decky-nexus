@@ -917,6 +917,61 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // off by the auto-off list), played with interaction, hotbar and
     // crafting working. BepInEx's log is read after each session.
   },
+  1174180: {
+    appId: 1174180,
+    displayName: "Red Dead Redemption 2",
+    nexusDomain: "reddeadredemption2", // verified against the Nexus API: game id 3024
+    // Verified on the Legion 2026-09-26: the Windows build under Proton
+    // (RDR2.exe, PlayRDR2.exe), prefix at compatdata/1174180. The first
+    // launch installs the Rockstar Launcher and needs a sign-in, which
+    // only the player can do.
+    installDirName: "Red Dead Redemption 2",
+    // Mods land beside RDR2.exe as exact-file records (the backend routes
+    // by game: _route_rdr2_payload). Nothing lives in a mods folder, so
+    // the folder scan points at one that never exists, like Elden Ring's.
+    modsSubdir: "._nexus_mods_unused",
+    moddedSaveWarning: false,
+    processName: "RDR2.exe",
+    // Both halves of the loader are MAIN files on ONE Nexus page,
+    // ScriptHookRDR2 V2 (1472, kepmehz): "Mod Loader" is dinput8.dll, the
+    // ASI loader, and "ScriptHookRDR2 V2" is the script hook itself. Its
+    // page: "copy dinput8.dll and ScriptHookRDR2.dll into your RDR2 Game
+    // Directory". avoidFileKeywords picks each one's file apart.
+    framework: {
+      name: "ScriptHookRDR2",
+      detectFile: "ScriptHookRDR2.dll",
+      url: "nexusmods.com/reddeadredemption2/mods/1472",
+      nexusModId: 1472,
+      avoidFileKeywords: ["Mod Loader"],
+      installKind: "copyRoot",
+      // Under Proton, Wine prefers its own dinput8 unless told otherwise,
+      // so without this the loader never loads, and with it off the game
+      // runs clean. That is what makes the panel's mod-loader switch the
+      // way to play Red Dead Online safely.
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
+      cleanupPrefixes: ["ScriptHookRDR2.dll", "sdk"],
+    },
+    extraFrameworks: [
+      {
+        name: "ASI Loader",
+        detectFile: "dinput8.dll",
+        url: "nexusmods.com/reddeadredemption2/mods/1472",
+        nexusModId: 1472,
+        avoidFileKeywords: ["ScriptHook"],
+        installKind: "copyRoot",
+        cleanupPrefixes: ["dinput8.dll"],
+      },
+    ],
+    recommendedModIds: [1472],
+    underConstruction:
+      "Red Dead Redemption 2 support is new. Script mods and trainers load " +
+      "through ScriptHookRDR2, which the panel sets up in one step.\n\n" +
+      "Mods are for Story Mode only. Before playing Red Dead Online, switch " +
+      "the mod loader off in this panel: the game then starts without any " +
+      "mods, as Rockstar requires.\n\n" +
+      "Mods made for Lenny's Mod Loader install, but need that loader to " +
+      "work, and it is not on Nexus Mods.",
+  },
   1623730: {
     appId: 1623730,
     displayName: "Palworld",

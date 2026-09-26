@@ -24269,3 +24269,58 @@ class TestUnloadAlwaysLetsGo(unittest.TestCase):
         self.assertLessEqual(armed["secs"], 15)
         main._DL_ACTIVE.clear()
         main._DL_CANCEL.clear()
+
+
+class TestRdr2Routing(unittest.TestCase):
+    """Where RDR2 mods go, from the real archives (2026-09-26)."""
+
+    def _scratch(self, files):
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        for rel in files:
+            p = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(b"x")
+        return root
+
+    def _route(self, files, name="Mod"):
+        got, err = main._route_rdr2_payload(self._scratch(files), name)
+        return sorted(r for r, _s in got), err
+
+    def test_rampage_trainer_unwraps_its_version_folder(self):
+        got, err = self._route([
+            "RampageNUI_1.0.1491.50/Rampage.asi",
+            "RampageNUI_1.0.1491.50/RampageFiles/Hotkeys.json",
+            "RampageNUI_1.0.1491.50/RampageFiles/Lists/ObjectList.txt",
+            "RampageNUI_1.0.1491.50/Readme.txt",
+        ])
+        self.assertIsNone(err)
+        # Its own lists are .txt and must stay; the top-level readme goes.
+        self.assertEqual(got, ["Rampage.asi", "RampageFiles/Hotkeys.json",
+                               "RampageFiles/Lists/ObjectList.txt"])
+
+    def test_an_lml_mod_keeps_its_lml_tree(self):
+        got, err = self._route([
+            "lml/Online Content Unlocker/install.xml",
+            "lml/Online Content Unlocker/update_1/content.xml",
+        ])
+        self.assertIsNone(err)
+        self.assertEqual(got, ["lml/Online Content Unlocker/install.xml",
+                               "lml/Online Content Unlocker/update_1/content.xml"])
+
+    def test_a_game_folder_wrapper_is_stripped(self):
+        got, _err = self._route(["Red Dead Redemption 2/scripts/Duels.asi"])
+        self.assertEqual(got, ["scripts/Duels.asi"])
+
+    def test_bare_assets_go_where_lml_reads_them(self):
+        got, _err = self._route(["HD Horses/stream/horse_01.ytd"], name="HD Horses")
+        self.assertEqual(got, ["lml/HD Horses/stream/horse_01.ytd"])
+
+    def test_a_program_is_named_as_one(self):
+        _got, err = self._route(["Trainer Launcher.exe", "readme.txt"], name="Launcher")
+        self.assertEqual(err[0], "tool")
+
+    def test_scripthook_on_dev_c_resolves_to_its_nexus_upload(self):
+        raw = [{"modName": "Scripthook and Dinput8", "modId": "0",
+                "url": "http://dev-c.com/rdr2/scripthookrdr2/"}]
+        self.assertEqual(main._normalize_requirements(raw)[0]["modId"], 1472)
