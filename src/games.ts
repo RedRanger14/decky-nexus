@@ -48,6 +48,22 @@ export type LogAdapter =
    * load". */
   | { kind: "redscript" };
 
+export interface UserTool {
+  name: string;
+  /** Game-root-relative file proving it is installed. */
+  detectFile: string;
+  /** Where the user downloads it. */
+  url: string;
+  /** A path inside the download that identifies it (any wrapper folder). */
+  zipMarker: string;
+  /** The folder in the download whose contents go beside the game's exe. */
+  zipSubdir: string;
+  /** What reset removes. */
+  cleanupPrefixes: string[];
+  /** Why someone would want it, one sentence. */
+  why: string;
+}
+
 export interface GameFramework {
   /** Community mod loader most mods require (e.g. SMAPI) */
   name: string;
@@ -118,6 +134,11 @@ export interface SupportedGame {
   /** Additional frameworks beyond the primary (CP77 script mods need
    * 3-4 at once) - installed together by the one-button Step 1. */
   extraFrameworks?: GameFramework[];
+  /** Optional tools the plugin may not fetch or redistribute, installed
+   * from the USER'S OWN download (found in Downloads or Desktop by what is
+   * inside the zip). Lenny's Mod Loader for RDR2: not on Nexus, behind a
+   * browser check, and licensed against redistribution. */
+  userTools?: UserTool[];
   /** Upgrade the Proton prefix's VC++ runtime, during Step 1 and via a
    * repair row whenever it falls behind. Games' own Steam install
    * scripts leave an ancient CRT in the prefix - CP77's is 2019
@@ -963,14 +984,40 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       },
     ],
     recommendedModIds: [1472],
+    // A third of RDR2's top 20 mods need Lenny's Mod Loader (read from
+    // their Nexus requirements, 2026-09-26). Its own zip (beta 11 read on
+    // this laptop): ModLoader/ holds vfs.asi, three dlls, lml.ini and an
+    // empty lml/, "_PLACE ALL THIS IN THE GAME ROOT"; ModManager/ is a
+    // Windows app the plugin replaces, and the rest are examples.
+    userTools: [
+      {
+        name: "Lenny's Mod Loader",
+        detectFile: "vfs.asi",
+        url: "https://www.rdr2mods.com/downloads/rdr2/tools/76-lennys-mod-loader-rdr/",
+        zipMarker: "ModLoader/vfs.asi",
+        zipSubdir: "ModLoader",
+        cleanupPrefixes: [
+          "vfs.asi",
+          "ModManager.Core.dll",
+          "ModManager.NativeInterop.dll",
+          "NLog.dll",
+          "lml.ini",
+          "lml",
+        ],
+        why:
+          "Many popular mods need it, and it is not on Nexus Mods, so it " +
+          "comes from your own download.",
+      },
+    ],
     underConstruction:
       "Red Dead Redemption 2 support is new. Script mods and trainers load " +
       "through ScriptHookRDR2, which the panel sets up in one step.\n\n" +
       "Mods are for Story Mode only. Before playing Red Dead Online, switch " +
       "the mod loader off in this panel: the game then starts without any " +
       "mods, as Rockstar requires.\n\n" +
-      "Mods made for Lenny's Mod Loader install, but need that loader to " +
-      "work, and it is not on Nexus Mods.",
+      "Mods made for Lenny's Mod Loader need it installed. It is not on " +
+      "Nexus Mods: download it once from rdr2mods.com into your Downloads " +
+      "folder and this panel installs it.",
   },
   1623730: {
     appId: 1623730,

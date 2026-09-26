@@ -24383,3 +24383,68 @@ class TestUnsupportedModsStayOffTheHomePage(unittest.TestCase):
         self.assertFalse(r["supported"])
         self.assertEqual(r["needs_name"], "Lenny's Mod Loader")
         self.assertIn("does nothing", r["reason"])
+
+
+class TestUserToolFromOwnDownload(unittest.TestCase):
+    """Lenny's Mod Loader may not be fetched or redistributed (its licence;
+    rdr2mods.com's browser check), so it comes from the user's own download.
+    The layout is lml_rdr_beta_11.zip's."""
+
+    def setUp(self):
+        self.home = main.decky.DECKY_USER_HOME
+        self.dl = os.path.join(self.home, "Downloads")
+        shutil.rmtree(self.dl, ignore_errors=True)
+        os.makedirs(self.dl)
+        self.game = os.path.join(tempfile.mkdtemp(dir=TEST_ROOT), "Red Dead Redemption 2")
+        os.makedirs(self.game)
+        main._UNSUPPORTED_CACHE.clear()
+
+    def tearDown(self):
+        shutil.rmtree(self.dl, ignore_errors=True)
+
+    def _zip(self, name="whatever I called it.zip"):
+        p = os.path.join(self.dl, name)
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("ModLoader/vfs.asi", b"asi")
+            z.writestr("ModLoader/ModManager.Core.dll", b"dll")
+            z.writestr("ModLoader/lml.ini", b"[Main]")
+            z.writestr("ModLoader/lml/", b"")
+            z.writestr("ModLoader/_PLACE ALL THIS IN THE GAME ROOT", b"")
+            z.writestr("ModManager/ModManager.UI.exe", b"MZ")
+            z.writestr("Example addon ped by BHmaster/install.xml", b"<x/>")
+            z.writestr("readme.txt", b"read me")
+        return p
+
+    def test_the_download_is_found_by_what_is_in_it(self):
+        with open(os.path.join(self.dl, "other.zip"), "wb") as f:
+            f.write(b"not a zip")
+        p = self._zip()
+        self.assertEqual(main._find_user_tool_zip("ModLoader/vfs.asi"), p)
+
+    def test_only_the_loader_goes_in_the_game_folder(self):
+        self._zip()
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["reddeadredemption2"] = {
+            "OCU": {"name": "Online Content Unlocker", "mode": "files",
+                    "warning": "This mod needs Lenny's Mod Loader, which is not on Nexus Mods, so..."}}
+        main._save_settings(settings)
+        with mock.patch.object(main, "_game_dir", lambda _d: self.game):
+            r = run(main.Plugin().install_user_tool(
+                "reddeadredemption2", "Red Dead Redemption 2", "vfs.asi",
+                "ModLoader/vfs.asi", "ModLoader", "Lenny's Mod Loader"))
+        self.assertTrue(r["installed"], r)
+        got = sorted(os.listdir(self.game))
+        self.assertEqual(got, ["ModManager.Core.dll", "lml", "lml.ini", "vfs.asi"])
+        self.assertEqual(
+            main._load_settings()["installed"]["reddeadredemption2"]["OCU"]["warning"], "")
+        settings = main._load_settings()
+        settings["installed"].pop("reddeadredemption2", None)
+        main._save_settings(settings)
+
+    def test_mods_needing_it_count_as_supported_once_it_is_there(self):
+        with open(os.path.join(self.game, "vfs.asi"), "wb") as f:
+            f.write(b"asi")
+        with mock.patch.object(main, "_game_dir", lambda _d: self.game):
+            self.assertEqual(main._tools_missing("reddeadredemption2"), ())
+            r = run(main.Plugin().get_unsupported_mods("reddeadredemption2", [1688]))
+        self.assertEqual(r["unsupported"], {})

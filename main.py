@@ -14,6 +14,7 @@ import ssl
 import threading
 import time
 import urllib.parse
+import zipfile
 
 import aiohttp
 
@@ -4683,8 +4684,13 @@ UNFETCHABLE_TOOLS = {
             "name": "Lenny's Mod Loader",
             "match": "rdr2mods.com/downloads/rdr2/tools/76-lennys-mod-loader",
             "url": "https://www.rdr2mods.com/downloads/rdr2/tools/76-lennys-mod-loader-rdr/",
-            "effect": ("Installed without it, the mod does nothing, and the "
-                       "plugin cannot install it for you."),
+            "effect": ("Installed without it, the mod does nothing. Download "
+                       "Lenny's Mod Loader once from rdr2mods.com into your "
+                       "Downloads folder and the game's panel installs it."),
+            # Its licence forbids redistribution, so it only ever comes from
+            # the user's own download; once installed, this file proves it.
+            "game_dir": "Red Dead Redemption 2",
+            "marker": "vfs.asi",
         },
     ),
     "newvegas": (
@@ -4698,6 +4704,50 @@ UNFETCHABLE_TOOLS = {
     ),
 }
 _UNSUPPORTED_CACHE: dict = {}
+
+# Where a user's own download of a tool is looked for (under their home).
+USER_TOOL_DIRS = ("Downloads", "Desktop")
+
+
+def _tools_missing(game_domain: str) -> tuple:
+    """This game's unfetchable tools that are NOT installed. Once the user
+    has installed one (Lenny's Mod Loader from their own download), mods
+    needing it are supported like any other."""
+    out = []
+    for t in UNFETCHABLE_TOOLS.get(game_domain) or ():
+        marker = t.get("marker")
+        if marker and t.get("game_dir") and os.path.isfile(
+                os.path.join(_game_dir(t["game_dir"]), marker)):
+            continue
+        out.append(t)
+    return tuple(out)
+
+
+def _find_user_tool_zip(marker: str) -> str:
+    """The newest zip in the user's Downloads or Desktop that contains
+    `marker` (a path inside it, any wrapper folder allowed), or "".
+    Matched by contents, so whatever the download was called is fine."""
+    want = marker.lower().strip("/")
+    found = []
+    for d in USER_TOOL_DIRS:
+        base = os.path.join(decky.DECKY_USER_HOME, d)
+        try:
+            names = os.listdir(base)
+        except OSError:
+            continue
+        for n in names:
+            p = os.path.join(base, n)
+            if not n.lower().endswith(".zip") or not os.path.isfile(p):
+                continue
+            try:
+                with zipfile.ZipFile(p) as z:
+                    if any(e.lower().rstrip("/") == want
+                           or e.lower().endswith("/" + want)
+                           for e in z.namelist()):
+                        found.append((os.path.getmtime(p), p))
+            except (zipfile.BadZipFile, OSError):
+                continue
+    return max(found)[1] if found else ""
 
 
 def _unfetchable_requirement(requirements: list, tools) -> str:
@@ -24908,17 +24958,22 @@ query CollectionInstructions($slug: String!) {
                 continue
         out = {}
         curated = MODS_NEEDING_EXTERNAL.get(game_domain) or {}
-        tools = UNFETCHABLE_TOOLS.get(game_domain) or ()
+        tools = _tools_missing(game_domain)
         todo = []
         for i in ids:
             if i in curated:
                 out[str(i)] = f"Needs {curated[i]['needs_name']}, which is not on Nexus Mods."
                 continue
             key = (game_domain, i)
+            if not tools:
+                continue
             if key in _UNSUPPORTED_CACHE:
-                if _UNSUPPORTED_CACHE[key]:
-                    out[str(i)] = _UNSUPPORTED_CACHE[key]
-            elif tools:
+                # Cached per mod, judged per tool: a reason naming a tool
+                # the user has since installed no longer counts.
+                cached = _UNSUPPORTED_CACHE[key]
+                if cached and any(t["name"] in cached for t in tools):
+                    out[str(i)] = cached
+            else:
                 todo.append(i)
         if todo:
             try:
@@ -24941,6 +24996,97 @@ query CollectionInstructions($slug: String!) {
                     out[str(mid)] = reason
         return {"ok": True, "unsupported": out}
 
+    async def get_user_tool_status(
+        self, install_dir: str, detect_file: str, zip_marker: str,
+    ) -> dict:
+        """Is a user-downloaded tool installed, and if not, is its zip in
+        the user's Downloads or Desktop?"""
+        install_path = _game_dir(install_dir)
+        if install_path and os.path.isfile(os.path.join(install_path, detect_file)):
+            return {"ok": True, "installed": True}
+        zp = await asyncio.to_thread(_find_user_tool_zip, zip_marker)
+        return {"ok": True, "installed": False,
+                "zip_found": os.path.basename(zp) if zp else ""}
+
+    async def install_user_tool(
+        self, game_domain: str, install_dir: str, detect_file: str,
+        zip_marker: str, zip_subdir: str, tool_name: str = "",
+    ) -> dict:
+        """Install a tool from the USER'S OWN download into the game folder.
+
+        For tools the plugin may not fetch or redistribute. Lenny's Mod
+        Loader sits behind rdr2mods.com's browser check, and its licence
+        says "You may not copy, modify, rent, sell, distribute or transfer
+        any part of the Software" while allowing personal installs. So the
+        user downloads it once; this puts the contents of its `zip_subdir`
+        beside the game's exe, which is what its readme says to do, and
+        clears the "needs it" note from mods already installed."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        install_path = _game_dir(install_dir)
+        if not install_path or not os.path.isdir(install_path):
+            return {"ok": False, "error": "Game install folder not found"}
+        if os.path.isfile(os.path.join(install_path, detect_file)):
+            return {"ok": True, "installed": True, "already": True}
+        zp = await asyncio.to_thread(_find_user_tool_zip, zip_marker)
+        if not zp:
+            return {"ok": True, "installed": False, "found": False}
+
+        def _extract():
+            placed = 0
+            with zipfile.ZipFile(zp) as z:
+                names = z.namelist()
+                want = zip_marker.lower().strip("/")
+                hit = next(e for e in names if e.lower().rstrip("/") == want
+                           or e.lower().endswith("/" + want))
+                # Everything under the folder that holds the marker's
+                # subdir, wherever the archive nests it.
+                root = hit[: len(hit) - len(want)] + zip_subdir.strip("/") + "/"
+                for info in z.infolist():
+                    if not info.filename.startswith(root):
+                        continue
+                    rel = info.filename[len(root):]
+                    if not rel or not _safe_rel_path(rel.rstrip("/")):
+                        continue
+                    base = rel.rstrip("/").rsplit("/", 1)[-1]
+                    # "_PLACE ALL THIS IN THE GAME ROOT" is an instruction,
+                    # written as an empty file, not part of the tool.
+                    if base.startswith("_PLACE"):
+                        continue
+                    dst = os.path.join(install_path, *rel.rstrip("/").split("/"))
+                    if info.is_dir():
+                        os.makedirs(dst, exist_ok=True)
+                        continue
+                    _makedirs_for(dst)
+                    with z.open(info) as src, open(dst + ".part", "wb") as out:
+                        shutil.copyfileobj(src, out)
+                    os.replace(dst + ".part", dst)
+                    placed += 1
+            return placed
+
+        try:
+            placed = await asyncio.to_thread(_extract)
+        except (OSError, zipfile.BadZipFile, StopIteration) as e:
+            return {"ok": False, "error": f"Could not install from {os.path.basename(zp)}: {e}"}
+        if not os.path.isfile(os.path.join(install_path, detect_file)):
+            return {"ok": False, "error": f"{os.path.basename(zp)} did not contain {detect_file}"}
+        # Mods installed before it now work: drop their "needs it" note.
+        settings = _load_settings()
+        cleared = 0
+        for rec in (settings.get("installed", {}).get(game_domain) or {}).values():
+            if tool_name and tool_name in (rec.get("warning") or "") and \
+                    "not on" in (rec.get("warning") or ""):
+                rec["warning"] = ""
+                cleared += 1
+        if cleared:
+            _save_settings(settings)
+        decky.logger.info(
+            f"{game_domain}: installed {tool_name or detect_file} from the "
+            f"user's download {os.path.basename(zp)} ({placed} files); "
+            f"cleared the note on {cleared} mod(s)")
+        return {"ok": True, "installed": True, "files": placed,
+                "zip": os.path.basename(zp)}
+
     async def get_mod_support(self, game_domain: str, mod_id: int) -> dict:
         """Whether this mod needs something we cannot install, and what.
 
@@ -24952,7 +25098,7 @@ query CollectionInstructions($slug: String!) {
         if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
             return {"ok": False, "error": "Invalid game domain"}
         entry = (MODS_NEEDING_EXTERNAL.get(game_domain) or {}).get(int(mod_id))
-        if not entry and UNFETCHABLE_TOOLS.get(game_domain):
+        if not entry and _tools_missing(game_domain):
             # Not in the curated table, but its own requirements may name a
             # tool this game cannot get (RDR2: Lenny's Mod Loader).
             got = await self.get_unsupported_mods(game_domain, [int(mod_id)])

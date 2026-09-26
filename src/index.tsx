@@ -77,6 +77,8 @@ import {
   enforceSkips,
   fixLoadOrder,
   getInstalledCount,
+  getUserToolStatus,
+  installUserTool,
   parkFailingMods,
   getLoadOrderState,
   getPrefixRuntimeState,
@@ -143,6 +145,7 @@ import {
   modeParams,
   noteActiveGame,
   SupportedGame,
+  UserTool,
 } from "./games";
 import {
   getAppDisplayName,
@@ -447,6 +450,9 @@ function ResetGameRow({
           ...(game.extraFrameworks ?? []).flatMap(
             (fw) => fw.cleanupPrefixes ?? []
           ),
+          // Tools from the user's own download (Lenny's Mod Loader) go too:
+          // a reset is back to vanilla.
+          ...(game.userTools ?? []).flatMap((t) => t.cleanupPrefixes),
         ],
         game.witcherLayout ?? false,
         [
@@ -1539,6 +1545,9 @@ function CurrentGameSection() {
               )}
             </PanelSectionRow>
           )}
+          {(game.userTools ?? []).map((tool) => (
+            <UserToolRow key={tool.name} game={game} tool={tool} />
+          ))}
           {/* Merge mod support. Deliberately a step the user presses:
               it downloads and runs somebody else's program, and that is
               not a decision to make on their behalf. Until it is on, a
@@ -2459,6 +2468,91 @@ function LoadProblemsSummary({
 
 /** Switched off by the plugin after a session, as opposed to by the user. */
 const PLUGIN_PARKED_PREFIX = "Switched off by the plugin";
+
+/** An optional tool that comes from the user's own download (Lenny's Mod
+ * Loader for RDR2). The plugin may not fetch or redistribute it, so the
+ * row says where to get it, and the moment the zip is in Downloads or on
+ * the Desktop, installs it: downloading it was the user's decision, and
+ * asking again for a tap would be an instruction pretending to be help. */
+function UserToolRow({ game, tool }: { game: SupportedGame; tool: UserTool }) {
+  const [state, setState] = useState<
+    "checking" | "installed" | "missing" | "installing" | "failed"
+  >("checking");
+  const [note, setNote] = useState("");
+  const qamVisible = useQuickAccessVisible();
+
+  const check = async () => {
+    try {
+      const s = await getUserToolStatus(
+        game.installDirName,
+        tool.detectFile,
+        tool.zipMarker
+      );
+      if (s.installed) {
+        setState("installed");
+        return;
+      }
+      if (!s.zip_found) {
+        setState("missing");
+        return;
+      }
+      setState("installing");
+      const r = await installUserTool(
+        game.nexusDomain,
+        game.installDirName,
+        tool.detectFile,
+        tool.zipMarker,
+        tool.zipSubdir,
+        tool.name
+      );
+      if (r.ok && r.installed) {
+        setState("installed");
+        toaster.toast({
+          title: `${tool.name} installed`,
+          body: `From your download ${r.zip ?? ""}. Mods that need it work now.`,
+        });
+        notifyGameStateChanged();
+      } else {
+        setState("failed");
+        setNote(r.error ?? "It could not be installed");
+      }
+    } catch (e) {
+      setState("failed");
+      setNote(String(e));
+    }
+  };
+  useEffect(() => {
+    if (qamVisible) check();
+  }, [qamVisible, game.appId]);
+
+  if (state === "checking") return null;
+  return (
+    <PanelSectionRow>
+      {state === "installed" ? (
+        <Field label={tool.name} childrenLayout="below">
+          Installed ✓ (from your own download)
+        </Field>
+      ) : state === "installing" ? (
+        <Field label={tool.name} childrenLayout="below">
+          Installing from your download…
+        </Field>
+      ) : (
+        <ButtonItem
+          label={`${tool.name} (optional)`}
+          layout="below"
+          description={
+            (state === "failed" ? `${note}. ` : "") +
+            `${tool.why} Download it once, and put the zip in your Downloads ` +
+            "folder: this panel installs it next time it opens."
+          }
+          onClick={() => Navigation.NavigateToExternalWeb(tool.url)}
+        >
+          Open the download page
+        </ButtonItem>
+      )}
+    </PanelSectionRow>
+  );
+}
 
 function AllInstalledModsSection() {
   // Neutral/unsupported contexts: a collapsed accordion of every installed

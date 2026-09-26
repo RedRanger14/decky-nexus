@@ -1445,6 +1445,30 @@ export const getUnsupportedMods = callable<
   { ok: boolean; unsupported?: Record<string, string>; error?: string }
 >("get_unsupported_mods");
 
+export const getUserToolStatus = callable<
+  [install_dir: string, detect_file: string, zip_marker: string],
+  { ok: boolean; installed?: boolean; zip_found?: string; error?: string }
+>("get_user_tool_status");
+
+export const installUserTool = callable<
+  [
+    game_domain: string,
+    install_dir: string,
+    detect_file: string,
+    zip_marker: string,
+    zip_subdir: string,
+    tool_name: string
+  ],
+  {
+    ok: boolean;
+    installed?: boolean;
+    found?: boolean;
+    files?: number;
+    zip?: string;
+    error?: string;
+  }
+>("install_user_tool");
+
 export const getModSupport = callable<
   [game_domain: string, mod_id: number],
   {

@@ -377,7 +377,8 @@
     "longWaitAtMods": null,
     "cleanupPrefixes": [
       "\"ScriptHookRDR2.dll\", \"sdk\"",
-      "\"dinput8.dll\""
+      "\"dinput8.dll\"",
+      "\"vfs.asi\", \"ModManager.Core.dll\", \"ModManager.NativeInterop.dll\", \"NLog.dll\", \"lml.ini\", \"lml\","
     ]
   },
   {
