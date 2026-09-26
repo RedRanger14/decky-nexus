@@ -14980,7 +14980,10 @@ class TestNierTexturePacks(unittest.TestCase):
         self.assertTrue(res.get("ok"), res)
         self.assertIn("2B Shinobi Outfit already replaces it", res["warning"])
         self.assertEqual(self._read("pl", "pl0000.dtt"), b"outfit")
-        self.assertEqual(self._records()["2B Shinobi Outfit"]["files"],
+        # Sorted: the order is whatever the folder listing gave, and Linux
+        # and Windows list the same archive differently (Linux CI failed on
+        # this from v1.13.0 while every Windows run passed).
+        self.assertEqual(sorted(self._records()["2B Shinobi Outfit"]["files"]),
                          ["pl/pl0000.dat", "pl/pl0000.dtt"])
 
     def test_textures_for_the_mods_own_model_go_into_that_model(self):
