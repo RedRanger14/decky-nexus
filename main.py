@@ -20401,8 +20401,9 @@ query Link($slug: String!, $domainName: String!) {
                     os.path.isfile(os.path.join(install_path, RDR2_LML_MARKER)):
                 warning = (
                     "This mod needs Lenny's Mod Loader, which is not on "
-                    "Nexus Mods, so the plugin cannot install it. Until it "
-                    "is installed from rdr2mods.com, this mod does nothing.")
+                    "Nexus Mods. Download it once from rdr2mods.com into "
+                    "your Downloads folder and the game's panel installs "
+                    "it; until then, this mod does nothing.")
             settings = _load_settings()
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
