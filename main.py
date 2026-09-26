@@ -10851,6 +10851,11 @@ def _remove_module_entry(path: str, module_id: str) -> None:
 PENDING_FOMODS: dict = {}
 FOMOD_TTL_SECONDS = 30 * 60
 
+# After _unload, the process is given this long to exit on its own before
+# it is made to (see _unload): long enough for Decky's own shutdown, short
+# enough that the next loader never finds its port taken.
+UNLOAD_EXIT_SECONDS = 8
+
 # Collections' recorded file sets for FOMODs installed with Vortex's
 # "replicate" option (issue #35), written by get_collection_manifest.
 COLLECTION_HASHES_DIR = os.path.join(
@@ -28673,8 +28678,20 @@ query CollectionInstructions($slug: String!) {
         decky.logger.info("Nexus Mods plugin loaded")
 
     async def _unload(self):
+        # Stop what is in flight, and make sure this process really goes.
+        # 2026-09-26: a plugin process survived a Decky restart for an hour,
+        # busy with a large collection download, still holding port 1337,
+        # which it inherits from the loader. Every new loader then died on
+        # "address already in use" and systemd restarted it in a loop: no
+        # Decky, no plugins, until the orphan was killed by hand. An
+        # interrupted download resumes from its .part; a loader that cannot
+        # start needs a terminal the user does not have.
+        _DL_CANCEL.update(_DL_ACTIVE)
         await _close_http_session()
         decky.logger.info("Nexus Mods plugin unloading")
+        watchdog = threading.Timer(UNLOAD_EXIT_SECONDS, os._exit, args=(0,))
+        watchdog.daemon = True
+        watchdog.start()
 
     async def _uninstall(self):
         decky.logger.info("Nexus Mods plugin uninstalled")

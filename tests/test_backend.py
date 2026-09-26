@@ -24240,3 +24240,32 @@ class TestFomodReplicatedFileSet(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertTrue(r["needs_fomod"])
         self.assertEqual(r["fomod_token"], "tok35b")
+
+
+class TestUnloadAlwaysLetsGo(unittest.TestCase):
+    """A plugin process that outlives Decky's restart keeps the loader's
+    port, and every new loader dies on 'address already in use' (the
+    Legion, 2026-09-26, an hour-old process busy with a collection)."""
+
+    def test_unload_cancels_downloads_and_arms_an_exit(self):
+        main._DL_ACTIVE.clear()
+        main._DL_CANCEL.clear()
+        main._DL_ACTIVE.update({85298, 1030})
+        armed = {}
+
+        class FakeTimer:
+            def __init__(self, secs, fn, args=()):
+                armed.update(secs=secs, fn=fn, args=args)
+                self.daemon = False
+
+            def start(self):
+                armed["daemon"] = self.daemon
+
+        with mock.patch.object(main.threading, "Timer", FakeTimer):
+            run(main.Plugin()._unload())
+        self.assertEqual(main._DL_CANCEL, {85298, 1030})
+        self.assertIs(armed["fn"], main.os._exit)
+        self.assertTrue(armed["daemon"], "a non-daemon timer would itself hold the process open")
+        self.assertLessEqual(armed["secs"], 15)
+        main._DL_ACTIVE.clear()
+        main._DL_CANCEL.clear()
