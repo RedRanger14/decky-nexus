@@ -24154,3 +24154,89 @@ class TestErrorsInsidePatchedGameCode(TestBepInExLogReader):
                   ".Character.Message(string)\nStack trace:\n"
                   "(wrapper dynamic-method) Player.DMD<Player::Update>(Player)\n")
         self.assertEqual(main._bepinex_problems(self.game)["problems"], {})
+
+
+
+class TestFomodReplicatedFileSet(unittest.TestCase):
+    """Issue #35. A curator who installs a FOMOD with Vortex's "replicate"
+    option leaves no wizard choices in the collection, only the files they
+    ended up with, by path and md5. Immersive & Pure's three Bijin mods are
+    recorded that way (real shape below), and every run parked them for a
+    manual wizard: "Collections that has mods with a fomod installer fails
+    on install"."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(dir=TEST_ROOT)
+        self.scratch = os.path.join(self.root, "scratch")
+        for rel, body in (
+            ("fomod/ModuleConfig.xml", b"<config/>"),
+            ("00 Core/Bijin Wives.esp", b"plugin bytes"),
+            ("01 UNP/meshes/body_a.nif", b"unp body"),
+            ("02 CBBE/meshes/body_a.nif", b"cbbe body"),
+        ):
+            p = os.path.join(self.scratch, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(body)
+
+    @staticmethod
+    def _md5(b):
+        import hashlib
+        return hashlib.md5(b).hexdigest()
+
+    def test_the_recorded_files_are_staged_where_the_curator_had_them(self):
+        staging = os.path.join(self.scratch, "__fomod_staged__")
+        os.makedirs(staging)
+        hashes = [
+            {"path": "Bijin Wives.esp", "md5": self._md5(b"plugin bytes")},
+            # The curator chose CBBE; the recorded path is where it LANDED,
+            # renamed by the installer, so only content can find it.
+            {"path": "meshes\\actors\\character\\Bijin Wives\\femalebody_0.nif",
+             "md5": self._md5(b"cbbe body")},
+            {"path": "meshes\\gone.nif", "md5": self._md5(b"not in the archive")},
+        ]
+        staged, missing = main._fomod_stage_replicate(self.scratch, hashes, staging)
+        self.assertEqual((staged, missing), (2, 1))
+        with open(os.path.join(staging, "meshes", "actors", "character",
+                               "Bijin Wives", "femalebody_0.nif"), "rb") as f:
+            self.assertEqual(f.read(), b"cbbe body")
+        self.assertTrue(os.path.isfile(os.path.join(staging, "Bijin Wives.esp")))
+
+    def test_a_replicate_marker_hands_the_file_set_to_the_installer(self):
+        slug, fid = "qfftpq", "30461"
+        os.makedirs(main.COLLECTION_HASHES_DIR, exist_ok=True)
+        rec = [{"path": "Bijin Wives.esp", "md5": self._md5(b"plugin bytes")}]
+        with open(main._collection_hashes_path("skyrimspecialedition", slug), "w") as f:
+            json.dump({fid: rec}, f)
+        main.PENDING_FOMODS["tok35"] = {
+            "scratch": self.scratch, "mod_name": "Bijin Wives SE",
+            "game_domain": "skyrimspecialedition", "ctx": {"steps": []},
+            "at": time.time(),
+        }
+        seen = {}
+
+        async def fake_install_fomod(token, ids, replicate=None):
+            seen.update(token=token, ids=ids, replicate=replicate)
+            return {"ok": True}
+
+        plugin = main.Plugin()
+        with mock.patch.object(plugin, "install_fomod", fake_install_fomod):
+            r = run(plugin.install_fomod_auto(
+                "tok35", {"type": "replicate", "slug": slug, "file_id": fid}))
+        main.PENDING_FOMODS.pop("tok35", None)
+        self.assertTrue(r["ok"])
+        self.assertEqual(seen["replicate"], rec)
+
+    def test_no_recorded_file_set_leaves_it_for_the_wizard(self):
+        main.PENDING_FOMODS["tok35b"] = {
+            "scratch": self.scratch, "mod_name": "X",
+            "game_domain": "skyrimspecialedition", "ctx": {"steps": []},
+            "at": time.time(),
+        }
+        r = run(main.Plugin().install_fomod_auto(
+            "tok35b", {"type": "replicate", "slug": "nothing", "file_id": "1"}))
+        self.assertIn("tok35b", main.PENDING_FOMODS, "the wizard lost its install")
+        main.PENDING_FOMODS.pop("tok35b", None)
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["needs_fomod"])
+        self.assertEqual(r["fomod_token"], "tok35b")

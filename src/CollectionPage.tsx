@@ -133,6 +133,9 @@ import { DownloadsButton } from "./DownloadsButton";
 
 const Scroller: any = ScrollPanelGroup;
 
+/** Collection manifests' installer choices, by "domain:slug", read once. */
+const recordedChoices = new Map<string, Record<string, unknown>>();
+
 function fmtBytes(bytes: number): string {
   if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`;
   if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)} MB`;
@@ -1614,6 +1617,22 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       );
     });
 
+  /** The collection's recorded installer choices, fetched once per page. */
+  const curatorChoicesFor = async (): Promise<Record<string, unknown>> => {
+    const key = `${game.nexusDomain}:${collection.slug}`;
+    const known = recordedChoices.get(key);
+    if (known) return known;
+    let found: Record<string, unknown> = {};
+    try {
+      const m = await getCollectionManifest(collection.slug, game.nexusDomain);
+      found = m.ok ? m.choices ?? {} : {};
+    } catch {
+      // Only an enhancement: without it the wizard is asked, as before.
+    }
+    recordedChoices.set(key, found);
+    return found;
+  };
+
   /** Resolve ONE pending manual decision: re-install to the decision
    * point, show its modal, finish. "backout" = the user closed the
    * modal - the item stays pending AND the caller must stop prompting. */
@@ -1640,6 +1659,17 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
         collection.slug,
         choice
       );
+      // Before asking: the collection may have recorded what to install
+      // after all. Issue #35 parked the Bijin mods here because their
+      // manifest carries a file set to replicate, not wizard choices, and
+      // the plugin could not read that until now.
+      if (result.needs_fomod && result.fomod_token) {
+        const recorded = (await curatorChoicesFor())[String(item.file_id)];
+        if (recorded !== undefined) {
+          const auto = await installFomodAuto(result.fomod_token, recorded);
+          if (auto.ok || !auto.needs_fomod) result = auto;
+        }
+      }
       if (result.needs_fomod && result.fomod_token && result.wizard) {
         const ids = await runWizard(result.wizard as FomodWizardData);
         if (ids === undefined) {

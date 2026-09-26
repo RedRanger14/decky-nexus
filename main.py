@@ -10851,6 +10851,62 @@ def _remove_module_entry(path: str, module_id: str) -> None:
 PENDING_FOMODS: dict = {}
 FOMOD_TTL_SECONDS = 30 * 60
 
+# Collections' recorded file sets for FOMODs installed with Vortex's
+# "replicate" option (issue #35), written by get_collection_manifest.
+COLLECTION_HASHES_DIR = os.path.join(
+    decky.DECKY_PLUGIN_RUNTIME_DIR, "collection-hashes")
+
+
+def _collection_hashes_path(game_domain: str, slug: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", f"{game_domain}-{slug}")
+    return os.path.join(COLLECTION_HASHES_DIR, safe + ".json")
+
+
+def _collection_replicate_hashes(game_domain: str, slug: str, file_id: str) -> list:
+    """The file set a collection recorded for one file, or []."""
+    try:
+        with open(_collection_hashes_path(game_domain, slug), encoding="utf-8") as f:
+            return json.load(f).get(str(file_id)) or []
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def _fomod_stage_replicate(scratch: str, hashes: list, staging: str) -> tuple:
+    """Stage a collection's recorded file set from an extracted archive:
+    each {path, md5} is the file with that md5, placed at that path, which
+    is how Vortex replays a "replicate" install. Matched by content, not by
+    name, because the recorded paths are where the files ENDED UP, after
+    the installer renamed and rearranged them. Returns (staged, missing)."""
+    by_md5 = {}
+    stage_abs = os.path.abspath(staging)
+    for root, dirs, names in os.walk(scratch):
+        dirs[:] = [d for d in dirs
+                   if os.path.abspath(os.path.join(root, d)) != stage_abs]
+        for n in names:
+            p = os.path.join(root, n)
+            h = hashlib.md5()
+            try:
+                with open(p, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+            except OSError:
+                continue
+            by_md5.setdefault(h.hexdigest(), p)
+    staged = missing = 0
+    for e in hashes:
+        rel = str(e.get("path") or "").replace("\\", "/").lstrip("/")
+        if not rel or not _safe_rel_path(rel):
+            continue
+        src = by_md5.get(str(e.get("md5") or "").lower())
+        if not src:
+            missing += 1
+            continue
+        dst = os.path.join(staging, *rel.split("/"))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copyfile(src, dst)
+        staged += 1
+    return staged, missing
+
 
 def _fomod_config_path(scratch: str):
     for root, dirs, names in os.walk(scratch):
@@ -17304,15 +17360,41 @@ query Link($slug: String!, $domainName: String!) {
                 manifest = json.load(f)
             _force_rmtree(scratch)
             choices = {}
+            replicate = {}
             for mod in manifest.get("mods") or []:
                 source = mod.get("source") or {}
                 file_id = source.get("fileId")
                 mod_choices = mod.get("choices")
                 if file_id and mod_choices:
                     choices[str(file_id)] = mod_choices
+                elif file_id and isinstance(mod.get("hashes"), list) and mod["hashes"]:
+                    # Issue #35. A curator can install a FOMOD with
+                    # Vortex's "replicate" option, and then the collection
+                    # records no wizard choices at all, only the file set
+                    # they ended up with: every path and its md5. Immersive
+                    # & Pure's three Bijin mods are recorded that way, and
+                    # with no choices to apply they parked for a manual
+                    # wizard every time. The hashes stay on the device and
+                    # the page gets a marker in the choices slot, so the
+                    # existing hands-off FOMOD step replicates them.
+                    replicate[str(file_id)] = [
+                        {"path": h.get("path"), "md5": h.get("md5")}
+                        for h in mod["hashes"]
+                        if isinstance(h, dict) and h.get("path") and h.get("md5")
+                    ]
+                    choices[str(file_id)] = {
+                        "type": "replicate", "slug": slug,
+                        "file_id": str(file_id),
+                    }
+            if replicate:
+                os.makedirs(COLLECTION_HASHES_DIR, exist_ok=True)
+                with open(_collection_hashes_path(game_domain, slug), "w",
+                          encoding="utf-8") as f:
+                    json.dump(replicate, f)
             decky.logger.info(
                 f"collection manifest {slug!r}: {len(choices)} mods carry "
-                f"installer choices"
+                f"installer choices ({len(replicate)} as a file set to "
+                "replicate)"
             )
             return {"ok": True, "choices": choices}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
@@ -20726,12 +20808,36 @@ query Link($slug: String!, $domainName: String!) {
             )
         return result
 
-    async def install_fomod(self, token: str, selected_ids: list) -> dict:
+    async def install_fomod(self, token: str, selected_ids: list,
+                            replicate: list = None) -> dict:
         """Finish a parked FOMOD install with the user's wizard selections.
         Stages the selected sources, then runs the same dataDir merge as a
         normal install (case-merged paths, per-file manifest, plugins.txt
-        activation)."""
+        activation).
+
+        `replicate` is a collection's recorded file set ([{path, md5}])
+        instead of selections: see get_collection_manifest and issue #35."""
         try:
+            if replicate:
+                entry = PENDING_FOMODS.get(token)
+                if entry and not entry.get("masseffect"):
+                    staging = os.path.join(entry["scratch"], "__fomod_staged__")
+                    _force_rmtree(staging)
+                    os.makedirs(staging)
+                    staged, missing = await asyncio.to_thread(
+                        _fomod_stage_replicate, entry["scratch"], replicate, staging)
+                    decky.logger.info(
+                        f"FOMOD {entry.get('mod_name')!r}: replicated {staged} "
+                        f"of {len(replicate)} recorded files ({missing} not in "
+                        "the archive)")
+                    if staged == 0:
+                        # Nothing matched: the archive is not the one the
+                        # curator installed. Leave it for the wizard rather
+                        # than install nothing and call it done.
+                        _force_rmtree(staging)
+                        return {"ok": False, "needs_fomod": True,
+                                "fomod_token": token}
+                    entry["replicated"] = True
             entry = PENDING_FOMODS.pop(token, None)
             if not entry:
                 decky.logger.warning(
@@ -20752,9 +20858,13 @@ query Link($slug: String!, $domainName: String!) {
                 return await _me_complete(entry, list(selected_ids or []))
             scratch = entry["scratch"]
             staging = os.path.join(scratch, "__fomod_staged__")
-            _force_rmtree(staging)
-            os.makedirs(staging)
-            staged = _fomod_stage(entry["ctx"], list(selected_ids or []), staging)
+            if entry.get("replicated"):
+                # Already staged from the collection's recorded file set.
+                staged = sum(len(n) for _r, _d, n in os.walk(staging))
+            else:
+                _force_rmtree(staging)
+                os.makedirs(staging)
+                staged = _fomod_stage(entry["ctx"], list(selected_ids or []), staging)
             if staged == 0:
                 _force_rmtree(scratch)
                 # Logged, not just returned: a FOMOD that quietly staged
@@ -20902,6 +21012,19 @@ query Link($slug: String!, $domainName: String!) {
         entry = PENDING_FOMODS.get(token)
         if not entry:
             return {"ok": False, "error": "This install expired - retry it"}
+        if isinstance(curator_choices, dict) and curator_choices.get("type") == "replicate":
+            hashes = _collection_replicate_hashes(
+                entry.get("game_domain", ""), str(curator_choices.get("slug") or ""),
+                str(curator_choices.get("file_id") or ""))
+            if hashes:
+                decky.logger.info(
+                    f"fomod auto-install: replicating {len(hashes)} files the "
+                    f"curator recorded for {entry['mod_name']!r}")
+                return await self.install_fomod(token, [], replicate=hashes)
+            decky.logger.warning(
+                f"fomod auto-install: no recorded file set for "
+                f"{entry['mod_name']!r}, leaving it for the wizard")
+            return {"ok": False, "needs_fomod": True, "fomod_token": token}
         ids = _match_fomod_choices(
             entry["ctx"]["steps"], curator_choices or {}
         )
