@@ -17,7 +17,7 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Twenty games. Every one unmarked below was installed, modded and played
+Twenty-one games. Every one unmarked below was installed, modded and played
 on real hardware before it shipped. That is what supported means here: not
 that the code has a config entry for it, but that someone finished a
 session with mods running.
@@ -42,12 +42,15 @@ session with mods running.
 18. Subnautica 2
 19. Subnautica: Below Zero
 20. The Witcher 3
+21. Valheim §
 
 \* Community added game. Not tested by author.
 
 † New. Played on a Deck, and mods that edit the game's own files install through an optional step in the panel. That step is newer than the rest.
 
 ‡ New. Played on a Legion Go 2. Special K texture packs such as the HD Texture Pack are built into the game's own files during the install, since Special K itself does not run there.
+
+§ New. Played on a Legion Go 2, on the native Linux build. The mod loader's own log is read after each session, and mods that keep failing are switched off with the reason shown.
 
 ### On the roadmap
 
@@ -56,7 +59,6 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
-- Valheim
 
 ### Requested, not started
 

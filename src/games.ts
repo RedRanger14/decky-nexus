@@ -911,11 +911,11 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // The pack, then Jotunn: the library a large share of Valheim mods
     // are built on, and the top trending mod on the site.
     recommendedModIds: [3605, 1138],
-    underConstruction:
-      "Valheim support is new and still being tested. Mods run through " +
-      "BepInEx, which the panel sets up in one step, and the game stays " +
-      "the native Linux version, so your characters and worlds stay " +
-      "where they are.",
+    // Out of construction 2026-09-26, after sessions on the Legion Go 2:
+    // BepInEx Step 1 and 2, single mods, "Valheim Collection" and "Valheim
+    // Enhanced" (the latter reset and installed fresh, six mods going in
+    // off by the auto-off list), played with interaction, hotbar and
+    // crafting working. BepInEx's log is read after each session.
   },
   1623730: {
     appId: 1623730,
