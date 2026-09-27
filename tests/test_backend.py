@@ -24517,6 +24517,15 @@ class TestRdr2RoutingFromCollections(TestRdr2Routing):
             f"{mod}/SFX Features/audio.ymt"])
         self.assertIsNone(err)
         self.assertEqual(got, [f"{mod}/SFX Features/audio.ymt", f"{mod}/install.xml"])
+        # The real archive wraps it all in "!Open This Folder!/", and the
+        # first version of the rule only looked at the archive's top.
+        w = "!Open This Folder!/"
+        got, err = self._route([
+            w + "Installation Instructions/Installation Instruction.md",
+            w + "Installation Instructions/Installation Instruction.txt",
+            w + f"{mod}/install.xml", w + f"{mod}/SFX Features/audio.ymt"])
+        self.assertIsNone(err)
+        self.assertEqual(got, [f"{mod}/SFX Features/audio.ymt", f"{mod}/install.xml"])
 
     def test_a_trainers_own_lists_are_not_readmes(self):
         got, _err = self._route(["Rampage.asi", "RampageFiles/Lists/ObjectList.txt"])

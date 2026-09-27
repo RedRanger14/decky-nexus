@@ -7974,21 +7974,24 @@ def _route_rdr2_payload(scratch: str, mod_name: str):
     # folder. Deeper .txt files stay: Rampage reads its lists from them.
     entries = [(rel, src) for rel, src in entries
                if rel.rsplit("/", 1)[-1].lower() not in _FLAT_NOISE_NAMES]
-    by_top = {}
-    for rel, _src in entries:
-        if "/" in rel:
-            by_top.setdefault(rel.split("/", 1)[0], []).append(rel)
-    doc_dirs = {
-        top for top, rels in by_top.items()
-        if all(noise(r) for r in rels)
-        and (_RDR2_DOCS_DIR_RE.search(top)
-             or not any(r.lower().endswith(".txt") for r in rels))
-    }
-    if doc_dirs and len(doc_dirs) < len(by_top):
-        entries = [(rel, src) for rel, src in entries
-                   if rel.split("/", 1)[0] not in doc_dirs or "/" not in rel]
     if not entries:
         return [], ("layout", "The archive holds only readme files."), ""
+
+    def doc_dirs(rels):
+        """Top folders of rels holding nothing but docs. Applied from where
+        the game folder starts: the real archive wraps everything in
+        "!Open This Folder!/"."""
+        by_top = {}
+        for rel in rels:
+            if "/" in rel:
+                by_top.setdefault(rel.split("/", 1)[0], []).append(rel)
+        found = {
+            top for top, tops in by_top.items()
+            if all(noise(r) for r in tops)
+            and (_RDR2_DOCS_DIR_RE.search(top)
+                 or not any(r.lower().endswith(".txt") for r in tops))
+        }
+        return found if len(found) < len(by_top) else set()
 
     # Where the game folder starts inside the archive: at a "Red Dead
     # Redemption 2" folder, at an lml/ tree, or at the folder holding the
@@ -8009,10 +8012,14 @@ def _route_rdr2_payload(scratch: str, mod_name: str):
         base = min(cands, key=lambda b: b.count("/") + 1 if b else 0)
         prefix = base + "/" if base else ""
         files, tools, left_out = [], 0, set()
+        docs = doc_dirs([rel[len(prefix):] for rel, _src in entries
+                         if not prefix or rel.startswith(prefix)])
         for rel, src in entries:
             if prefix and not rel.startswith(prefix):
                 continue
             sub = rel[len(prefix):]
+            if "/" in sub and sub.split("/", 1)[0] in docs:
+                continue
             # Only top-level readmes: a trainer's own lists are .txt too
             # (Rampage reads RampageFiles/Lists/ObjectList.txt).
             if "/" not in sub and noise(sub):
