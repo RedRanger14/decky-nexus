@@ -7934,6 +7934,7 @@ CP77_CET_ENTRY = "init.lua"
 RDR2_TOOL_EXTS = (".exe", ".msi", ".bat", ".cmd")
 RDR2_ASSET_EXTS = (".ytd", ".ydr", ".yft", ".ydd", ".ymt", ".ytyp", ".ybn",
                    ".ymap", ".ycd", ".awc", ".rpf")
+RDR2_DATA_EXTS = (".meta", ".xml", ".dat", ".ini")
 RDR2_LML_MARKER = "vfs.asi"  # Lenny's Mod Loader's own file in the game root
 _RDR2_OPTIONAL_RE = re.compile(r"\boptional\b", re.IGNORECASE)
 
@@ -8055,6 +8056,15 @@ def _route_rdr2_payload(scratch: str, mod_name: str):
     if all(rel.lower().endswith(RDR2_TOOL_EXTS) for rel, _src in real):
         return [], ("tool", f"{mod_name} is a program to run on a PC, not "
                     "files the game loads."), ""
+    # Loose data files and nothing else: a patch to copy over another mod's
+    # files by hand. Maverick's Tunables Add-on (pinned by Ultimate RDR 2 -
+    # Essentials) says to overwrite files in lml/Maverick Weapons/, and only
+    # its readme says so. Guessing would overwrite another mod.
+    if real and all(rel.lower().endswith(RDR2_DATA_EXTS) for rel, _src in real):
+        return [], ("layout", "This file is a patch you copy over another "
+                    "mod's files by hand, as its readme explains. The plugin "
+                    "does not overwrite one mod with another, so it is left "
+                    "out."), ""
     return [], ("layout", "Could not tell where this mod's files go in "
                 "Red Dead Redemption 2."), ""
 
@@ -24066,6 +24076,11 @@ query Link($slug: String!, $domainName: String!) {
                     "option_labels": _payload_choice_labels(
                         [str(o) for o in (item.get("options") or [])]
                     ),
+                    # Why a skip happened, in the installer's words: the
+                    # page said "utilities, updater scripts, or layouts we
+                    # don't support yet" over a hand-copied patch because
+                    # the reason was dropped here.
+                    "detail": str(item.get("detail") or "")[:400],
                 }
             )
         if clean:

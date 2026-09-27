@@ -34,6 +34,8 @@ import {
   splitOutstanding,
   launchOptionsAppliedNote,
   loadersInstalledNote,
+  layoutSkipsNote,
+  archiveDisplayName,
   unavailableNote,
   pinnedVersionDiffs,} from "./panelRules";
 
@@ -172,6 +174,13 @@ export function CollectionPage() {
   // through the ordinary installer, so they are held out of the download
   // queue - but they are NOT assumed installed. See splitOutstanding.
   const [loaderIds, setLoaderIds] = useState<Set<number>>(new Set());
+  // Loaders every mod for the game needs that are not on disk, whether or
+  // not the collection lists them (collectionAlwaysInstalls). RDR2
+  // collections never list ScriptHookRDR2, and the page said "Everything
+  // installed" over nine mods with nothing to load them.
+  const [alwaysLoadersMissing, setAlwaysLoadersMissing] = useState<
+    { name: string; ids: number[] }[]
+  >([]);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [modInfo, setModInfo] = useState<Record<number, NexusMod | null>>({});
   // Mods a previous run left needing manual choices - persisted so any
@@ -312,6 +321,16 @@ export function CollectionPage() {
         )
       );
       if (stale()) return;
+      setAlwaysLoadersMissing(
+        loaders
+          .filter((fw, i) => fw.collectionAlwaysInstalls && !present[i])
+          .map((fw) => ({
+            name: fw.name,
+            ids: [fw.nexusModId, ...(fw.aliasModIds ?? [])].filter(
+              (x): x is number => typeof x === "number"
+            ),
+          }))
+      );
       const installedLoaderIds = loaders.flatMap((fw, i) =>
         present[i]
           ? [fw.nexusModId, ...(fw.aliasModIds ?? [])].filter(
@@ -946,6 +965,13 @@ export function CollectionPage() {
     requiredOutstanding,
     loaderIds
   );
+  // Plus the always-needed loaders the collection does not list (a listed
+  // one is already a row in loaderRemaining).
+  const pinnedModIds = new Set((detail?.files ?? []).map((f) => f.modId));
+  const loaderWork =
+    loaderRemaining.length +
+    alwaysLoadersMissing.filter((l) => !l.ids.some((id) => pinnedModIds.has(id)))
+      .length;
   const optionalRemaining = splitOutstanding(
     optional.filter((f) =>
       isRemaining(f, installedIds, rowState, attentionIds, justResolved)
@@ -1377,9 +1403,12 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               version: f.version,
               reason: "layout",
               options: [],
+              detail: result.error ?? "",
             });
             toaster.toast({
-              title: `${f.modName}: not installable - skipped`,
+              title: `${
+                archiveDisplayName(f.fileName) || f.modName
+              }: skipped`,
               body: result.error ?? "",
             });
           } else if (result.unsupported_tool) {
@@ -1843,12 +1872,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
   };
 
   const stateBadge = (f: CollectionFile): string => {
-    if (
-      installedIds.has(f.modId) ||
-      rowState[f.fileId] === "done" ||
-      justResolved.has(f.fileId)
-    )
-      return "✓ ";
+    if (rowState[f.fileId] === "done" || justResolved.has(f.fileId)) return "✓ ";
+    // A skipped file is not done because its sibling is (Maverick's add-on).
+    if (installedIds.has(f.modId) && !attentionIds.has(f.fileId)) return "✓ ";
     if (actionableIds.has(f.fileId)) return "⚙ ";
     if (attentionIds.has(f.fileId)) {
       const reason = attention.find((a) => a.file_id === f.fileId)?.reason;
@@ -2048,7 +2074,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             disabled={
               !detail ||
               installing ||
-              remaining.length + loaderRemaining.length === 0
+              remaining.length + loaderWork === 0
             }
             onClick={() => installAll(false)}
             style={{
@@ -2078,18 +2104,20 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                   : `Installing… ${runIsOurs ? run!.finished : 0}/${
                       runIsOurs ? run!.total : remaining.length
                     } · ${getAggregateDownloadPercent(run) ?? 0}%`
-              : remaining.length + loaderRemaining.length === 0 && detail
+              : remaining.length + loaderWork === 0 && detail
               ? "Everything installed ✓"
+              : remaining.length === 0 && loaderWork > 0 && detail
+              ? `Install the mod loader${loaderWork === 1 ? "" : "s"} (${loaderWork})`
               : partialFromRun
               ? `Resume collection (${
-                  remaining.length + loaderRemaining.length
+                  remaining.length + loaderWork
                 } left)`
               : detail &&
-                remaining.length + loaderRemaining.length < required.length
+                remaining.length + loaderWork < required.length
               ? `Install remaining (${
-                  remaining.length + loaderRemaining.length
+                  remaining.length + loaderWork
                 } of ${required.length})`
-              : `Install required (${remaining.length + loaderRemaining.length})`}
+              : `Install required (${remaining.length + loaderWork})`}
           </DialogButton>
           <Focusable style={ACTION_ROW}>
           {actionable.length > 0 && (
@@ -2514,11 +2542,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               margin: "-6px 0 12px",
             }}
           >
-            ⏭ {layoutSkips.length} archive
-            {layoutSkips.length === 1 ? "" : "s"} skipped (
-            {layoutSkips.map((t) => t.mod_name).join(", ")}) - no
-            installable payload for this device (utilities, updater
-            scripts, or layouts we don't support yet).
+            {layoutSkipsNote(layoutSkips)}
           </div>
         )}
         {nothingSkips.length > 0 && !installing && (

@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  archiveDisplayName,
+  layoutSkipsNote,
   autoOffGroups,
   autoOffNote,
   autoOffSummary,
@@ -1686,8 +1688,13 @@ test("the page no longer assumes a loader is installed", () => {
   assert.match(src, /checkGameFile\(/, "and the proof is the detect file");
   assert.match(
     src,
-    /remaining\.length \+ loaderRemaining\.length/,
+    /remaining\.length \+ loaderWork/,
     "the button counts the loaders it is about to install"
+  );
+  assert.match(
+    src,
+    /loaderWork =\s+loaderRemaining\.length/,
+    "listed loaders are part of that count"
   );
 });
 
@@ -1739,6 +1746,61 @@ test("a loader pinned under an alias id still counts", () => {
   const withAlias = [{ name: "SKSE64", nexusModId: 30379, aliasModIds: [133427] }];
   assert.equal(collectionMissingLoaders(withAlias, [133427], {}).length, 1);
   assert.equal(collectionMissingLoaders(withAlias, [999], {}).length, 0);
+});
+
+test("a loader every mod needs is installed even when the collection omits it", () => {
+  // Ultimate RDR 2 - Essentials after a reset: nine .asi and LML mods
+  // installed, and no dinput8.dll or ScriptHookRDR2.dll to load them,
+  // because RDR2 collections never list 1472.
+  const rdr2 = [
+    { name: "ScriptHookRDR2", nexusModId: 1472, collectionAlwaysInstalls: true },
+    { name: "ASI Loader", nexusModId: 1472, collectionAlwaysInstalls: true },
+  ];
+  assert.deepEqual(
+    collectionMissingLoaders(rdr2, [1675, 308, 569], {}).map((f) => f.name),
+    ["ScriptHookRDR2", "ASI Loader"]
+  );
+  assert.deepEqual(
+    collectionMissingLoaders(rdr2, [1675], { ScriptHookRDR2: true, "ASI Loader": true }),
+    [],
+    "still left alone once they are on disk"
+  );
+});
+
+test("RDR2's loaders are marked as always needed", () => {
+  const src = fs.readFileSync("src/games.ts", "utf8");
+  const rdr2 = src.slice(src.indexOf("appId: 1174180"), src.indexOf("userTools:", src.indexOf("appId: 1174180")));
+  assert.equal((rdr2.match(/collectionAlwaysInstalls: true/g) ?? []).length, 2);
+});
+
+test("the collection page counts unlisted loaders as outstanding work", () => {
+  // It said "Everything installed" over nine RDR2 mods and no loader.
+  const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(src, /fw\.collectionAlwaysInstalls && !present\[i\]/);
+  assert.ok(!src.includes("remaining.length + loaderRemaining.length"),
+    "every count on the button includes the unlisted loaders");
+  assert.match(src, /Install the mod loader/,
+    "loaders alone are not called two of the collection's nine mods");
+});
+
+test("a skipped file is named by file and says why", () => {
+  const one = layoutSkipsNote([{
+    mod_name: "Maverick Weapons and Catalog",
+    file_name: "Tunables Add-on-850-4-0-3-1650153829.rar",
+    detail: "This file is a patch you copy over another mod's files by hand.",
+  }]);
+  assert.match(one, /Tunables Add-on \(Maverick Weapons and Catalog\): This file is a patch/);
+  const bare = layoutSkipsNote([{ mod_name: "X", file_name: "X-1-1-0-1650153829.zip" }]);
+  assert.match(bare, /1 file skipped: X\. The plugin could not tell where it goes/);
+  assert.equal(archiveDisplayName("Maverick Weapons-850-4-1-1653776602.rar"), "Maverick Weapons");
+  assert.equal(archiveDisplayName("plain.zip"), "plain");
+  assert.ok(!one.includes("—") && !bare.includes("—"));
+});
+
+test("a skipped file does not wear its sibling's tick", () => {
+  const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  const badge = src.slice(src.indexOf("const stateBadge"), src.indexOf("const stateBadge") + 700);
+  assert.match(badge, /installedIds\.has\(f\.modId\) && !attentionIds\.has\(f\.fileId\)/);
 });
 
 test("a loader with no Nexus id is never queued", () => {

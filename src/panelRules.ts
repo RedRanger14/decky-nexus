@@ -1363,12 +1363,16 @@ export function splitOutstanding<T extends { modId: number }>(
  *
  * Only loaders the collection itself pins are installed here. The tick
  * beside them is the promise being kept, not a new decision: a loader
- * the collection never mentioned is still the game panel's Step 1.
+ * the collection never mentioned is still the game panel's Step 1, unless
+ * every mod for the game needs it (collectionAlwaysInstalls): RDR2
+ * collections never list ScriptHookRDR2, and after a reset the Legion had
+ * nine collection mods and no loader to run any of them (2026-09-27).
  */
 export interface CollectionFramework {
   name: string;
   nexusModId?: number;
   aliasModIds?: number[];
+  collectionAlwaysInstalls?: boolean;
 }
 
 export function collectionMissingLoaders<T extends CollectionFramework>(
@@ -1380,9 +1384,48 @@ export function collectionMissingLoaders<T extends CollectionFramework>(
   return frameworks.filter((fw) => {
     if (typeof fw.nexusModId !== "number") return false;
     if (installedByName[fw.name]) return false;
+    if (fw.collectionAlwaysInstalls) return true;
     const ids = [fw.nexusModId, ...(fw.aliasModIds ?? [])];
     return ids.some((id) => pinned.has(id));
   });
+}
+
+/** A Nexus archive's own name, from its download file name:
+ * "Tunables Add-on-850-4-0-3-1650153829.rar" is "Tunables Add-on". */
+export function archiveDisplayName(fileName: string): string {
+  const bare = fileName.replace(/\.(zip|rar|7z|tar|gz)$/i, "");
+  const m = bare.match(/^(.+?)-\d+(?:-[^-]+)*-\d{9,}$/);
+  return (m ? m[1] : bare).trim();
+}
+
+/** The line under the install button for files the installer could not
+ * place. Each is named by file, because a collection can pin two files of
+ * one mod and only one of them was skipped (Maverick Weapons and its
+ * Tunables Add-on), and each says why in the installer's own words. */
+export function layoutSkipsNote(
+  skips: { mod_name: string; file_name: string; detail?: string }[]
+): string {
+  const named = skips.map((s) => {
+    const file = archiveDisplayName(s.file_name || "");
+    const label =
+      file && file.toLowerCase() !== s.mod_name.toLowerCase()
+        ? `${file} (${s.mod_name})`
+        : s.mod_name;
+    return { label, detail: (s.detail ?? "").trim() };
+  });
+  if (named.every((n) => !n.detail)) {
+    const one = skips.length === 1;
+    return (
+      `⏭ ${skips.length} file${one ? "" : "s"} skipped: ` +
+      named.map((n) => n.label).join(", ") +
+      `. The plugin could not tell where ${one ? "it goes" : "they go"} ` +
+      "on this device."
+    );
+  }
+  return (
+    "⏭ Skipped " +
+    named.map((n) => (n.detail ? `${n.label}: ${n.detail}` : n.label)).join(" · ")
+  );
 }
 
 /** What to say once they are in. Named as loaders, because "framework"
@@ -1395,9 +1438,8 @@ export function loadersInstalledNote(
   return {
     title: `Installed ${n} mod loader${n === 1 ? "" : "s"} for ${gameName}`,
     body:
-      `${names.join(", ")}. The collection lists ${n === 1 ? "it" : "these"} ` +
-      "but they install differently from ordinary mods, so they are done " +
-      "last. Without them none of the other mods load.",
+      `${names.join(", ")}. Mod loaders install differently from ordinary ` +
+      "mods, so they are done last. Without them none of the other mods load.",
   };
 }
 

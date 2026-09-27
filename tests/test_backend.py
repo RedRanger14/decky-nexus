@@ -1210,6 +1210,17 @@ class TestCollectionAttention(unittest.TestCase):
         )
         self.assertEqual(got["items"], [])
 
+    def test_a_skip_keeps_its_reason(self):
+        # The page read "layouts we don't support yet" over Maverick's
+        # hand-copied Tunables patch because the reason was not stored.
+        item = {"file_id": 5603, "mod_id": 850, "mod_name": "Maverick",
+                "file_name": "Tunables Add-on-850-4-0-3-1650153829.rar",
+                "version": "4.0.3", "reason": "layout", "options": [],
+                "detail": "This file is a patch you copy over another mod's files by hand."}
+        run(self.plugin.set_collection_attention("reddeadredemption2", "pjwopl", [item]))
+        got = run(self.plugin.get_collection_attention("reddeadredemption2", "pjwopl"))
+        self.assertIn("copy over another mod's files", got["items"][0]["detail"])
+
 
 class TestHelpers(unittest.TestCase):
     def test_force_rmtree_handles_plain_files(self):
@@ -24480,3 +24491,22 @@ class TestRdr2RoutingFromTheTop40(TestRdr2Routing):
         _got, err = self._route(["640DD797/SRDR30000", "640DD797/SRDR30000.bak",
                                  "640DD797/cfg.dat"])
         self.assertIn("save game", err[1])
+
+
+class TestRdr2RoutingFromCollections(TestRdr2Routing):
+    """Found by installing Ultimate RDR 2 - Essentials (2026-09-27)."""
+
+    def test_a_hand_copied_patch_is_named_not_guessed(self):
+        # Maverick's Tunables Add-on (850 file 5603): loose .meta files the
+        # readme says to copy over lml/Maverick Weapons/ by hand.
+        got, err = self._route([
+            "Tunables/weapons_mp.meta", "Tunables/weapon_pistol_m1899_mp.meta",
+            "Examples/Unkillable/weapons_mp.meta", "Readme.txt"])
+        self.assertEqual(got, [])
+        self.assertEqual(err[0], "layout")
+        self.assertIn("copy over another mod's files by hand", err[1])
+
+    def test_a_bare_asset_mod_still_goes_under_lml(self):
+        got, err = self._route(["Horse/horse.ytd", "Horse/horse.meta"], name="Horse")
+        self.assertIsNone(err)
+        self.assertEqual(got, ["lml/Horse/horse.meta", "lml/Horse/horse.ytd"])

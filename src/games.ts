@@ -96,6 +96,11 @@ export interface GameFramework {
    * flattens archives into the game root and would scatter BaseLib's files
    * across mods/ instead of mods/BaseLib/. */
   installAsMod?: boolean;
+  /** Every mod for the game needs this loader, and the game's collections
+   * never list it because players outside the plugin install it by hand
+   * (RDR2's ScriptHook lived on dev-c.com). A finished collection then
+   * installs it even though the collection does not pin it. */
+  collectionAlwaysInstalls?: boolean;
   /** Reset-to-vanilla: game-root files AND directories starting with any
    * of these prefixes belong to the framework (copyRoot installs keep no
    * manifest) and are removed on reset (e.g. ["skse64"]). */
@@ -970,6 +975,10 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // runs clean. That is what makes the panel's mod-loader switch the
       // way to play Red Dead Online safely.
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
+      // RDR2 collections never list 1472 (Ultimate RDR 2 - Essentials:
+      // nine .asi and LML mods, no loader), so a collection after a reset
+      // left every mod inert.
+      collectionAlwaysInstalls: true,
       // Plus what the hook writes while the game runs (its config and log)
       // and the scripts/ folder ScriptHook .NET mods live in: a reset on
       // the Legion left all of those behind.
@@ -989,6 +998,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         nexusModId: 1472,
         avoidFileKeywords: ["ScriptHook"],
         installKind: "copyRoot",
+        // Every .asi mod and Lenny's Mod Loader itself load through it.
+        collectionAlwaysInstalls: true,
         cleanupPrefixes: ["dinput8.dll", "asiloader.log"],
       },
     ],
