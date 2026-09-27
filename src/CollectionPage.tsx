@@ -37,6 +37,8 @@ import {
   layoutSkipsNote,
   archiveDisplayName,
   externalUserTool,
+  fileCountsInstalled,
+  filesByMod,
   unavailableNote,
   pinnedVersionDiffs,} from "./panelRules";
 
@@ -939,6 +941,12 @@ export function CollectionPage() {
     );
   }
   const { game, collection } = sel;
+  // Installed means THIS pinned file is in, not just some file of its mod:
+  // see fileCountsInstalled (#35, "Everything installed" over a failure).
+  const installedFiles = filesByMod(installedRows);
+  const pinnedFiles = filesByMod(detail?.files ?? []);
+  const fileIn = (f: { modId: number; fileId: number }) =>
+    fileCountsInstalled(f, installedIds, installedFiles, pinnedFiles);
 
   const attentionIds = new Set(attention.map((a) => a.file_id));
   // Actionable = Finish setup can do something: choices/wizards get
@@ -976,7 +984,7 @@ export function CollectionPage() {
   // Outstanding work, split: the mod installer takes the mods, the
   // finishing pass takes the loaders. Both count on the button.
   const requiredOutstanding = required.filter((f) =>
-    isRemaining(f, installedIds, rowState, attentionIds, justResolved)
+    isRemaining(f, installedIds, rowState, attentionIds, justResolved, installedFiles, pinnedFiles)
   );
   const { mods: remaining, loaders: loaderRemaining } = splitOutstanding(
     requiredOutstanding,
@@ -991,7 +999,7 @@ export function CollectionPage() {
       .length;
   const optionalRemaining = splitOutstanding(
     optional.filter((f) =>
-      isRemaining(f, installedIds, rowState, attentionIds, justResolved)
+      isRemaining(f, installedIds, rowState, attentionIds, justResolved, installedFiles, pinnedFiles)
     ),
     loaderIds
   ).mods;
@@ -1048,7 +1056,7 @@ export function CollectionPage() {
   // required-minus-remaining math counted them and overstated).
   const installedRequiredCount = required.filter(
     (f) =>
-      installedIds.has(f.modId) ||
+      fileIn(f) ||
       rowState[f.fileId] === "done" ||
       justResolved.has(f.fileId)
   ).length;
@@ -1891,7 +1899,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
   const stateBadge = (f: CollectionFile): string => {
     if (rowState[f.fileId] === "done" || justResolved.has(f.fileId)) return "✓ ";
     // A skipped file is not done because its sibling is (Maverick's add-on).
-    if (installedIds.has(f.modId) && !attentionIds.has(f.fileId)) return "✓ ";
+    if (fileIn(f) && !attentionIds.has(f.fileId)) return "✓ ";
     if (actionableIds.has(f.fileId)) return "⚙ ";
     if (attentionIds.has(f.fileId)) {
       const reason = attention.find((a) => a.file_id === f.fileId)?.reason;
@@ -2658,14 +2666,14 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                   ? liveDl.percent
                   : undefined;
               const needsChoices =
-                actionableIds.has(f.fileId) && !installedIds.has(f.modId);
+                actionableIds.has(f.fileId) && !fileIn(f);
               const parkedReason = attentionIds.has(f.fileId)
                 ? attention.find((a) => a.file_id === f.fileId)?.reason
                 : undefined;
               const isToolSkip =
-                parkedReason === "tool" && !installedIds.has(f.modId);
+                parkedReason === "tool" && !fileIn(f);
               const isConflict =
-                parkedReason === "conflict" && !installedIds.has(f.modId);
+                parkedReason === "conflict" && !fileIn(f);
               const attentionItem = needsChoices
                 ? attention.find((a) => a.file_id === f.fileId)
                 : undefined;
@@ -2727,14 +2735,14 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                         <span style={{ opacity: 0.55 }}> · PC tool</span>
                       )}
                       {parkedReason === "layout" &&
-                        !installedIds.has(f.modId) && (
+                        !fileIn(f) && (
                           <span style={{ opacity: 0.55 }}>
                             {" "}
                             · not installable
                           </span>
                         )}
                       {parkedReason === "nothing" &&
-                        !installedIds.has(f.modId) && (
+                        !fileIn(f) && (
                           <span style={{ opacity: 0.55 }}>
                             {" "}
                             · nothing to install
@@ -2749,7 +2757,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                       {/* Amber and worded, because a toast has gone by the
                           time the user wonders why this one has no tick. */}
                       {parkedReason === "older-game" &&
-                        !installedIds.has(f.modId) && (
+                        !fileIn(f) && (
                           <span style={{ color: "#ffc83c" }}>
                             {" "}
                             · skipped · built for an older patch

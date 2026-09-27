@@ -6,6 +6,10 @@ import test from "node:test";
 import {
   archiveDisplayName,
   externalUserTool,
+  collectionCountLine,
+  collectionSwitchPlan,
+  fileCountsInstalled,
+  filesByMod,
   layoutSkipsNote,
   autoOffGroups,
   autoOffNote,
@@ -1816,7 +1820,54 @@ test("an off-Nexus item that is the game's own user tool is recognised", () => {
 test("a skipped file does not wear its sibling's tick", () => {
   const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
   const badge = src.slice(src.indexOf("const stateBadge"), src.indexOf("const stateBadge") + 700);
-  assert.match(badge, /installedIds\.has\(f\.modId\) && !attentionIds\.has\(f\.fileId\)/);
+  assert.match(badge, /fileIn\(f\) && !attentionIds\.has\(f\.fileId\)/);
+});
+
+test("a collection's switch leaves mods the plugin switched off alone (#35)", () => {
+  const members = [
+    { folder: "a", enabled: true },
+    { folder: "b", enabled: true },
+    { folder: "broken", enabled: false, disabled_reason: "Switched off by the plugin: stops the game booting" },
+    { folder: "fixed", enabled: true, togglable: false },
+  ];
+  const plan = collectionSwitchPlan(members);
+  assert.equal(plan.on, true, "held-off mods do not make the collection read as off");
+  assert.deepEqual(plan.enableOnOn, []);
+  assert.deepEqual(plan.disableOnOff.map((m) => m.folder), ["a", "b"]);
+  const offByUser = collectionSwitchPlan([...members.slice(0, 3), { folder: "c", enabled: false }]);
+  assert.equal(offByUser.on, false);
+  assert.deepEqual(offByUser.enableOnOn.map((m) => m.folder), ["c"], "the broken one never comes back");
+  const src = fs.readFileSync("src/ManagerPage.tsx", "utf8");
+  assert.match(src, /collectionSwitchPlan\(members\)/);
+});
+
+test("the collection count compares mods with mods (#35)", () => {
+  assert.equal(collectionCountLine(458, [1, 2, 2, 3]), "458 of 3 mods installed");
+  assert.equal(collectionCountLine(1, [], 566), "1 mod installed · 566 files in the collection");
+  const src = fs.readFileSync("src/ManagerPage.tsx", "utf8");
+  assert.ok(!src.includes("in the collection`"), "the old files-versus-mods line is gone");
+});
+
+test("a collection counts each pinned file, not each mod (#35)", () => {
+  const installedIds = new Set([8834, 850, 77]);
+  const installed = filesByMod([
+    { mod_id: 850, file_ids: [5762] },     // Maverick: one of its two files
+    { mod_id: 77, file_ids: [9001] },      // the user's own, other version
+    { mod_id: 8834 },                      // an old record naming no files
+  ]);
+  const pinned = filesByMod([
+    { modId: 850, fileId: 5603 }, { modId: 850, fileId: 5762 },
+    { modId: 77, fileId: 7000 }, { modId: 8834, fileId: 133231 },
+  ]);
+  const inn = (modId, fileId) => fileCountsInstalled({ modId, fileId }, installedIds, installed, pinned);
+  assert.equal(inn(850, 5762), true);
+  assert.equal(inn(850, 5603), false, "a failed file no longer hides behind its sibling");
+  assert.equal(inn(77, 7000), true, "the user's own version still counts; pinnedVersionDiffs offers the swap");
+  assert.equal(inn(8834, 133231), true, "records without file ids keep the old rule");
+  assert.equal(inn(5, 1), false);
+  assert.equal(isRemaining({ modId: 850, fileId: 5603 }, installedIds, {}, new Set(), new Set(), installed, pinned), true);
+  const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.ok(!src.includes("installedIds.has(f.modId)"), "no per-mod check left on the page");
 });
 
 test("a loader with no Nexus id is never queued", () => {

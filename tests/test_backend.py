@@ -9,6 +9,7 @@ anything that would hit the Nexus Mods API raises immediately.
 
 import ast
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -1220,6 +1221,62 @@ class TestCollectionAttention(unittest.TestCase):
         run(self.plugin.set_collection_attention("reddeadredemption2", "pjwopl", [item]))
         got = run(self.plugin.get_collection_attention("reddeadredemption2", "pjwopl"))
         self.assertIn("copy over another mod's files", got["items"][0]["detail"])
+
+
+class TestReportCarriesInstallFailures(unittest.TestCase):
+    """#35: a Deck showed Blended Roads as "Failed" and nothing a user could
+    reach said why. The report now carries what the installer said."""
+
+    LOG = (
+        "[2026-09-27 16:22:10,921][INFO]: install_mod: reddeadredemption2/850 file 5603 ('Maverick' v'4.0.3', src='collection')\n"
+        "[2026-09-27 16:22:10,957][WARNING]: install 'Maverick' (reddeadredemption2/850) failed: Could not tell where this mod's files go.\n"
+        "[2026-09-27 16:22:11,345][INFO]: install_mod: reddeadredemption2/850 file 5762 ('Maverick' v'4.1', src='collection')\n"
+        "[2026-09-27 16:23:00,000][INFO]: install_mod: reddeadredemption2/99 file 1 (\"Retried\" v'1', src='collection')\n"
+        "[2026-09-27 16:23:01,000][WARNING]: install \"Retried\" (reddeadredemption2/99) failed: Download failed: ClientPayloadError\n"
+        "[2026-09-27 16:24:00,000][INFO]: install_mod: reddeadredemption2/99 file 1 (\"Retried\" v'1', src='collection')\n"
+        "[2026-09-27 16:25:01,000][WARNING]: install 'Other game' (skyrimspecialedition/5) failed: nope\n"
+    )
+
+    def test_failures_are_listed_and_a_retry_that_worked_is_not(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "2026-09-27 16.00.00.log"), "w", encoding="utf-8") as fh:
+            fh.write(self.LOG)
+        got = main._recent_install_failures("reddeadredemption2", log_dir=d)
+        # The sibling file installing does not clear the add-on's failure.
+        self.assertEqual(got, ["Maverick (mod 850): Could not tell where this mod's files go."])
+        self.assertEqual(main._recent_install_failures("skyrimspecialedition", log_dir=d),
+                         ["Other game (mod 5): nope"])
+
+    def test_no_logs_is_no_section(self):
+        self.assertEqual(main._recent_install_failures("x", log_dir="/nonexistent-dir"), [])
+
+
+class TestInstalledRowsCarryTheirFiles(unittest.TestCase):
+    """#35: a collection counted by mod id, so a missing file hid behind a
+    sibling. The first fix only reached the folder branch; Skyrim's
+    dataDir branch returns early and never carried file ids."""
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+
+    def test_every_file_of_a_mod_is_on_its_row(self):
+        s = main._load_settings()
+        s["installed"] = {"skyrimspecialedition": {
+            "a": {"mod_id": 11260, "file_id": 69089},
+            "b": {"mod_id": 158971, "file_id": 672092, "file_ids": [672075, 672092, "664948"]},
+        }}
+        main._save_settings(s)
+        rows = [{"mod_id": 11260}, {"mod_id": 158971}, {"mod_id": 5}, "junk"]
+        main._attach_file_ids("skyrimspecialedition", rows)
+        self.assertEqual(rows[0]["file_ids"], [69089])
+        self.assertEqual(rows[1]["file_ids"], [664948, 672075, 672092])
+        self.assertNotIn("file_ids", rows[2])
+
+    def test_it_wraps_every_install_mode(self):
+        src = inspect.getsource(main.Plugin.get_installed_mods)
+        self.assertIn("_get_installed_mods_raw(", src)
+        self.assertIn("_attach_file_ids(", src)
 
 
 class TestHelpers(unittest.TestCase):

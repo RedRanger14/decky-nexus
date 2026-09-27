@@ -2458,6 +2458,79 @@ def _merge_install_record(existing: dict, new: dict) -> dict:
     return merged
 
 
+def _attach_file_ids(game_domain: str, rows: list) -> None:
+    """Give each installed-mod row every file of its mod that is in, so a
+    collection page counts per pinned file. By mod id alone, a missing file
+    hid behind a sibling of the same mod: the Legion showed "Everything
+    installed" over Brothers In Arms' 588 MB main file, Immersive & Adult's
+    own Resources and Pandora Output, and Maverick's Tunables Add-on (#35)."""
+    records = _load_settings().get("installed", {}).get(game_domain, {}) or {}
+    files_by_mod = {}
+    for rec in records.values():
+        if rec.get("mod_id") is None:
+            continue
+        ids = files_by_mod.setdefault(rec["mod_id"], set())
+        for fid in [rec.get("file_id"), *(rec.get("file_ids") or [])]:
+            if isinstance(fid, int) or (isinstance(fid, str) and fid.isdigit()):
+                ids.add(int(fid))
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        ids = files_by_mod.get(r.get("mod_id"))
+        if ids:
+            r["file_ids"] = sorted(ids)
+
+
+_INSTALL_FAILED_RE = re.compile(
+    r"install (?P<name>'.*?'|\".*?\") \((?P<domain>[a-z0-9]+)/(?P<mod>\d+)\) "
+    r"failed: (?P<err>.*)$")
+
+
+def _recent_install_failures(game_domain: str, limit: int = 8,
+                             log_dir: str = None) -> list:
+    """The last few install failures for a game, from the plugin's own logs,
+    newest first, one line each: "Name (mod 123): what went wrong". A mod
+    that failed and later installed is dropped, so a retry that worked is
+    not reported as a problem."""
+    log_dir = log_dir if log_dir is not None else (decky.DECKY_PLUGIN_LOG_DIR or "")
+    try:
+        logs = sorted(
+            (os.path.join(log_dir, n) for n in os.listdir(log_dir) if n.endswith(".log")),
+            key=os.path.getmtime)[-3:]
+    except OSError:
+        return []
+    # (mod id, file id) -> (order, line). Keyed by FILE: a collection can
+    # pin two files of one mod, and the sibling installing is not this one
+    # being fixed (Maverick's Tunables Add-on failed, Maverick installed).
+    latest = {}
+    current = {}  # mod id -> the file its latest attempt was for
+    order = 0
+    for path in logs:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    order += 1
+                    m = _INSTALL_FAILED_RE.search(raw.rstrip())
+                    if m and m.group("domain") == game_domain:
+                        mod = m.group("mod")
+                        err = m.group("err").strip()
+                        if len(err) > 160:
+                            err = err[:157] + "..."
+                        latest[(mod, current.get(mod))] = (
+                            order, f"{m.group('name')[1:-1]} (mod {mod}): {err}")
+                        continue
+                    start = re.search(r"install_mod: ([a-z0-9]+)/(\d+) file (\d+)", raw)
+                    if start and start.group(1) == game_domain:
+                        mod, fid = start.group(2), start.group(3)
+                        current[mod] = fid
+                        # A new attempt at this file: its failure only
+                        # stands if this attempt fails too (re-added above).
+                        latest.pop((mod, fid), None)
+        except OSError:
+            continue
+    return [line for _o, line in sorted(latest.values(), reverse=True)][:limit]
+
+
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._ -]", "", name).strip().strip(".")
     return cleaned or "mod"
@@ -25588,6 +25661,13 @@ query CollectionInstructions($slug: String!) {
                     f"- {rec.get('name') or key} "
                     f"v{rec.get('version') or '?'}{mark}"
                 )
+        # What the installer said when a mod failed, which is the one line a
+        # report needs and the one a handheld user cannot fetch: #35 showed
+        # Blended Roads as "Failed" on a Deck, and nothing anywhere said why.
+        failures = _recent_install_failures(game_domain)
+        if failures:
+            lines += ["", "### Recent install failures", ""]
+            lines += [f"- {f}" for f in failures]
         # NOT the log. It goes in the URL, and GitHub fails an over-long
         # issue link - with a 500 when the user has to sign in on the way,
         # which is the worst possible moment. The summary above is what makes
@@ -27416,6 +27496,31 @@ query CollectionInstructions($slug: String!) {
         return {"ok": True, "mods": len(records)}
 
     async def get_installed_mods(
+        self,
+        game_domain: str,
+        install_dir: str,
+        mods_subdir: str,
+        install_mode: str = "folder",
+        app_id: int = 0,
+        plugins_subpath: str = "",
+        plugins_style: str = "starred",
+        hidden_folders: list = None,
+    ) -> dict:
+        """The installed mods, each with every file of its mod that is in.
+
+        The file ids are attached here, around every install mode, because
+        the modes return early from their own branches: the first version
+        sat at the end of the folder branch, and Skyrim (dataDir) never
+        got them."""
+        result = await self._get_installed_mods_raw(
+            game_domain, install_dir, mods_subdir, install_mode, app_id,
+            plugins_subpath, plugins_style, hidden_folders,
+        )
+        if result.get("ok") and isinstance(result.get("mods"), list):
+            _attach_file_ids(game_domain, result["mods"])
+        return result
+
+    async def _get_installed_mods_raw(
         self,
         game_domain: str,
         install_dir: str,

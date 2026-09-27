@@ -50,6 +50,7 @@ import {
   popOurPage,
   pushOurPage,
 } from "./Tabs";
+import { collectionCountLine, collectionSwitchPlan } from "./panelRules";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -428,15 +429,26 @@ export function ManagerPage() {
     const key = `${game.appId}:coll:${slug}`;
     setBusyKey(key);
     try {
-      for (const mod of members) {
-        if (mod.togglable === false || mod.enabled === enable) continue;
+      // Mods the plugin switched off for a reason stay off: see
+      // collectionSwitchPlan.
+      const plan = collectionSwitchPlan(members);
+      const change = enable ? plan.enableOnOn : plan.disableOnOff;
+      for (const mod of change) {
         await toggleMod(game, mod.folder, enable);
       }
+      const held = members.filter(
+        (m) => m.togglable !== false && !m.enabled && m.disabled_reason
+      ).length;
       toaster.toast({
         title: enable ? "Collection enabled" : "Collection disabled",
-        body: `${members.filter((m) => m.togglable !== false).length} mods ${
-          enable ? "activated" : "deactivated"
-        }`,
+        body:
+          `${change.length} mod${change.length === 1 ? "" : "s"} ${
+            enable ? "switched on" : "switched off"
+          }` +
+          (enable && held > 0
+            ? `. ${held} the plugin switched off stay off; the reason is ` +
+              "beside each one."
+            : ""),
       });
     } finally {
       setBusyKey(undefined);
@@ -767,9 +779,7 @@ export function ManagerPage() {
                         const toggleable = members.filter(
                           (m) => m.togglable !== false
                         );
-                        const allOn =
-                          toggleable.length > 0 &&
-                          toggleable.every((m) => m.enabled);
+                        const allOn = collectionSwitchPlan(members).on;
                         const collBusy =
                           busyKey === `${game.appId}:coll:${slug}`;
                         return (
@@ -827,11 +837,11 @@ export function ManagerPage() {
                                       opacity: 0.65,
                                     }}
                                   >
-                                    {members.length} mod
-                                    {members.length === 1 ? "" : "s"} installed
-                                    {info?.mod_count
-                                      ? ` · ${info.mod_count} in the collection`
-                                      : ""}
+                                    {collectionCountLine(
+                                      members.length,
+                                      info?.mod_ids,
+                                      info?.mod_count
+                                    )}
                                     {collBusy ? " · switching…" : ""}
                                   </div>
                                 </div>

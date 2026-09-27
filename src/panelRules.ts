@@ -1030,6 +1030,89 @@ export function troubleshootingCount(
   );
 }
 
+/** A collection's switch in My Mods.
+ *
+ * It read OFF whenever any mod in it was off, and a big collection always
+ * has some the plugin switched off on purpose (#35's Immersive & Adult
+ * showed its switch off). Pressing it then switched EVERY mod on, those
+ * included: the mods that stop the game booting came back. So mods the
+ * plugin turned off for a reason neither count against "on" nor come back
+ * with it. Turning the collection off still turns everything off. */
+export function collectionSwitchPlan<
+  T extends { enabled: boolean; togglable?: boolean; disabled_reason?: string }
+>(members: T[]): { on: boolean; enableOnOn: T[]; disableOnOff: T[] } {
+  const toggleable = members.filter((m) => m.togglable !== false);
+  const heldOff = (m: T) => !m.enabled && Boolean(m.disabled_reason);
+  const counted = toggleable.filter((m) => !heldOff(m));
+  return {
+    on: counted.length > 0 && counted.every((m) => m.enabled),
+    enableOnOn: counted.filter((m) => !m.enabled),
+    disableOnOff: toggleable.filter((m) => m.enabled),
+  };
+}
+
+/** The count under a collection in My Mods, in mods on both sides.
+ * "458 mods installed · 566 in the collection" compared install records
+ * with pinned FILES, and read as 108 missing when two were. */
+export function collectionCountLine(
+  installed: number,
+  memberModIds?: number[],
+  fileCount?: number
+): string {
+  const distinct = memberModIds?.length ? new Set(memberModIds).size : 0;
+  if (distinct > 0) {
+    return `${installed} of ${distinct} mod${distinct === 1 ? "" : "s"} installed`;
+  }
+  return (
+    `${installed} mod${installed === 1 ? "" : "s"} installed` +
+    (fileCount ? ` · ${fileCount} files in the collection` : "")
+  );
+}
+
+/** Whether one pinned file of a collection is installed.
+ *
+ * Per FILE where the records say which files are in. By mod id alone, a
+ * file that failed hid behind a sibling of the same mod that installed:
+ * #35's Deck showed "Everything installed" over a failure, and 79 of
+ * Immersive & Adult's 460 mods pin more than one file.
+ *
+ * Two cases still count by mod: a record that names no files (older
+ * records, loaders), and a mod the user has at a version the collection
+ * does not pin at all - that is pinnedVersionDiffs' job to offer, and
+ * counting it as missing would reinstall over their choice. */
+export function fileCountsInstalled(
+  file: { modId: number; fileId: number },
+  installedModIds: Set<number>,
+  installedFiles?: Map<number, Set<number>>,
+  pinnedFiles?: Map<number, Set<number>>
+): boolean {
+  if (!installedModIds.has(file.modId)) return false;
+  const have = installedFiles?.get(file.modId);
+  if (!have || have.size === 0) return true;
+  if (have.has(file.fileId)) return true;
+  const pinned = pinnedFiles?.get(file.modId);
+  if (!pinned) return true;
+  for (const id of pinned) if (have.has(id)) return false;
+  return true;
+}
+
+/** Pinned file ids per mod, and installed file ids per mod, as
+ * fileCountsInstalled wants them. */
+export function filesByMod(
+  rows: { modId?: number; fileId?: number; mod_id?: number; file_ids?: number[] }[]
+): Map<number, Set<number>> {
+  const out = new Map<number, Set<number>>();
+  for (const r of rows) {
+    const mod = r.modId ?? r.mod_id;
+    if (typeof mod !== "number") continue;
+    const set = out.get(mod) ?? new Set<number>();
+    if (typeof r.fileId === "number") set.add(r.fileId);
+    for (const id of r.file_ids ?? []) set.add(id);
+    out.set(mod, set);
+  }
+  return out;
+}
+
 /** Whether one collection file still counts as "remaining to install".
  *
  * Four ways a file stops being remaining, and the fourth is the one that
@@ -1045,10 +1128,12 @@ export function isRemaining(
   installedModIds: Set<number>,
   rowState: Record<number, string>,
   pendingAttentionFileIds: Set<number>,
-  justResolvedFileIds: Set<number> = new Set()
+  justResolvedFileIds: Set<number> = new Set(),
+  installedFiles?: Map<number, Set<number>>,
+  pinnedFiles?: Map<number, Set<number>>
 ): boolean {
   return (
-    !installedModIds.has(file.modId) &&
+    !fileCountsInstalled(file, installedModIds, installedFiles, pinnedFiles) &&
     rowState[file.fileId] !== "done" &&
     !pendingAttentionFileIds.has(file.fileId) &&
     !justResolvedFileIds.has(file.fileId)
