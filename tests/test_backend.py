@@ -24506,6 +24506,24 @@ class TestRdr2RoutingFromCollections(TestRdr2Routing):
         self.assertEqual(err[0], "layout")
         self.assertIn("copy over another mod's files by hand", err[1])
 
+    def test_a_readme_folder_and_windows_junk_stay_out(self):
+        # Unlocked 'n' Extended Audio Features (8414 file 29370).
+        mod = "lml/~U 'n' E~ A F - MisterMansion Edition"
+        got, err = self._route([
+            "Installation Instructions/desktop.ini",
+            "Installation Instructions/Installation Instruction.md",
+            "Installation Instructions/Installation Instruction.txt",
+            f"{mod}/desktop.ini", f"{mod}/install.xml",
+            f"{mod}/SFX Features/audio.ymt"])
+        self.assertIsNone(err)
+        self.assertEqual(got, [f"{mod}/SFX Features/audio.ymt", f"{mod}/install.xml"])
+
+    def test_a_trainers_own_lists_are_not_readmes(self):
+        got, _err = self._route(["Rampage.asi", "RampageFiles/Lists/ObjectList.txt"])
+        self.assertEqual(got, ["Rampage.asi", "RampageFiles/Lists/ObjectList.txt"])
+        got, _err = self._route(["Trainer.asi", "Lists/peds.txt"])
+        self.assertEqual(got, ["Lists/peds.txt", "Trainer.asi"])
+
     def test_a_bare_asset_mod_still_goes_under_lml(self):
         got, err = self._route(["Horse/horse.ytd", "Horse/horse.meta"], name="Horse")
         self.assertIsNone(err)

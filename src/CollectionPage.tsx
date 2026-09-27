@@ -36,6 +36,7 @@ import {
   loadersInstalledNote,
   layoutSkipsNote,
   archiveDisplayName,
+  externalUserTool,
   unavailableNote,
   pinnedVersionDiffs,} from "./panelRules";
 
@@ -181,6 +182,11 @@ export function CollectionPage() {
   const [alwaysLoadersMissing, setAlwaysLoadersMissing] = useState<
     { name: string; ids: number[] }[]
   >([]);
+  // The game's user-downloaded tools (Lenny's Mod Loader) that are on
+  // disk, so a collection listing one off Nexus is not called missing.
+  const [userToolsPresent, setUserToolsPresent] = useState<
+    Record<string, boolean>
+  >({});
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [modInfo, setModInfo] = useState<Record<number, NexusMod | null>>({});
   // Mods a previous run left needing manual choices - persisted so any
@@ -320,7 +326,18 @@ export function CollectionPage() {
             .catch(() => false)
         )
       );
+      const tools = sel.game.userTools ?? [];
+      const toolsPresent = await Promise.all(
+        tools.map((t) =>
+          checkGameFile(sel.game.installDirName, t.detectFile)
+            .then((g) => Boolean(g.ok && g.exists))
+            .catch(() => false)
+        )
+      );
       if (stale()) return;
+      setUserToolsPresent(
+        Object.fromEntries(tools.map((t, i) => [t.name, toolsPresent[i]]))
+      );
       setAlwaysLoadersMissing(
         loaders
           .filter((fw, i) => fw.collectionAlwaysInstalls && !present[i])
@@ -2399,10 +2416,30 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 // each other.
                 const seen = new Set<string>();
                 const items: { label: string; url?: string }[] = [];
+                // Off-Nexus items that are the game's own user tool: named
+                // as covered when it is on disk, or with the panel's way
+                // of getting it when not, never as a bare link.
+                const covered: string[] = [];
+                const tools = game.userTools ?? [];
+                const asTool = (name: string, url?: string) => {
+                  const tool = externalUserTool({ name, url }, tools);
+                  if (!tool) return false;
+                  if (userToolsPresent[tool.name]) {
+                    if (!covered.includes(tool.name)) covered.push(tool.name);
+                  } else {
+                    items.push({
+                      label:
+                        `${name} (this is ${tool.name}: download it into ` +
+                        "your Downloads folder and the game panel installs it)",
+                    });
+                  }
+                  return true;
+                };
                 for (const m of manualMods) {
                   const k = m.name.toLowerCase();
                   if (seen.has(k)) continue;
                   seen.add(k);
+                  if (asTool(m.name, m.url)) continue;
                   items.push({
                     label: m.name + (m.optional ? " (optional)" : ""),
                     url: m.url,
@@ -2412,6 +2449,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                   const k = e.name.toLowerCase();
                   if (seen.has(k)) continue;
                   seen.add(k);
+                  if (asTool(e.name, e.url)) continue;
                   const isFramework =
                     game.framework &&
                     e.name
@@ -2421,12 +2459,18 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                       );
                   items.push({
                     label: isFramework
-                      ? `${e.name} — this is ${game.framework!.name}, ` +
-                        `Step 1 on the game panel installs it`
+                      ? `${e.name} (this is ${game.framework!.name}, ` +
+                        `Step 1 on the game panel installs it)`
                       : e.name + (e.optional ? " (optional)" : ""),
                   });
                 }
                 const withUrl = items.find((i) => i.url);
+                const coveredLine =
+                  covered.length > 0
+                    ? `✓ ${covered.join(", ")}, which this collection also ` +
+                      `lists, is already installed from your download.`
+                    : "";
+                if (items.length === 0) return <>{coveredLine}</>;
                 return (
                   <>
                     ⬇ {items.length} thing{items.length === 1 ? "" : "s"} in
@@ -2439,14 +2483,17 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                       ? ` ${parkedForExternal} mod${
                           parkedForExternal === 1 ? "" : "s"
                         } that need ${
-                          items.length === 1 ? "it" : "them"
-                        } been switched off so the game still starts — turn ${
+                          items.length === 1 ? "it have" : "them have"
+                        } been switched off so the game still starts. Turn ${
                           parkedForExternal === 1 ? "it" : "them"
                         } back on in My Mods once you have added ${
                           items.length === 1 ? "it" : "them"
                         }.`
-                      : " Nothing else needed switching off, so the rest of" +
-                        " the collection is installed and active."}
+                      : remaining.length === 0
+                      ? " Nothing else needed switching off, so the rest of" +
+                        " the collection is installed and active."
+                      : ""}
+                    {coveredLine ? ` ${coveredLine}` : ""}
                   </>
                 );
               })()}

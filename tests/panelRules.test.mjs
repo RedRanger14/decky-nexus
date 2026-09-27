@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   archiveDisplayName,
+  externalUserTool,
   layoutSkipsNote,
   autoOffGroups,
   autoOffNote,
@@ -1795,6 +1796,21 @@ test("a skipped file is named by file and says why", () => {
   assert.equal(archiveDisplayName("Maverick Weapons-850-4-1-1653776602.rar"), "Maverick Weapons");
   assert.equal(archiveDisplayName("plain.zip"), "plain");
   assert.ok(!one.includes("—") && !bare.includes("—"));
+});
+
+test("an off-Nexus item that is the game's own user tool is recognised", () => {
+  // RDR 2: Fixed and Enhanced lists LML with a download link carrying a
+  // csrfKey; the page showed that link as something it could not get.
+  const lml = { name: "Lenny's Mod Loader",
+    url: "https://www.rdr2mods.com/downloads/rdr2/tools/76-lennys-mod-loader-rdr/" };
+  const item = { name: "lml_rdr_beta_11.zip",
+    url: "https://www.rdr2mods.com/downloads/rdr2/tools/76-lennys-mod-loader-rdr/?do=download&r=9912&csrfKey=x" };
+  assert.equal(externalUserTool(item, [lml]), lml);
+  assert.equal(externalUserTool({ name: "Horse Bridle Fix.zip", url: "https://www.rdr2mods.com/downloads/rdr2/other/1-horse/" }, [lml]), undefined);
+  assert.equal(externalUserTool({ name: "no link" }, [lml]), undefined);
+  const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(src, /externalUserTool\(/, "the collection page consults it");
+  assert.match(src, /is already installed from your download/);
 });
 
 test("a skipped file does not wear its sibling's tick", () => {

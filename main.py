@@ -7937,6 +7937,9 @@ RDR2_ASSET_EXTS = (".ytd", ".ydr", ".yft", ".ydd", ".ymt", ".ytyp", ".ybn",
 RDR2_DATA_EXTS = (".meta", ".xml", ".dat", ".ini")
 RDR2_LML_MARKER = "vfs.asi"  # Lenny's Mod Loader's own file in the game root
 _RDR2_OPTIONAL_RE = re.compile(r"\boptional\b", re.IGNORECASE)
+_RDR2_DOCS_DIR_RE = re.compile(
+    r"instruction|readme|read me|\bdocs?\b|documentation|screenshots?|images?|preview",
+    re.IGNORECASE)
 
 
 def _route_rdr2_payload(scratch: str, mod_name: str):
@@ -7963,6 +7966,29 @@ def _route_rdr2_payload(scratch: str, mod_name: str):
         name = sub.rsplit("/", 1)[-1].lower()
         return (os.path.splitext(name)[1] in _FLAT_NOISE_EXTS
                 or name in _FLAT_NOISE_NAMES)
+
+    # Windows' folder junk goes wherever it is, and a top-level folder of
+    # nothing but docs is a readme, not part of the mod: Unlocked 'n'
+    # Extended Audio Features put "Installation Instructions/" (a .md, a
+    # .txt and desktop.ini) beside RDR2.exe and desktop.ini into its lml
+    # folder. Deeper .txt files stay: Rampage reads its lists from them.
+    entries = [(rel, src) for rel, src in entries
+               if rel.rsplit("/", 1)[-1].lower() not in _FLAT_NOISE_NAMES]
+    by_top = {}
+    for rel, _src in entries:
+        if "/" in rel:
+            by_top.setdefault(rel.split("/", 1)[0], []).append(rel)
+    doc_dirs = {
+        top for top, rels in by_top.items()
+        if all(noise(r) for r in rels)
+        and (_RDR2_DOCS_DIR_RE.search(top)
+             or not any(r.lower().endswith(".txt") for r in rels))
+    }
+    if doc_dirs and len(doc_dirs) < len(by_top):
+        entries = [(rel, src) for rel, src in entries
+                   if rel.split("/", 1)[0] not in doc_dirs or "/" not in rel]
+    if not entries:
+        return [], ("layout", "The archive holds only readme files."), ""
 
     # Where the game folder starts inside the archive: at a "Red Dead
     # Redemption 2" folder, at an lml/ tree, or at the folder holding the

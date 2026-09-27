@@ -1390,6 +1390,25 @@ export function collectionMissingLoaders<T extends CollectionFramework>(
   });
 }
 
+/** The game's user-downloaded tool (Lenny's Mod Loader) a collection's
+ * off-Nexus item IS, matched by the tool's download page appearing in the
+ * item's link. RDR 2: Fixed and Enhanced lists lml_rdr_beta_11.zip with an
+ * rdr2mods.com link, and the page called it "cannot be downloaded here"
+ * with LML already installed from the user's own download. */
+export function externalUserTool<T extends { url: string }>(
+  item: { name: string; url?: string },
+  tools: T[]
+): T | undefined {
+  const norm = (u: string) =>
+    u.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+  const link = norm(item.url ?? "");
+  if (!link) return undefined;
+  return tools.find((t) => {
+    const page = norm(t.url);
+    return page.length > 0 && link.startsWith(page);
+  });
+}
+
 /** A Nexus archive's own name, from its download file name:
  * "Tunables Add-on-850-4-0-3-1650153829.rar" is "Tunables Add-on". */
 export function archiveDisplayName(fileName: string): string {
