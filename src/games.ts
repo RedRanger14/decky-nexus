@@ -970,7 +970,16 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // runs clean. That is what makes the panel's mod-loader switch the
       // way to play Red Dead Online safely.
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
-      cleanupPrefixes: ["ScriptHookRDR2.dll", "sdk"],
+      // Plus what the hook writes while the game runs (its config and log)
+      // and the scripts/ folder ScriptHook .NET mods live in: a reset on
+      // the Legion left all of those behind.
+      cleanupPrefixes: [
+        "ScriptHookRDR2.dll",
+        "sdk",
+        "ScriptHookConfig.ini",
+        "ScriptHookRDR2.log",
+        "scripts",
+      ],
     },
     extraFrameworks: [
       {
@@ -980,7 +989,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         nexusModId: 1472,
         avoidFileKeywords: ["ScriptHook"],
         installKind: "copyRoot",
-        cleanupPrefixes: ["dinput8.dll"],
+        cleanupPrefixes: ["dinput8.dll", "asiloader.log"],
       },
     ],
     recommendedModIds: [1472],
@@ -1003,6 +1012,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
           "NLog.dll",
           "lml.ini",
           "lml",
+          // Its logs, written in the game folder while it runs.
+          "vfs.log",
+          "ModManager.log",
         ],
         why:
           "Many popular mods need it, and it is not on Nexus Mods, so it " +

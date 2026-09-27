@@ -376,9 +376,9 @@
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
     "cleanupPrefixes": [
-      "\"ScriptHookRDR2.dll\", \"sdk\"",
-      "\"dinput8.dll\"",
-      "\"vfs.asi\", \"ModManager.Core.dll\", \"ModManager.NativeInterop.dll\", \"NLog.dll\", \"lml.ini\", \"lml\","
+      "\"ScriptHookRDR2.dll\", \"sdk\", \"ScriptHookConfig.ini\", \"ScriptHookRDR2.log\", \"scripts\",",
+      "\"dinput8.dll\", \"asiloader.log\"",
+      "\"vfs.asi\", \"ModManager.Core.dll\", \"ModManager.NativeInterop.dll\", \"NLog.dll\", \"lml.ini\", \"lml\", // Its logs, written in the game folder while it runs. \"vfs.log\", \"ModManager.log\","
     ]
   },
   {
