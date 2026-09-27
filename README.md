@@ -59,6 +59,7 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
+- Red Dead Redemption 2 (marked under construction in the plugin; script mods and trainers played on a Legion Go 2, and mods for Lenny's Mod Loader need its zip in your Downloads folder)
 
 ### Requested, not started
 
