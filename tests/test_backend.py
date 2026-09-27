@@ -24284,7 +24284,7 @@ class TestRdr2Routing(unittest.TestCase):
         return root
 
     def _route(self, files, name="Mod"):
-        got, err = main._route_rdr2_payload(self._scratch(files), name)
+        got, err, self.note = main._route_rdr2_payload(self._scratch(files), name)
         return sorted(r for r, _s in got), err
 
     def test_rampage_trainer_unwraps_its_version_folder(self):
@@ -24448,3 +24448,35 @@ class TestUserToolFromOwnDownload(unittest.TestCase):
             self.assertEqual(main._tools_missing("reddeadredemption2"), ())
             r = run(main.Plugin().get_unsupported_mods("reddeadredemption2", [1688]))
         self.assertEqual(r["unsupported"], {})
+
+
+class TestRdr2RoutingFromTheTop40(TestRdr2Routing):
+    """Found by installing RDR2's 40 most downloaded mods (2026-09-27)."""
+
+    def test_optional_parts_and_examples_stay_out_and_are_named(self):
+        got, err = self._route([
+            "EnhancedBrawling.asi", "EnhancedBrawling.ini",
+            "Harder Fights for BS_AI (Optional)/pedbrawlingref.meta",
+            "No GTA V Animations (Optional)/definitions.meta",
+            "lml/Enhanced Brawling/install.xml",
+        ])
+        self.assertIsNone(err)
+        self.assertEqual(got, ["EnhancedBrawling.asi", "EnhancedBrawling.ini",
+                               "lml/Enhanced Brawling/install.xml"])
+        self.assertIn("Harder Fights for BS_AI (Optional)", self.note)
+        got, _err = self._route(["ScriptHookRDRDotNet.asi", "EXAMPLES/ExampleScript.cs"])
+        self.assertEqual(got, ["ScriptHookRDRDotNet.asi"])
+
+    def test_an_lml_mod_without_its_lml_folder_is_placed_under_lml(self):
+        got, err = self._route([
+            "Maverick Catalog/install.xml", "Maverick Catalog/catalog_sp.xml",
+            "Maverick Catalog/weaponcomponents.meta", "Readme.txt"])
+        self.assertIsNone(err)
+        self.assertEqual(got, ["lml/Maverick Catalog/catalog_sp.xml",
+                               "lml/Maverick Catalog/install.xml",
+                               "lml/Maverick Catalog/weaponcomponents.meta"])
+
+    def test_a_save_game_is_called_one(self):
+        _got, err = self._route(["640DD797/SRDR30000", "640DD797/SRDR30000.bak",
+                                 "640DD797/cfg.dat"])
+        self.assertIn("save game", err[1])

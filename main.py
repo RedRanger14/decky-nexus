@@ -7935,18 +7935,28 @@ RDR2_TOOL_EXTS = (".exe", ".msi", ".bat", ".cmd")
 RDR2_ASSET_EXTS = (".ytd", ".ydr", ".yft", ".ydd", ".ymt", ".ytyp", ".ybn",
                    ".ymap", ".ycd", ".awc", ".rpf")
 RDR2_LML_MARKER = "vfs.asi"  # Lenny's Mod Loader's own file in the game root
+_RDR2_OPTIONAL_RE = re.compile(r"\boptional\b", re.IGNORECASE)
 
 
 def _route_rdr2_payload(scratch: str, mod_name: str):
-    """Classify an RDR2 archive. Returns (files, err) like
-    _route_cp77_payload: files is [(game-root-relative rel, source)]."""
+    """Classify an RDR2 archive. Returns (files, err, note): files is
+    [(game-root-relative rel, source)], err is None or (kind, message),
+    and note names anything deliberately left out ("" when nothing)."""
     entries = []
     for root, _dirs, names in os.walk(scratch):
         for n in names:
             src = os.path.join(root, n)
             entries.append((os.path.relpath(src, scratch).replace(os.sep, "/"), src))
     if not entries:
-        return [], ("layout", "The archive is empty.")
+        return [], ("layout", "The archive is empty."), ""
+    # A save game, not a mod: RDR2 saves are SRDR3xxxx files, and they
+    # belong in the Rockstar profile folder, not the game's. The intro save
+    # (Nexus 8) was refused as "could not tell where this goes".
+    if any(re.fullmatch(r"srdr3\d{4}(\.bak)?", rel.rsplit("/", 1)[-1].lower())
+           for rel, _src in entries):
+        return [], ("layout", "This is a save game, not a mod. Saves go in "
+                    "your Rockstar profile folder, and the plugin does not "
+                    "install them."), ""
 
     def noise(sub):
         name = sub.rsplit("/", 1)[-1].lower()
@@ -7971,7 +7981,7 @@ def _route_rdr2_payload(scratch: str, mod_name: str):
     if cands:
         base = min(cands, key=lambda b: b.count("/") + 1 if b else 0)
         prefix = base + "/" if base else ""
-        files, tools = [], 0
+        files, tools, left_out = [], 0, set()
         for rel, src in entries:
             if prefix and not rel.startswith(prefix):
                 continue
@@ -7980,17 +7990,56 @@ def _route_rdr2_payload(scratch: str, mod_name: str):
             # (Rampage reads RampageFiles/Lists/ObjectList.txt).
             if "/" not in sub and noise(sub):
                 continue
+            # Optional parts and developer samples stay out, named: Enhanced
+            # Brawling ships "Harder Fights for BS_AI (Optional)" beside its
+            # mod, and ScriptHook .NET an EXAMPLES folder, and both landed
+            # in the game folder where they do nothing.
+            top = sub.split("/", 1)[0] if "/" in sub else ""
+            if top and (_RDR2_OPTIONAL_RE.search(top)
+                        or top.lower() in ("examples", "example", "samples")):
+                left_out.add(top)
+                continue
             if sub.lower().endswith(RDR2_TOOL_EXTS):
                 tools += 1
                 continue
             if _safe_rel_path(sub):
                 files.append((sub, src))
+        note = ""
+        opt = sorted(t for t in left_out if _RDR2_OPTIONAL_RE.search(t))
+        if opt:
+            note = ("Left out the optional parts: " + ", ".join(opt) + ". "
+                    "They change how the mod works, so they are not added "
+                    "unless you choose them.")
         if files:
-            return files, None
+            return files, None, note
         if tools:
             return [], ("tool", f"{mod_name} is a program to run on a PC, "
-                        "not files the game loads.")
-        return [], ("layout", "Nothing in the archive goes in the game folder.")
+                        "not files the game loads."), ""
+        return [], ("layout", "Nothing in the archive goes in the game folder."), ""
+
+    # A folder with an install.xml is an LML mod, even with no lml/ folder
+    # around it: Maverick Weapons and Catalog ships "Maverick Catalog/
+    # install.xml" at the top of its zip. It goes to lml/<that folder>/.
+    manifests = [rel for rel, _src in entries
+                 if rel.lower().rsplit("/", 1)[-1] == "install.xml"]
+    if manifests:
+        roots = sorted({m.rsplit("/", 1)[0] if "/" in m else "" for m in manifests},
+                       key=len)
+        files, taken = [], set()
+        for root in roots:
+            name = root.rsplit("/", 1)[-1] if root else (_safe_name(mod_name) or "mod")
+            prefix = root + "/" if root else ""
+            for rel, src in entries:
+                if src in taken or (prefix and not rel.startswith(prefix)):
+                    continue
+                sub = rel[len(prefix):]
+                if "/" not in sub and noise(sub):
+                    continue
+                if _safe_rel_path(sub):
+                    files.append((f"lml/{name}/{sub}", src))
+                    taken.add(src)
+        if files:
+            return files, None, ""
 
     # Game assets with no lml/ folder around them: an LML stream mod
     # shipped bare. They go where LML reads them, lml/<mod>/.
@@ -8002,12 +8051,12 @@ def _route_rdr2_payload(scratch: str, mod_name: str):
         folder = _safe_name(mod_name) or "mod"
         files = [(f"lml/{folder}/{rel[len(strip):]}", src) for rel, src in real
                  if _safe_rel_path(rel[len(strip):])]
-        return files, None
+        return files, None, ""
     if all(rel.lower().endswith(RDR2_TOOL_EXTS) for rel, _src in real):
         return [], ("tool", f"{mod_name} is a program to run on a PC, not "
-                    "files the game loads.")
+                    "files the game loads."), ""
     return [], ("layout", "Could not tell where this mod's files go in "
-                "Red Dead Redemption 2.")
+                "Red Dead Redemption 2."), ""
 
 
 def _route_cp77_payload(scratch: str, mod_name: str):
@@ -20366,7 +20415,7 @@ query Link($slug: String!, $domainName: String!) {
         # exact-file record, like Cyberpunk. Routed by game rather than by
         # a flag, as NieR's files are.
         if game_domain == "reddeadredemption2":
-            rd_files, rd_err = _route_rdr2_payload(scratch, mod_name)
+            rd_files, rd_err, rd_note = _route_rdr2_payload(scratch, mod_name)
             if rd_err:
                 kind, message = rd_err
                 decky.logger.info(f"RDR2 {mod_name!r}: {kind}: {message}")
@@ -20396,14 +20445,14 @@ query Link($slug: String!, $domainName: String!) {
             # An LML asset mod does nothing without Lenny's Mod Loader,
             # which the plugin cannot fetch (not on Nexus). Say so on the
             # mod rather than let it look installed and do nothing.
-            warning = ""
+            warning = rd_note
             if any(r.lower().startswith("lml/") for r in installed_rel) and not \
                     os.path.isfile(os.path.join(install_path, RDR2_LML_MARKER)):
-                warning = (
+                warning = " ".join(x for x in (warning, (
                     "This mod needs Lenny's Mod Loader, which is not on "
                     "Nexus Mods. Download it once from rdr2mods.com into "
                     "your Downloads folder and the game's panel installs "
-                    "it; until then, this mod does nothing.")
+                    "it; until then, this mod does nothing.")) if x)
             settings = _load_settings()
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
