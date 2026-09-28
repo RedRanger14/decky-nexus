@@ -8,6 +8,7 @@ import {
   externalUserTool,
   collectionCountLine,
   collectionSwitchPlan,
+  downloadRowStatus,
   fileCountsInstalled,
   filesByMod,
   layoutSkipsNote,
@@ -1821,6 +1822,31 @@ test("a skipped file does not wear its sibling's tick", () => {
   const src = fs.readFileSync("src/CollectionPage.tsx", "utf8");
   const badge = src.slice(src.indexOf("const stateBadge"), src.indexOf("const stateBadge") + 700);
   assert.match(badge, /fileIn\(f\) && !attentionIds\.has\(f\.fileId\)/);
+});
+
+test("an installer waiting for choices is not called Failed (#35, #36)", () => {
+  assert.equal(downloadRowStatus("done"), "Done ✓");
+  assert.equal(downloadRowStatus("error", "fomod wizard"), "Waiting for your choices ⚙");
+  assert.equal(downloadRowStatus("error", "options"), "Waiting for your choices ⚙");
+  assert.equal(downloadRowStatus("error", "pc tool"), "Skipped ⏭");
+  assert.equal(downloadRowStatus("error", "Download failed: ClientPayloadError"), "Failed ⚠");
+  assert.equal(downloadRowStatus("error"), "Failed ⚠");
+  assert.equal(downloadRowStatus("cancelled"), "Cancelled");
+  const page = fs.readFileSync("src/DownloadsPage.tsx", "utf8");
+  assert.match(page, /downloadRowStatus\(d\.phase, d\.message\)/);
+});
+
+test("a done after the wizard pause turns the Failed row into Done (#36)", () => {
+  // The reporter's log: "installed FOMOD 'Blended Roads': 81 files", while
+  // the Downloads page said Failed, because the late "done" found no live
+  // row and was dropped.
+  const src = fs.readFileSync("src/state.ts", "utf8");
+  const fn = src.slice(src.indexOf("export function updateDownload"), src.indexOf("export function getAggregateBps"));
+  assert.match(fn, /if \(!existing && phase === "done"\)/);
+  assert.match(fn, /prior\.phase === "error"/);
+  assert.ok(fn.indexOf('phase === "done")') < fn.indexOf('phase !== "downloading"'),
+    "the upgrade runs before the no-live-row early return");
+  assert.match(fn, /bps: undefined, message \}/, "finished rows keep their message");
 });
 
 test("a collection's switch leaves mods the plugin switched off alone (#35)", () => {

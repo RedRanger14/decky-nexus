@@ -25648,6 +25648,15 @@ query CollectionInstructions($slug: String!) {
         srcs = sorted({r.get("source") or "manual" for r in records.values()})
         if srcs:
             lines.append(f"- Installed via: {', '.join(srcs)}")
+        # What the installer said when a mod failed, which is the one line a
+        # report needs and the one a handheld user cannot fetch: #35 showed
+        # Blended Roads as "Failed" on a Deck, and nothing anywhere said why.
+        # Above the mod list, because the link is trimmed from the bottom
+        # and #36's report lost everything after that list.
+        failures = _recent_install_failures(game_domain)
+        if failures:
+            lines += ["", "### Recent install failures", ""]
+            lines += [f"- {f}" for f in failures]
         recent = sorted(
             records.items(),
             key=lambda kv: kv[1].get("installed_at") or 0,
@@ -25661,13 +25670,6 @@ query CollectionInstructions($slug: String!) {
                     f"- {rec.get('name') or key} "
                     f"v{rec.get('version') or '?'}{mark}"
                 )
-        # What the installer said when a mod failed, which is the one line a
-        # report needs and the one a handheld user cannot fetch: #35 showed
-        # Blended Roads as "Failed" on a Deck, and nothing anywhere said why.
-        failures = _recent_install_failures(game_domain)
-        if failures:
-            lines += ["", "### Recent install failures", ""]
-            lines += [f"- {f}" for f in failures]
         # NOT the log. It goes in the URL, and GitHub fails an over-long
         # issue link - with a 500 when the user has to sign in on the way,
         # which is the worst possible moment. The summary above is what makes

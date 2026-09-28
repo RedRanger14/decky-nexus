@@ -216,6 +216,22 @@ export function updateDownload(
   message?: string
 ): void {
   const existing = downloads.get(modId);
+  // An installer (FOMOD) mod reports "error: fomod wizard" when it stops
+  // for its choices, which files the row as finished; the collection then
+  // installs it with the curator's choices and "done" arrives with no live
+  // row. Dropped, the row said "Failed" over a mod that was installed:
+  // Blended Roads in #35 and #36, where the reporter's own log said
+  // "installed FOMOD 'Blended Roads': 81 files". It now becomes Done.
+  if (!existing && phase === "done") {
+    const prior = completed.find((c) => c.modId === modId);
+    if (prior && prior.phase === "error") {
+      prior.phase = "done";
+      prior.percent = percent;
+      prior.message = undefined;
+      notifyDownloads();
+    }
+    return;
+  }
   // Background rebuilds narrate on this channel too: disabling a Frostbite
   // mod recompiles the whole pack and reports percentages under that mod's
   // id. Only a real download may CREATE a row - Michael opened a mod he had
@@ -230,7 +246,9 @@ export function updateDownload(
     // them until cleared).
     if (existing) {
       downloads.delete(modId);
-      completed.unshift({ ...existing, phase, percent, bps: undefined });
+      // The message is kept: it is what tells "waiting for your choices"
+      // apart from a real failure (see downloadRowStatus).
+      completed.unshift({ ...existing, phase, percent, bps: undefined, message });
       if (completed.length > 30) completed.pop();
       notifyDownloads();
     }

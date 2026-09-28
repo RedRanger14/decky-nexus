@@ -34,7 +34,11 @@ import {
   getModDetails,
   setDownloadsPaused,
 } from "./api";
-import { cancellableDownload, pauseAllControl } from "./panelRules";
+import {
+  cancellableDownload,
+  downloadRowStatus,
+  pauseAllControl,
+} from "./panelRules";
 import { PAGE_SCROLLER } from "./theme";
 import { toaster } from "@decky/api";
 import { getSupportedGame, modeParams } from "./games";
@@ -748,13 +752,7 @@ export function DownloadsPage() {
                 openDownloadTarget(d.modId, d.gameAppId, d.collectionSlug, d.name)
               }
               name={d.name}
-              status={
-                d.phase === "done"
-                  ? "Done ✓"
-                  : d.phase === "cancelled"
-                  ? "Cancelled"
-                  : "Failed ⚠"
-              }
+              status={downloadRowStatus(d.phase, d.message)}
               dim
             />
           ))}

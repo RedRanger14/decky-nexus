@@ -1030,6 +1030,25 @@ export function troubleshootingCount(
   );
 }
 
+/** What a finished row on the Downloads page says.
+ *
+ * The backend reports an installer that stopped for choices as an error
+ * ("fomod wizard", "options"). That is a pause, not a failure: in a
+ * collection the curator's choices install it a moment later, or it waits
+ * under Finish setup. Every one of them read "Failed" (#35, #36). */
+export function downloadRowStatus(phase: string, message?: string): string {
+  if (phase === "done") return "Done ✓";
+  if (phase === "cancelled") return "Cancelled";
+  const m = (message ?? "").toLowerCase();
+  if (m === "fomod wizard" || m === "options" || m === "choose a folder") {
+    return "Waiting for your choices ⚙";
+  }
+  if (m === "pc tool" || m === "no payload" || m === "not installable") {
+    return "Skipped ⏭";
+  }
+  return "Failed ⚠";
+}
+
 /** A collection's switch in My Mods.
  *
  * It read OFF whenever any mod in it was off, and a big collection always

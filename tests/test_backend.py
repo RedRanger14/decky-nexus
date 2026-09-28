@@ -1247,6 +1247,12 @@ class TestReportCarriesInstallFailures(unittest.TestCase):
         self.assertEqual(main._recent_install_failures("skyrimspecialedition", log_dir=d),
                          ["Other game (mod 5): nope"])
 
+    def test_failures_come_before_the_mod_list(self):
+        # The link is trimmed from the bottom; #36 lost what followed.
+        src = inspect.getsource(main.Plugin.build_report)
+        self.assertLess(src.index("### Recent install failures"),
+                        src.index("### Most recent mods"))
+
     def test_no_logs_is_no_section(self):
         self.assertEqual(main._recent_install_failures("x", log_dir="/nonexistent-dir"), [])
 
