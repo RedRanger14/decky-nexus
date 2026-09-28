@@ -70,6 +70,8 @@ appear in the plugin until they do.
 - Dragon's Dogma 2
 - Final Fantasy XII: The Zodiac Age
 - Horizon Forbidden West
+- Kingdom Come: Deliverance
+- Kingdom Come: Deliverance II
 - Middle-earth: Shadow of Mordor
 - Middle-earth: Shadow of War
 - Skyrim VR
