@@ -11711,12 +11711,22 @@ def _match_fomod_choices(steps: list, curator_choices) -> list:
     return ids
 
 
-def _prune_pending_fomods() -> None:
+def _prune_pending_fomods(keep: str = "") -> None:
+    """Drop expired wizards and delete their extractions. `keep` is the
+    scratch the caller has just extracted into: scratch dirs are named per
+    mod file, so a retry reuses the folder an abandoned wizard for the same
+    file still points at. That wizard is superseded and dropped, but its
+    folder is the fresh extraction now and is left alone - deleting it
+    made the retry stage 0 files."""
     now = time.time()
     for token in list(PENDING_FOMODS):
-        if now - PENDING_FOMODS[token].get("at", 0) > FOMOD_TTL_SECONDS:
-            entry = PENDING_FOMODS.pop(token)
-            _force_rmtree(entry.get("scratch") or "")
+        entry = PENDING_FOMODS[token]
+        scratch = entry.get("scratch") or ""
+        if keep and scratch == keep:
+            PENDING_FOMODS.pop(token)
+        elif now - entry.get("at", 0) > FOMOD_TTL_SECONDS:
+            PENDING_FOMODS.pop(token)
+            _force_rmtree(scratch)
 
 
 def _parse_nxm_url(url: str):
@@ -16698,7 +16708,7 @@ async def _me_install_from_scratch(
             wizard, ctx = wiz
             entry["ctx"] = ctx
             entry["m3"] = True
-            _prune_pending_fomods()
+            _prune_pending_fomods(keep=scratch)
             token = f"{mod_id}-{file_id}-{int(time.time())}"
             PENDING_FOMODS[token] = entry
             await _emit_progress(mod_id, "error", 0, "options")
@@ -16714,7 +16724,7 @@ async def _me_install_from_scratch(
     if wiz:
         wizard, ctx = wiz
         entry["ctx"] = ctx
-        _prune_pending_fomods()
+        _prune_pending_fomods(keep=scratch)
         token = f"{mod_id}-{file_id}-{int(time.time())}"
         PENDING_FOMODS[token] = entry
         await _emit_progress(mod_id, "error", 0, "options")
@@ -19215,7 +19225,7 @@ query Link($slug: String!, $domainName: String!) {
                 if parsed:
                     wizard, ctx = parsed
                     if wizard["steps"]:
-                        _prune_pending_fomods()
+                        _prune_pending_fomods(keep=scratch)
                         token = f"{mod_id}-{file_id}-{int(time.time())}"
                         PENDING_FOMODS[token] = {
                             "at": time.time(),
@@ -19974,7 +19984,7 @@ query Link($slug: String!, $domainName: String!) {
             if parsed:
                 wizard, ctx = parsed
                 if wizard["steps"]:
-                    _prune_pending_fomods()
+                    _prune_pending_fomods(keep=scratch)
                     token = f"{mod_id}-{file_id}-{int(time.time())}"
                     PENDING_FOMODS[token] = {
                         "at": time.time(),
