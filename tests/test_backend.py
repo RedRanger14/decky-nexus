@@ -24316,6 +24316,55 @@ class TestFomodReplicatedFileSet(unittest.TestCase):
         self.assertEqual(r["fomod_token"], "tok35b")
 
 
+class TestFomodRetryKeepsItsExtraction(unittest.TestCase):
+    """Scratch dirs are named per mod file, so retrying a wizard abandoned
+    over FOMOD_TTL_SECONDS ago re-extracts into the folder the stale entry
+    still points at. Pruning that entry used to delete the fresh
+    extraction, and the retry then staged 0 files ('source missing')."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(dir=TEST_ROOT)
+        self.scratch = os.path.join(self.root, "extract-100-200")
+        os.makedirs(os.path.join(self.scratch, "core"))
+        with open(os.path.join(self.scratch, "core", "a.esm"), "wb") as f:
+            f.write(b"x")
+        self.saved = dict(main.PENDING_FOMODS)
+        main.PENDING_FOMODS.clear()
+
+    def tearDown(self):
+        main.PENDING_FOMODS.clear()
+        main.PENDING_FOMODS.update(self.saved)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _park(self, token, scratch, age):
+        main.PENDING_FOMODS[token] = {
+            "scratch": scratch, "at": time.time() - age, "ctx": {}}
+
+    def test_an_expired_wizard_for_the_same_file_spares_the_retry(self):
+        self._park("stale", self.scratch, main.FOMOD_TTL_SECONDS + 60)
+        main._prune_pending_fomods(keep=self.scratch)
+        self.assertNotIn("stale", main.PENDING_FOMODS)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.scratch, "core", "a.esm")),
+            "the retry's extraction was deleted")
+
+    def test_a_live_wizard_for_the_same_file_is_superseded(self):
+        self._park("live", self.scratch, 5)
+        main._prune_pending_fomods(keep=self.scratch)
+        self.assertNotIn("live", main.PENDING_FOMODS)
+        self.assertTrue(os.path.isdir(self.scratch))
+
+    def test_other_expired_wizards_are_still_cleaned_up(self):
+        other = os.path.join(self.root, "extract-1-2")
+        os.makedirs(other)
+        self._park("old", other, main.FOMOD_TTL_SECONDS + 60)
+        self._park("fresh", os.path.join(self.root, "extract-3-4"), 5)
+        main._prune_pending_fomods(keep=self.scratch)
+        self.assertNotIn("old", main.PENDING_FOMODS)
+        self.assertFalse(os.path.exists(other))
+        self.assertIn("fresh", main.PENDING_FOMODS)
+
+
 class TestUnloadAlwaysLetsGo(unittest.TestCase):
     """A plugin process that outlives Decky's restart keeps the loader's
     port, and every new loader dies on 'address already in use' (the
