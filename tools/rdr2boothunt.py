@@ -200,6 +200,13 @@ def ensure_pad():
     st = run_cmd(["systemctl", "--user", "is-active", "bg3pad"], timeout=10)
     if st is not None and st.stdout.strip() == "active":
         return True
+    # The daemon replays its command file from the top when it starts, so a
+    # QUIT left there by the last session stops it the moment it comes up
+    # (found on the tool's first real run, 2026-10-05).
+    try:
+        open("/tmp/bg3pad.cmd", "w").close()
+    except OSError:
+        pass
     run_cmd(["systemd-run", "--user", "--unit=bg3pad", "--collect",
              "python3", PAD, "daemon"], timeout=20)
     time.sleep(2)
