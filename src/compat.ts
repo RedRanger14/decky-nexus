@@ -562,6 +562,25 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "and stay on. The mod page has a newer Smaller Crosshair (1.4) that " +
       "may work.",
   },
+  {
+    nexusDomain: "reddeadredemption2",
+    modId: 671, // WhyEm's DLC
+    name: "WhyEm's DLC",
+    // Found 2026-10-05: Ultimate RDR 2 - Essentials (pjwopl) installed
+    // alongside RDR 2: Fixed and Enhanced (zpvmhh), both on the Legion.
+    // Bisected by switching off the four Essentials-only mods one at a
+    // time and re-booting: every other combination reached Story Mode,
+    // and the one that still crashed each time was this file on top of
+    // Fixed and Enhanced's set. Scoped to the collection it is pinned by,
+    // since it was never tested installed on its own.
+    collections: ["pjwopl"],
+    fileIds: [6052], // v1.0.1.1
+    reason:
+      "This file crashes Story Mode a few seconds after loading when " +
+      "installed alongside a large collection like RDR 2: Fixed and " +
+      "Enhanced (seen on this device). Everything else in the collection " +
+      "works without it.",
+  },
 ];
 
 /** Which of a collection's mods should be installed SWITCHED OFF, each

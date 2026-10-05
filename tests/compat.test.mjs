@@ -557,3 +557,26 @@ test("Valheim Enhanced installs with exactly its six broken mods off", async () 
     collectionAutoOff("valheim", pinned, "aevgug").map((o) => o.modId).sort((a, b) => a - b),
     [425, 2067, 2204, 2875, 2887, 2906]);
 });
+
+test("RDR2: WhyEm's DLC crashes Story Mode alongside Fixed and Enhanced", async () => {
+  const { collectionAutoOff } = await import("../.test-build/compat.js");
+  // Ultimate RDR 2 - Essentials (pjwopl), bisected on device 2026-10-05.
+  const off = collectionAutoOff(
+    "reddeadredemption2",
+    [{ modId: 671, fileId: 6052 }, { modId: 1675, fileId: 21033 }],
+    "pjwopl"
+  );
+  assert.deepEqual(off.map((o) => [o.modId, o.fileId]), [[671, 6052]]);
+  assert.match(off[0].reason, /Fixed and Enhanced/);
+  assert.ok(!off[0].reason.includes("—"));
+  // Scoped to the collection it was tested in, same as every other rule here.
+  assert.deepEqual(
+    collectionAutoOff("reddeadredemption2", [{ modId: 671, fileId: 6052 }]),
+    []
+  );
+  // A different file of the same mod would not be convicted by this.
+  assert.deepEqual(
+    collectionAutoOff("reddeadredemption2", [{ modId: 671, fileId: 99999 }], "pjwopl"),
+    []
+  );
+});

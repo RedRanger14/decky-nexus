@@ -20409,6 +20409,45 @@ class TestBg3Mode(unittest.TestCase):
             main.HOME_ROOT = real
 
 
+class TestRdr2BootHunt(unittest.TestCase):
+    """RDR2's boot judge, held to the memory measured on the Legion
+    (2026-10-05): title screen 3.0-3.1 GB flat, camp 4.5-4.6 GB."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+        import rdr2boothunt
+
+        self.h = rdr2boothunt
+
+    def test_reaching_camp_is_ok(self):
+        s = [3_442_296, 4_223_612, 4_537_716, 4_549_408, 4_554_000]
+        self.assertEqual(self.h.classify(s, True, False), "ok")
+
+    def test_sitting_on_the_title_screen_is_never_a_crash(self):
+        # The misread that cost two boots: a press that never took.
+        s = [3_065_772, 3_070_888, 3_071_136, 3_071_148]
+        self.assertEqual(self.h.classify(s, True, False), "watching")
+        self.assertEqual(self.h.classify(s, True, True), "nostart")
+        self.assertEqual(self.h.classify(s, False, False), "nostart")
+
+    def test_the_game_closing_after_loading_is_a_crash(self):
+        self.assertEqual(self.h.classify([3_442_296, 3_900_000], False, False), "exit")
+
+    def test_falling_back_to_the_title_after_the_game_is_a_crash(self):
+        s = [3_500_000, 4_400_000, 4_500_000, 3_050_000]
+        self.assertEqual(self.h.classify(s, True, False), "exit")
+
+    def test_a_press_counts_only_when_memory_leaves_the_title(self):
+        self.assertFalse(self.h.press_landed(3_036_748, 3_040_000))
+        self.assertTrue(self.h.press_landed(3_036_748, 3_442_296))
+
+    def test_the_process_match_is_exact(self):
+        # "RDR2.exe" is a suffix of the launcher shim "PlayRDR2.exe".
+        src = open(os.path.join(REPO_ROOT, "tools", "rdr2boothunt.py"), encoding="utf-8").read()
+        self.assertIn("parts[1].strip() in ROCKSTAR_PROCS", src)
+        self.assertNotIn("pgrep", src)
+
+
 class TestBg3BootHunt(unittest.TestCase):
     """The boot-hunt classifier, held to the numbers actually measured on
     device (2026-09-02). Judging a boot is the whole risk in an unattended
