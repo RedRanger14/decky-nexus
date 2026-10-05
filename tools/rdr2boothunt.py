@@ -83,13 +83,23 @@ ROCKSTAR_PROCS = ("RDR2.exe", "PlayRDR2.exe", "Launcher.exe",
 
 SAMPLE_SECS = 10
 TITLE_RSS_KB = 3_300_000      # above the 3.0-3.1 GB idle title screen
-GAME_RSS_KB = 4_200_000       # under the 4.5 GB measured in camp
+GAME_RSS_KB = 3_700_000       # camp: 4.5 GB modded, 3.9 GB with every mod off
 SETTLE_SAMPLES = 3
 PRESS_TRIES = 6
 TITLE_WAIT_SECS = 180          # RedemptiVizion (225 mods) took past 60s
 PRESS_SETTLE_SECS = 12        # first press 8s after the exe appears missed once
 START_BUDGET_SECS = 120
 BOOT_BUDGET_SECS = 300
+# --look: an ok boot is also looked at (wait for the fade-in, screenshot).
+# OFF by default, because the screenshot lies: with RDR2's HDR on and the
+# Legion docked to a 4K screen, gamescopectl returned a pure black frame
+# while Michael's daughter was riding around camp in it (2026-10-05), and a
+# whole hunt chased that. Use it only where a screenshot has been seen to
+# match the screen.
+LOOK = False
+LOOK_AFTER_SECS = 40
+BRIGHT_LEVEL = 24            # 0-255 grey: above this a pixel is "lit"
+BRIGHT_SHARE = 0.01          # under 1% lit pixels is a black screen
 RELAUNCH_GAP_SECS = 15
 
 
@@ -126,6 +136,16 @@ def title_settled(samples):
         return False
     a, b = samples[-2], samples[-1]
     return a > 2_500_000 and b > 2_500_000 and abs(b - a) < 60_000
+
+
+def frame_is_black(grey):
+    """grey: bytes of 0-255 pixel levels from a shrunken screenshot. A night
+    scene is dark, but its HUD, moon and lamps still light more than
+    BRIGHT_SHARE of it; a faded-out screen lights none."""
+    if not grey:
+        return False   # no picture is no evidence
+    lit = sum(1 for b in grey if b > BRIGHT_LEVEL)
+    return lit < BRIGHT_SHARE * len(grey)
 
 
 def press_landed(before_kb, after_kb):
@@ -202,6 +222,29 @@ def kill_game():
         return False
     time.sleep(RELAUNCH_GAP_SECS)
     return True
+
+
+def screen_grey():
+    """The composited frame as 64x36 grey bytes, or b"" if none was taken.
+    gamescopectl sees the real frame; x11grab of :0/:1 is always black."""
+    shot = "/tmp/rdr2hunt-shot.png"
+    try:
+        os.remove(shot)
+    except OSError:
+        pass
+    run_cmd(["gamescopectl", "screenshot", shot], timeout=15)
+    for _ in range(10):
+        if os.path.isfile(shot) and os.path.getsize(shot) > 0:
+            break
+        time.sleep(1)
+    out = None
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", shot, "-vf", "scale=64:36,format=gray",
+             "-f", "rawvideo", "-"], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return b""
+    return out.stdout if out and out.returncode == 0 else b""
 
 
 def pad(*cmds):
@@ -347,6 +390,16 @@ def boot_once(label):
             samples.append(cur)
             say(f"    {label} t={time.time() - t0:3.0f} rss={cur // 1024}MB")
         verdict = classify(samples, alive, time.time() - t0 > BOOT_BUDGET_SECS)
+        if verdict == "ok" and LOOK:
+            time.sleep(LOOK_AFTER_SECS)
+            if game_pid() != pid:
+                verdict = "exit"
+            else:
+                grey = screen_grey()
+                lit = sum(1 for b in grey if b > BRIGHT_LEVEL)
+                say(f"    {label} screen: {lit} of {len(grey)} pixels lit")
+                if frame_is_black(grey):
+                    verdict = "black"
         if verdict != "watching":
             say(f"  {label}: {verdict.upper()}")
             kill_game()
@@ -378,9 +431,10 @@ def check(m):
     return ok
 
 
-def hunt(m, slug=None):
+def hunt(m, slug=None, fault="exit"):
     """Bisect the enabled mods (optionally one collection's) to the one
-    whose presence crashes Story Mode. Mods outside the scope stay on."""
+    whose presence causes `fault`: "exit" (crashes Story Mode) or "black"
+    (reaches camp and draws nothing). Mods outside the scope stay on."""
     enabled, keys = read_state(m, slug)
     _all_on, all_keys = read_state(m)
     if not enabled:
@@ -395,17 +449,26 @@ def hunt(m, slug=None):
         apply_state(m, set(original), all_keys)
         sys.exit(1)
 
+    def judge(label):
+        # A different failure says nothing about this fault: RedemptiVizion
+        # crashed one boot in six with LML loaded, whatever was on. Once more.
+        v = boot_once(label)
+        if v not in (fault, "ok"):
+            say(f"  {label}: {v}, not {fault}; booting again")
+            v = boot_once(label + "-again")
+        return v
+
     signal.signal(signal.SIGINT, bail)
     signal.signal(signal.SIGTERM, bail)
     try:
         say(f"confirm the fault: all {len(enabled)} suspects ON")
         apply_state(m, others_on | set(enabled), all_keys)
-        if boot_once("all-on") != "exit":
-            say("ABORT: the full set did not crash, so there is nothing to bisect")
+        if judge("all-on") != fault:
+            say(f"ABORT: the full set did not show {fault}, so there is nothing to bisect")
             return
         say("control: suspects OFF")
         apply_state(m, others_on, all_keys)
-        v = boot_once("control")
+        v = judge("control")
         if v != "ok":
             say(f"ABORT: the game does not reach Story Mode with every suspect "
                 f"off ({v}); the cause is outside this set")
@@ -415,8 +478,8 @@ def hunt(m, slug=None):
             half = suspects[: len(suspects) // 2]
             say(f"trying {len(half)} of {len(suspects)} on")
             apply_state(m, others_on | set(half), all_keys)
-            v = boot_once(f"half-{len(half)}")
-            if v == "exit":
+            v = judge(f"half-{len(half)}")
+            if v == fault:
                 suspects = half
                 continue
             if v != "ok":
@@ -425,8 +488,8 @@ def hunt(m, slug=None):
                 break
             rest = suspects[len(half):]
             apply_state(m, others_on | set(rest), all_keys)
-            v2 = boot_once(f"rest-{len(rest)}")
-            if v2 == "exit":
+            v2 = judge(f"rest-{len(rest)}")
+            if v2 == fault:
                 suspects = rest
                 continue
             if v2 != "ok":
@@ -456,9 +519,14 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--hunt", action="store_true")
     ap.add_argument("--collection", metavar="SLUG")
+    ap.add_argument("--fault", choices=("exit", "black"), default="exit")
+    ap.add_argument("--look", action="store_true",
+                    help="judge ok boots by a screenshot too (see LOOK)")
     ap.add_argument("--restore-only", action="store_true")
     ap.add_argument("--verify", type=int, nargs="?", const=2, metavar="N")
     args = ap.parse_args()
+    global LOOK
+    LOOK = args.look or args.fault == "black"
     m = load_plugin()
     if args.restore_only:
         try:
@@ -475,7 +543,7 @@ def main():
     if args.verify is not None:
         return 0 if all(v == "ok" for v in verify(args.verify)) else 1
     if args.hunt or args.collection:
-        hunt(m, args.collection)
+        hunt(m, args.collection, args.fault)
         verify(2)
     return 0
 

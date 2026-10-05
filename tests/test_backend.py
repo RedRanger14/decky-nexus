@@ -20598,6 +20598,16 @@ class TestRdr2BootHunt(unittest.TestCase):
 
         self.h = rdr2boothunt
 
+    def test_a_faded_out_screen_is_black_and_a_night_scene_is_not(self):
+        # RedemptiVizion: camp by memory, a black frame with no HUD.
+        self.assertTrue(self.h.frame_is_black(bytes(64 * 36)))
+        self.assertTrue(self.h.frame_is_black(bytes([3]) * (64 * 36)))
+        night = bytearray([6]) * (64 * 36)
+        for i in range(0, 64 * 36, 40):   # HUD, moon, lamps: 2.5% lit
+            night[i] = 200
+        self.assertFalse(self.h.frame_is_black(bytes(night)))
+        self.assertFalse(self.h.frame_is_black(b""), "no picture is no evidence")
+
     def test_presses_wait_for_the_title_to_settle(self):
         # RedemptiVizion: every press went in at 424 MB, before the menu.
         self.assertFalse(self.h.title_settled([434_176]))
