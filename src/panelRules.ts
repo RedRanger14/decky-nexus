@@ -1030,6 +1030,63 @@ export function troubleshootingCount(
   );
 }
 
+/** The mod page's DLC note, or nothing.
+ *
+ * It said "Needs the Far Harbor DLC" to everyone, owners included, and an
+ * owner with every Fallout 4 DLC reported the plugin "can't read them"
+ * (#38). The backend now marks each declared DLC owned (true), missing
+ * (false) or uncheckable (null). Owned DLC is not mentioned: the plugin
+ * has proved it is there. Missing DLC is said plainly. Uncheckable DLC
+ * keeps the old, hedged wording, because guessing "you do not own this"
+ * at someone who does is worse than the author's own sentence. */
+export function dlcNote(
+  dlc: { name: string; owned?: boolean | null }[] | undefined,
+  quote?: string
+): { title: string; body: string; hint: string } | undefined {
+  const list = (dlc ?? []).filter((d) => d.name);
+  if (list.length === 0) {
+    return quote
+      ? {
+          title: "Needs DLC",
+          body: quote,
+          hint:
+            "Check you own it before installing. Without it, the mod can " +
+            "install cleanly and still crash the game.",
+        }
+      : undefined;
+  }
+  const missing = list.filter((d) => d.owned === false).map((d) => d.name);
+  const unknown = list
+    .filter((d) => d.owned === null || d.owned === undefined)
+    .map((d) => d.name);
+  const and = (xs: string[]) => xs.join(" and ");
+  if (missing.length > 0) {
+    return {
+      title: "Needs DLC you don't have",
+      body:
+        `Needs the ${and(missing)} DLC, which ${
+          missing.length === 1 ? "isn't" : "aren't"
+        } installed.` +
+        (unknown.length
+          ? ` It also lists ${and(unknown)}, which can't be checked here.`
+          : ""),
+      hint:
+        "DLC is installed from Steam's DLC tab. Without it, the mod can " +
+        "install cleanly and still crash the game.",
+    };
+  }
+  if (unknown.length > 0) {
+    return {
+      title: "Needs DLC",
+      body: `Needs the ${and(unknown)} DLC.`,
+      hint:
+        "Check you own it before installing. Without it, the mod can " +
+        "install cleanly and still crash the game.",
+    };
+  }
+  return undefined;
+}
+
 /** What a finished row on the Downloads page says.
  *
  * The backend reports an installer that stopped for choices as an error

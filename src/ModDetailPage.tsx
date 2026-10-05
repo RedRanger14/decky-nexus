@@ -32,7 +32,7 @@ import {
   getShowAdult,
   getInstallBlock,
 } from "./api";
-import { knownBrokenNote, requirementSetupNotes } from "./panelRules";
+import { dlcNote, knownBrokenNote, requirementSetupNotes } from "./panelRules";
 import { PayloadChoiceModal } from "./ChoiceModal";
 import { EndorsePill } from "./EndorseButton";
 import { popOurPage, pushOurPage } from "./Tabs";
@@ -108,7 +108,9 @@ export function ModDetailPage() {
   const [files, setFiles] = useState<FilesResult | undefined>();
   const [requirements, setRequirements] = useState<ModRequirement[] | undefined>();
   /** DLC this mod needs: the structured field, or the author's own sentence. */
-  const [dlcNeed, setDlcNeed] = useState("");
+  const [dlcNeed, setDlcNeed] = useState<
+    { title: string; body: string; hint: string } | undefined
+  >(undefined);
   const [description, setDescription] = useState<string | undefined>();
   const [descExpanded, setDescExpanded] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
@@ -247,23 +249,24 @@ export function ModDetailPage() {
         else if (b.warning) setStale(b.warning);
       });
     });
-    getModRequirements(s.game.nexusDomain, s.mod.modId).then((r) => {
+    getModRequirements(
+      s.game.nexusDomain,
+      s.mod.modId,
+      s.game.installDirName,
+      s.game.modsSubdir
+    ).then((r) => {
       setRequirements(r.ok ? r.requirements ?? [] : []);
-      // Structured DLC first (the real field), the author's sentence as the
-      // fallback for everything published before that field existed.
-      const dlcNames = (r.dlc ?? []).map((d) => d.name).filter(Boolean);
-      setDlcNeed(
-        dlcNames.length > 0
-          ? `Needs the ${dlcNames.join(" and ")} DLC.`
-          : r.dlc_quote ?? ""
-      );
+      // Structured DLC first (the real field), checked against what is
+      // installed; the author's sentence as the fallback for everything
+      // published before that field existed. See dlcNote (#38).
+      setDlcNeed(r.ok ? dlcNote(r.dlc, r.dlc_quote) : undefined);
     });
     getModDetails(s.game.nexusDomain, s.mod.modId).then((r) => {
       setDescription(r.ok ? stripMarkup(r.mod?.description ?? "") : "");
       setUploader(r.ok ? (r.mod as NexusMod | undefined)?.uploader : undefined);
     });
     setEndorseStatus(undefined);
-    setDlcNeed("");
+    setDlcNeed(undefined);
     setNeedsExternal(undefined);
     setKnownBroken("");
     // What we have watched this mod actually do on the game build installed
@@ -930,7 +933,7 @@ export function ModDetailPage() {
               🎮 <b>Gaming Mode warning:</b> {strandingWarning}
             </div>
           )}
-          {dlcNeed !== "" && (
+          {dlcNeed && (
             <div
               style={{
                 marginTop: "10px",
@@ -943,19 +946,18 @@ export function ModDetailPage() {
               }}
             >
               <div style={{ fontWeight: 600, marginBottom: "3px" }}>
-                Needs paid DLC
+                {dlcNeed.title}
               </div>
-              {/* The author's words, not ours: working out which DLC a Steam
-                  install includes is game-specific and fragile, and a wrong
-                  "you do not own this" is worse than the sentence itself.
-                  This is stated ABOVE the required-mods list because no
+              {/* "Isn't installed" only where the disk proves it (a master
+                  file in Data); everything else keeps the author's words,
+                  because a wrong "you do not own this" is worse than the
+                  sentence itself. See dlcNote. Stated ABOVE the required-mods list because no
                   amount of mod installing fixes a missing DLC - Michael's
                   Eagle Rising crash was exactly this, after its own DLLs
                   had loaded fine. */}
-              <div style={{ opacity: 0.9 }}>{dlcNeed}</div>
+              <div style={{ opacity: 0.9 }}>{dlcNeed.body}</div>
               <div style={{ opacity: 0.6, marginTop: "3px" }}>
-                Check you own it before installing. Without it, the mod can
-                install cleanly and still crash the game.
+                {dlcNeed.hint}
               </div>
             </div>
           )}

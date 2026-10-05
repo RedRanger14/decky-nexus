@@ -5850,7 +5850,59 @@ DLC_MASTER_NAMES = {
     "dlcworkshop02.esm": "Contraptions Workshop",
     "dlcworkshop03.esm": "Vault-Tec Workshop",
     "dlcnukaworld.esm": "Nuka-World",
+    # Fallout 4's free Creation Club content from the 2024 next-gen update,
+    # under the names Nexus lists them as requirements by (#38: all three
+    # were reported missing to someone who had them). File names read from
+    # the Legion's Data folder, 2026-10-05.
+    "ccotmfo4001-remnants.esl": "Enclave Remnants",
+    "ccsbjfo4003-grenade.esl": "Makeshift Weapon Pack",
+    "ccfsvfo4007-halloween.esl": "Halloween Workshop Pack",
 }
+
+
+def _dlc_key(name: str) -> str:
+    """A DLC name reduced to letters and digits. Nexus says "Nuka World",
+    the game's own name is "Nuka-World", and an exact comparison told
+    everyone who owned it that they did not (#38)."""
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _owned_dlc(game_domain: str, install_path: str, data_path: str) -> set:
+    """DLC proved present on disk, by human name: a master file in Data is
+    the only proof that survives a reinstall, a family share or a regional
+    edition. Plus expansions that are folders rather than masters."""
+    owned = set()
+    try:
+        for name in os.listdir(data_path):
+            human = DLC_MASTER_NAMES.get(name.lower())
+            if human:
+                owned.add(human)
+    except OSError:
+        pass
+    return owned | _owned_expansions(game_domain, install_path)
+
+
+def _dlc_check_keys(game_domain: str) -> set:
+    """The DLC this game's check can prove one way or the other. A
+    requirement outside it ("Creation Club Content") is never reported
+    missing: that would be a guess aimed at someone who may own it."""
+    keys = set()
+    if game_domain in DLC_GAMES_WITH_MASTERS:
+        keys |= {_dlc_key(v) for v in DLC_MASTER_NAMES.values()}
+    entry = EXPANSION_DIRS_BY_DOMAIN.get(game_domain)
+    if entry:
+        keys |= {_dlc_key(v) for v in entry[1].values()}
+    return keys
+
+
+def _dlc_missing(game_domain: str, wanted: list, owned: set) -> list:
+    """Of the DLC a mod declares, the ones proved absent."""
+    have = {_dlc_key(o) for o in owned}
+    checkable = _dlc_check_keys(game_domain)
+    return [
+        n for n in wanted
+        if n and _dlc_key(n) in checkable and _dlc_key(n) not in have
+    ]
 
 
 def _ghost_plugins(data_path: str, names: list) -> list:
@@ -17190,7 +17242,10 @@ class Plugin:
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             return {"ok": False, "error": f"Network error: {type(e).__name__}"}
 
-    async def get_mod_requirements(self, game_domain: str, mod_id: int) -> dict:
+    async def get_mod_requirements(
+        self, game_domain: str, mod_id: int,
+        install_dir: str = "", mods_subdir: str = "",
+    ) -> dict:
         """Nexus-listed requirements for a mod (public v2 data). Two-step:
         resolve the numeric game id once, then query via legacyMods.
 
@@ -17233,6 +17288,21 @@ class Plugin:
                 quote = _dlc_requirement_quote(node.get("description") or "")
                 if quote:
                     split["dlc_quote"] = quote
+            # Whether each declared DLC is installed, where the disk can
+            # say. The mod page told everyone "Needs the Far Harbor DLC"
+            # whether they had it or not (#38).
+            if install_dir and split.get("dlc"):
+                install_path, data_path, _ = _game_paths(install_dir, mods_subdir)
+                if os.path.isdir(install_path):
+                    owned = _owned_dlc(game_domain, install_path, data_path)
+                    missing = set(_dlc_missing(
+                        game_domain, [d["name"] for d in split["dlc"]], owned))
+                    checkable = _dlc_check_keys(game_domain)
+                    for d in split["dlc"]:
+                        d["owned"] = (
+                            None if _dlc_key(d["name"]) not in checkable
+                            else d["name"] not in missing
+                        )
             return {"ok": True, **split}
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError) as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
@@ -25856,16 +25926,7 @@ query CollectionInstructions($slug: String!) {
         # Which DLC the user actually owns, read from disk rather than from
         # the store: a master file present in Data is the only proof that
         # survives a reinstall, a family share or a regional edition.
-        owned_dlc = set()
-        try:
-            for name in os.listdir(data_path):
-                human = DLC_MASTER_NAMES.get(name.lower())
-                if human:
-                    owned_dlc.add(human)
-        except OSError:
-            pass
-        # ...and the ones that are folders rather than master files.
-        owned_dlc |= _owned_expansions(game_domain, install_path)
+        owned_dlc = _owned_dlc(game_domain, install_path, data_path)
         needs_mods, needs_dlc, needs_external = [], [], []
         # One query per 20 mods rather than one per mod. At 14 mods the
         # difference is invisible; on a 500-mod Fallout 3 collection it is
@@ -25942,13 +26003,11 @@ query CollectionInstructions($slug: String!) {
             # master files we can see. Elsewhere, saying nothing beats
             # guessing "you do not own this" at somebody who does.
             if owned_dlc or _dlc_checkable(game_domain):
-                short = [
-                    d["name"] for d in reqs.get("dlc") or []
-                    if d.get("name")
-                    and d["name"].strip().lower() not in {
-                        o.lower() for o in owned_dlc
-                    }
-                ]
+                short = _dlc_missing(
+                    game_domain,
+                    [d.get("name") for d in reqs.get("dlc") or []],
+                    owned_dlc,
+                )
                 if short:
                     needs_dlc.append({"name": name, "dlc": short})
 

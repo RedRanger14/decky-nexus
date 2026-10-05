@@ -1766,12 +1766,14 @@ export const resolveFileConflicts = callable<
 >("resolve_file_conflicts");
 
 export const getModRequirements = callable<
-  [game_domain: string, mod_id: number],
+  [game_domain: string, mod_id: number, install_dir?: string, mods_subdir?: string],
   {
     ok: boolean;
     requirements?: ModRequirement[];
-    /** DLC the mod declares structurally (the new Nexus field). */
-    dlc?: { name: string; notes?: string }[];
+    /** DLC the mod declares structurally (the new Nexus field). `owned` is
+     * set when the game's folders were passed: true installed, false proved
+     * missing, null not something this game's check can prove. */
+    dlc?: { name: string; notes?: string; owned?: boolean | null }[];
     /** The author's own sentence saying a DLC is needed, when they never
      * filled in the structured field. Nexus only added dlcRequirements
      * recently, so most published mods state it in prose or not at all -

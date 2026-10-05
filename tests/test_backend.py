@@ -20409,6 +20409,51 @@ class TestBg3Mode(unittest.TestCase):
             main.HOME_ROOT = real
 
 
+class TestFallout4DlcIsRecognised(unittest.TestCase):
+    """#38: every Fallout 4 DLC installed, and the plugin said the mods
+    needed DLC. Names are the ones Nexus actually returned for the top
+    FO4 mods on 2026-10-05; file names from the Legion's Data folder."""
+
+    DATA = ["Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm", "DLCCoast.esm",
+            "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm",
+            "ccOTMFO4001-Remnants.esl", "ccSBJFO4003-Grenade.esl",
+            "ccFSVFO4007-Halloween.esl", "ccBGSFO4044-HellfirePowerArmor.esl"]
+
+    def _owned(self, files):
+        root = tempfile.mkdtemp()
+        data = os.path.join(root, "Data")
+        os.makedirs(data)
+        for n in files:
+            open(os.path.join(data, n), "w").close()
+        return main._owned_dlc("fallout4", root, data)
+
+    def test_nexus_names_match_an_owner_with_everything(self):
+        owned = self._owned(self.DATA)
+        nexus = ["Automatron", "Far Harbor", "Contraptions Workshop",
+                 "Vault-Tec Workshop", "Nuka World", "Wasteland Workshop",
+                 "Enclave Remnants", "Makeshift Weapon Pack",
+                 "Halloween Workshop Pack"]
+        self.assertEqual(main._dlc_missing("fallout4", nexus, owned), [])
+
+    def test_a_dlc_that_is_really_missing_is_still_reported(self):
+        owned = self._owned(["Fallout4.esm", "DLCRobot.esm"])
+        self.assertEqual(
+            main._dlc_missing("fallout4", ["Automatron", "Nuka World"], owned),
+            ["Nuka World"])
+
+    def test_an_uncheckable_requirement_is_never_called_missing(self):
+        owned = self._owned(["Fallout4.esm"])
+        self.assertEqual(
+            main._dlc_missing("fallout4", ["Creation Club Content"], owned), [])
+
+    def test_the_health_check_and_mod_page_use_the_same_rule(self):
+        hc = inspect.getsource(main.Plugin.get_health_check)
+        mp = inspect.getsource(main.Plugin.get_mod_requirements)
+        for src in (hc, mp):
+            self.assertIn("_dlc_missing(", src)
+            self.assertIn("_owned_dlc(", src)
+
+
 class TestRdr2BootHunt(unittest.TestCase):
     """RDR2's boot judge, held to the memory measured on the Legion
     (2026-10-05): title screen 3.0-3.1 GB flat, camp 4.5-4.6 GB."""

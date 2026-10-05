@@ -1002,21 +1002,21 @@ test("a needed DLC is stated above the required mods", () => {
   // Michael's device after its own DLLs loaded fine, because War Sails was
   // not there. So the notice sits ABOVE the required-mods list.
   const page = read("ModDetailPage.tsx");
-  const dlcAt = page.indexOf('dlcNeed !== ""');
+  const dlcAt = page.indexOf("{dlcNeed && (");
   const reqAt = page.indexOf("requirements && requirements.length > 0 && (");
   assert.ok(dlcAt > 0, "the mod page never mentions a needed DLC");
   assert.ok(
     dlcAt < reqAt,
     "the DLC notice renders below the required mods - it outranks them"
   );
-  // The author's words, never a claim about what the user owns: working out
-  // which DLC a Steam install includes is game-specific and fragile.
-  // readCode, not read - the comment above the notice explains this very
-  // rule and would match the regex itself.
+  // Ownership is the backend's call from the disk, worded in one place
+  // (dlcNote): the page itself never decides "you do not own this". Before
+  // #38 it said "Needs" to owners and non-owners alike.
   assert.ok(
     !/you do not own|not owned|missing dlc/i.test(readCode("ModDetailPage.tsx")),
-    "the page claims to know which DLC the user owns, which it cannot"
+    "the page words DLC ownership itself instead of through dlcNote"
   );
+  assert.match(page, /dlcNote\(/);
 });
 
 test("requirement notes are not crammed into the nowrap pill", () => {

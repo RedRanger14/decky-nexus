@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   archiveDisplayName,
+  dlcNote,
   externalUserTool,
   collectionCountLine,
   collectionSwitchPlan,
@@ -2068,4 +2069,27 @@ test("a mod you already had at another version is named (Valheim, Epic Loot)", a
     ["Epic Loot", "0.14.13", "0.14.5"],
     ["Jotunn", "2.30.2", "2.30.0"],
   ]);
+});
+
+test("the mod page only says a DLC is missing when it is (#38)", () => {
+  // Owner of everything: no note at all.
+  assert.equal(
+    dlcNote([{ name: "Far Harbor", owned: true }, { name: "Nuka World", owned: true }]),
+    undefined
+  );
+  const miss = dlcNote([{ name: "Far Harbor", owned: true }, { name: "Nuka World", owned: false }]);
+  assert.match(miss.body, /Needs the Nuka World DLC, which isn't installed/);
+  assert.doesNotMatch(miss.body, /Far Harbor/);
+  // Not checkable here: the author's requirement, hedged as before.
+  const unk = dlcNote([{ name: "Creation Club Content", owned: null }]);
+  assert.equal(unk.title, "Needs DLC");
+  assert.match(unk.hint, /Check you own it/);
+  // Older callers without ownership data behave as before.
+  assert.match(dlcNote([{ name: "Dead Money" }]).body, /Needs the Dead Money DLC\./);
+  assert.equal(dlcNote([], "Requires Dead Money").body, "Requires Dead Money");
+  assert.equal(dlcNote([]), undefined);
+  for (const n of [miss, unk]) assert.ok(!(n.title + n.body + n.hint).includes("—"));
+  const page = fs.readFileSync("src/ModDetailPage.tsx", "utf8");
+  assert.match(page, /dlcNote\(r\.dlc, r\.dlc_quote\)/);
+  assert.match(page, /s\.game\.installDirName,\s*s\.game\.modsSubdir/);
 });
