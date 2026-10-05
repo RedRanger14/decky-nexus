@@ -20409,6 +20409,23 @@ class TestBg3Mode(unittest.TestCase):
             main.HOME_ROOT = real
 
 
+class TestResetPrunesFoldersBesideTheExe(unittest.TestCase):
+    """RDR2 mods install beside RDR2.exe and make folders there; a reset
+    removed every file and left RedLua/Langs behind, empty."""
+
+    def test_folders_of_recorded_files_are_offered_for_pruning(self):
+        src = inspect.getsource(main.Plugin.reset_game_modding)
+        self.assertIn('if target == ".":', src)
+        root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(root, "RedLua", "Langs"))
+        os.makedirs(os.path.join(root, "Keep"))
+        open(os.path.join(root, "Keep", "game.dat"), "w").close()
+        gone = main._prune_empty_mod_dirs(
+            [os.path.join(root, "RedLua", "Langs"), os.path.join(root, "Keep")], root)
+        self.assertEqual(gone, ["RedLua/Langs", "RedLua"])
+        self.assertTrue(os.path.isdir(os.path.join(root, "Keep")))
+
+
 class TestIssue36RepairAndReasons(unittest.TestCase):
     """#36: Repair re-downloaded 84 installers to restore 0 files, and
     plugins left off said "needs a mod that breaks the game" without
@@ -24748,6 +24765,19 @@ class TestRdr2RoutingFromCollections(TestRdr2Routing):
         got, err = self._route(["Horse/horse.ytd", "Horse/horse.meta"], name="Horse")
         self.assertIsNone(err)
         self.assertEqual(got, ["lml/stream/horse.ytd"])
+
+    def test_a_reshade_preset_is_named_as_one(self):
+        # Bluegrass Horizons (10159): one .ini, "drop in your RDR 2 directory".
+        scratch = self._scratch(["Bluegrass Horizons/Bluegrass Horizons.ini"])
+        with open(os.path.join(scratch, "Bluegrass Horizons", "Bluegrass Horizons.ini"), "w") as fh:
+            fh.write("PreprocessorDefinitions=\nTechniques=Clarity@qUINT_lightroom.fx\n")
+        got, err, _note = main._route_rdr2_payload(scratch, "Bluegrass Horizons")
+        self.assertEqual(got, [])
+        self.assertIn("ReShade preset", err[1])
+
+    def test_a_plain_ini_patch_is_still_a_patch(self):
+        _got, err = self._route(["Tweaks/settings.ini"], name="Tweaks")
+        self.assertIn("by hand", err[1])
 
     def test_a_shipped_lml_folder_without_install_xml_is_streamed(self):
         # Fort Mercer Ruins: lml/Fort Mercer Ruins/{Models,stream}/...

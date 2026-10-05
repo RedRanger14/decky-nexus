@@ -8278,6 +8278,27 @@ def _route_rdr2_payload_raw(scratch: str, mod_name: str):
     if all(rel.lower().endswith(RDR2_TOOL_EXTS) for rel, _src in real):
         return [], ("tool", f"{mod_name} is a program to run on a PC, not "
                     "files the game loads."), ""
+    # A ReShade preset: .ini (and maybe .fx shaders) that ReShade reads.
+    # RedemptiVizion pins several ("Bluegrass Horizons": one .ini, "drop
+    # in your RDR 2 directory"), and the rule below called them patches.
+    # Recognised by what ReShade writes in its presets.
+    if real and all(rel.lower().endswith((".ini", ".fx", ".fxh", ".txt"))
+                    for rel, _src in real):
+        def _preset(src):
+            try:
+                with open(src, encoding="utf-8", errors="replace") as fh:
+                    head = fh.read(20000)
+            except OSError:
+                return False
+            return bool(re.search(r"^\s*(Techniques|TechniqueSorting|"
+                                  r"PreprocessorDefinitions)\s*=", head,
+                                  re.I | re.M))
+        if any(rel.lower().endswith((".fx", ".fxh")) for rel, _s in real) or any(
+                rel.lower().endswith(".ini") and _preset(src) for rel, src in real):
+            return [], ("layout", f"{mod_name} is a ReShade preset. ReShade "
+                        "is a separate injector this plugin does not set up "
+                        "for Red Dead Redemption 2, so the preset would do "
+                        "nothing here."), ""
     # Loose data files and nothing else: a patch to copy over another mod's
     # files by hand. Maverick's Tunables Add-on (pinned by Ultimate RDR 2 -
     # Essentials) says to overwrite files in lml/Maverick Weapons/, and only
@@ -23649,6 +23670,16 @@ query Link($slug: String!, $domainName: String!) {
             mod_dirs.append(mods_path)
         for rec in records.values():
             target = rec.get("target")
+            if target == ".":
+                # Mods installed beside the exe (RDR2) make their own
+                # folders there: RedLua/Langs stayed behind, empty, after
+                # a reset removed every file in it (2026-10-05).
+                mod_dirs += sorted({
+                    os.path.join(install_path, *os.path.dirname(f).split("/"))
+                    for f in rec.get("files") or []
+                    if "/" in f and _safe_rel_path(f)
+                }, key=len, reverse=True)
+                continue
             if not target or target in (".", "dlc") or not _safe_rel_path(target):
                 continue
             base = os.path.join(install_path, *target.split("/"))
