@@ -20530,6 +20530,64 @@ class TestFallout4DlcIsRecognised(unittest.TestCase):
             self.assertIn("_owned_dlc(", src)
 
 
+class TestLmlLoadsFirst(unittest.TestCase):
+    """RedemptiVizion on the Legion, 2026-10-05: with 150-odd .asi mods
+    loading ahead of it, LML's vfs.asi failed 2 boots in 4 ("Failed to
+    allocate hooking memory!"). Renamed to load first, it loaded 3 in 3."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        for n in ("RDR2.exe", "vfs.asi", "!ArmadilloSaloon.asi", "dinput8.dll"):
+            open(os.path.join(self.tmp, n), "w").close()
+        self.plugin = main.Plugin()
+        self.paths = mock.patch.object(
+            main, "_game_paths",
+            lambda d, m: (self.tmp, os.path.join(self.tmp, "lml"), ""))
+        self.paths.start()
+
+    def tearDown(self):
+        self.paths.stop()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_it_sorts_before_every_other_asi(self):
+        first = main.ASI_LOAD_FIRST["vfs.asi"]
+        names = sorted([first, "!ArmadilloSaloon.asi", "!!AnyMod.asi", "1911.asi"],
+                       key=str.lower)
+        self.assertEqual(names[0], first)
+
+    def test_opening_the_panel_renames_it_and_still_sees_it(self):
+        with mock.patch.object(main, "_rdr2_running", lambda: False):
+            s = run(self.plugin.get_game_status("Red Dead Redemption 2", "", "vfs.asi"))
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "!!!vfs.asi")))
+        self.assertFalse(os.path.isfile(os.path.join(self.tmp, "vfs.asi")))
+        self.assertTrue(s["framework_installed"], "the panel must still call LML installed")
+        self.assertTrue(main._tool_file_present(self.tmp, "vfs.asi"))
+
+    def test_never_under_a_running_game(self):
+        with mock.patch.object(main, "_rdr2_running", lambda: True):
+            run(self.plugin.get_game_status("Red Dead Redemption 2", "", "vfs.asi"))
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "vfs.asi")))
+
+    def test_a_fresh_plain_copy_replaces_the_renamed_one(self):
+        with open(os.path.join(self.tmp, "!!!vfs.asi"), "w") as f:
+            f.write("old")
+        with open(os.path.join(self.tmp, "vfs.asi"), "w") as f:
+            f.write("new")
+        self.assertEqual(main._asi_load_first(self.tmp), ["!!!vfs.asi"])
+        with open(os.path.join(self.tmp, "!!!vfs.asi")) as f:
+            self.assertEqual(f.read(), "new", "only one copy, the newer, may load")
+        self.assertFalse(os.path.isfile(os.path.join(self.tmp, "vfs.asi")))
+
+    def test_missing_means_missing(self):
+        os.remove(os.path.join(self.tmp, "vfs.asi"))
+        self.assertFalse(main._tool_file_present(self.tmp, "vfs.asi"))
+        self.assertEqual(main._asi_load_first(self.tmp), [])
+
+    def test_reset_removes_the_renamed_file_too(self):
+        with open(os.path.join(REPO_ROOT, "src", "games.ts"), encoding="utf-8") as f:
+            self.assertIn('"!!!vfs.asi",', f.read())
+
+
 class TestRdr2BootHunt(unittest.TestCase):
     """RDR2's boot judge, held to the memory measured on the Legion
     (2026-10-05): title screen 3.0-3.1 GB flat, camp 4.5-4.6 GB."""
@@ -20539,6 +20597,13 @@ class TestRdr2BootHunt(unittest.TestCase):
         import rdr2boothunt
 
         self.h = rdr2boothunt
+
+    def test_presses_wait_for_the_title_to_settle(self):
+        # RedemptiVizion: every press went in at 424 MB, before the menu.
+        self.assertFalse(self.h.title_settled([434_176]))
+        self.assertFalse(self.h.title_settled([434_176, 1_900_000]))
+        self.assertFalse(self.h.title_settled([2_600_000, 3_000_000]))
+        self.assertTrue(self.h.title_settled([2_900_000, 3_035_000, 3_057_000]))
 
     def test_reaching_camp_is_ok(self):
         s = [3_442_296, 4_223_612, 4_537_716, 4_549_408, 4_554_000]
@@ -24699,7 +24764,8 @@ class TestUserToolFromOwnDownload(unittest.TestCase):
                 "ModLoader/vfs.asi", "ModLoader", "Lenny's Mod Loader"))
         self.assertTrue(r["installed"], r)
         got = sorted(os.listdir(self.game))
-        self.assertEqual(got, ["ModManager.Core.dll", "lml", "lml.ini", "vfs.asi"])
+        # vfs.asi under its load-first name (ASI_LOAD_FIRST).
+        self.assertEqual(got, ["!!!vfs.asi", "ModManager.Core.dll", "lml", "lml.ini"])
         self.assertEqual(
             main._load_settings()["installed"]["reddeadredemption2"]["OCU"]["warning"], "")
         settings = main._load_settings()

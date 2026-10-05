@@ -1018,6 +1018,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         zipSubdir: "ModLoader",
         cleanupPrefixes: [
           "vfs.asi",
+          // The name the plugin gives it so it loads first (ASI_LOAD_FIRST).
+          "!!!vfs.asi",
           "ModManager.Core.dll",
           "ModManager.NativeInterop.dll",
           "NLog.dll",

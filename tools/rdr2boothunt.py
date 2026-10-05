@@ -85,7 +85,8 @@ SAMPLE_SECS = 10
 TITLE_RSS_KB = 3_300_000      # above the 3.0-3.1 GB idle title screen
 GAME_RSS_KB = 4_200_000       # under the 4.5 GB measured in camp
 SETTLE_SAMPLES = 3
-PRESS_TRIES = 4
+PRESS_TRIES = 6
+TITLE_WAIT_SECS = 180          # RedemptiVizion (225 mods) took past 60s
 PRESS_SETTLE_SECS = 12        # first press 8s after the exe appears missed once
 START_BUDGET_SECS = 120
 BOOT_BUDGET_SECS = 300
@@ -114,6 +115,17 @@ def classify(samples, alive, budget_used):
     if budget_used:
         return "inconclusive" if loading else "nostart"
     return "watching"
+
+
+def title_settled(samples):
+    """Has the title screen finished loading? The last two samples are past
+    2.5 GB and within 60 MB of each other. Pressing earlier lands on
+    nothing: with RedemptiVizion every press went in at 424 MB, before the
+    menu existed, and the boot read as "Story never took"."""
+    if len(samples) < 2:
+        return False
+    a, b = samples[-2], samples[-1]
+    return a > 2_500_000 and b > 2_500_000 and abs(b - a) < 60_000
 
 
 def press_landed(before_kb, after_kb):
@@ -297,7 +309,19 @@ def boot_once(label):
         kill_game()
         return "nostart"
     say(f"  {label}: pid {pid}")
-    time.sleep(PRESS_SETTLE_SECS)
+    seen = []
+    t_title = time.time()
+    while time.time() - t_title < TITLE_WAIT_SECS:
+        time.sleep(5)
+        cur = rss_kb(pid)
+        if cur is None:
+            break
+        seen.append(cur)
+        if title_settled(seen):
+            break
+    say(f"  {label}: title after {time.time() - t_title:.0f}s at "
+        f"{(seen[-1] if seen else 0) // 1024}MB")
+    time.sleep(3)
     base = rss_kb(pid) or 0
     landed = False
     for attempt in range(1, PRESS_TRIES + 1):

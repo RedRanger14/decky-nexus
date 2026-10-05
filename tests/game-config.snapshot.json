@@ -378,7 +378,7 @@
     "cleanupPrefixes": [
       "\"ScriptHookRDR2.dll\", \"sdk\", \"ScriptHookConfig.ini\", \"ScriptHookRDR2.log\", \"scripts\",",
       "\"dinput8.dll\", \"asiloader.log\"",
-      "\"vfs.asi\", \"ModManager.Core.dll\", \"ModManager.NativeInterop.dll\", \"NLog.dll\", \"lml.ini\", \"lml\", // Its logs, written in the game folder while it runs. \"vfs.log\", \"ModManager.log\","
+      "\"vfs.asi\", // The name the plugin gives it so it loads first (ASI_LOAD_FIRST). \"!!!vfs.asi\", \"ModManager.Core.dll\", \"ModManager.NativeInterop.dll\", \"NLog.dll\", \"lml.ini\", \"lml\", // Its logs, written in the game folder while it runs. \"vfs.log\", \"ModManager.log\","
     ]
   },
   {

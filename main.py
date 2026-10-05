@@ -4789,8 +4789,8 @@ def _tools_missing(game_domain: str) -> tuple:
     out = []
     for t in UNFETCHABLE_TOOLS.get(game_domain) or ():
         marker = t.get("marker")
-        if marker and t.get("game_dir") and os.path.isfile(
-                os.path.join(_game_dir(t["game_dir"]), marker)):
+        if marker and t.get("game_dir") and _tool_file_present(
+                _game_dir(t["game_dir"]), marker):
             continue
         out.append(t)
     return tuple(out)
@@ -8088,6 +8088,62 @@ RDR2_ASSET_EXTS = (".ytd", ".ydr", ".yft", ".ydd", ".ymt", ".ytyp", ".ybn",
                    ".gfx")
 RDR2_DATA_EXTS = (".meta", ".xml", ".dat", ".ini")
 RDR2_LML_MARKER = "vfs.asi"  # Lenny's Mod Loader's own file in the game root
+# ASI files that must load before every other, and the name that does it.
+# The ASI loader goes alphabetically, and with RedemptiVizion's 150-odd
+# .asi mods ahead of it LML's vfs.asi failed 2 boots in 4 on the Legion:
+# "Failed to allocate hooking memory!" in vfs.log, "Failed to load vfs.asi"
+# in asiloader.log, and the game closed before its title screen
+# (2026-10-05). The mods before it had taken the memory near the game that
+# its hooks need. Renamed to load first, it loaded on 3 boots in 3.
+ASI_LOAD_FIRST = {"vfs.asi": "!!!vfs.asi"}
+
+
+def _tool_file_present(install_path: str, name: str) -> bool:
+    """Is a tool's file in the game folder, under its own name or the
+    load-first one ASI_LOAD_FIRST gives it?"""
+    if not install_path:
+        return False
+    if os.path.isfile(os.path.join(install_path, name)):
+        return True
+    first = ASI_LOAD_FIRST.get(name.lower())
+    return bool(first) and os.path.isfile(os.path.join(install_path, first))
+
+
+def _rdr2_running() -> bool:
+    """Is RDR2.exe alive? Exact comm match: PlayRDR2.exe is the launcher,
+    and a substring test mistook one for the other. Errors answer False."""
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid}/comm") as f:
+                    if f.read().strip() == "RDR2.exe":
+                        return True
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return False
+
+
+def _asi_load_first(install_path: str) -> list:
+    """Give each ASI_LOAD_FIRST file its load-first name. A plain copy
+    beside an already renamed one is the newer install, so it replaces it:
+    both would load the tool twice. Returns the names it wrote."""
+    done = []
+    if not install_path:
+        return done
+    for plain, first in ASI_LOAD_FIRST.items():
+        src = os.path.join(install_path, plain)
+        if not os.path.isfile(src):
+            continue
+        try:
+            os.replace(src, os.path.join(install_path, first))
+            done.append(first)
+        except OSError as e:
+            decky.logger.warning(f"could not rename {plain} to load first: {e}")
+    return done
 _RDR2_OPTIONAL_RE = re.compile(r"\boptional\b", re.IGNORECASE)
 _RDR2_DOCS_DIR_RE = re.compile(
     r"instruction|readme|read me|\bdocs?\b|documentation|screenshots?|images?|preview",
@@ -20752,7 +20808,7 @@ query Link($slug: String!, $domainName: String!) {
             # mod rather than let it look installed and do nothing.
             warning = rd_note
             if any(r.lower().startswith("lml/") for r in installed_rel) and not \
-                    os.path.isfile(os.path.join(install_path, RDR2_LML_MARKER)):
+                    _tool_file_present(install_path, RDR2_LML_MARKER):
                 warning = " ".join(x for x in (warning, (
                     "This mod needs Lenny's Mod Loader, which is not on "
                     "Nexus Mods. Download it once from rdr2mods.com into "
@@ -25461,7 +25517,7 @@ query CollectionInstructions($slug: String!) {
         install_path = _game_dir(install_dir)
         if not install_path or not os.path.isdir(install_path):
             return {"ok": False, "error": "Game install folder not found"}
-        if os.path.isfile(os.path.join(install_path, detect_file)):
+        if _tool_file_present(install_path, detect_file):
             return {"ok": True, "installed": True, "already": True}
         zp = await asyncio.to_thread(_find_user_tool_zip, zip_marker)
         if not zp:
@@ -25505,6 +25561,7 @@ query CollectionInstructions($slug: String!) {
             return {"ok": False, "error": f"Could not install from {os.path.basename(zp)}: {e}"}
         if not os.path.isfile(os.path.join(install_path, detect_file)):
             return {"ok": False, "error": f"{os.path.basename(zp)} did not contain {detect_file}"}
+        _asi_load_first(install_path)
         # Mods installed before it now work: drop their "needs it" note.
         settings = _load_settings()
         cleared = 0
@@ -29498,14 +29555,26 @@ query CollectionInstructions($slug: String!) {
             fixed = _skyrim_cc_catalog_fix(app_id, install_path)
             if fixed:
                 status["cc_catalog_fixed"] = fixed
+        # LML installed before ASI_LOAD_FIRST, or by hand, still has its
+        # plain name and fails half its boots. Fixed when the panel opens,
+        # never under a running game.
+        if (
+            installed
+            and os.path.isfile(os.path.join(install_path, RDR2_LML_MARKER))
+            and os.path.isfile(os.path.join(install_path, "RDR2.exe"))
+            and not _rdr2_running()
+        ):
+            for name in _asi_load_first(install_path):
+                decky.logger.info(f"RDR2: {name} now loads before the other ASI mods")
         if framework_file:
             if "/" in framework_file:
                 status["framework_installed"] = installed and os.path.exists(
                     os.path.join(install_path, *framework_file.split("/"))
                 )
             else:
+                first = ASI_LOAD_FIRST.get(framework_file.lower())
                 status["framework_installed"] = installed and any(
-                    name.startswith(framework_file)
+                    name.startswith(framework_file) or name == first
                     for name in os.listdir(install_path)
                 )
         # How fresh the game's own build is. Helldivers 2 repacked its data
