@@ -24775,6 +24775,27 @@ class TestRdr2RoutingFromCollections(TestRdr2Routing):
         self.assertEqual(got, [])
         self.assertIn("ReShade preset", err[1])
 
+    def test_a_bare_replace_folder_goes_into_lml_replace(self):
+        # Complete Temperature OVERHAUL (2128): "paste the replace folder
+        # into the LML folder".
+        got, err = self._route([
+            "TemperatureOverHaul BETA/replace/common_0/data/regionTemperatureInfo.xml",
+            "TemperatureOverHaul BETA/README.txt"], name="Temperature")
+        self.assertIsNone(err)
+        self.assertEqual(got, ["lml/replace/common_0/data/regionTemperatureInfo.xml"])
+
+    def test_a_bare_stream_folder_goes_into_lml_stream(self):
+        # Fixed Bandolier (982): Stream/component_player_bandolier.yed.
+        got, err = self._route(["Stream/component_player_bandolier.yed",
+                                "Read me.txt"], name="Bandolier")
+        self.assertIsNone(err)
+        self.assertEqual(got, ["lml/stream/component_player_bandolier.yed"])
+
+    def test_an_lml_mod_with_its_own_stream_folder_keeps_its_install_xml(self):
+        files = ["My Mod/install.xml", "My Mod/stream/a.ytd"]
+        got, _err = self._route(files, name="My Mod")
+        self.assertEqual(got, ["lml/My Mod/install.xml", "lml/My Mod/stream/a.ytd"])
+
     def test_a_plain_ini_patch_is_still_a_patch(self):
         _got, err = self._route(["Tweaks/settings.ini"], name="Tweaks")
         self.assertIn("by hand", err[1])

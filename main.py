@@ -8079,7 +8079,10 @@ CP77_CET_ENTRY = "init.lua"
 # RampageNUI_<version>/, Online Content Unlocker ships lml/<name>/install.xml.
 RDR2_TOOL_EXTS = (".exe", ".msi", ".bat", ".cmd")
 RDR2_ASSET_EXTS = (".ytd", ".ydr", ".yft", ".ydd", ".ymt", ".ytyp", ".ybn",
-                   ".ymap", ".ycd", ".awc", ".rpf")
+                   ".ymap", ".ycd", ".awc", ".rpf",
+                   # Expression dictionaries and particle/model data: Fixed
+                   # Bandolier ships only a .yed and was "could not tell".
+                   ".yed", ".ypt", ".ymf", ".yld", ".ynd", ".ynv")
 RDR2_DATA_EXTS = (".meta", ".xml", ".dat", ".ini")
 RDR2_LML_MARKER = "vfs.asi"  # Lenny's Mod Loader's own file in the game root
 _RDR2_OPTIONAL_RE = re.compile(r"\boptional\b", re.IGNORECASE)
@@ -8263,6 +8266,26 @@ def _route_rdr2_payload_raw(scratch: str, mod_name: str):
                     taken.add(src)
         if files:
             return files, None, ""
+
+    # LML's own stream/ and replace/ folders shipped bare, without the lml/
+    # around them: "copy the replace folder into LML" (Temperature
+    # Overhaul), a Stream/ folder of assets (Fixed Bandolier). Both were
+    # refused. Both folders load with no install.xml (LML's log), so they
+    # go to lml/stream/ and lml/replace/ as they stand. A folder with an
+    # install.xml was already handled above, which is where an ordinary
+    # LML mod with its own stream/ belongs.
+    special = []
+    for rel, src in entries:
+        parts = rel.split("/")
+        low = [p.lower() for p in parts]
+        for i, p in enumerate(low[:-1]):
+            if p in _LML_SPECIAL_DIRS and "lml" not in low[:i]:
+                rest = "/".join(parts[i + 1:])
+                if _safe_rel_path(rest):
+                    special.append((f"lml/{p}/{rest}", src))
+                break
+    if special:
+        return special, None, ""
 
     # Game assets with no lml/ folder around them: an LML stream mod
     # shipped bare. They go where LML reads them, lml/<mod>/.
