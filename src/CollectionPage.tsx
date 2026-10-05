@@ -37,6 +37,7 @@ import {
   layoutSkipsNote,
   archiveDisplayName,
   externalUserTool,
+  collectionSizeChip,
   fileCountsInstalled,
   filesByMod,
   unavailableNote,
@@ -72,6 +73,7 @@ import {
   setFrameworkLaunchOptions,
   getUserPrefs,
   getCollectionManifest,
+  getRepairQueue,
   getInstalledMods,
   getModDetails,
   installFomodAuto,
@@ -1113,9 +1115,34 @@ export function CollectionPage() {
       const choices = (manifest.ok ? manifest.choices : {}) ?? {};
       // Only mods with recorded installer choices can have hit this -
       // everything else took the plain payload path.
-      const queue = detail.files.filter(
+      // Every file of the collection, installers and plain archives alike:
+      // a plain archive whose files went missing (#36's SofiaFollower.esp)
+      // needs Repair as much as an installer does.
+      const installers = detail.files.filter(
         (f) => choices[String(f.fileId)] !== undefined
       );
+      let queue = detail.files.filter(
+        (f) => !f.domain || f.domain === game.nexusDomain
+      );
+      // Skip what the record proves complete, or Repair downloads every
+      // mod again to restore nothing (#36). A failed check falls back to
+      // the installers alone, which is what Repair always did.
+      try {
+        const rq = await getRepairQueue(
+          game.nexusDomain,
+          game.installDirName,
+          game.modsSubdir,
+          queue.map((f) => f.fileId),
+          installers.map((f) => f.fileId)
+        );
+        if (rq.ok && rq.check) {
+          const need = new Set(rq.check);
+          queue = queue.filter((f) => need.has(f.fileId));
+        }
+        else queue = installers;
+      } catch {
+        queue = installers;
+      }
       beginCollectionRun(collection.slug, queue.length, {
         gameAppId: game.appId,
         name: `Repairing ${collection.name}`,
@@ -1992,7 +2019,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               }}
             >
               <StatChip icon={<FaPuzzlePiece size={11} />}>
-                {detail ? detail.files.length : collection.modCount} mods
+                {detail
+                  ? collectionSizeChip(detail.files)
+                  : `${collection.modCount} mods`}
               </StatChip>
               <StatChip icon={<FaArrowDown size={11} />}>
                 {fmtBytes(detail ? detail.totalSize : collection.totalSize)}

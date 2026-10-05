@@ -6484,6 +6484,23 @@ def _rewrite_load_order(
             "removed_base_masters": len(dropped)}
 
 
+def _blocked_reason(data_path: str, name: str, off: set, reasons: dict) -> str:
+    """Why a plugin was left off because something it needs is off, naming
+    that something. "needs a mod that breaks the game" left #36's reporter
+    with no way to tell which mod, or why."""
+    masters = _plugin_masters(os.path.join(data_path, name)) if data_path else []
+    blockers = [m for m in (masters or []) if m.lower() in off]
+    if not blockers:
+        return "needs a mod that is switched off because it stops the game working"
+    first = blockers[0]
+    why = (reasons.get(first.lower()) or {}).get("reason") if isinstance(
+        reasons.get(first.lower()), dict) else reasons.get(first.lower())
+    names = ", ".join(blockers)
+    verb = "is" if len(blockers) == 1 else "are"
+    return (f"needs {names}, which {verb} switched off"
+            + (f" ({why})" if why else ""))
+
+
 def _add_plugins(path: str, names: list, style: str = "starred",
                  game_domain: str = "", data_path: str = "") -> None:
     """Activate plugins. 'starred' (SSE/FO4): '*Name.esp' lines; 'listed'
@@ -6528,7 +6545,11 @@ def _add_plugins(path: str, names: list, style: str = "starred",
             }
         if needs & (off | set(newly_skipped)):
             newly_skipped[low] = {
-                "reason": "needs a mod that breaks the game", "root": False,
+                "reason": _blocked_reason(
+                    data_path, name, off | set(newly_skipped),
+                    {**{k: {"reason": v} for k, v in bad.items()}, **skips,
+                     **newly_skipped}),
+                "root": False,
             }
             if style != "listed":
                 lines.append(name)
@@ -21496,9 +21517,16 @@ query Link($slug: String!, $domainName: String!) {
                 "files": files_rel,
                 "plugins": plugins,
             }
+            prior_checked = list(
+                (installed.get(record_key) or {}).get("fomod_checked") or [])
             installed[record_key] = _merge_install_record(
                 installed.get(record_key), _new_record
             )
+            # This file's whole selection is now in the record, so Repair can
+            # trust the record for it instead of downloading it again: #36's
+            # Repair re-downloaded all 84 installer mods and restored 0 files.
+            installed[record_key]["fomod_checked"] = sorted(
+                {int(x) for x in prior_checked} | {int(entry["file_id"])})
             _save_settings(settings)
             decky.logger.info(
                 f"{'repaired' if repair_only else 'installed'} FOMOD "
@@ -24219,6 +24247,64 @@ query Link($slug: String!, $domainName: String!) {
         )
         return {"ok": True, "removed": removed, "errors": errors}
 
+    async def get_repair_queue(
+        self, game_domain: str, install_dir: str, mods_subdir: str,
+        file_ids: list, installer_ids: list = None,
+    ) -> dict:
+        """Which of these files Repair must install again.
+
+        Plain archives (not in installer_ids) need only their recorded
+        files on disk: #36's SofiaFollower.esp had gone from a mod still
+        recorded as installed, and Repair never looked at plain archives,
+        so nothing could put it back. Installers (FOMOD) need more:
+
+        Repair re-stages installers because an old install could record
+        fewer files than it placed, so the record alone was not proof. A
+        file installed (or repaired) since the record learned to say so is
+        stamped in `fomod_checked`; if its recorded files are all on disk
+        there is nothing to repair and no reason to download it again (#36:
+        84 installers re-downloaded, 0 files restored). Anything unstamped,
+        missing from disk, or not installed at all stays in the queue."""
+        if not re.fullmatch(r"[a-z0-9_-]+", game_domain or ""):
+            return {"ok": False, "error": "Invalid game domain"}
+        _install_path, data_path, _unused = _game_paths(install_dir, mods_subdir)
+        records = _load_settings().get("installed", {}).get(game_domain, {}) or {}
+        by_file = {}
+        for rec in records.values():
+            for fid in [rec.get("file_id"), *(rec.get("file_ids") or [])]:
+                if fid is not None:
+                    by_file.setdefault(int(fid), rec)
+        installers = (
+            {int(x) for x in installer_ids} if installer_ids is not None
+            else {int(x) for x in file_ids or []}
+        )
+        check, skipped = [], 0
+        for raw in file_ids or []:
+            fid = int(raw)
+            rec = by_file.get(fid)
+            if fid not in installers and (
+                rec is None or not rec.get("enabled", True)
+                or not rec.get("files")
+            ):
+                # A plain archive that is not installed is Install
+                # remaining's job (optional mods, skipped tools), and one
+                # switched off has nothing on disk to repair.
+                skipped += 1
+                continue
+            if (
+                rec is not None
+                and (fid not in installers
+                     or fid in {int(x) for x in rec.get("fomod_checked") or []})
+                and rec.get("enabled", True)
+                and rec.get("files")
+                and all(os.path.exists(os.path.join(data_path, f))
+                        for f in rec["files"])
+            ):
+                skipped += 1
+                continue
+            check.append(fid)
+        return {"ok": True, "check": check, "skipped": skipped}
+
     async def set_collection_attention(
         self, game_domain: str, slug: str, items: list
     ) -> dict:
@@ -26697,10 +26783,12 @@ query CollectionInstructions($slug: String!) {
         skips = _load_skips(game_domain)
         for n in roots:
             skips[n.lower()] = {"reason": table[n.lower()], "root": True}
+        blocked_off = set(skips) | {d.lower() for d in dependents}
         for n in dependents:
             skips.setdefault(
                 n.lower(),
-                {"reason": "needs a mod that breaks the game", "root": False},
+                {"reason": _blocked_reason(data_path, n, blocked_off, skips),
+                 "root": False},
             )
         _save_skips(game_domain, skips)
         off = set(skips)
@@ -26755,10 +26843,12 @@ query CollectionInstructions($slug: String!) {
         listed = [n for n, _ in entries]
         dependents = await asyncio.to_thread(
             _dependents_closure, data_path, listed, set(skips))
+        blocked_off = set(skips) | {d.lower() for d in dependents}
         for n in dependents:
             skips.setdefault(
                 n.lower(),
-                {"reason": "needs a mod that breaks the game", "root": False},
+                {"reason": _blocked_reason(data_path, n, blocked_off, skips),
+                 "root": False},
             )
         off = set(skips)
         # Only report a change when one was actually needed - this runs on

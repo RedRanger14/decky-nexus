@@ -572,6 +572,13 @@ export interface AttentionItem {
   detail?: string;
 }
 
+/** Which installer files Repair must stage again; the rest are proved
+ * complete by their record and on disk (see get_repair_queue). */
+export const getRepairQueue = callable<
+  [game_domain: string, install_dir: string, mods_subdir: string, file_ids: number[], installer_ids?: number[]],
+  { ok: boolean; check?: number[]; skipped?: number; error?: string }
+>("get_repair_queue");
+
 export const setCollectionAttention = callable<
   [game_domain: string, slug: string, items: AttentionItem[]],
   { ok: boolean; count?: number; error?: string }

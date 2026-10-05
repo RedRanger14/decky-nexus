@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   archiveDisplayName,
+  collectionSizeChip,
   dlcNote,
   externalUserTool,
   collectionCountLine,
@@ -2092,4 +2093,21 @@ test("the mod page only says a DLC is missing when it is (#38)", () => {
   const page = fs.readFileSync("src/ModDetailPage.tsx", "utf8");
   assert.match(page, /dlcNote\(r\.dlc, r\.dlc_quote\)/);
   assert.match(page, /s\.game\.installDirName,\s*s\.game\.modsSubdir/);
+});
+
+test("the collection chip counts mods, and files only beside them (#36)", () => {
+  const files = [{ modId: 1 }, { modId: 1 }, { modId: 2 }];
+  assert.equal(collectionSizeChip(files), "2 mods · 3 files");
+  assert.equal(collectionSizeChip([{ modId: 5 }, { modId: 6 }]), "2 mods");
+  assert.equal(collectionSizeChip([{ modId: 5 }]), "1 mod");
+  const page = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(page, /collectionSizeChip\(detail\.files\)/);
+});
+
+test("Repair only stages installers it cannot prove complete (#36)", () => {
+  const page = fs.readFileSync("src/CollectionPage.tsx", "utf8");
+  const fn = page.slice(page.indexOf("const repairInstallers"), page.indexOf("const repairInstallers") + 3000);
+  assert.match(fn, /getRepairQueue\(/);
+  assert.ok(fn.indexOf("getRepairQueue(") < fn.indexOf("beginCollectionRun("),
+    "the queue is trimmed before the run starts counting it");
 });

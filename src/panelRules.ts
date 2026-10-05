@@ -1030,6 +1030,17 @@ export function troubleshootingCount(
   );
 }
 
+/** The size chip at the top of a collection page, in mods, with the file
+ * count beside it when they differ. It said "566 mods" for 566 FILES from
+ * 460 mods, while My Mods said 460, and the two read as 106 missing
+ * (#36). */
+export function collectionSizeChip(files: { modId: number }[]): string {
+  const mods = new Set(files.map((f) => f.modId)).size;
+  const n = files.length;
+  if (mods === n) return `${mods} mod${mods === 1 ? "" : "s"}`;
+  return `${mods} mod${mods === 1 ? "" : "s"} · ${n} files`;
+}
+
 /** The mod page's DLC note, or nothing.
  *
  * It said "Needs the Far Harbor DLC" to everyone, owners included, and an

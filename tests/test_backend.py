@@ -20409,6 +20409,65 @@ class TestBg3Mode(unittest.TestCase):
             main.HOME_ROOT = real
 
 
+class TestIssue36RepairAndReasons(unittest.TestCase):
+    """#36: Repair re-downloaded 84 installers to restore 0 files, and
+    plugins left off said "needs a mod that breaks the game" without
+    naming it."""
+
+    def setUp(self):
+        if os.path.isfile(main.SETTINGS_PATH):
+            os.remove(main.SETTINGS_PATH)
+        self.root = tempfile.mkdtemp()
+        self.data = os.path.join(self.root, "Game", "Data")
+        os.makedirs(self.data)
+
+    def _rec(self, key, **kw):
+        s = main._load_settings()
+        s.setdefault("installed", {}).setdefault("skyrimspecialedition", {})[key] = kw
+        main._save_settings(s)
+
+    def test_repair_skips_installers_proved_complete(self):
+        open(os.path.join(self.data, "a.esp"), "w").close()
+        self._rec("A", mod_id=1, file_id=10, files=["a.esp"], fomod_checked=[10])
+        self._rec("B", mod_id=2, file_id=20, files=["b.esp"], fomod_checked=[20])  # file gone
+        self._rec("C", mod_id=3, file_id=30, files=["a.esp"])                     # never stamped
+        with mock.patch.object(main, "_game_paths",
+                               return_value=(self.root, self.data, "")):
+            r = run(main.Plugin().get_repair_queue(
+                "skyrimspecialedition", "Game", "Data", [10, 20, 30, 40]))
+        self.assertEqual(r["check"], [20, 30, 40])
+        self.assertEqual(r["skipped"], 1)
+
+    def test_repair_restores_a_plain_archive_with_files_gone(self):
+        # SofiaFollower.esp gone from a mod still recorded as installed.
+        open(os.path.join(self.data, "a.esp"), "w").close()
+        self._rec("Sofia", mod_id=2180, file_id=29077, files=["SofiaFollower.esp"])
+        self._rec("Fine", mod_id=5, file_id=50, files=["a.esp"])
+        self._rec("Off", mod_id=6, file_id=60, files=["gone.esp"], enabled=False)
+        with mock.patch.object(main, "_game_paths",
+                               return_value=(self.root, self.data, "")):
+            r = run(main.Plugin().get_repair_queue(
+                "skyrimspecialedition", "Game", "Data",
+                [29077, 50, 60, 70], []))
+        # 70 was never installed: Install remaining's job, not Repair's.
+        self.assertEqual(r["check"], [29077])
+
+    def test_a_left_off_plugin_names_what_it_needs(self):
+        p = os.path.join(self.data, "Sofia - RDO Patch.esp")
+        open(p, "wb").close()
+        with mock.patch.object(main, "_plugin_masters",
+                               return_value=["Skyrim.esm", "SofiaFollower.esp"]):
+            why = main._blocked_reason(
+                self.data, "Sofia - RDO Patch.esp", {"sofiafollower.esp"},
+                {"sofiafollower.esp": {"reason": "crashes on load"}})
+        self.assertEqual(why, "needs SofiaFollower.esp, which is switched off (crashes on load)")
+        self.assertNotIn("breaks the game", why)
+
+    def test_the_fomod_record_is_stamped(self):
+        src = inspect.getsource(main.Plugin.install_fomod)
+        self.assertIn('["fomod_checked"]', src)
+
+
 class TestFallout4DlcIsRecognised(unittest.TestCase):
     """#38: every Fallout 4 DLC installed, and the plugin said the mods
     needed DLC. Names are the ones Nexus actually returned for the top
