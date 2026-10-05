@@ -388,6 +388,20 @@ test("a download with nothing to install is a named skip, not a failure", () => 
   assert.match(coll, /· nothing to install/, "and named on the row");
 });
 
+// RedemptiVizion, 2026-10-05: a reboot cut the run at 177 of 225 and the
+// loaders, installed only in the finishing pass, never went in. Steps 1
+// and 2 sat unticked under a folder full of mods.
+test("a collection run installs its loaders before its mods", () => {
+  const coll = readFileSync("src/CollectionPage.tsx", "utf8");
+  const run = coll.slice(coll.indexOf("const installAll = async"));
+  const loaders = run.indexOf("await installCollectionLoaders(");
+  const downloads = run.indexOf("Starting downloads");
+  assert.ok(loaders > 0 && downloads > 0, "both must exist");
+  assert.ok(loaders < downloads, "loaders go in before the first download");
+  const extras = coll.slice(coll.indexOf("const runCollectionExtras"));
+  assert.match(extras, /await installCollectionLoaders\(\)/, "and the finishing pass still checks, for Repair");
+});
+
 // The capacity warning has to reach the page, and reach it BEFORE the
 // install button rather than after the run.
 test("the collection page warns about capacity before installing", () => {

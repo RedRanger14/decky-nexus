@@ -17,7 +17,7 @@ import {
   getCollectionRun,
   getCompletedDownloads,
   getDownloads,
-  getInflightBytes,
+  getRunDoneBytes,
   getRunSkippedCount,
   getSpeedHistory,
   recordSpeedSample,
@@ -289,7 +289,7 @@ function CollectionHero({
     finished: run.finished,
     total: run.total,
     totalBytes,
-    doneBytes: (run.finishedBytes ?? 0) + getInflightBytes(),
+    doneBytes: getRunDoneBytes(run),
     elapsedMs: run.startedAt ? Date.now() - run.startedAt : 0,
   });
   const pct = progress.pct;

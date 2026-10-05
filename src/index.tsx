@@ -4632,7 +4632,8 @@ export default definePlugin(() => {
         p.bytes_done,
         p.bytes_total,
         p.bps,
-        p.message
+        p.message,
+        p.file_id
       )
   );
 

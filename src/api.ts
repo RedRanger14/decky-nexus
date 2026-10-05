@@ -205,6 +205,8 @@ export interface InstalledResult {
 
 export interface InstallProgress {
   mod_id: number;
+  /** Download events only: which of the mod's files. */
+  file_id?: number;
   phase:
     | "downloading"
     | "extracting"

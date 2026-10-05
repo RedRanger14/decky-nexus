@@ -2116,6 +2116,21 @@ test("collection progress counts bytes, not files (RedemptiVizion)", () => {
   assert.match(st, /if \(run\?\.running && run\.sizes\)/);
 });
 
+// Recording, 2026-10-05: the collection bar swung 37%, 45%, 47%, 37% every
+// second. Mod 2189 had two files downloading at once and one byte count
+// per mod, so each file's progress event overwrote the other's.
+test("collection progress counts bytes per file and never goes backwards", () => {
+  const st = fs.readFileSync("src/state.ts", "utf8");
+  assert.match(st, /fileBytes\.set\(`\$\{modId\}:\$\{fileId\}`/, "bytes are kept per file");
+  assert.match(st, /peakBytes = Math\.max\(/, "the run's done bytes only grow");
+  const agg = st.slice(st.indexOf("export function getAggregateDownloadPercent"));
+  assert.match(agg.slice(0, 800), /getRunDoneBytes\(run\)/, "the QAM fill uses it");
+  const page = fs.readFileSync("src/DownloadsPage.tsx", "utf8");
+  assert.match(page, /doneBytes: getRunDoneBytes\(run\)/, "and so does the Downloads page");
+  const idx = fs.readFileSync("src/index.tsx", "utf8");
+  assert.match(idx, /p\.message,\s*p\.file_id/, "the event's file id reaches the store");
+});
+
 test("the collection chip counts mods, and files only beside them (#36)", () => {
   const files = [{ modId: 1 }, { modId: 1 }, { modId: 2 }];
   assert.equal(collectionSizeChip(files), "2 mods · 3 files");

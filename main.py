@@ -13208,6 +13208,7 @@ async def _emit_progress(
     bytes_done=None,
     bytes_total=None,
     bps=None,
+    file_id=None,
 ):
     payload = {
         "mod_id": mod_id,
@@ -13221,6 +13222,11 @@ async def _emit_progress(
         payload["bytes_total"] = int(bytes_total)
     if bps is not None:
         payload["bps"] = int(bps)
+    # Which of the mod's files: a mod with two files downloads both at once
+    # (RedemptiVizion's Upscaled packs), and keyed by mod alone their byte
+    # counts overwrote each other and the bar swung 37%, 47%, 37%.
+    if file_id is not None:
+        payload["file_id"] = int(file_id)
     await decky.emit("install_progress", payload)
 
 
@@ -13647,7 +13653,7 @@ async def _download_archive(
         if os.path.getsize(archive_path) > 0:
             # Prefetched (or a retry after install-stage failure). .part
             # files never rename on failure, so a completed file is whole.
-            await _emit_progress(mod_id, "downloading", 100)
+            await _emit_progress(mod_id, "downloading", 100, file_id=file_id)
             return "", archive_path
     except OSError:
         pass
@@ -13736,7 +13742,7 @@ async def _download_archive(
         )
 
     part_path = archive_path + ".part"
-    await _emit_progress(mod_id, "downloading", 0)
+    await _emit_progress(mod_id, "downloading", 0, file_id=file_id)
     # The whole transfer runs inside one control loop. Pause exits the
     # connection cleanly (a socket held open across an hours-long pause
     # just invites the server to drop it), parks at the gate, and resumes
@@ -13878,6 +13884,7 @@ async def _download_archive(
                                     pct,
                                     bytes_done=done,
                                     bytes_total=total or None,
+                                    file_id=file_id,
                                     bps=ema_bps,
                                 )
                 if paused:
@@ -13948,6 +13955,7 @@ async def _download_archive(
                     message=f"connection lost - retrying in {wait:.0f}s",
                     bytes_done=have,
                     bytes_total=known_total or None,
+                    file_id=file_id,
                 )
                 await asyncio.sleep(wait)
                 continue

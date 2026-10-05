@@ -481,6 +481,89 @@ export function CollectionPage() {
     }
   };
 
+  /** The loaders themselves. The mod pipeline skips them on purpose, so
+   * without this the collection finishes with its mods and none of the
+   * things that load them. See collectionMissingLoaders.
+   *
+   * Runs at the START of a collection run as well as in the finishing
+   * pass: RedemptiVizion was cut off by a reboot at 177 of 225 mods and
+   * the Legion was left with every mod and neither ScriptHookRDR2 nor the
+   * ASI Loader, Steps 1 and 2 unticked (2026-10-05). */
+  const installCollectionLoaders = async (
+    say: (text: string) => void = setFinalising
+  ) => {
+    if (!sel) return;
+    const { game } = sel;
+    const allLoaders = [
+      ...(game.framework ? [game.framework] : []),
+      ...(game.extraFrameworks ?? []),
+    ];
+    if (allLoaders.length > 0) {
+      try {
+        const pinned = new Set((detail?.files ?? []).map((f) => f.modId));
+        const state: Record<string, boolean> = {};
+        for (const fw of allLoaders) {
+          const st = await getGameStatus(
+            game.installDirName,
+            game.modsSubdir,
+            fw.detectFile
+          );
+          state[fw.name] = Boolean(st.framework_installed);
+        }
+        const queue = collectionMissingLoaders(allLoaders, pinned, state);
+        if (queue.length > 0) {
+          // Same order as Step 1: the prefix runtime first, because CET
+          // and RED4ext install fine against an old CRT and then fail to
+          // load with nothing said in game.
+          if (game.prefixRuntimeFix) {
+            say("Updating the Windows runtime the loaders need…");
+            await fixPrefixRuntime(game.appId).catch(() => undefined);
+          }
+          const done: string[] = [];
+          for (let i = 0; i < queue.length; i++) {
+            const fw = queue[i];
+            say(
+              `Installing ${fw.name} (${i + 1} of ${queue.length})…`
+            );
+            const isMain = fw.name === game.framework?.name;
+            const r = fw.installAsMod
+              ? await installLatest(game, fw.nexusModId!, fw.name)
+              : await installFramework(
+                  game.nexusDomain,
+                  fw.nexusModId!,
+                  game.installDirName,
+                  fw.installKind ?? (isMain ? "smapi" : "copyRoot"),
+                  fw.detectFile,
+                  fw.avoidFileKeywords ?? [],
+                  fw.installSubdir ?? "",
+                  game.modsSubdir,
+                  game.appId,
+                  game.launcherXmlSubpath ?? "",
+                  game.processName ?? ""
+                );
+            if (r.ok) {
+              done.push(fw.name);
+            } else {
+              toaster.toast({
+                title: `Could not install ${fw.name}`,
+                body: r.error ?? "The other mods will not load without it",
+                duration: 15000,
+              });
+            }
+          }
+          if (done.length > 0) {
+            toaster.toast({
+              ...loadersInstalledNote(done, game.displayName),
+              duration: 12000,
+            });
+          }
+        }
+      } catch {
+        /* the game panel's Step 1 still offers them */
+      }
+    }
+  };
+
   /** Apply what the collection's own manifest says, once its mods are in.
    *
    * Every one of these was being thrown away with the manifest we already
@@ -541,77 +624,9 @@ export function CollectionPage() {
     } catch {
       /* a bundle failing must not fail the whole install */
     }
-    // The loaders themselves. The mod pipeline skips them on purpose, so
-    // without this the collection finishes with its mods and none of the
-    // things that load them. See collectionMissingLoaders.
-    const allLoaders = [
-      ...(game.framework ? [game.framework] : []),
-      ...(game.extraFrameworks ?? []),
-    ];
-    if (allLoaders.length > 0) {
-      try {
-        const pinned = new Set((detail?.files ?? []).map((f) => f.modId));
-        const state: Record<string, boolean> = {};
-        for (const fw of allLoaders) {
-          const st = await getGameStatus(
-            game.installDirName,
-            game.modsSubdir,
-            fw.detectFile
-          );
-          state[fw.name] = Boolean(st.framework_installed);
-        }
-        const queue = collectionMissingLoaders(allLoaders, pinned, state);
-        if (queue.length > 0) {
-          // Same order as Step 1: the prefix runtime first, because CET
-          // and RED4ext install fine against an old CRT and then fail to
-          // load with nothing said in game.
-          if (game.prefixRuntimeFix) {
-            setFinalising("Updating the Windows runtime the loaders need…");
-            await fixPrefixRuntime(game.appId).catch(() => undefined);
-          }
-          const done: string[] = [];
-          for (let i = 0; i < queue.length; i++) {
-            const fw = queue[i];
-            setFinalising(
-              `Installing ${fw.name} (${i + 1} of ${queue.length})…`
-            );
-            const isMain = fw.name === game.framework?.name;
-            const r = fw.installAsMod
-              ? await installLatest(game, fw.nexusModId!, fw.name)
-              : await installFramework(
-                  game.nexusDomain,
-                  fw.nexusModId!,
-                  game.installDirName,
-                  fw.installKind ?? (isMain ? "smapi" : "copyRoot"),
-                  fw.detectFile,
-                  fw.avoidFileKeywords ?? [],
-                  fw.installSubdir ?? "",
-                  game.modsSubdir,
-                  game.appId,
-                  game.launcherXmlSubpath ?? "",
-                  game.processName ?? ""
-                );
-            if (r.ok) {
-              done.push(fw.name);
-            } else {
-              toaster.toast({
-                title: `Could not install ${fw.name}`,
-                body: r.error ?? "The other mods will not load without it",
-                duration: 15000,
-              });
-            }
-          }
-          if (done.length > 0) {
-            toaster.toast({
-              ...loadersInstalledNote(done, game.displayName),
-              duration: 12000,
-            });
-          }
-        }
-      } catch {
-        /* the game panel's Step 1 still offers them */
-      }
-    }
+    // Normally a no-op: installAll puts the loaders in first. Repair and a
+    // run cut short before that existed still get them here.
+    await installCollectionLoaders();
     // The loaders the collection just installed only load if Steam starts
     // the game through them. Step 1 offers that; a collection never did,
     // so every loader sat there inert. See collectionLaunchOptions.
@@ -1260,6 +1275,9 @@ export function CollectionPage() {
       } catch {
         // Manifest is an enhancement - never let it stall the batch.
       }
+      // Loaders before mods, so a run cut short still leaves the mods it
+      // did install something to load them.
+      await installCollectionLoaders(setCollectionNote);
       let failures = 0;
       // Mods the collection lists that Nexus no longer serves. Tracked
       // apart from failures because nobody can act on them.

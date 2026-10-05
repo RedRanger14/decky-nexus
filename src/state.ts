@@ -163,6 +163,30 @@ export interface ActiveDownload {
 }
 
 const downloads = new Map<number, ActiveDownload>();
+/** Bytes per FILE, "modId:fileId". Rows are one per mod, but a mod with
+ * two files downloads both at once (RedemptiVizion's Upscaled Vegetation,
+ * mod 2189), and one byte count per mod had the two overwriting each
+ * other: the collection bar swung 37%, 47%, 37% every second. */
+const fileBytes = new Map<string, { done: number; total?: number }>();
+
+function modFileBytes(modId: number): { done: number; total?: number } | undefined {
+  let done = 0;
+  let total = 0;
+  let any = false;
+  for (const [k, v] of fileBytes) {
+    if (!k.startsWith(`${modId}:`)) continue;
+    any = true;
+    done += v.done;
+    total += v.total ?? 0;
+  }
+  return any ? { done, total: total || undefined } : undefined;
+}
+
+function forgetModFiles(modId: number): void {
+  for (const k of Array.from(fileBytes.keys())) {
+    if (k.startsWith(`${modId}:`)) fileBytes.delete(k);
+  }
+}
 const downloadListeners = new Set<() => void>();
 
 function notifyDownloads(): void {
@@ -213,7 +237,8 @@ export function updateDownload(
   bytesDone?: number,
   bytesTotal?: number,
   bps?: number,
-  message?: string
+  message?: string,
+  fileId?: number
 ): void {
   const existing = downloads.get(modId);
   // An installer (FOMOD) mod reports "error: fomod wizard" when it stops
@@ -242,6 +267,7 @@ export function updateDownload(
     return;
   }
   if (phase === "done" || phase === "error" || phase === "cancelled") {
+    forgetModFiles(modId);
     // Move terminal states to the completed list (Downloads page shows
     // them until cleared).
     if (existing) {
@@ -253,6 +279,13 @@ export function updateDownload(
       notifyDownloads();
     }
     return;
+  }
+  if (fileId !== undefined && bytesDone !== undefined) {
+    fileBytes.set(`${modId}:${fileId}`, { done: bytesDone, total: bytesTotal });
+    const sum = modFileBytes(modId)!;
+    bytesDone = sum.done;
+    bytesTotal = sum.total;
+    percent = sum.total ? Math.floor((sum.done * 100) / sum.total) : percent;
   }
   downloads.set(modId, {
     modId,
@@ -305,6 +338,7 @@ export function getSpeedHistory(): { t: number; bps: number }[] {
 /** Remove an entry without recording an outcome - parked installs
  * (needs_choice/wizard) re-register when the user picks options. */
 export function dropDownload(modId: number): void {
+  forgetModFiles(modId);
   if (downloads.delete(modId)) notifyDownloads();
 }
 
@@ -318,8 +352,7 @@ export function getAggregateDownloadPercent(
   if (run?.running && run.sizes) {
     const total = Object.values(run.sizes).reduce((a, b) => a + b, 0);
     if (total > 0) {
-      const done = (run.finishedBytes ?? 0) + getInflightBytes();
-      return Math.round(Math.min(1, done / total) * 100);
+      return Math.round(Math.min(1, getRunDoneBytes(run) / total) * 100);
     }
   }
   const active = Array.from(downloads.values()).map((d) =>
@@ -411,6 +444,8 @@ export interface CollectionRun {
    * texture packs still to come. */
   sizes?: Record<number, number>;
   finishedBytes?: number;
+  /** The most bytes this run has shown as done. See getRunDoneBytes. */
+  peakBytes?: number;
 }
 
 let collectionRun: CollectionRun | undefined;
@@ -503,6 +538,16 @@ export function getInflightBytes(): number {
   let sum = 0;
   for (const d of downloads.values()) sum += d.bytesDone ?? 0;
   return sum;
+}
+
+/** Bytes the run has done, never less than it showed before. A finished
+ * file's bytes move from in flight to finished in two steps (the row is
+ * dropped, then counted), and a retry can report less than the last
+ * chunk did: either one is a dip that reads as progress going backwards. */
+export function getRunDoneBytes(run: CollectionRun): number {
+  const now = (run.finishedBytes ?? 0) + getInflightBytes();
+  run.peakBytes = Math.max(run.peakBytes ?? 0, now);
+  return run.peakBytes;
 }
 
 export function endCollectionRun(): void {

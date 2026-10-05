@@ -24273,6 +24273,35 @@ class TestSlowMirrorIsLeft(unittest.TestCase):
         self.assertTrue(fetches[-1][1].get("Range", "").startswith("bytes="))
         self.assertNotEqual(fetches[-1][1]["Range"], "bytes=0-")
 
+    def test_every_download_event_names_its_file(self):
+        """Two files of one mod download at once; without the file id the
+        page summed them as one and the bar swung back and forth."""
+        session = self._session()
+        emitted = mock.AsyncMock()
+
+        async def fake_session():
+            return session
+
+        with mock.patch.object(main, "_http_session", fake_session), \
+                mock.patch.object(main.time, "monotonic", lambda: self.clock[0]), \
+                mock.patch.object(main, "_emit_progress", emitted):
+            err, path = run(main._download_archive(
+                "valheim", 1030, 17848, "fileid-test.7z", "key"))
+        self.assertEqual(err, "")
+        os.remove(path)
+        downloading = [c for c in emitted.call_args_list if c.args[1] == "downloading"]
+        self.assertTrue(downloading)
+        for c in downloading:
+            self.assertEqual(c.kwargs.get("file_id"), 17848)
+
+    def test_the_event_payload_carries_the_file_id(self):
+        sent = mock.AsyncMock()
+        with mock.patch.object(main.decky, "emit", sent):
+            run(main._emit_progress(1, "downloading", 5, bytes_done=10, file_id=7))
+            run(main._emit_progress(1, "extracting", 5))
+        self.assertEqual(sent.call_args_list[0].args[1]["file_id"], 7)
+        self.assertNotIn("file_id", sent.call_args_list[1].args[1])
+
 
 class TestBepInExBlamesWhereTheErrorStarted(TestBepInExLogReader):
     """Valheim Enhanced, real lines: the game's own "Steamworks is not
