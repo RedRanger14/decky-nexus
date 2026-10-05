@@ -24530,8 +24530,10 @@ class TestRdr2Routing(unittest.TestCase):
         self.assertEqual(got, ["scripts/Duels.asi"])
 
     def test_bare_assets_go_where_lml_reads_them(self):
+        # LML's log on the Legion (2026-10-05): lml/stream/ loads without an
+        # install.xml, a mod's own lml/<name>/stream/ does not.
         got, _err = self._route(["HD Horses/stream/horse_01.ytd"], name="HD Horses")
-        self.assertEqual(got, ["lml/HD Horses/stream/horse_01.ytd"])
+        self.assertEqual(got, ["lml/stream/horse_01.ytd"])
 
     def test_a_program_is_named_as_one(self):
         _got, err = self._route(["Trainer Launcher.exe", "readme.txt"], name="Launcher")
@@ -24739,7 +24741,24 @@ class TestRdr2RoutingFromCollections(TestRdr2Routing):
         got, _err = self._route(["Trainer.asi", "Lists/peds.txt"])
         self.assertEqual(got, ["Lists/peds.txt", "Trainer.asi"])
 
-    def test_a_bare_asset_mod_still_goes_under_lml(self):
+    def test_a_bare_asset_mod_goes_into_lml_stream(self):
+        # Buell Seam Fix, Map Card Fix and eight more from Fixed and
+        # Enhanced sat in lml/<name>/ with no install.xml: 0 lines in LML's
+        # log. Moved to lml/stream/, where Blackwater Card Fix loaded.
         got, err = self._route(["Horse/horse.ytd", "Horse/horse.meta"], name="Horse")
         self.assertIsNone(err)
-        self.assertEqual(got, ["lml/Horse/horse.meta", "lml/Horse/horse.ytd"])
+        self.assertEqual(got, ["lml/stream/horse.ytd"])
+
+    def test_a_shipped_lml_folder_without_install_xml_is_streamed(self):
+        # Fort Mercer Ruins: lml/Fort Mercer Ruins/{Models,stream}/...
+        got, _err = self._route([
+            "lml/Fort Mercer Ruins/Models/fort_mercer.ydr",
+            "lml/Fort Mercer Ruins/stream/fort_mercer.ymap"], name="Fort Mercer")
+        self.assertEqual(got, ["lml/stream/fort_mercer.ydr", "lml/stream/fort_mercer.ymap"])
+
+    def test_a_folder_with_install_xml_anywhere_inside_is_left_alone(self):
+        # Hat Hair Fix keeps install.xml one level down, and loaded.
+        files = ["lml/Hat_Hair_Fix/Abe_Hat_Hair_Fix/install.xml",
+                 "lml/Hat_Hair_Fix/Abe_Hat_Hair_Fix/Hat_Hair/a.ymt"]
+        got, _err = self._route(files, name="Hat Hair Fix")
+        self.assertEqual(got, sorted(files))

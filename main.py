@@ -8089,6 +8089,49 @@ _RDR2_DOCS_DIR_RE = re.compile(
 
 
 def _route_rdr2_payload(scratch: str, mod_name: str):
+    """Route an RDR2 archive, then put manifest-less LML folders where LML
+    actually reads them. See _rdr2_stream_unmanifested."""
+    files, err, note = _route_rdr2_payload_raw(scratch, mod_name)
+    if files:
+        files = _rdr2_stream_unmanifested(files)
+    return files, err, note
+
+
+# Read from LML's own log on the Legion, 2026-10-05: files in lml/stream/
+# and lml/replace/ load with no install.xml, but a mod's own lml/<name>/
+# folder is ignored unless an install.xml sits somewhere inside it - even
+# when that folder has its own stream/ (Fort Mercer Ruins). Ten mods from
+# RDR 2: Fixed and Enhanced installed cleanly and never loaded.
+_LML_SPECIAL_DIRS = ("stream", "replace")
+
+
+def _rdr2_stream_unmanifested(files: list) -> list:
+    """[(rel, src)] with each lml/<folder>/ that has no install.xml moved:
+    its game assets flattened into lml/stream/, everything else dropped
+    (a readme in a folder LML never reads is just clutter)."""
+    groups = {}
+    for rel, _src in files:
+        parts = rel.split("/")
+        if len(parts) >= 3 and parts[0].lower() == "lml"                 and parts[1].lower() not in _LML_SPECIAL_DIRS:
+            groups.setdefault(parts[1], []).append(rel)
+    dead = {
+        g for g, rels in groups.items()
+        if not any(r.lower().rsplit("/", 1)[-1] == "install.xml" for r in rels)
+    }
+    if not dead:
+        return files
+    out = []
+    for rel, src in files:
+        parts = rel.split("/")
+        if len(parts) >= 3 and parts[0].lower() == "lml" and parts[1] in dead:
+            if parts[-1].lower().endswith(RDR2_ASSET_EXTS + (".yas",)):
+                out.append((f"lml/stream/{parts[-1]}", src))
+            continue
+        out.append((rel, src))
+    return out
+
+
+def _route_rdr2_payload_raw(scratch: str, mod_name: str):
     """Classify an RDR2 archive. Returns (files, err, note): files is
     [(game-root-relative rel, source)], err is None or (kind, message),
     and note names anything deliberately left out ("" when nothing)."""
