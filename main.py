@@ -8082,7 +8082,10 @@ RDR2_ASSET_EXTS = (".ytd", ".ydr", ".yft", ".ydd", ".ymt", ".ytyp", ".ybn",
                    ".ymap", ".ycd", ".awc", ".rpf",
                    # Expression dictionaries and particle/model data: Fixed
                    # Bandolier ships only a .yed and was "could not tell".
-                   ".yed", ".ypt", ".ymf", ".yld", ".ynd", ".ynv")
+                   ".yed", ".ypt", ".ymf", ".yld", ".ynd", ".ynv",
+                   # Scaleform UI: No Hitmarkers is one hud_reticle.gfx
+                   # for lml/stream.
+                   ".gfx")
 RDR2_DATA_EXTS = (".meta", ".xml", ".dat", ".ini")
 RDR2_LML_MARKER = "vfs.asi"  # Lenny's Mod Loader's own file in the game root
 _RDR2_OPTIONAL_RE = re.compile(r"\boptional\b", re.IGNORECASE)

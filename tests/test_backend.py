@@ -24796,6 +24796,12 @@ class TestRdr2RoutingFromCollections(TestRdr2Routing):
         got, _err = self._route(files, name="My Mod")
         self.assertEqual(got, ["lml/My Mod/install.xml", "lml/My Mod/stream/a.ytd"])
 
+    def test_a_lone_ui_file_goes_into_lml_stream(self):
+        # No Hitmarkers (613): "Place 'hud_reticle.gfx' file in lml/stream".
+        got, err = self._route(["hud_reticle.gfx"], name="No Hitmarkers")
+        self.assertIsNone(err)
+        self.assertEqual(got, ["lml/stream/hud_reticle.gfx"])
+
     def test_a_plain_ini_patch_is_still_a_patch(self):
         _got, err = self._route(["Tweaks/settings.ini"], name="Tweaks")
         self.assertIn("by hand", err[1])
