@@ -17,6 +17,7 @@ import {
   getCollectionRun,
   getCompletedDownloads,
   getDownloads,
+  getInflightBytes,
   getRunSkippedCount,
   getSpeedHistory,
   recordSpeedSample,
@@ -36,6 +37,7 @@ import {
 } from "./api";
 import {
   cancellableDownload,
+  collectionProgress,
   downloadRowStatus,
   pauseAllControl,
 } from "./panelRules";
@@ -280,23 +282,18 @@ function CollectionHero({
   run: CollectionRun;
   activeNames: string[];
 }) {
-  const pct = run.total ? Math.round((run.finished / run.total) * 100) : 0;
   const skipped = getRunSkippedCount(run);
-  // ETA from observed pace (mods/min). Only shown once a few mods are in
-  // - earlier than that it's noise, not information.
-  let eta: string | undefined;
-  if (run.running && run.startedAt && run.finished >= 3) {
-    const perMod = (Date.now() - run.startedAt) / run.finished;
-    const mins = Math.round((perMod * (run.total - run.finished)) / 60_000);
-    eta =
-      mins < 1
-        ? "under a minute left"
-        : mins === 1
-        ? "about 1 minute left"
-        : mins < 90
-        ? `about ${mins} minutes left`
-        : `about ${(mins / 60).toFixed(1)} hours left`;
-  }
+  // By bytes, not files: see collectionProgress.
+  const totalBytes = Object.values(run.sizes ?? {}).reduce((a, b) => a + b, 0);
+  const progress = collectionProgress({
+    finished: run.finished,
+    total: run.total,
+    totalBytes,
+    doneBytes: (run.finishedBytes ?? 0) + getInflightBytes(),
+    elapsedMs: run.startedAt ? Date.now() - run.startedAt : 0,
+  });
+  const pct = progress.pct;
+  const eta = run.running ? progress.eta : undefined;
   return (
     <Focusable
       onActivate={() => pushOurPage("/nexus-mods/collection")}

@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   archiveDisplayName,
+  collectionProgress,
   collectionSizeChip,
   dlcNote,
   externalUserTool,
@@ -2093,6 +2094,26 @@ test("the mod page only says a DLC is missing when it is (#38)", () => {
   const page = fs.readFileSync("src/ModDetailPage.tsx", "utf8");
   assert.match(page, /dlcNote\(r\.dlc, r\.dlc_quote\)/);
   assert.match(page, /s\.game\.installDirName,\s*s\.game\.modsSubdir/);
+});
+
+test("collection progress counts bytes, not files (RedemptiVizion)", () => {
+  // 177 of 225 files done, but 44 GB of 44.2 GB still to download, an
+  // hour in: the old pace said ~22 minutes and 79%.
+  const GB = 1024 ** 3;
+  const p = collectionProgress({
+    finished: 177, total: 225, totalBytes: 44.2 * GB,
+    doneBytes: 0.2 * GB + 3.3 * GB, elapsedMs: 60 * 60_000,
+  });
+  assert.equal(p.pct, 8);
+  assert.match(p.eta, /hours left/);
+  // Without sizes it falls back to files, as before.
+  assert.equal(collectionProgress({ finished: 1, total: 4, totalBytes: 0, doneBytes: 0, elapsedMs: 0 }).pct, 25);
+  // No estimate in the first minute: it is noise then.
+  assert.equal(collectionProgress({ finished: 1, total: 4, totalBytes: 100, doneBytes: 10, elapsedMs: 5000 }).eta, undefined);
+  const page = fs.readFileSync("src/DownloadsPage.tsx", "utf8");
+  assert.match(page, /collectionProgress\(\{/);
+  const st = fs.readFileSync("src/state.ts", "utf8");
+  assert.match(st, /if \(run\?\.running && run\.sizes\)/);
 });
 
 test("the collection chip counts mods, and files only beside them (#36)", () => {

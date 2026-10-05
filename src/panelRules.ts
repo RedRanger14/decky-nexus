@@ -1030,6 +1030,38 @@ export function troubleshootingCount(
   );
 }
 
+/** A collection run's progress and time left, by BYTES where the sizes
+ * are known. By files, RedemptiVizion read "177 of 225 · about 22 minutes
+ * left · 79%" with 44 GB of its 44.2 still to download: the small mods
+ * finish first and the texture packs come last. The rate is the run's own
+ * average, which a slow mirror or a fast small file cannot swing. */
+export function collectionProgress(p: {
+  finished: number;
+  total: number;
+  totalBytes: number;
+  doneBytes: number;
+  elapsedMs: number;
+}): { pct: number; eta?: string } {
+  const byBytes = p.totalBytes > 0;
+  const frac = byBytes
+    ? Math.min(1, p.doneBytes / p.totalBytes)
+    : p.total
+    ? p.finished / p.total
+    : 0;
+  const pct = Math.round(frac * 100);
+  if (p.elapsedMs < 60_000 || frac <= 0 || frac >= 1) return { pct };
+  const mins = Math.round(((p.elapsedMs / frac) * (1 - frac)) / 60_000);
+  const eta =
+    mins < 1
+      ? "under a minute left"
+      : mins === 1
+      ? "about 1 minute left"
+      : mins < 90
+      ? `about ${mins} minutes left`
+      : `about ${(mins / 60).toFixed(1)} hours left`;
+  return { pct, eta };
+}
+
 /** The size chip at the top of a collection page, in mods, with the file
  * count beside it when they differ. It said "566 mods" for 566 FILES from
  * 460 mods, while My Mods said 460, and the two read as 106 missing

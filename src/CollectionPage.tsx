@@ -1144,6 +1144,7 @@ export function CollectionPage() {
         queue = installers;
       }
       beginCollectionRun(collection.slug, queue.length, {
+        sizes: Object.fromEntries(queue.map((f) => [f.fileId, (f.sizeKb ?? 0) * 1024])),
         gameAppId: game.appId,
         name: `Repairing ${collection.name}`,
         thumbnailUrl: collection.thumbnailUrl,
@@ -1228,6 +1229,7 @@ export function CollectionPage() {
       ? [...remaining, ...optionalRemaining]
       : remaining;
     beginCollectionRun(collection.slug, queue.length, {
+      sizes: Object.fromEntries(queue.map((f) => [f.fileId, (f.sizeKb ?? 0) * 1024])),
       gameAppId: game.appId,
       name: collection.name,
       thumbnailUrl: collection.thumbnailUrl,

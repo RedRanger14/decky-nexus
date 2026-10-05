@@ -313,6 +313,15 @@ export function dropDownload(modId: number): void {
 export function getAggregateDownloadPercent(
   run?: CollectionRun
 ): number | undefined {
+  // By bytes when the run knows its file sizes (see collectionProgress):
+  // by files, RedemptiVizion read 82% with 44 of its 44.2 GB still to come.
+  if (run?.running && run.sizes) {
+    const total = Object.values(run.sizes).reduce((a, b) => a + b, 0);
+    if (total > 0) {
+      const done = (run.finishedBytes ?? 0) + getInflightBytes();
+      return Math.round(Math.min(1, done / total) * 100);
+    }
+  }
   const active = Array.from(downloads.values()).map((d) =>
     d.phase === "extracting" ? 100 : d.percent
   );
@@ -396,6 +405,12 @@ export interface CollectionRun {
   thumbnailUrl?: string;
   /** Epoch ms when the run began - drives the Downloads page ETA. */
   startedAt?: number;
+  /** Each queued file's size in bytes, and the bytes of files finished.
+   * The ETA counted FILES: RedemptiVizion's small mods went first and the
+   * page said "177 of 225 · about 22 minutes left · 79%" with 44 GB of
+   * texture packs still to come. */
+  sizes?: Record<number, number>;
+  finishedBytes?: number;
 }
 
 let collectionRun: CollectionRun | undefined;
@@ -419,7 +434,12 @@ export function subscribeCollectionRun(listener: () => void): () => void {
 export function beginCollectionRun(
   slug: string,
   total: number,
-  meta?: { gameAppId?: number; name?: string; thumbnailUrl?: string }
+  meta?: {
+    gameAppId?: number;
+    name?: string;
+    thumbnailUrl?: string;
+    sizes?: Record<number, number>;
+  }
 ): void {
   collectionRun = {
     slug,
@@ -430,6 +450,7 @@ export function beginCollectionRun(
     note: "Reading the collection…",
     rows: {},
     startedAt: Date.now(),
+    finishedBytes: 0,
     ...meta,
   };
   notifyRun();
@@ -461,11 +482,27 @@ export function setCollectionRow(
   state: CollectionRowState
 ): void {
   if (!collectionRun) return;
+  const terminal = (st?: CollectionRowState) =>
+    st === "done" || st === "skipped" || st === "failed";
+  const was = collectionRun.rows[fileId];
   collectionRun.rows[fileId] = state;
-  if (state === "done" || state === "skipped" || state === "failed") {
+  if (terminal(state)) {
     collectionRun.finished += 1;
+    if (!terminal(was)) {
+      collectionRun.finishedBytes =
+        (collectionRun.finishedBytes ?? 0) +
+        (collectionRun.sizes?.[fileId] ?? 0);
+    }
   }
   notifyRun();
+}
+
+/** Bytes downloaded so far by downloads still in flight (or downloaded and
+ * waiting to install) - the part of a big file the ETA must not ignore. */
+export function getInflightBytes(): number {
+  let sum = 0;
+  for (const d of downloads.values()) sum += d.bytesDone ?? 0;
+  return sum;
 }
 
 export function endCollectionRun(): void {
