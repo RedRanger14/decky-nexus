@@ -14268,11 +14268,32 @@ _EXTRACTORS = (
 )
 
 
+def _is_rar(archive_path: str) -> bool:
+    """RAR by its signature ("Rar!\\x1a\\x07"), whatever the extension says."""
+    try:
+        with open(archive_path, "rb") as f:
+            return f.read(6) == b"Rar!\x1a\x07"
+    except OSError:
+        return False
+
+
+def _extractor_order(archive_path: str) -> tuple:
+    """bsdtar first, except for RAR: libarchive can read a RAR5 from a
+    recent WinRAR wrongly AND exit 0, so no fallback ever ran. Perkaholic
+    PTF (KCD, method v6) came out as one stray .xml instead of 15 files,
+    and the install then said it could not tell where the files go
+    (2026-10-08). 7z and unrar read RAR properly, so they go first."""
+    if _is_rar(archive_path):
+        by_name = dict(_EXTRACTORS)
+        return tuple((n, by_name[n]) for n in ("7z", "unrar", "bsdtar"))
+    return _EXTRACTORS
+
+
 async def _extract_archive(archive_path: str, dest_dir: str) -> str:
     """Extract an archive into dest_dir, trying each available extractor
     until one succeeds. Returns '' on success, error text otherwise."""
     errors = []
-    for name, build in _EXTRACTORS:
+    for name, build in _extractor_order(archive_path):
         if not shutil.which(name):
             continue
         if errors:

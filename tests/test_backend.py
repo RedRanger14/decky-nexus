@@ -2756,6 +2756,31 @@ class TestExtractZipFallback(unittest.TestCase):
         )
 
 
+class TestRarGoesTo7zFirst(unittest.TestCase):
+    """Perkaholic PTF (KCD, 2026-10-08): bsdtar read a RAR5 wrongly and
+    exited 0, so the 7z fallback never ran and one stray file came out."""
+
+    def _file(self, name, head):
+        p = os.path.join(TEST_ROOT, name)
+        with open(p, "wb") as f:
+            f.write(head + b"\0" * 32)
+        return p
+
+    def test_a_rar_tries_7z_then_unrar_then_bsdtar(self):
+        p = self._file("mod.rar", b"Rar!\x1a\x07\x01\x00")
+        self.assertEqual([n for n, _b in main._extractor_order(p)],
+                         ["7z", "unrar", "bsdtar"])
+
+    def test_a_rar_with_another_extension_is_still_a_rar(self):
+        p = self._file("mod.zip", b"Rar!\x1a\x07\x00")
+        self.assertEqual(main._extractor_order(p)[0][0], "7z")
+
+    def test_everything_else_keeps_bsdtar_first(self):
+        p = self._file("mod.7z", b"7z\xbc\xaf\x27\x1c")
+        self.assertEqual(main._extractor_order(p), main._EXTRACTORS)
+        self.assertEqual(main._extractor_order("/nonexistent.rar"), main._EXTRACTORS)
+
+
 class TestHostEnv(unittest.TestCase):
     """Decky Loader is a PyInstaller bundle, so plugins inherit an
     LD_LIBRARY_PATH aimed at its unpacked /tmp/_MEIxxxxxx directory. The
