@@ -24759,10 +24759,31 @@ class TestKcdRouting(unittest.TestCase):
         self.assertIn("user.cfg", self.note)
 
     def test_nothing_recognisable_is_a_named_refusal(self):
-        got, err = self._route(["tool.exe", "readme.txt"])
+        got, err = self._route(["savegame_backup.bin", "readme.txt"])
         self.assertEqual(got, [])
         self.assertEqual(err[0], "layout")
         self.assertIn("Kingdom Come", err[1])
+
+    def test_user_cfg_is_always_lowercase(self):
+        # One mod shipped User.cfg: on SteamOS it sat beside another
+        # mod's user.cfg as a second file (2026-10-08).
+        got, _ = self._route(["User.cfg"], name="Ultimate Performance Graphics")
+        self.assertEqual(got, ["user.cfg"])
+
+    def test_a_reshade_preset_says_so(self):
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        with open(os.path.join(root, "Perfection.ini"), "w") as f:
+            f.write("PreprocessorDefinitions=\nTechniques=Clarity@Clarity.fx\n")
+        got, err, _n = main._route_kcd_payload(root, "Perfection Reshade")
+        self.assertEqual(got, [])
+        self.assertIn("ReShade preset", err[1])
+
+    def test_a_windows_program_says_so(self):
+        got, err = self._route(["KCD Mod Merger/KCDModMerger.exe",
+                                "KCD Mod Merger/readme.txt"], name="Mod Merger")
+        self.assertEqual(got, [])
+        self.assertEqual(err[0], "tool")
+        self.assertIn("program", err[1])
 
     def test_folder_names_are_plain(self):
         self.assertEqual(main._kcd_folder_name("Better Hair v1.2 (Female)"),

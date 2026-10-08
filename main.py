@@ -8458,6 +8458,17 @@ def _kcd_files_under(base: str, prefix: str) -> list:
     return out
 
 
+def _kcd_reshade_ini(path: str) -> bool:
+    """A ReShade preset .ini, by what ReShade writes in one."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(20000)
+    except OSError:
+        return False
+    return bool(re.search(r"^\s*(Techniques|TechniqueSorting|"
+                          r"PreprocessorDefinitions)\s*=", head, re.I | re.M))
+
+
 def _route_kcd_payload(scratch: str, mod_name: str):
     """Classify a KCD1 archive. Returns (files, error, note): files is
     [(rel to the game folder, src in scratch)], error is (kind, message)."""
@@ -8514,12 +8525,27 @@ def _route_kcd_payload(scratch: str, mod_name: str):
         for p in paks:
             files.append((f"Mods/{folder}/Data/{p}", os.path.join(base, p)))
 
-    # cvar tweaks go beside the exe's folder root, where the game reads them.
+    # cvar tweaks go in the game folder, where the game reads them, always
+    # as lowercase user.cfg: one mod ships "User.cfg", and on SteamOS that
+    # sat beside another mod's user.cfg as a second file (2026-10-08).
     for e in entries:
         if e.lower() in KCD_ROOT_FILES and os.path.isfile(os.path.join(base, e)):
-            files.append((e, os.path.join(base, e)))
+            files.append((e.lower(), os.path.join(base, e)))
 
     if not files:
+        everything = [os.path.join(r, f) for r, _d, fs in os.walk(scratch) for f in fs]
+        lows = [p.lower() for p in everything]
+        if any(p.endswith((".fx", ".fxh")) for p in lows) or any(
+                p.endswith(".ini") and _kcd_reshade_ini(p0)
+                for p, p0 in zip(lows, everything)):
+            return [], ("layout", f"{mod_name} is a ReShade preset. ReShade "
+                        "is a separate injector this plugin does not set up "
+                        "for Kingdom Come: Deliverance, so the preset would "
+                        "do nothing here."), ""
+        if any(p.endswith(".exe") for p in lows):
+            return [], ("tool", "This download is a program that runs on a "
+                        "desktop computer, not a mod the game loads, so there "
+                        "is nothing to install here."), ""
         return [], ("layout", "Could not tell where this mod's files go in "
                     "Kingdom Come: Deliverance."), ""
     if any(r.lower() == "user.cfg" for r, _s in files):
@@ -20947,7 +20973,8 @@ query Link($slug: String!, $domainName: String!) {
                 decky.logger.info(f"KCD {mod_name!r}: {kind}: {message}")
                 _force_rmtree(scratch)
                 await _emit_progress(mod_id, "error", 0, kind)
-                return {"ok": False, "error": message, "unsupported_layout": True}
+                return {"ok": False, "error": message,
+                        "unsupported_tool" if kind == "tool" else "unsupported_layout": True}
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path)
             installed_rel = []
