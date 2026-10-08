@@ -159,6 +159,14 @@ export interface CollectionOffMod {
   fileIds?: number[];
 }
 
+/** RedemptiVizion 6.0's five stacked visual overhauls: see the entries. */
+const VISUAL_STACK_REASON =
+  "This visual overhaul replaces the game's weather and lighting files, " +
+  "and in this collection it stacks with four others that replace the " +
+  "same files. Together they crash Red Dead Redemption 2 on this " +
+  "device, on the current game version. The rest of the collection, " +
+  "upscaled textures included, works without them.";
+
 export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
   // Valheim 1.0.16 (updated 2026-09-25). Valheim Enhanced (aevgug) pins
   // these files, and on the Legion each failed every frame: together
@@ -580,6 +588,84 @@ export const COLLECTION_OFF_MODS: CollectionOffMod[] = [
       "installed alongside a large collection like RDR 2: Fixed and " +
       "Enhanced (seen on this device). Everything else in the collection " +
       "works without it.",
+  },
+  // RedemptiVizion 6.0 Houser's Epic (8gxa7h), on the Legion 2026-10-05 to
+  // 10-08, every boot judged by screenshot (an unmodded boot proved the
+  // screenshot honest). Game build 1491.50, updated about 2026-09-26.
+  //  * Collyrium on its own crashes at startup (2/2), right after LML swaps
+  //    in its visualsettings.dat. The other four overhauls each boot alone,
+  //    but with Collyrium off and any of them on, the game crashed the moment
+  //    Story was pressed (every try). All five off boots every time.
+  //  * Disable Out Of Bounds Snipers holds the game on a black screen after
+  //    loading: switching each of six suspects off alone, only it changed
+  //    the result. ScriptHook logs its .asi "caused an error" at start.
+  //  * Community ScriptHookRDR2 .NET then crashes the game ~40s into the
+  //    world (bisected, 192 suspects, 8 boots). Nothing in the collection
+  //    installs a .NET script, so switching it off loses nothing.
+  // With all seven off: Story loads into camp and stays up (screenshot of
+  // Arthur at the fire, 2026-10-08).
+  {
+    nexusDomain: "reddeadredemption2",
+    modId: 3311,
+    name: "Collyrium - Visual and Weather Overhaul",
+    collections: ["8gxa7h"],
+    fileIds: [19971], // v1.2: crashes at startup on its own
+    reason: VISUAL_STACK_REASON,
+  },
+  {
+    nexusDomain: "reddeadredemption2",
+    modId: 3190,
+    name: "Seki's Visuals - Graphics Changes",
+    collections: ["8gxa7h"],
+    fileIds: [12250], // v1.4
+    reason: VISUAL_STACK_REASON,
+  },
+  {
+    nexusDomain: "reddeadredemption2",
+    modId: 1521,
+    name: "WhyEm's Visuals",
+    collections: ["8gxa7h"],
+    fileIds: [9468], // v1.1.3.9
+    reason: VISUAL_STACK_REASON,
+  },
+  {
+    nexusDomain: "reddeadredemption2",
+    modId: 6347,
+    name: "VESTIGIA 2.0 - A Visual Mod",
+    collections: ["8gxa7h"],
+    fileIds: [24380], // v2.0.7
+    reason: VISUAL_STACK_REASON,
+  },
+  {
+    nexusDomain: "reddeadredemption2",
+    modId: 7971,
+    name: "VAXIS's PBW - Physics Based Water",
+    collections: ["8gxa7h"],
+    fileIds: [24549], // v.1.0
+    reason: VISUAL_STACK_REASON,
+  },
+  {
+    nexusDomain: "reddeadredemption2",
+    modId: 877,
+    name: "Disable Out Of Bounds Snipers",
+    collections: ["8gxa7h"],
+    fileIds: [2898], // v1
+    reason:
+      "In this collection the game loads into Story Mode and stays on a " +
+      "black screen while this mod is on (seen on this device, on the " +
+      "current game version). Everything else in the collection works " +
+      "without it.",
+  },
+  {
+    nexusDomain: "reddeadredemption2",
+    modId: 70,
+    name: "Community ScriptHookRDR2 .NET",
+    collections: ["8gxa7h"],
+    fileIds: [8462], // v1.0.6.1
+    reason:
+      "In this collection the game crashes about 40 seconds into Story " +
+      "Mode while this is on (seen on this device, on the current game " +
+      "version). No other mod in the collection needs it.",
   },
 ];
 

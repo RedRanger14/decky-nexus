@@ -572,6 +572,27 @@ test("Valheim Enhanced installs with exactly its six broken mods off", async () 
     [425, 2067, 2204, 2875, 2887, 2906]);
 });
 
+test("RDR2: RedemptiVizion 6.0 installs with its seven boot-breakers off", async () => {
+  const { collectionAutoOff } = await import("../.test-build/compat.js");
+  // Bisected on the Legion 2026-10-05 to 10-08, judged by screenshot.
+  const pinned = [
+    [3311, 19971], [3190, 12250], [1521, 9468], [6347, 24380], [7971, 24549],
+    [877, 2898], [70, 8462],
+    [2189, 25092], [4251, 14842], [1472, 8471], // kept: textures, JMFAO, loader
+  ].map(([modId, fileId]) => ({ modId, fileId }));
+  const off = collectionAutoOff("reddeadredemption2", pinned, "8gxa7h");
+  assert.deepEqual(off.map((o) => o.modId).sort((a, b) => a - b),
+    [70, 877, 1521, 3190, 3311, 6347, 7971]);
+  for (const o of off) {
+    assert.ok(o.reason.length > 40, `${o.modId} says why`);
+    assert.match(o.reason, /on this device/, `${o.modId} says where it was seen`);
+  }
+  // Only in this collection, and only these files.
+  assert.deepEqual(collectionAutoOff("reddeadredemption2", pinned, "zpvmhh"), []);
+  assert.deepEqual(
+    collectionAutoOff("reddeadredemption2", [{ modId: 70, fileId: 9999 }], "8gxa7h"), []);
+});
+
 test("RDR2: WhyEm's DLC crashes Story Mode alongside Fixed and Enhanced", async () => {
   const { collectionAutoOff } = await import("../.test-build/compat.js");
   // Ultimate RDR 2 - Essentials (pjwopl), bisected on device 2026-10-05.
