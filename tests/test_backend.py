@@ -24680,6 +24680,71 @@ class TestUnloadAlwaysLetsGo(unittest.TestCase):
         main._DL_CANCEL.clear()
 
 
+class TestKcdRouting(unittest.TestCase):
+    """Where Kingdom Come: Deliverance mods go. Every shape lands as
+    Mods/<name>/..., which the game has loaded since patch 1.9."""
+
+    def _route(self, files, name="Better Hair v1.2"):
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        for rel in files:
+            p = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(b"x")
+        got, err, self.note = main._route_kcd_payload(root, name)
+        return sorted(r for r, _s in got), err
+
+    def test_a_whole_mods_tree_keeps_its_folder(self):
+        got, err = self._route(["Mods/BetterHair/mod.manifest",
+                                "Mods/BetterHair/Data/hair.pak",
+                                "Mods/mod_order.txt", "readme.txt"])
+        self.assertIsNone(err)
+        self.assertEqual(got, ["Mods/BetterHair/Data/hair.pak",
+                               "Mods/BetterHair/mod.manifest"])
+
+    def test_a_wrapped_mods_tree_is_unwrapped(self):
+        got, _ = self._route(["Better Hair v1.2/Mods/BetterHair/Data/hair.pak"])
+        self.assertEqual(got, ["Mods/BetterHair/Data/hair.pak"])
+
+    def test_a_mod_folder_on_its_own_is_kept_as_named(self):
+        got, _ = self._route(["BetterHair/mod.manifest", "BetterHair/Data/hair.pak",
+                              "BetterHair/Localization/english_xml.pak"])
+        self.assertEqual(got, ["Mods/BetterHair/Data/hair.pak",
+                               "Mods/BetterHair/Localization/english_xml.pak",
+                               "Mods/BetterHair/mod.manifest"])
+
+    def test_a_bare_data_folder_gets_a_folder_named_after_the_mod(self):
+        got, _ = self._route(["Data/zzz_hair.pak", "Screenshots/a.jpg"])
+        self.assertEqual(got, ["Mods/better_hair_v1_2/Data/zzz_hair.pak"])
+
+    def test_loose_paks_go_into_a_data_folder(self):
+        # Pre-1.9 mods were made to be dropped into the game's own Data.
+        got, _ = self._route(["zzz_unlimited_saving.pak", "Readme.txt"],
+                             name="Unlimited Saving")
+        self.assertEqual(got, ["Mods/unlimited_saving/Data/zzz_unlimited_saving.pak"])
+
+    def test_variant_folders_side_by_side_each_become_a_mod(self):
+        got, _ = self._route(["Hardcore/Data/a.pak", "Normal/Data/b.pak"])
+        self.assertEqual(got, ["Mods/Hardcore/Data/a.pak", "Mods/Normal/Data/b.pak"])
+
+    def test_user_cfg_goes_to_the_game_folder_and_says_so(self):
+        got, err = self._route(["user.cfg"], name="Bow Dot Reticle")
+        self.assertIsNone(err)
+        self.assertEqual(got, ["user.cfg"])
+        self.assertIn("user.cfg", self.note)
+
+    def test_nothing_recognisable_is_a_named_refusal(self):
+        got, err = self._route(["tool.exe", "readme.txt"])
+        self.assertEqual(got, [])
+        self.assertEqual(err[0], "layout")
+        self.assertIn("Kingdom Come", err[1])
+
+    def test_folder_names_are_plain(self):
+        self.assertEqual(main._kcd_folder_name("Better Hair v1.2 (Female)"),
+                         "better_hair_v1_2_female")
+        self.assertEqual(main._kcd_folder_name("!!!"), "mod")
+
+
 class TestRdr2Routing(unittest.TestCase):
     """Where RDR2 mods go, from the real archives (2026-09-26)."""
 

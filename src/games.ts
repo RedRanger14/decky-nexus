@@ -1045,6 +1045,21 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // says where its download goes.
     gameNote: "Story Mode only. Turn the mod loader off before Red Dead Online.",
   },
+  379430: {
+    appId: 379430,
+    displayName: "Kingdom Come: Deliverance",
+    nexusDomain: "kingdomcomedeliverance", // verified against the Nexus API: game id 2298
+    // Verified on the Legion 2026-10-08: the Windows build under Proton,
+    // Bin/Win64/KingdomCome.exe, no Mods folder until a mod creates it.
+    installDirName: "KingdomComeDeliverance",
+    // Mods land as Mods/<name>/... exact-file records (the backend routes
+    // by game: _route_kcd_payload), so the folder scan points at nothing,
+    // like RDR2's.
+    modsSubdir: "._nexus_mods_unused",
+    moddedSaveWarning: false,
+    processName: "KingdomCome.exe",
+    underConstruction: "Kingdom Come: Deliverance support is new.",
+  },
   1623730: {
     appId: 1623730,
     displayName: "Palworld",

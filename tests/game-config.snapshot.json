@@ -141,6 +141,26 @@
     ]
   },
   {
+    "appId": "379430",
+    "displayName": "Kingdom Come: Deliverance",
+    "nexusDomain": "kingdomcomedeliverance",
+    "installDirName": "KingdomComeDeliverance",
+    "modsSubdir": "._nexus_mods_unused",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "413150",
     "displayName": "Stardew Valley",
     "nexusDomain": "stardewvalley",

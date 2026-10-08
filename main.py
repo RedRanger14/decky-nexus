@@ -8402,6 +8402,133 @@ def _route_rdr2_payload_raw(scratch: str, mod_name: str):
                 "Red Dead Redemption 2."), ""
 
 
+# ---- Kingdom Come: Deliverance --------------------------------------------
+# Since patch 1.9 the game loads every folder under <install>/Mods: each mod
+# is Mods/<name>/ holding Data/*.pak (and sometimes Localization/*.pak and a
+# mod.manifest). No script loader exists for KCD1. Archives on Nexus come in
+# every shape: the whole Mods/<name>/ tree, the <name>/ folder alone, a bare
+# Data/ folder, or loose .pak files from before mod support, made to be
+# dropped into the game's own Data folder. All of them land as
+# Mods/<name>/... exact-file records, so uninstall and reset are exact.
+KCD_PAK_DIRS = ("data", "localization")
+KCD_ROOT_FILES = ("user.cfg",)        # cvar tweaks, read from the game folder
+_KCD_DOC_EXTS = (".txt", ".md", ".pdf", ".jpg", ".jpeg", ".png", ".gif",
+                 ".url", ".html", ".htm", ".rtf", ".doc", ".docx", ".bmp",
+                 ".webp")
+
+
+def _kcd_folder_name(name: str) -> str:
+    """A Mods/ folder name from a mod's display name: the game reads any
+    folder, but spaces and punctuation are a trap in every tool that later
+    writes mod_order.txt, so keep it plain."""
+    out = re.sub(r"[^A-Za-z0-9_-]+", "_", name or "").strip("_").lower()
+    return out[:60] or "mod"
+
+
+def _kcd_is_mod_dir(path: str) -> bool:
+    """A KCD mod folder: it has a mod.manifest, or a Data/ or Localization/
+    folder holding at least one .pak."""
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return False
+    if any(n.lower() == "mod.manifest" for n in names):
+        return True
+    for n in names:
+        p = os.path.join(path, n)
+        if n.lower() in KCD_PAK_DIRS and os.path.isdir(p):
+            for _root, _dirs, files in os.walk(p):
+                if any(f.lower().endswith(".pak") for f in files):
+                    return True
+    return False
+
+
+def _kcd_files_under(base: str, prefix: str) -> list:
+    """(rel, src) for every file under base, rel = prefix/<path>, docs and
+    Windows litter left out."""
+    out = []
+    for root, _dirs, files in os.walk(base):
+        for f in files:
+            low = f.lower()
+            if low in ("desktop.ini", "thumbs.db") or low.endswith(_KCD_DOC_EXTS):
+                continue
+            src = os.path.join(root, f)
+            rel = os.path.relpath(src, base).replace(os.sep, "/")
+            out.append((f"{prefix}/{rel}", src))
+    return out
+
+
+def _route_kcd_payload(scratch: str, mod_name: str):
+    """Classify a KCD1 archive. Returns (files, error, note): files is
+    [(rel to the game folder, src in scratch)], error is (kind, message)."""
+    folder = _kcd_folder_name(mod_name)
+    files = []
+    note = ""
+
+    # Unwrap single wrapper folders that are not themselves a mod folder:
+    # "Better Hair v1.2/Mods/..." or "Better Hair v1.2/Data/x.pak".
+    base = scratch
+    for _ in range(3):
+        try:
+            entries = [e for e in os.listdir(base) if not e.startswith(".")]
+        except OSError:
+            break
+        dirs = [e for e in entries if os.path.isdir(os.path.join(base, e))]
+        loose = [e for e in entries if os.path.isfile(os.path.join(base, e))
+                 and not e.lower().endswith(_KCD_DOC_EXTS)]
+        if (len(dirs) == 1 and not loose
+                and dirs[0].lower() not in ("mods",) + KCD_PAK_DIRS
+                and not _kcd_is_mod_dir(os.path.join(base, dirs[0]))):
+            base = os.path.join(base, dirs[0])
+            continue
+        break
+
+    entries = sorted(os.listdir(base))
+    by_low = {e.lower(): e for e in entries}
+
+    # 1. A Mods/ tree: every child folder is a mod folder, kept as named.
+    if "mods" in by_low and os.path.isdir(os.path.join(base, by_low["mods"])):
+        mods_dir = os.path.join(base, by_low["mods"])
+        for child in sorted(os.listdir(mods_dir)):
+            cp = os.path.join(mods_dir, child)
+            if os.path.isdir(cp):
+                files += _kcd_files_under(cp, f"Mods/{child}")
+            elif child.lower() == "mod_order.txt":
+                continue      # the player's own load order is not ours to replace
+    # 2. The archive root is itself one mod folder (manifest or Data/ at top).
+    elif _kcd_is_mod_dir(base):
+        files += _kcd_files_under(base, f"Mods/{folder}")
+        files = [(r, s) for r, s in files
+                 if r.split("/")[-1].lower() not in KCD_ROOT_FILES
+                 or r.count("/") > 2]
+    # 3. One or more mod folders side by side (variants, or a pack).
+    else:
+        mod_dirs = [e for e in entries
+                    if os.path.isdir(os.path.join(base, e))
+                    and _kcd_is_mod_dir(os.path.join(base, e))]
+        for d in mod_dirs:
+            files += _kcd_files_under(os.path.join(base, d), f"Mods/{d}")
+        # 4. Loose .pak files: pre-1.9 mods made for the game's Data folder.
+        paks = [e for e in entries if e.lower().endswith(".pak")
+                and os.path.isfile(os.path.join(base, e))]
+        for p in paks:
+            files.append((f"Mods/{folder}/Data/{p}", os.path.join(base, p)))
+
+    # cvar tweaks go beside the exe's folder root, where the game reads them.
+    for e in entries:
+        if e.lower() in KCD_ROOT_FILES and os.path.isfile(os.path.join(base, e)):
+            files.append((e, os.path.join(base, e)))
+
+    if not files:
+        return [], ("layout", "Could not tell where this mod's files go in "
+                    "Kingdom Come: Deliverance."), ""
+    if any(r.lower() == "user.cfg" for r, _s in files):
+        note = ("This mod changes game settings through user.cfg. Only one "
+                "mod can own that file, so installing another mod that ships "
+                "one replaces it.")
+    return files, None, note
+
+
 def _route_cp77_payload(scratch: str, mod_name: str):
     """Classify a CP77 archive. Returns (files, err) where files is a
     list of (game-root-relative rel, source path) and err is None or a
@@ -20789,6 +20916,65 @@ query Link($slug: String!, $domainName: String!) {
             )
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
+
+        # Kingdom Come: Deliverance: every mod becomes Mods/<name>/...,
+        # recorded file by file. Routed by game, like RDR2.
+        if game_domain == "kingdomcomedeliverance":
+            kc_files, kc_err, kc_note = _route_kcd_payload(scratch, mod_name)
+            if kc_err:
+                kind, message = kc_err
+                decky.logger.info(f"KCD {mod_name!r}: {kind}: {message}")
+                _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, kind)
+                return {"ok": False, "error": message, "unsupported_layout": True}
+            _record_vanilla_baseline(
+                game_domain, mods_path, app_id, None, install_path)
+            installed_rel = []
+            for rel, src in kc_files:
+                dst = os.path.join(install_path, *rel.split("/"))
+                _makedirs_for(dst)
+                if os.path.isfile(dst):
+                    os.remove(dst)
+                shutil.move(src, dst)
+                installed_rel.append(rel)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            settings = _load_settings()
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            record_key = _safe_name(mod_name)
+            _take_over_files(installed, record_key, installed_rel, mod_name)
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key),
+                {
+                    "mod_id": mod_id,
+                    "file_id": file_id,
+                    "name": mod_name,
+                    "version": mod_version,
+                    "file_name": file_name,
+                    "installed_at": int(time.time()),
+                    "page_version": page_version,
+                    "source": record_source,
+                    "collection_slug": collection_slug,
+                    "mode": "files",
+                    "target": ".",
+                    "files": installed_rel,
+                    "warning": kc_note,
+                },
+            )
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed KCD {mod_name!r}: {len(installed_rel)} file(s): "
+                f"{sorted({r.split('/')[1] if r.startswith('Mods/') else r for r in installed_rel})}")
+            await _emit_progress(mod_id, "done", 100)
+            out = {"ok": True, "folder": record_key}
+            if kc_note:
+                out["warning"] = kc_note
+            return out
 
         # Red Dead Redemption 2: everything lands beside RDR2.exe as an
         # exact-file record, like Cyberpunk. Routed by game rather than by
