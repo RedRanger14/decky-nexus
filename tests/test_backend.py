@@ -24825,6 +24825,61 @@ class TestKcdRouting(unittest.TestCase):
         main._kcd_rebuild_user_cfg(bare)
         self.assertFalse(os.path.exists(os.path.join(bare, "user.cfg")))
 
+    def test_an_engine_mod_routes_its_paks_and_keeps_its_pak_list_aside(self):
+        # Better Rain 2.1, as on Nexus: Data/pak.cfg + Engine/*_mod.pak.
+        got, err = self._route(["Data/pak.cfg", "Engine/engine_mod.pak",
+                                "Engine/shaders_mod.pak"], name="Better Rain")
+        self.assertIsNone(err)
+        self.assertEqual(got, ["Engine/engine_mod.pak", "Engine/shaders_mod.pak",
+                               "mods/better_rain/pak.cfg"])
+
+    def _pakgame(self, game_lines, mods):
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        os.makedirs(os.path.join(root, "Data"))
+        with open(os.path.join(root, "Data", "pak.cfg"), "w", newline="") as f:
+            f.write("\r\n".join(game_lines))
+        for folder, lines in mods.items():
+            os.makedirs(os.path.join(root, "mods", folder), exist_ok=True)
+            with open(os.path.join(root, "mods", folder, "pak.cfg"), "w") as f:
+                f.write("\n".join(lines))
+        return root
+
+    def _live(self, root):
+        with open(os.path.join(root, "Data", "pak.cfg"), newline="") as f:
+            return f.read()
+
+    def test_an_outdated_pak_list_only_adds_its_own_lines(self):
+        # Better Rain's list predates patch 1.9.3: copied, it dropped the
+        # game's newest patch. Merged, the game's lines all stay.
+        game = ["engine\\engine.pak", "data\\patch\\patch_010903.pak"]
+        root = self._pakgame(game, {"better_rain": [
+            "engine\\engine.pak", "engine\\engine_mod.pak", "engine\\shaders_mod.pak"]})
+        self.assertEqual(main._kcd_rebuild_pak_cfg(root), ["better_rain"])
+        live = self._live(root)
+        self.assertIn("data\\patch\\patch_010903.pak", live)
+        self.assertIn("engine\\engine_mod.pak", live)
+        self.assertEqual(live.count("engine\\engine.pak\r\n"), 1)
+        self.assertIn("\r\n", live, "the game's own line endings are kept")
+
+    def test_without_engine_mods_the_games_list_comes_back(self):
+        game = ["engine\\engine.pak", "data\\patch\\patch_010903.pak"]
+        root = self._pakgame(game, {"better_rain": ["engine\\engine_mod.pak"]})
+        main._kcd_rebuild_pak_cfg(root)
+        shutil.rmtree(os.path.join(root, "mods", "better_rain"))
+        self.assertEqual(main._kcd_rebuild_pak_cfg(root), [])
+        self.assertEqual(self._live(root), "\r\n".join(game))
+        self.assertFalse(os.path.exists(os.path.join(root, "Data", "pak.cfg.vanilla")))
+
+    def test_a_game_update_to_pak_cfg_becomes_the_new_original(self):
+        root = self._pakgame(["engine\\engine.pak"], {"better_rain": ["engine\\engine_mod.pak"]})
+        main._kcd_rebuild_pak_cfg(root)
+        with open(os.path.join(root, "Data", "pak.cfg"), "w", newline="") as f:
+            f.write("engine\\engine.pak\r\ndata\\patch\\patch_011000.pak")   # Steam update
+        main._kcd_rebuild_pak_cfg(root)
+        live = self._live(root)
+        self.assertIn("patch_011000.pak", live)
+        self.assertIn("engine\\engine_mod.pak", live)
+
     def test_switching_uninstalling_and_resetting_rebuild_it(self):
         for name in ("set_mod_enabled", "uninstall_mod", "reset_game_modding"):
             fn = getattr(main.Plugin, name)

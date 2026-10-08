@@ -8577,6 +8577,83 @@ def _kcd_rebuild_user_cfg(install_path: str) -> list:
     return [f for f, _t in parts]
 
 
+def _kcd_rebuild_pak_cfg(install_path: str) -> list:
+    """Add every installed engine mod's paks to the game's Data/pak.cfg.
+
+    Engine and shader mods (Better Rain) ship Engine/*_mod.pak and a whole
+    Data/pak.cfg, the game's list of paks to open, with their lines added.
+    Better Rain's copy predates patch 1.9.3: written over the game's, it
+    dropped patch_010903.pak and two other game paks (2026-10-08). So the
+    game's own list is kept as Data/pak.cfg.vanilla and the live file is
+    that plus each mod's new lines (mods/<mod>/pak.cfg). A Steam update
+    that rewrites pak.cfg becomes the new original: what was last written
+    is kept in Data/pak.cfg.nexus, and any other content is the game's.
+    With no engine mods left, the original goes back.
+
+    Returns the folders whose lines went in."""
+    data = os.path.join(install_path or "", "Data")
+    live = os.path.join(data, "pak.cfg")
+    vanilla = live + ".vanilla"
+    ours = live + ".nexus"
+    if not os.path.isfile(live):
+        return []
+
+    def read(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace", newline="") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    current, written, original = read(live), read(ours), read(vanilla)
+    if original is None or current != written:
+        original = current          # untouched, or the game rewrote it
+    known = {l.strip().lower() for l in original.splitlines() if l.strip()}
+
+    extra, folders = [], []
+    mods_dir = os.path.join(install_path, KCD_MODS_DIR)
+    try:
+        names = sorted(os.listdir(mods_dir))
+    except OSError:
+        names = []
+    for folder in names:
+        text = read(os.path.join(mods_dir, folder, "pak.cfg"))
+        if not text:
+            continue
+        added = [l.strip() for l in text.splitlines()
+                 if l.strip() and l.strip().lower() not in known]
+        for l in added:
+            known.add(l.lower())
+        if added:
+            extra += added
+            folders.append(folder)
+
+    try:
+        if not extra:
+            if current != original:
+                with open(live, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(original)
+            for p in (vanilla, ours):
+                if os.path.exists(p):
+                    os.remove(p)
+            return []
+        nl = "\r\n" if "\r\n" in original else "\n"
+        new = original.rstrip("\r\n") + nl + nl + nl.join(extra) + nl
+        for path, text in ((vanilla, original), (live, new), (ours, new)):
+            with open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write(text)
+    except OSError as e:
+        decky.logger.warning(f"KCD: could not rebuild pak.cfg: {e}")
+        return []
+    return folders
+
+
+def _kcd_rebuild_configs(install_path: str) -> None:
+    """Every file KCD reads once for all mods: user.cfg and Data/pak.cfg."""
+    _kcd_rebuild_user_cfg(install_path)
+    _kcd_rebuild_pak_cfg(install_path)
+
+
 def _kcd_rebuilds_user_cfg(fn):
     """Rebuild Kingdom Come: Deliverance's user.cfg after `fn` (switching,
     uninstalling, resetting): each changes which mods' copies are present.
@@ -8590,7 +8667,7 @@ def _kcd_rebuilds_user_cfg(fn):
             bound.apply_defaults()
             a = bound.arguments
             if a.get("game_domain") == "kingdomcomedeliverance":
-                _kcd_rebuild_user_cfg(_game_dir(a.get("install_dir", "")))
+                _kcd_rebuild_configs(_game_dir(a.get("install_dir", "")))
         except Exception as e:  # noqa: BLE001 - never fail the call over this
             decky.logger.warning(f"KCD: user.cfg rebuild skipped: {e}")
         return result
@@ -8640,14 +8717,31 @@ def _route_kcd_payload(scratch: str, mod_name: str):
         files = [(r, s) for r, s in files
                  if r.split("/")[-1].lower() not in KCD_ROOT_FILES
                  or r.count("/") > 2]
-    # 3. One or more mod folders side by side (variants, or a pack).
+    # 3. An engine or shader mod: Engine/*.pak for the game's own Engine
+    # folder, often with a whole Data/pak.cfg listing them (Better Rain).
+    # The paks are new files there; the list is merged, not copied - see
+    # _kcd_rebuild_pak_cfg.
+    elif "engine" in by_low and any(
+            f.lower().endswith(".pak")
+            for f in os.listdir(os.path.join(base, by_low["engine"]))):
+        eng = os.path.join(base, by_low["engine"])
+        for f in sorted(os.listdir(eng)):
+            if f.lower().endswith(".pak") and os.path.isfile(os.path.join(eng, f)):
+                files.append((f"Engine/{f}", os.path.join(eng, f)))
+        data_dir = os.path.join(base, by_low["data"]) if "data" in by_low else ""
+        if data_dir and os.path.isdir(data_dir):
+            for f in os.listdir(data_dir):
+                if f.lower() == "pak.cfg":
+                    files.append((f"{KCD_MODS_DIR}/{folder}/pak.cfg",
+                                  os.path.join(data_dir, f)))
+    # 4. One or more mod folders side by side (variants, or a pack).
     else:
         mod_dirs = [e for e in entries
                     if os.path.isdir(os.path.join(base, e))
                     and _kcd_is_mod_dir(os.path.join(base, e))]
         for d in mod_dirs:
             files += _kcd_files_under(os.path.join(base, d), f"{KCD_MODS_DIR}/{d}")
-        # 4. Loose .pak files: pre-1.9 mods made for the game's Data folder.
+        # 5. Loose .pak files: pre-1.9 mods made for the game's Data folder.
         paks = [e for e in entries if e.lower().endswith(".pak")
                 and os.path.isfile(os.path.join(base, e))]
         for p in paks:
@@ -8683,7 +8777,12 @@ def _route_kcd_payload(scratch: str, mod_name: str):
     # SteamOS those were two folders, and the case-blind ownership check
     # then lost track of two files, which outlived a reset (2026-10-08).
     # Wine reads lowercase paths fine.
-    files = list({r.lower(): (r.lower(), s) for r, s in files}.values())
+    # Only under mods/: the game's own Engine folder keeps its case, or a
+    # second "engine" folder would appear beside it on SteamOS.
+    files = list({
+        (r.lower() if r.startswith(KCD_MODS_DIR + "/") else r).lower(): (
+            r.lower() if r.startswith(KCD_MODS_DIR + "/") else r, s)
+        for r, s in files}.values())
     if any(r.endswith("/user.cfg") for r, _s in files):
         note = ("This mod changes game settings. They are merged into the "
                 "game's user.cfg with every other installed mod's.")
@@ -21114,7 +21213,12 @@ query Link($slug: String!, $domainName: String!) {
                 game_domain, mods_path, app_id, None, install_path)
             _kcd_keep_mods_folder(install_path)
             installed_rel = []
+            case_cache = {}
             for rel, src in kc_files:
+                # Outside mods/ (an engine mod's Engine/*.pak) take the game
+                # folder's own casing, or Wine sees two Engine folders.
+                if not rel.startswith(KCD_MODS_DIR + "/"):
+                    rel = _case_merge_rel(install_path, rel, case_cache)
                 dst = os.path.join(install_path, *rel.split("/"))
                 _makedirs_for(dst)
                 if os.path.isfile(dst):
@@ -21126,7 +21230,7 @@ query Link($slug: String!, $domainName: String!) {
                 os.remove(archive_path)
             except OSError:
                 pass
-            _kcd_rebuild_user_cfg(install_path)
+            _kcd_rebuild_configs(install_path)
             settings = _load_settings()
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
