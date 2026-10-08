@@ -572,6 +572,20 @@ test("Valheim Enhanced installs with exactly its six broken mods off", async () 
     [425, 2067, 2204, 2875, 2887, 2906]);
 });
 
+// Out of construction 2026-10-08. The badge was the only place the Red Dead
+// Online warning lived; it must survive the badge going.
+test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
+  const games = readFileSync("src/games.ts", "utf8");
+  const rdr2 = games.slice(games.indexOf("nexusDomain: \"reddeadredemption2\""));
+  const block = rdr2.slice(0, rdr2.indexOf("\n  },\n"));
+  assert.doesNotMatch(block, /underConstruction:/);
+  assert.match(block, /gameNote:\s*\n\s*"Mods are for Story Mode only/);
+  assert.match(block, /Red Dead Online/);
+  assert.match(block, /Lenny's Mod Loader/);
+  const idx = readFileSync("src/index.tsx", "utf8");
+  assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
+});
+
 test("RDR2: RedemptiVizion 6.0 installs with its seven boot-breakers off", async () => {
   const { collectionAutoOff } = await import("../.test-build/compat.js");
   // Bisected on the Legion 2026-10-05 to 10-08, judged by screenshot.

@@ -17,7 +17,7 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Twenty-one games. Every one unmarked below was installed, modded and played
+Twenty-two games. Every one unmarked below was installed, modded and played
 on real hardware before it shipped. That is what supported means here: not
 that the code has a config entry for it, but that someone finished a
 session with mods running.
@@ -32,17 +32,18 @@ session with mods running.
 8. Mount & Blade II: Bannerlord
 9. NieR:Automata ‡
 10. Palworld
-11. Resident Evil 4
-12. Skyrim Special Edition
-13. Slay the Spire 2
-14. STAR WARS Battlefront II (2017)
-15. Stardew Valley
-16. Starfield \*
-17. Subnautica
-18. Subnautica 2
-19. Subnautica: Below Zero
-20. The Witcher 3
-21. Valheim §
+11. Red Dead Redemption 2 ¶
+12. Resident Evil 4
+13. Skyrim Special Edition
+14. Slay the Spire 2
+15. STAR WARS Battlefront II (2017)
+16. Stardew Valley
+17. Starfield \*
+18. Subnautica
+19. Subnautica 2
+20. Subnautica: Below Zero
+21. The Witcher 3
+22. Valheim §
 
 \* Community added game. Not tested by author.
 
@@ -52,6 +53,8 @@ session with mods running.
 
 § New. Played on a Legion Go 2, on the native Linux build. The mod loader's own log is read after each session, and mods that keep failing are switched off with the reason shown.
 
+¶ New. Played on a Legion Go 2 with a 225-mod collection. Story Mode only: switch the mod loader off in the panel before playing Red Dead Online. Mods for Lenny's Mod Loader need its zip in your Downloads folder.
+
 ### On the roadmap
 
 Groundwork exists for these and they are NOT ready. They may appear in the
@@ -59,7 +62,6 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
-- Red Dead Redemption 2 (marked under construction in the plugin; script mods and trainers played on a Legion Go 2, and mods for Lenny's Mod Loader need its zip in your Downloads folder)
 
 ### Requested, not started
 

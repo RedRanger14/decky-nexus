@@ -303,6 +303,11 @@ export interface SupportedGame {
   /** Shown as a banner at the top of the QAM panel: support for this game
    * is real but rough. Honest signposting beats silent rough edges. */
   underConstruction?: string;
+  /** Shown near the top of the QAM panel for good: what a player must know
+   * about modding this game that no Step can do for them (RDR2: mods are
+   * Story Mode only). Unlike underConstruction, it stays once support is
+   * finished. */
+  gameNote?: string;
   /** ReShade support: where the game's exe lives (injector files land
    * there), and the launch options Proton needs to load a native dxgi. */
   reshade?: { subdir: string; launchOptionsTemplate: string };
@@ -1034,9 +1039,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
           "comes from your own download.",
       },
     ],
-    underConstruction:
-      "Red Dead Redemption 2 support is new. Script mods and trainers load " +
-      "through ScriptHookRDR2, which the panel sets up in one step.\n\n" +
+    // Out of construction 2026-10-08: RedemptiVizion 6.0 (225 files) passed
+    // a reset, a clean install and a played boot on the Legion.
+    gameNote:
       "Mods are for Story Mode only. Before playing Red Dead Online, switch " +
       "the mod loader off in this panel: the game then starts without any " +
       "mods, as Rockstar requires.\n\n" +

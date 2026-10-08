@@ -1190,6 +1190,11 @@ function CurrentGameSection() {
           </Field>
         </PanelSectionRow>
       )}
+      {game.gameNote && (
+        <PanelSectionRow>
+          <Field label="Good to know">{game.gameNote}</Field>
+        </PanelSectionRow>
+      )}
       {status && !status.installed && (
         <PanelSectionRow>
           <Field label="Installed">Not found in main Steam library</Field>
