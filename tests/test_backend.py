@@ -24724,33 +24724,33 @@ class TestKcdRouting(unittest.TestCase):
                                 "mods/BetterHair/Data/hair.pak",
                                 "mods/mod_order.txt", "readme.txt"])
         self.assertIsNone(err)
-        self.assertEqual(got, ["mods/BetterHair/Data/hair.pak",
-                               "mods/BetterHair/mod.manifest"])
+        self.assertEqual(got, ["mods/betterhair/data/hair.pak",
+                               "mods/betterhair/mod.manifest"])
 
     def test_a_wrapped_mods_tree_is_unwrapped(self):
         got, _ = self._route(["Better Hair v1.2/Mods/BetterHair/Data/hair.pak"])
-        self.assertEqual(got, ["mods/BetterHair/Data/hair.pak"])
+        self.assertEqual(got, ["mods/betterhair/data/hair.pak"])
 
     def test_a_mod_folder_on_its_own_is_kept_as_named(self):
         got, _ = self._route(["BetterHair/mod.manifest", "BetterHair/Data/hair.pak",
                               "BetterHair/Localization/english_xml.pak"])
-        self.assertEqual(got, ["mods/BetterHair/Data/hair.pak",
-                               "mods/BetterHair/Localization/english_xml.pak",
-                               "mods/BetterHair/mod.manifest"])
+        self.assertEqual(got, ["mods/betterhair/data/hair.pak",
+                               "mods/betterhair/localization/english_xml.pak",
+                               "mods/betterhair/mod.manifest"])
 
     def test_a_bare_data_folder_gets_a_folder_named_after_the_mod(self):
         got, _ = self._route(["Data/zzz_hair.pak", "Screenshots/a.jpg"])
-        self.assertEqual(got, ["mods/better_hair_v1_2/Data/zzz_hair.pak"])
+        self.assertEqual(got, ["mods/better_hair_v1_2/data/zzz_hair.pak"])
 
     def test_loose_paks_go_into_a_data_folder(self):
         # Pre-1.9 mods were made to be dropped into the game's own Data.
         got, _ = self._route(["zzz_unlimited_saving.pak", "Readme.txt"],
                              name="Unlimited Saving")
-        self.assertEqual(got, ["mods/unlimited_saving/Data/zzz_unlimited_saving.pak"])
+        self.assertEqual(got, ["mods/unlimited_saving/data/zzz_unlimited_saving.pak"])
 
     def test_variant_folders_side_by_side_each_become_a_mod(self):
         got, _ = self._route(["Hardcore/Data/a.pak", "Normal/Data/b.pak"])
-        self.assertEqual(got, ["mods/Hardcore/Data/a.pak", "mods/Normal/Data/b.pak"])
+        self.assertEqual(got, ["mods/hardcore/data/a.pak", "mods/normal/data/b.pak"])
 
     def test_user_cfg_goes_to_the_game_folder_and_says_so(self):
         got, err = self._route(["user.cfg"], name="Bow Dot Reticle")
@@ -24763,6 +24763,15 @@ class TestKcdRouting(unittest.TestCase):
         self.assertEqual(got, [])
         self.assertEqual(err[0], "layout")
         self.assertIn("Kingdom Come", err[1])
+
+    def test_an_update_mod_lands_in_the_folder_it_updates(self):
+        # Perkaholic ships perkaholic/, its PTF update Perkaholic/: one
+        # folder on Windows, and now one here.
+        a, _ = self._route(["perkaholic/Data/zzz_perkaholic.pak"], name="Perkaholic")
+        b, _ = self._route(["Perkaholic/Data/zzz_perkaholic.pak",
+                            "Perkaholic/Localization/English_xml.pak"], name="Perkaholic PTF")
+        self.assertEqual(a[0], b[0])
+        self.assertEqual(b[1], "mods/perkaholic/localization/english_xml.pak")
 
     def test_user_cfg_is_always_lowercase(self):
         # One mod shipped User.cfg: on SteamOS it sat beside another

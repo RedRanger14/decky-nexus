@@ -8576,7 +8576,15 @@ def _route_kcd_payload(scratch: str, mod_name: str):
                         "is nothing to install here."), ""
         return [], ("layout", "Could not tell where this mod's files go in "
                     "Kingdom Come: Deliverance."), ""
-    if any(r.lower() == "user.cfg" for r, _s in files):
+    # Every path lowercase, as the game itself names them (its log reads
+    # "mods\bloodmod\data\thebloodmod.pak"). Windows folds case, so a mod
+    # made to update another one writes into the same folder there:
+    # Perkaholic PTF ships "Perkaholic/", Perkaholic "perkaholic/". On
+    # SteamOS those were two folders, and the case-blind ownership check
+    # then lost track of two files, which outlived a reset (2026-10-08).
+    # Wine reads lowercase paths fine.
+    files = list({r.lower(): (r.lower(), s) for r, s in files}.values())
+    if any(r == "user.cfg" for r, _s in files):
         note = ("This mod changes game settings through user.cfg. Only one "
                 "mod can own that file, so installing another mod that ships "
                 "one replaces it.")
