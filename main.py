@@ -8577,6 +8577,21 @@ def _kcd_rebuild_user_cfg(install_path: str) -> list:
     return [f for f, _t in parts]
 
 
+def _kcd_path_exists(install_path: str, rel: str) -> bool:
+    """Does a pak.cfg line ("engine\\shaders_mod.pak") name a real file,
+    matching each part case-blind the way Windows and Wine do?"""
+    cur = install_path
+    for part in [p for p in re.split(r"[\\/]+", rel) if p]:
+        try:
+            match = next((e for e in os.listdir(cur) if e.lower() == part.lower()), None)
+        except OSError:
+            return False
+        if match is None:
+            return False
+        cur = os.path.join(cur, match)
+    return os.path.isfile(cur)
+
+
 def _kcd_rebuild_pak_cfg(install_path: str) -> list:
     """Add every installed engine mod's paks to the game's Data/pak.cfg.
 
@@ -8620,8 +8635,12 @@ def _kcd_rebuild_pak_cfg(install_path: str) -> list:
         text = read(os.path.join(mods_dir, folder, "pak.cfg"))
         if not text:
             continue
+        # Only paks that exist: Better Rain's old list also names three
+        # patch_sounds_*_hd.pak files this game version does not have. A
+        # switched-off engine mod's paks are parked, so its lines drop too.
         added = [l.strip() for l in text.splitlines()
-                 if l.strip() and l.strip().lower() not in known]
+                 if l.strip() and l.strip().lower() not in known
+                 and _kcd_path_exists(install_path, l.strip())]
         for l in added:
             known.add(l.lower())
         if added:

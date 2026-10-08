@@ -24842,6 +24842,10 @@ class TestKcdRouting(unittest.TestCase):
             os.makedirs(os.path.join(root, "mods", folder), exist_ok=True)
             with open(os.path.join(root, "mods", folder, "pak.cfg"), "w") as f:
                 f.write("\n".join(lines))
+        # The engine paks the mods would have installed.
+        os.makedirs(os.path.join(root, "Engine"), exist_ok=True)
+        for name in ("engine_mod.pak", "shaders_mod.pak"):
+            open(os.path.join(root, "Engine", name), "w").close()
         return root
 
     def _live(self, root):
@@ -24860,6 +24864,15 @@ class TestKcdRouting(unittest.TestCase):
         self.assertIn("engine\\engine_mod.pak", live)
         self.assertEqual(live.count("engine\\engine.pak\r\n"), 1)
         self.assertIn("\r\n", live, "the game's own line endings are kept")
+
+    def test_a_listed_pak_that_does_not_exist_is_left_out(self):
+        # Better Rain also lists patch_sounds_*_hd.pak, absent from 1.9.8.
+        root = self._pakgame(["engine\\engine.pak"], {"better_rain": [
+            "data\\patch\\patch_sounds_010700_hd.pak", "engine\\engine_mod.pak"]})
+        main._kcd_rebuild_pak_cfg(root)
+        live = self._live(root)
+        self.assertNotIn("patch_sounds", live)
+        self.assertIn("engine\\engine_mod.pak", live)
 
     def test_without_engine_mods_the_games_list_comes_back(self):
         game = ["engine\\engine.pak", "data\\patch\\patch_010903.pak"]
