@@ -2479,6 +2479,14 @@ def _attach_file_ids(game_domain: str, rows: list) -> None:
         ids = files_by_mod.get(r.get("mod_id"))
         if ids:
             r["file_ids"] = sorted(ids)
+        # The row's OWN file, from its record. Exact-file installs (RDR2)
+        # listed none, so every file-scoped COLLECTION_OFF_MODS rule missed:
+        # RedemptiVizion's seven convicted files all installed switched on
+        # (clean install on the Legion, 2026-10-08).
+        if r.get("file_id") is None:
+            own = (records.get(r.get("folder")) or {}).get("file_id")
+            if isinstance(own, int) or (isinstance(own, str) and own.isdigit()):
+                r["file_id"] = int(own)
 
 
 _INSTALL_FAILED_RE = re.compile(

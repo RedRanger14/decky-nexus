@@ -1279,6 +1279,28 @@ class TestInstalledRowsCarryTheirFiles(unittest.TestCase):
         self.assertEqual(rows[1]["file_ids"], [664948, 672075, 672092])
         self.assertNotIn("file_ids", rows[2])
 
+    def test_a_row_names_its_own_file(self):
+        # RedemptiVizion, 2026-10-08: RDR2 rows had file_ids but no file_id,
+        # so the seven file-scoped off rules matched nothing.
+        s = main._load_settings()
+        s["installed"] = {"reddeadredemption2": {
+            "Collyrium - Visual and Weather Overhaul": {"mod_id": 3311, "file_id": 19971},
+            "Disable Out Of Bounds Snipers": {"mod_id": 877, "file_id": "2898"},
+            "Kept": {"mod_id": 5, "file_id": 50},
+        }}
+        main._save_settings(s)
+        rows = [
+            {"mod_id": 3311, "folder": "Collyrium - Visual and Weather Overhaul"},
+            {"mod_id": 877, "folder": "Disable Out Of Bounds Snipers", "file_id": None},
+            {"mod_id": 5, "folder": "Kept", "file_id": 51},  # an existing answer stands
+            {"mod_id": 9, "folder": "No record"},
+        ]
+        main._attach_file_ids("reddeadredemption2", rows)
+        self.assertEqual(rows[0]["file_id"], 19971)
+        self.assertEqual(rows[1]["file_id"], 2898)
+        self.assertEqual(rows[2]["file_id"], 51)
+        self.assertNotIn("file_id", rows[3])
+
     def test_it_wraps_every_install_mode(self):
         src = inspect.getsource(main.Plugin.get_installed_mods)
         self.assertIn("_get_installed_mods_raw(", src)
