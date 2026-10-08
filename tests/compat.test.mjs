@@ -579,9 +579,12 @@ test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
   const rdr2 = games.slice(games.indexOf("nexusDomain: \"reddeadredemption2\""));
   const block = rdr2.slice(0, rdr2.indexOf("\n  },\n"));
   assert.doesNotMatch(block, /underConstruction:/);
-  assert.match(block, /gameNote:\s*\n\s*"Mods are for Story Mode only/);
-  assert.match(block, /Red Dead Online/);
-  assert.match(block, /Lenny's Mod Loader/);
+  const note = block.match(/gameNote: "([^"]*)"/);
+  assert.ok(note, "a one-line note");
+  assert.match(note[1], /Story Mode only/);
+  assert.match(note[1], /Red Dead Online/);
+  // Michael, 2026-10-08: "far too long for the qam". One short line.
+  assert.ok(note[1].length <= 80, `note is ${note[1].length} chars`);
   const idx = readFileSync("src/index.tsx", "utf8");
   assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
 });

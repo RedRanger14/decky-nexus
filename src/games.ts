@@ -1041,13 +1041,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     ],
     // Out of construction 2026-10-08: RedemptiVizion 6.0 (225 files) passed
     // a reset, a clean install and a played boot on the Legion.
-    gameNote:
-      "Mods are for Story Mode only. Before playing Red Dead Online, switch " +
-      "the mod loader off in this panel: the game then starts without any " +
-      "mods, as Rockstar requires.\n\n" +
-      "Mods made for Lenny's Mod Loader need it installed. It is not on " +
-      "Nexus Mods: download it once from rdr2mods.com into your Downloads " +
-      "folder and this panel installs it.",
+    // One line: the QAM is narrow, and the Lenny's Mod Loader step already
+    // says where its download goes.
+    gameNote: "Story Mode only. Turn the mod loader off before Red Dead Online.",
   },
   1623730: {
     appId: 1623730,
