@@ -1,8 +1,10 @@
 import asyncio
 import datetime
+import functools
 import glob
 import hashlib
 import itertools
+import inspect
 import json
 import lzma
 import os
@@ -8497,6 +8499,104 @@ def _kcd_keep_mods_folder(install_path: str) -> None:
         decky.logger.warning(f"KCD: could not write mod_status.xml: {e}")
 
 
+KCD_CFG_HEADER = ("-- Built by the Nexus Mods plugin from each installed mod's "
+                  "user.cfg. Put your own settings in user.cfg.player.")
+
+
+def _kcd_rebuild_user_cfg(install_path: str) -> list:
+    """Write the game's user.cfg from every installed mod's own copy.
+
+    The game reads one user.cfg, from its own folder, and five of KCD1's
+    top 40 mods ship one: installed side by side they replaced each other,
+    and uninstalling any of them took the others' settings with it
+    (2026-10-08). Each mod keeps its copy at mods/<mod>/user.cfg, and this
+    joins them in folder order (a setting two mods set takes the later
+    one's value). A user.cfg the player had before any mod is kept as
+    user.cfg.player and goes first. A switched-off mod's files are parked
+    outside the game, so its settings drop out on their own.
+
+    Returns the folders whose settings went in."""
+    if not install_path or not os.path.isdir(install_path):
+        return []
+    root = os.path.join(install_path, "user.cfg")
+    player = os.path.join(install_path, "user.cfg.player")
+
+    def read(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    current = read(root)
+    if current is not None and not current.startswith(KCD_CFG_HEADER) \
+            and not os.path.exists(player):
+        try:
+            os.replace(root, player)
+        except OSError as e:
+            decky.logger.warning(f"KCD: could not keep the player's user.cfg: {e}")
+            return []
+
+    mods_dir = os.path.join(install_path, KCD_MODS_DIR)
+    parts = []
+    try:
+        folders = sorted(os.listdir(mods_dir))
+    except OSError:
+        folders = []
+    for folder in folders:
+        text = read(os.path.join(mods_dir, folder, "user.cfg"))
+        if text and text.strip():
+            parts.append((folder, text.strip()))
+
+    own = read(player)
+    if not parts:
+        # No mod settings left: give the game back exactly what it had.
+        if read(root) is not None and read(root).startswith(KCD_CFG_HEADER):
+            try:
+                os.remove(root)
+            except OSError:
+                pass
+        if own is not None:
+            try:
+                os.replace(player, root)
+            except OSError:
+                pass
+        return []
+
+    lines = [KCD_CFG_HEADER, ""]
+    if own and own.strip():
+        lines += ["-- your own settings (user.cfg.player)", own.strip(), ""]
+    for folder, text in parts:
+        lines += [f"-- from {folder}", text, ""]
+    try:
+        with open(root, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+    except OSError as e:
+        decky.logger.warning(f"KCD: could not write user.cfg: {e}")
+        return []
+    return [f for f, _t in parts]
+
+
+def _kcd_rebuilds_user_cfg(fn):
+    """Rebuild Kingdom Come: Deliverance's user.cfg after `fn` (switching,
+    uninstalling, resetting): each changes which mods' copies are present.
+    A decorator, so the call keeps its own signature and source for the
+    frontend's arity check, and none of its many returns need touching."""
+    @functools.wraps(fn)
+    async def wrapper(self, *args, **kwargs):
+        result = await fn(self, *args, **kwargs)
+        try:
+            bound = inspect.signature(fn).bind(self, *args, **kwargs)
+            bound.apply_defaults()
+            a = bound.arguments
+            if a.get("game_domain") == "kingdomcomedeliverance":
+                _kcd_rebuild_user_cfg(_game_dir(a.get("install_dir", "")))
+        except Exception as e:  # noqa: BLE001 - never fail the call over this
+            decky.logger.warning(f"KCD: user.cfg rebuild skipped: {e}")
+        return result
+    return wrapper
+
+
 def _route_kcd_payload(scratch: str, mod_name: str):
     """Classify a KCD1 archive. Returns (files, error, note): files is
     [(rel to the game folder, src in scratch)], error is (kind, message)."""
@@ -8553,12 +8653,12 @@ def _route_kcd_payload(scratch: str, mod_name: str):
         for p in paks:
             files.append((f"{KCD_MODS_DIR}/{folder}/Data/{p}", os.path.join(base, p)))
 
-    # cvar tweaks go in the game folder, where the game reads them, always
-    # as lowercase user.cfg: one mod ships "User.cfg", and on SteamOS that
-    # sat beside another mod's user.cfg as a second file (2026-10-08).
+    # cvar tweaks: the mod's own copy goes in its own folder, and the game's
+    # one user.cfg is built from all of them (_kcd_rebuild_user_cfg). Each
+    # mod writing the game folder's user.cfg directly replaced the last.
     for e in entries:
         if e.lower() in KCD_ROOT_FILES and os.path.isfile(os.path.join(base, e)):
-            files.append((e.lower(), os.path.join(base, e)))
+            files.append((f"{KCD_MODS_DIR}/{folder}/user.cfg", os.path.join(base, e)))
 
     if not files:
         everything = [os.path.join(r, f) for r, _d, fs in os.walk(scratch) for f in fs]
@@ -8584,10 +8684,9 @@ def _route_kcd_payload(scratch: str, mod_name: str):
     # then lost track of two files, which outlived a reset (2026-10-08).
     # Wine reads lowercase paths fine.
     files = list({r.lower(): (r.lower(), s) for r, s in files}.values())
-    if any(r == "user.cfg" for r, _s in files):
-        note = ("This mod changes game settings through user.cfg. Only one "
-                "mod can own that file, so installing another mod that ships "
-                "one replaces it.")
+    if any(r.endswith("/user.cfg") for r, _s in files):
+        note = ("This mod changes game settings. They are merged into the "
+                "game's user.cfg with every other installed mod's.")
     return files, None, note
 
 
@@ -21027,6 +21126,7 @@ query Link($slug: String!, $domainName: String!) {
                 os.remove(archive_path)
             except OSError:
                 pass
+            _kcd_rebuild_user_cfg(install_path)
             settings = _load_settings()
             installed = settings.setdefault("installed", {}).setdefault(
                 game_domain, {}
@@ -23789,6 +23889,7 @@ query Link($slug: String!, $domainName: String!) {
         )
         return {"ok": True}
 
+    @_kcd_rebuilds_user_cfg
     async def reset_game_modding(
         self,
         game_domain: str,
@@ -28504,6 +28605,7 @@ query CollectionInstructions($slug: String!) {
             ),
         }
 
+    @_kcd_rebuilds_user_cfg
     async def set_mod_enabled(
         self,
         install_dir: str,
@@ -28979,6 +29081,7 @@ query CollectionInstructions($slug: String!) {
         )
         return {"ok": True, "moved": moved, "errors": errors}
 
+    @_kcd_rebuilds_user_cfg
     async def uninstall_mod(
         self,
         game_domain: str,

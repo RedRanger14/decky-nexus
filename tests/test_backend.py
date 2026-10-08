@@ -24752,11 +24752,11 @@ class TestKcdRouting(unittest.TestCase):
         got, _ = self._route(["Hardcore/Data/a.pak", "Normal/Data/b.pak"])
         self.assertEqual(got, ["mods/hardcore/data/a.pak", "mods/normal/data/b.pak"])
 
-    def test_user_cfg_goes_to_the_game_folder_and_says_so(self):
+    def test_a_mods_user_cfg_stays_in_its_own_folder_and_says_so(self):
         got, err = self._route(["user.cfg"], name="Bow Dot Reticle")
         self.assertIsNone(err)
-        self.assertEqual(got, ["user.cfg"])
-        self.assertIn("user.cfg", self.note)
+        self.assertEqual(got, ["mods/bow_dot_reticle/user.cfg"])
+        self.assertIn("merged", self.note)
 
     def test_nothing_recognisable_is_a_named_refusal(self):
         got, err = self._route(["savegame_backup.bin", "readme.txt"])
@@ -24777,7 +24777,60 @@ class TestKcdRouting(unittest.TestCase):
         # One mod shipped User.cfg: on SteamOS it sat beside another
         # mod's user.cfg as a second file (2026-10-08).
         got, _ = self._route(["User.cfg"], name="Ultimate Performance Graphics")
-        self.assertEqual(got, ["user.cfg"])
+        self.assertEqual(got, ["mods/ultimate_performance_graphics/user.cfg"])
+
+    def _game(self, cfgs, player=None):
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        for folder, text in cfgs.items():
+            os.makedirs(os.path.join(root, "mods", folder), exist_ok=True)
+            with open(os.path.join(root, "mods", folder, "user.cfg"), "w") as f:
+                f.write(text)
+        if player is not None:
+            with open(os.path.join(root, "user.cfg"), "w") as f:
+                f.write(player)
+        return root
+
+    def _cfg(self, root, name="user.cfg"):
+        with open(os.path.join(root, name)) as f:
+            return f.read()
+
+    def test_every_mods_settings_go_into_one_user_cfg(self):
+        # Five of the top 40 ship one; side by side they replaced each other.
+        root = self._game({"bow_dot_reticle": "wh_ui_ShowReticle = 1",
+                           "texture_streaming": "r_TexturesStreamPoolSize = 4096\n"})
+        self.assertEqual(main._kcd_rebuild_user_cfg(root),
+                         ["bow_dot_reticle", "texture_streaming"])
+        text = self._cfg(root)
+        self.assertTrue(text.startswith(main.KCD_CFG_HEADER))
+        self.assertIn("wh_ui_ShowReticle = 1", text)
+        self.assertIn("r_TexturesStreamPoolSize = 4096", text)
+
+    def test_the_players_own_user_cfg_is_kept_and_comes_first(self):
+        root = self._game({"more_fov": "cl_fov = 75"}, player="g_showHUD = 0")
+        main._kcd_rebuild_user_cfg(root)
+        self.assertEqual(self._cfg(root, "user.cfg.player"), "g_showHUD = 0")
+        text = self._cfg(root)
+        self.assertLess(text.index("g_showHUD = 0"), text.index("cl_fov = 75"))
+
+    def test_with_no_mod_settings_left_the_game_gets_its_own_back(self):
+        root = self._game({"more_fov": "cl_fov = 75"}, player="g_showHUD = 0")
+        main._kcd_rebuild_user_cfg(root)
+        shutil.rmtree(os.path.join(root, "mods", "more_fov"))
+        self.assertEqual(main._kcd_rebuild_user_cfg(root), [])
+        self.assertEqual(self._cfg(root), "g_showHUD = 0")
+        self.assertFalse(os.path.exists(os.path.join(root, "user.cfg.player")))
+        bare = self._game({"more_fov": "cl_fov = 75"})
+        main._kcd_rebuild_user_cfg(bare)
+        shutil.rmtree(os.path.join(bare, "mods", "more_fov"))
+        main._kcd_rebuild_user_cfg(bare)
+        self.assertFalse(os.path.exists(os.path.join(bare, "user.cfg")))
+
+    def test_switching_uninstalling_and_resetting_rebuild_it(self):
+        for name in ("set_mod_enabled", "uninstall_mod", "reset_game_modding"):
+            fn = getattr(main.Plugin, name)
+            self.assertTrue(hasattr(fn, "__wrapped__"), f"{name} is not wrapped")
+            # The frontend's arity check reads the real signature.
+            self.assertIn("game_domain", inspect.signature(fn).parameters)
 
     def test_a_reshade_preset_says_so(self):
         root = tempfile.mkdtemp(dir=TEST_ROOT)
