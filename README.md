@@ -28,11 +28,11 @@ session with mods running.
 4. Fallout 4
 5. Fallout: New Vegas
 6. Helldivers 2
-7. Mass Effect Legendary Edition †
+7. Mass Effect Legendary Edition
 8. Mount & Blade II: Bannerlord
-9. NieR:Automata ‡
+9. NieR:Automata
 10. Palworld
-11. Red Dead Redemption 2 ¶
+11. Red Dead Redemption 2
 12. Resident Evil 4
 13. Skyrim Special Edition
 14. Slay the Spire 2
@@ -43,17 +43,9 @@ session with mods running.
 19. Subnautica 2
 20. Subnautica: Below Zero
 21. The Witcher 3
-22. Valheim §
+22. Valheim
 
 \* Community added game. Not tested by author.
-
-† New. Played on a Deck, and mods that edit the game's own files install through an optional step in the panel. That step is newer than the rest.
-
-‡ New. Played on a Legion Go 2. Special K texture packs such as the HD Texture Pack are built into the game's own files during the install, since Special K itself does not run there.
-
-§ New. Played on a Legion Go 2, on the native Linux build. The mod loader's own log is read after each session, and mods that keep failing are switched off with the reason shown.
-
-¶ New. Played on a Legion Go 2 with a 225-mod collection. Story Mode only: switch the mod loader off in the panel before playing Red Dead Online. Mods for Lenny's Mod Loader need its zip in your Downloads folder.
 
 ### On the roadmap
 
