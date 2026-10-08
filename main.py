@@ -8410,6 +8410,10 @@ def _route_rdr2_payload_raw(scratch: str, mod_name: str):
 # Data/ folder, or loose .pak files from before mod support, made to be
 # dropped into the game's own Data folder. All of them land as
 # Mods/<name>/... exact-file records, so uninstall and reset are exact.
+# The game's own name for it, from its log: "Mods dir is 'mods'". Windows
+# does not care about case; SteamOS does, so this matches what the game
+# writes and reads.
+KCD_MODS_DIR = "mods"
 KCD_PAK_DIRS = ("data", "localization")
 KCD_ROOT_FILES = ("user.cfg",)        # cvar tweaks, read from the game folder
 _KCD_DOC_EXTS = (".txt", ".md", ".pdf", ".jpg", ".jpeg", ".png", ".gif",
@@ -8469,6 +8473,30 @@ def _kcd_reshade_ini(path: str) -> bool:
                           r"PreprocessorDefinitions)\s*=", head, re.I | re.M))
 
 
+def _kcd_keep_mods_folder(install_path: str) -> None:
+    """Stop the game moving our mods aside. On the first launch after a
+    mods folder appears, KCD renames it to mods_old ("assuming update from
+    older KCD version") unless mod_status.xml says that move already
+    happened; with modFolderWasMoved false it moves it again. Seen on the
+    Legion 2026-10-08: 30 installed mods, "0 mods loaded", twice. With
+    both flags true it loaded all 30."""
+    path = os.path.join(install_path, "mod_status.xml")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        text = ""
+    if re.search(r"<modFolderWasMoved>\s*true", text, re.I) and re.search(
+            r"<playerWasNotified>\s*true", text, re.I):
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("<ModStatus>\n  <modFolderWasMoved>true</modFolderWasMoved>\n"
+                     "  <playerWasNotified>true</playerWasNotified>\n</ModStatus>\n")
+    except OSError as e:
+        decky.logger.warning(f"KCD: could not write mod_status.xml: {e}")
+
+
 def _route_kcd_payload(scratch: str, mod_name: str):
     """Classify a KCD1 archive. Returns (files, error, note): files is
     [(rel to the game folder, src in scratch)], error is (kind, message)."""
@@ -8503,12 +8531,12 @@ def _route_kcd_payload(scratch: str, mod_name: str):
         for child in sorted(os.listdir(mods_dir)):
             cp = os.path.join(mods_dir, child)
             if os.path.isdir(cp):
-                files += _kcd_files_under(cp, f"Mods/{child}")
+                files += _kcd_files_under(cp, f"{KCD_MODS_DIR}/{child}")
             elif child.lower() == "mod_order.txt":
                 continue      # the player's own load order is not ours to replace
     # 2. The archive root is itself one mod folder (manifest or Data/ at top).
     elif _kcd_is_mod_dir(base):
-        files += _kcd_files_under(base, f"Mods/{folder}")
+        files += _kcd_files_under(base, f"{KCD_MODS_DIR}/{folder}")
         files = [(r, s) for r, s in files
                  if r.split("/")[-1].lower() not in KCD_ROOT_FILES
                  or r.count("/") > 2]
@@ -8518,12 +8546,12 @@ def _route_kcd_payload(scratch: str, mod_name: str):
                     if os.path.isdir(os.path.join(base, e))
                     and _kcd_is_mod_dir(os.path.join(base, e))]
         for d in mod_dirs:
-            files += _kcd_files_under(os.path.join(base, d), f"Mods/{d}")
+            files += _kcd_files_under(os.path.join(base, d), f"{KCD_MODS_DIR}/{d}")
         # 4. Loose .pak files: pre-1.9 mods made for the game's Data folder.
         paks = [e for e in entries if e.lower().endswith(".pak")
                 and os.path.isfile(os.path.join(base, e))]
         for p in paks:
-            files.append((f"Mods/{folder}/Data/{p}", os.path.join(base, p)))
+            files.append((f"{KCD_MODS_DIR}/{folder}/Data/{p}", os.path.join(base, p)))
 
     # cvar tweaks go in the game folder, where the game reads them, always
     # as lowercase user.cfg: one mod ships "User.cfg", and on SteamOS that
@@ -20977,6 +21005,7 @@ query Link($slug: String!, $domainName: String!) {
                         "unsupported_tool" if kind == "tool" else "unsupported_layout": True}
             _record_vanilla_baseline(
                 game_domain, mods_path, app_id, None, install_path)
+            _kcd_keep_mods_folder(install_path)
             installed_rel = []
             for rel, src in kc_files:
                 dst = os.path.join(install_path, *rel.split("/"))

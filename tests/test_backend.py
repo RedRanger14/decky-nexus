@@ -24720,37 +24720,37 @@ class TestKcdRouting(unittest.TestCase):
         return sorted(r for r, _s in got), err
 
     def test_a_whole_mods_tree_keeps_its_folder(self):
-        got, err = self._route(["Mods/BetterHair/mod.manifest",
-                                "Mods/BetterHair/Data/hair.pak",
-                                "Mods/mod_order.txt", "readme.txt"])
+        got, err = self._route(["mods/BetterHair/mod.manifest",
+                                "mods/BetterHair/Data/hair.pak",
+                                "mods/mod_order.txt", "readme.txt"])
         self.assertIsNone(err)
-        self.assertEqual(got, ["Mods/BetterHair/Data/hair.pak",
-                               "Mods/BetterHair/mod.manifest"])
+        self.assertEqual(got, ["mods/BetterHair/Data/hair.pak",
+                               "mods/BetterHair/mod.manifest"])
 
     def test_a_wrapped_mods_tree_is_unwrapped(self):
         got, _ = self._route(["Better Hair v1.2/Mods/BetterHair/Data/hair.pak"])
-        self.assertEqual(got, ["Mods/BetterHair/Data/hair.pak"])
+        self.assertEqual(got, ["mods/BetterHair/Data/hair.pak"])
 
     def test_a_mod_folder_on_its_own_is_kept_as_named(self):
         got, _ = self._route(["BetterHair/mod.manifest", "BetterHair/Data/hair.pak",
                               "BetterHair/Localization/english_xml.pak"])
-        self.assertEqual(got, ["Mods/BetterHair/Data/hair.pak",
-                               "Mods/BetterHair/Localization/english_xml.pak",
-                               "Mods/BetterHair/mod.manifest"])
+        self.assertEqual(got, ["mods/BetterHair/Data/hair.pak",
+                               "mods/BetterHair/Localization/english_xml.pak",
+                               "mods/BetterHair/mod.manifest"])
 
     def test_a_bare_data_folder_gets_a_folder_named_after_the_mod(self):
         got, _ = self._route(["Data/zzz_hair.pak", "Screenshots/a.jpg"])
-        self.assertEqual(got, ["Mods/better_hair_v1_2/Data/zzz_hair.pak"])
+        self.assertEqual(got, ["mods/better_hair_v1_2/Data/zzz_hair.pak"])
 
     def test_loose_paks_go_into_a_data_folder(self):
         # Pre-1.9 mods were made to be dropped into the game's own Data.
         got, _ = self._route(["zzz_unlimited_saving.pak", "Readme.txt"],
                              name="Unlimited Saving")
-        self.assertEqual(got, ["Mods/unlimited_saving/Data/zzz_unlimited_saving.pak"])
+        self.assertEqual(got, ["mods/unlimited_saving/Data/zzz_unlimited_saving.pak"])
 
     def test_variant_folders_side_by_side_each_become_a_mod(self):
         got, _ = self._route(["Hardcore/Data/a.pak", "Normal/Data/b.pak"])
-        self.assertEqual(got, ["Mods/Hardcore/Data/a.pak", "Mods/Normal/Data/b.pak"])
+        self.assertEqual(got, ["mods/Hardcore/Data/a.pak", "mods/Normal/Data/b.pak"])
 
     def test_user_cfg_goes_to_the_game_folder_and_says_so(self):
         got, err = self._route(["user.cfg"], name="Bow Dot Reticle")
@@ -24784,6 +24784,39 @@ class TestKcdRouting(unittest.TestCase):
         self.assertEqual(got, [])
         self.assertEqual(err[0], "tool")
         self.assertIn("program", err[1])
+
+    def test_the_mods_folder_is_marked_so_the_game_keeps_it(self):
+        # Without this the game moved 30 installed mods to mods_old and
+        # loaded none, twice (Legion, 2026-10-08).
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        main._kcd_keep_mods_folder(root)
+        with open(os.path.join(root, "mod_status.xml")) as f:
+            text = f.read()
+        self.assertIn("<modFolderWasMoved>true</modFolderWasMoved>", text)
+        self.assertIn("<playerWasNotified>true</playerWasNotified>", text)
+        # The game's own "moved, not notified" and our earlier "false" are
+        # both rewritten; a file that already says true is left alone.
+        for stale in ("<ModStatus><modFolderWasMoved>false</modFolderWasMoved>"
+                      "<playerWasNotified>true</playerWasNotified></ModStatus>",
+                      "<ModStatus><modFolderWasMoved>true</modFolderWasMoved>"
+                      "<playerWasNotified>false</playerWasNotified></ModStatus>"):
+            with open(os.path.join(root, "mod_status.xml"), "w") as f:
+                f.write(stale)
+            main._kcd_keep_mods_folder(root)
+            with open(os.path.join(root, "mod_status.xml")) as f:
+                self.assertNotIn("false", f.read())
+        good = "<ModStatus><modFolderWasMoved> true</modFolderWasMoved><playerWasNotified>true</playerWasNotified></ModStatus>"
+        with open(os.path.join(root, "mod_status.xml"), "w") as f:
+            f.write(good)
+        main._kcd_keep_mods_folder(root)
+        with open(os.path.join(root, "mod_status.xml")) as f:
+            self.assertEqual(f.read(), good)
+
+    def test_mods_go_in_the_lowercase_folder_the_game_reads(self):
+        self.assertEqual(main.KCD_MODS_DIR, "mods")
+        src = inspect.getsource(main.Plugin._install_mod_inner) if hasattr(
+            main.Plugin, "_install_mod_inner") else open(main.__file__, encoding="utf-8").read()
+        self.assertIn("_kcd_keep_mods_folder(install_path)", src)
 
     def test_folder_names_are_plain(self):
         self.assertEqual(main._kcd_folder_name("Better Hair v1.2 (Female)"),
