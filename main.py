@@ -21154,7 +21154,7 @@ query Link($slug: String!, $domainName: String!) {
             _save_settings(settings)
             decky.logger.info(
                 f"installed KCD {mod_name!r}: {len(installed_rel)} file(s): "
-                f"{sorted({r.split('/')[1] if r.startswith('Mods/') else r for r in installed_rel})}")
+                f"{sorted({r.split('/')[1] if r.startswith(KCD_MODS_DIR + '/') else r for r in installed_rel})}")
             await _emit_progress(mod_id, "done", 100)
             out = {"ok": True, "folder": record_key}
             if kc_note:
