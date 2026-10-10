@@ -7385,15 +7385,61 @@ class TestBrowseHidesKnownBrokenMods(unittest.TestCase):
         kept, _hidden = main._hide_known_broken(self.DOMAIN, 1, self._mods())
         self.assertEqual(len(kept), 2)
 
-    def test_search_is_unaffected_by_the_highlights_rule(self):
-        # Hiding is a recommendation decision, not a pretence the mod does
-        # not exist - anyone searching for it by name still finds it.
-        import re as _re
+    def _get_mods(self, search):
+        """get_mods against a fake API that returns both mods."""
+        nodes = [{"modId": 284, "name": "Relics Reminder", "adultContent": False},
+                 {"modId": 103, "name": "BaseLib", "adultContent": False}]
+
+        class Resp:
+            status = 200
+
+            async def json(self):
+                return {"data": {"mods": {"nodesCount": 2, "nodes": nodes}}}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        class Session:
+            def __init__(self, *a, **k):
+                pass
+
+            def post(self, *a, **k):
+                return Resp()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        with mock.patch.object(main.aiohttp, "ClientSession", Session):
+            r = run(main.Plugin().get_mods(self.DOMAIN, "endorsements", 10, 0,
+                                           search, 1, "", 0))
+        return [m.get("name") for m in r.get("mods") or []]
+
+    def test_search_finds_a_mod_the_page_would_hide(self):
+        # Issue #43: 138 verdicts on one device hid Virtual Atelier from a
+        # search by name. The browse rows still leave it out; a search,
+        # which asks for the mod by name, does not.
+        self.assertEqual(self._get_mods(""), ["BaseLib"])
+        self.assertEqual(self._get_mods("relics"), ["Relics Reminder", "BaseLib"])
+
+    def test_switching_a_mod_back_on_clears_its_broken_verdict(self):
+        self.assertTrue(main._clear_broken_verdict(self.DOMAIN, 284))
+        kept, hidden = main._hide_known_broken(self.DOMAIN, 1, self._mods())
+        self.assertEqual(hidden, [])
+        # A "stale" verdict (wants an update) is still true after a re-enable.
+        main._record_mod_verdicts(self.DOMAIN, self.BUILD, [
+            {"mod_id": 103, "name": "BaseLib"}], "stale")
+        self.assertFalse(main._clear_broken_verdict(self.DOMAIN, 103))
+        fn = main.Plugin.set_mod_enabled
+        self.assertIn("enabled", inspect.signature(fn).parameters)
         src = open(main.__file__, encoding="utf-8").read()
-        start = src.index("def _hide_known_broken")
-        # Whitespace-normalised: the sentence wraps across source lines.
-        window = _re.sub(r"\s+", " ", src[start:start + 1200]).lower()
-        self.assertIn("still reachable by search", window)
+        self.assertIn("@_enabling_clears_broken_verdict\n    async def set_mod_enabled(",
+                      src.replace("\r\n", "\n"))
 
 
 class TestDownloadSurvivesConnectionDrops(unittest.TestCase):

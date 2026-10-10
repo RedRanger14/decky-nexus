@@ -5058,6 +5058,50 @@ def _collection_downgrade_reason(description: str) -> str:
     return ""
 
 
+def _clear_broken_verdict(game_domain: str, mod_id) -> bool:
+    """Forget that a mod was seen failing on this device. Only "broken":
+    a "stale" verdict (wants an update) is still true after a re-enable."""
+    try:
+        key = str(int(mod_id))
+    except (TypeError, ValueError):
+        return False
+    settings = _load_settings()
+    store = (settings.get("mod_verdicts") or {}).get(game_domain) or {}
+    if (store.get(key) or {}).get("state") != "broken":
+        return False
+    store.pop(key, None)
+    _save_settings(settings)
+    return True
+
+
+def _enabling_clears_broken_verdict(fn):
+    """Switching a mod back ON is the player overruling a "broken" verdict,
+    so it is cleared. Verdicts otherwise live until the game updates, and
+    a reset keeps them on purpose: issue #43 had 138 mods marked broken,
+    all of them switched back on and running, and every one still hidden
+    from the store. If the mod really is broken, the next session's log
+    blames it again and the verdict comes back. A decorator, like the
+    other two on set_mod_enabled, so its signature stays intact."""
+    @functools.wraps(fn)
+    async def wrapper(self, *args, **kwargs):
+        result = await fn(self, *args, **kwargs)
+        try:
+            a = inspect.signature(fn).bind(self, *args, **kwargs).arguments
+            if a.get("enabled") and a.get("game_domain") and \
+                    isinstance(result, dict) and result.get("ok"):
+                rec = ((_load_settings().get("installed") or {}).get(
+                    a["game_domain"]) or {}).get(a.get("folder")) or {}
+                if rec.get("mod_id") and _clear_broken_verdict(
+                        a["game_domain"], rec["mod_id"]):
+                    decky.logger.info(
+                        f"{a.get('folder')!r} switched back on: its broken "
+                        "verdict is cleared")
+        except Exception as e:  # noqa: BLE001 - never fail the switch over this
+            decky.logger.warning(f"verdict clear skipped: {e}")
+        return result
+    return wrapper
+
+
 def _hide_known_broken(game_domain: str, app_id: int, mods: list) -> tuple:
     """Drop mods this device has watched fail on the build it is running.
 
@@ -17715,8 +17759,13 @@ class Plugin:
                 # and every backfilled page silently skipped mods.
                 for node in raw:
                     src_offset += 1
+                    # Searching asks for a mod BY NAME, so nothing is hidden:
+                    # _hide_known_broken is for what the page recommends.
+                    # Issue #43: 138 verdicts on one device hid Virtual
+                    # Atelier and "many other very popular mods" from search.
                     kept, dropped = _hide_known_broken(
-                        game_domain, app_id, _gate_adult_nodes([node])
+                        game_domain, 0 if search else app_id,
+                        _gate_adult_nodes([node])
                     )
                     mods.extend(kept)
                     hidden.extend(dropped)
@@ -26533,8 +26582,15 @@ query CollectionInstructions($slug: String!) {
             f"- Mods installed: {len(records)} ({len(enabled)} enabled)",
         ]
         if verdicts:
+            # By kind: "broken" is switched off and kept out of the store,
+            # "stale" only wants an update. #43 reported 138 with no way to
+            # tell which.
+            kinds = {}
+            for v in verdicts.values():
+                kinds[v.get("state") or "broken"] = kinds.get(v.get("state") or "broken", 0) + 1
             lines.append(
-                f"- Mods recorded as broken on this build: {len(verdicts)}"
+                f"- Mods recorded as broken on this build: {len(verdicts)} ("
+                + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items())) + ")"
             )
         srcs = sorted({r.get("source") or "manual" for r in records.values()})
         if srcs:
@@ -28786,6 +28842,7 @@ query CollectionInstructions($slug: String!) {
         }
 
     @_kcd_rebuilds_user_cfg
+    @_enabling_clears_broken_verdict
     async def set_mod_enabled(
         self,
         install_dir: str,
