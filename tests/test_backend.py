@@ -25061,6 +25061,20 @@ class TestKcdRouting(unittest.TestCase):
             main.Plugin, "_install_mod_inner") else open(main.__file__, encoding="utf-8").read()
         self.assertIn("_kcd_keep_mods_folder(install_path)", src)
 
+    def test_kcd2_shares_the_router(self):
+        # The top 40 KCD2 mods on Nexus (2026-10-10) are packed like KCD1's.
+        self.assertIn("kingdomcomedeliverance2", main.KCD_DOMAINS)
+        got, _ = self._route(["usii/Data/USII.pak", "usii/Localization/English_xml.pak",
+                              "usii/mod.manifest"], name="Unlimited Saving II")
+        self.assertEqual(got, ["mods/usii/data/usii.pak",
+                               "mods/usii/localization/english_xml.pak",
+                               "mods/usii/mod.manifest"])
+        # FPS Boost: a mod folder holding only mod.cfg and its manifest.
+        got, _ = self._route(["enableasynccompute/mod.cfg",
+                              "enableasynccompute/mod.manifest"], name="FPS Boost")
+        self.assertEqual(got, ["mods/enableasynccompute/mod.cfg",
+                               "mods/enableasynccompute/mod.manifest"])
+
     def test_folder_names_are_plain(self):
         self.assertEqual(main._kcd_folder_name("Better Hair v1.2 (Female)"),
                          "better_hair_v1_2_female")

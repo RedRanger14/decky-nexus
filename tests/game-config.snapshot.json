@@ -514,6 +514,26 @@
     ]
   },
   {
+    "appId": "1771300",
+    "displayName": "Kingdom Come: Deliverance II",
+    "nexusDomain": "kingdomcomedeliverance2",
+    "installDirName": "KingdomComeDeliverance2",
+    "modsSubdir": "._nexus_mods_unused",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "1962700",
     "displayName": "Subnautica 2",
     "nexusDomain": "subnautica2",

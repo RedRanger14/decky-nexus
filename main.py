@@ -8460,6 +8460,10 @@ def _route_rdr2_payload_raw(scratch: str, mod_name: str):
 # does not care about case; SteamOS does, so this matches what the game
 # writes and reads.
 KCD_MODS_DIR = "mods"
+# Both games: KCD2 mods are packed exactly like KCD1's (mod.manifest,
+# Data/*.pak, Localization/*.pak, the odd user.cfg), read from the top 40
+# on Nexus 2026-10-10.
+KCD_DOMAINS = ("kingdomcomedeliverance", "kingdomcomedeliverance2")
 KCD_PAK_DIRS = ("data", "localization")
 KCD_ROOT_FILES = ("user.cfg",)        # cvar tweaks, read from the game folder
 _KCD_DOC_EXTS = (".txt", ".md", ".pdf", ".jpg", ".jpeg", ".png", ".gif",
@@ -8729,7 +8733,7 @@ def _kcd_rebuilds_user_cfg(fn):
             bound = inspect.signature(fn).bind(self, *args, **kwargs)
             bound.apply_defaults()
             a = bound.arguments
-            if a.get("game_domain") == "kingdomcomedeliverance":
+            if a.get("game_domain") in KCD_DOMAINS:
                 _kcd_rebuild_configs(_game_dir(a.get("install_dir", "")))
         except Exception as e:  # noqa: BLE001 - never fail the call over this
             decky.logger.warning(f"KCD: user.cfg rebuild skipped: {e}")
@@ -21325,7 +21329,7 @@ query Link($slug: String!, $domainName: String!) {
 
         # Kingdom Come: Deliverance: every mod becomes Mods/<name>/...,
         # recorded file by file. Routed by game, like RDR2.
-        if game_domain == "kingdomcomedeliverance":
+        if game_domain in KCD_DOMAINS:
             kc_files, kc_err, kc_note = _route_kcd_payload(scratch, mod_name)
             if kc_err:
                 kind, message = kc_err

@@ -1062,6 +1062,23 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // installed and loaded in game on the Legion; Unlimited Saving (A/B),
     // Unlimited Weight and SimpleHUD seen working; Michael played it.
   },
+  1771300: {
+    appId: 1771300,
+    displayName: "Kingdom Come: Deliverance II",
+    nexusDomain: "kingdomcomedeliverance2", // verified against the Nexus API: game id 7286
+    // Steam's install folder for 1771300. TODO verify on the Legion once
+    // it is installed, with the exe path and process name.
+    installDirName: "KingdomComeDeliverance2",
+    // Mods are packed exactly like KCD1's (the top 40 on Nexus, 2026-10-10):
+    // routed by game into mods/<name>/ as exact-file records, like KCD1.
+    modsSubdir: "._nexus_mods_unused",
+    moddedSaveWarning: false,
+    processName: "KingdomCome.exe",
+    underConstruction:
+      "Kingdom Come: Deliverance II support is new. Mods install the same " +
+      "way as for the first game; it has not been played with mods on this " +
+      "device yet.",
+  },
   1623730: {
     appId: 1623730,
     displayName: "Palworld",
