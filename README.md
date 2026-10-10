@@ -54,6 +54,7 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
+- Kingdom Come: Deliverance (marked under construction in the plugin)
 
 ### Requested, not started
 
@@ -64,7 +65,6 @@ appear in the plugin until they do.
 - Dragon's Dogma 2
 - Final Fantasy XII: The Zodiac Age
 - Horizon Forbidden West
-- Kingdom Come: Deliverance
 - Kingdom Come: Deliverance II
 - Middle-earth: Shadow of Mordor
 - Middle-earth: Shadow of War
