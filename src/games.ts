@@ -1058,7 +1058,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     modsSubdir: "._nexus_mods_unused",
     moddedSaveWarning: false,
     processName: "KingdomCome.exe",
-    underConstruction: "Kingdom Come: Deliverance support is new.",
+    // Out of construction 2026-10-10: the top 10 mods and top 3 collections
+    // installed and loaded in game on the Legion; Unlimited Saving (A/B),
+    // Unlimited Weight and SimpleHUD seen working; Michael played it.
   },
   1623730: {
     appId: 1623730,

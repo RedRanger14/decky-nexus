@@ -589,6 +589,18 @@ test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
   assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
 });
 
+// Out of construction 2026-10-10, after the top 10 mods and top 3
+// collections were verified in game on the Legion.
+test("KCD: no construction badge, and listed as supported", () => {
+  const games = readFileSync("src/games.ts", "utf8");
+  const kcd = games.slice(games.indexOf("nexusDomain: \"kingdomcomedeliverance\""));
+  const block = kcd.slice(0, kcd.indexOf("\n  },\n"));
+  assert.doesNotMatch(block, /underConstruction:/);
+  const readme = readFileSync("README.md", "utf8");
+  const supported = readme.slice(readme.indexOf("## Supported games"), readme.indexOf("### On the roadmap"));
+  assert.match(supported, /\d+\. Kingdom Come: Deliverance\r?\n/);
+});
+
 test("RDR2: RedemptiVizion 6.0 installs with its seven boot-breakers off", async () => {
   const { collectionAutoOff } = await import("../.test-build/compat.js");
   // Bisected on the Legion 2026-10-05 to 10-08, judged by screenshot.
