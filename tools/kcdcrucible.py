@@ -100,9 +100,14 @@ def log_summary():
         return "no kcd.log"
     loaded = re.findall(r"\[Mod\] (\d+) mods loaded from mods/", text)
     paks = len(re.findall(r"Pak 'mods\\", text, re.I))
-    engine = len(re.findall(r"Pak 'engine\\[^']*_mod\.pak' is opened", text, re.I))
+    # Any engine pak beyond the game's own five: Better Rain is *_mod.pak on
+    # KCD1 and *_BR.pak on KCD2.
+    base = {"engine", "shadercache", "shadercachestartup", "shaders", "shadersbin"}
+    engine = len([n for n in re.findall(r"Pak 'engine\\([^'\\]+)\.pak' is opened", text, re.I)
+                  if n.lower() not in base])
+    # Whole words: a mod called easysmithing_nofailure is not an error.
     errors = [l for l in text.splitlines()
-              if re.search(r"\[Mod\].*(error|fail|cannot)", l, re.I)]
+              if re.search(r"\[Mod\].*\b(error|failed|cannot)\b", l, re.I)]
     return (f"mods loaded {loaded[-1] if loaded else '?'}, mod paks opened {paks}, "
             f"engine mod paks {engine}, mod errors {len(errors)}"
             + ("".join("\n  " + e[:160] for e in errors[:5])))
