@@ -589,6 +589,19 @@ test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
   assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
 });
 
+// Henry From Skalitz (KCD2), 2026-10-10: LuaDB was skipped as "could not
+// tell where" before it became KCD2's loader, and that old skip both hid it
+// from the page's count and kept claiming it could not be placed.
+test("a missing loader is never hidden by an earlier skip", () => {
+  const coll = readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(coll, /const pageAttention = attention\.filter\(\(a\) => !loaderIds\.has\(a\.mod_id\)\)/);
+  assert.match(coll, /const attentionIds = new Set\(pageAttention\.map/);
+  assert.match(coll, /const layoutSkips = pageAttention\.filter/);
+  const games = readFileSync("src/games.ts", "utf8");
+  const kcd2 = games.slice(games.indexOf("nexusDomain: \"kingdomcomedeliverance2\""));
+  assert.match(kcd2.slice(0, 3000), /nexusModId: 1523/, "LuaDB is KCD2's loader");
+});
+
 // Out of construction 2026-10-10, after the top 10 mods and top 3
 // collections were verified in game on the Legion.
 test("KCD: no construction badge, and listed as supported", () => {

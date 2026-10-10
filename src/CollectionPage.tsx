@@ -965,28 +965,33 @@ export function CollectionPage() {
   const fileIn = (f: { modId: number; fileId: number }) =>
     fileCountsInstalled(f, installedIds, installedFiles, pinnedFiles);
 
-  const attentionIds = new Set(attention.map((a) => a.file_id));
+  // A loader is never "skipped" for good: if it is not on disk it is
+  // missing, whatever an earlier run decided. LuaDB was refused as "could
+  // not tell where" before it became KCD2's loader, and that old skip hid
+  // it from the count and kept saying so after it went in (2026-10-10).
+  const pageAttention = attention.filter((a) => !loaderIds.has(a.mod_id));
+  const attentionIds = new Set(pageAttention.map((a) => a.file_id));
   // Actionable = Finish setup can do something: choices/wizards get
   // their modals. Script conflicts are NOT retryable by default now -
   // the second mod is skipped to keep the game bootable (auto-merge
   // proved able to break boot), so they're a note, not an action.
-  const actionable = attention.filter(isActionableAttention);
+  const actionable = pageAttention.filter(isActionableAttention);
   const actionableIds = new Set(actionable.map((a) => a.file_id));
-  const toolSkips = attention.filter((a) => a.reason === "tool");
-  const emptySkips = attention.filter((a) => a.reason === "empty");
+  const toolSkips = pageAttention.filter((a) => a.reason === "tool");
+  const emptySkips = pageAttention.filter((a) => a.reason === "empty");
   // Only claim we switched things off when we actually did - this
   // collection's note said so while nothing had been parked.
-  const parkedForExternal = attention.filter(
+  const parkedForExternal = pageAttention.filter(
     (a) => a.reason === "needs_external"
   ).length;
   // Mods proven to stop THIS game booting on SteamOS. Not a failure to
   // retry and not something Finish setup can resolve - the collection is
   // usable without them and the page has to say which and why, or the
   // user is left with mods that are simply, silently absent.
-  const brokenSkips = attention.filter((a) => a.reason === "incompatible");
-  const conflictSkips = attention.filter((a) => a.reason === "conflict");
-  const layoutSkips = attention.filter((a) => a.reason === "layout");
-  const nothingSkips = attention.filter((a) => a.reason === "nothing");
+  const brokenSkips = pageAttention.filter((a) => a.reason === "incompatible");
+  const conflictSkips = pageAttention.filter((a) => a.reason === "conflict");
+  const layoutSkips = pageAttention.filter((a) => a.reason === "layout");
+  const nothingSkips = pageAttention.filter((a) => a.reason === "nothing");
 
   // Entries, to match every other number on this page - see
   // collectionOwnedCount for why the record count read as 92 missing.
