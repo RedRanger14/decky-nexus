@@ -10,6 +10,7 @@ Runs ON the device (beside bg3pad.py, the uinput pad daemon):
   python3 kcdcrucible.py press A [ms]    one pad press (HOLD_X 2000 etc.)
   python3 kcdcrucible.py shot NAME       screenshot to /tmp/kcd-NAME.png
   python3 kcdcrucible.py quit            close the game and the launcher
+  python3 kcdcrucible.py --kcd2 boot     the same for Kingdom Come: Deliverance II
 
 Learned on the Legion, 2026-10-08:
 * The game process's comm is "Main" (its main thread), not KingdomCome.exe.
@@ -25,10 +26,15 @@ import subprocess
 import sys
 import time
 
-APPID = "379430"
-GAME = "/home/deck/.local/share/Steam/steamapps/common/KingdomComeDeliverance"
+# Either game: pass --kcd2 first for Kingdom Come: Deliverance II.
+KCD2 = "--kcd2" in sys.argv
+if KCD2:
+    sys.argv.remove("--kcd2")
+APPID = "1771300" if KCD2 else "379430"
+GAME = ("/home/deck/.local/share/Steam/steamapps/common/"
+        + ("KingdomComeDeliverance2" if KCD2 else "KingdomComeDeliverance"))
 PAD = "/home/deck/bg3pad.py"
-MENU_RSS_KB = 3_000_000
+MENU_RSS_KB = 1_500_000  # KCD2 sits at ~1.6 GB on its menu, KCD1 ~3.1 GB
 
 
 def sh(args, timeout=30):
