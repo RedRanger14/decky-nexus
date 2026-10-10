@@ -24627,6 +24627,73 @@ class TestFomodReplicatedFileSet(unittest.TestCase):
         self.assertEqual(r["fomod_token"], "tok35b")
 
 
+class TestOneInstallPerFile(unittest.TestCase):
+    """Issue #42: the same mod file installed twice at once shares one
+    .part and one extraction folder, and one run deleted the other's tree
+    mid-write ("bsdtar: Failed to create dir")."""
+
+    class _Fake:
+        def __init__(self):
+            self.active, self.peak, self.order = {}, {}, []
+
+        @main._one_install_per_file
+        async def install(self, game_domain, mod_id, file_id, tag=""):
+            key = (mod_id, file_id)
+            self.active[key] = self.active.get(key, 0) + 1
+            self.peak[key] = max(self.peak.get(key, 0), self.active[key])
+            self.order.append(("start", tag))
+            await asyncio.sleep(0.05)
+            self.order.append(("end", tag))
+            self.active[key] -= 1
+            return tag
+
+    def setUp(self):
+        main._FILE_LOCKS.clear()
+
+    def test_the_same_file_runs_one_at_a_time_and_both_finish(self):
+        f = self._Fake()
+
+        async def go():
+            return await asyncio.gather(f.install("kcd", 1410, 6723, tag="a"),
+                                        f.install("kcd", 1410, 6723, tag="b"))
+        self.assertEqual(run(go()), ["a", "b"], "each returns its own result")
+        self.assertEqual(f.peak[(1410, 6723)], 1, "never two at once")
+        self.assertEqual(f.order, [("start", "a"), ("end", "a"),
+                                   ("start", "b"), ("end", "b")])
+
+    def test_different_files_still_run_together(self):
+        f = self._Fake()
+
+        async def go():
+            await asyncio.gather(f.install("kcd", 1, 10, tag="x"),
+                                 f.install("kcd", 1, 11, tag="y"))
+        run(go())
+        self.assertEqual(f.order[:2], [("start", "x"), ("start", "y")])
+
+    def test_the_installer_is_wrapped_and_keeps_its_signature(self):
+        fn = main.Plugin._install_mod_inner
+        self.assertTrue(hasattr(fn, "__wrapped__"))
+        self.assertIn("file_id", inspect.signature(fn).parameters)
+
+    def test_extract_ahead_steps_aside_while_the_file_installs(self):
+        downloads = []
+
+        async def no_download(*a, **k):
+            downloads.append(a)
+            return "should not download", ""
+
+        async def go():
+            lock = main._file_lock(1410, 6723)
+            async with lock:
+                with mock.patch.object(main, "_download_archive", no_download), \
+                        mock.patch.object(main, "_load_settings", lambda: {"api_key": "k"}):
+                    return await main.Plugin().prepare_mod_file(
+                        "kingdomcomedeliverance", 1410, 6723, "x.zip")
+        r = run(go())
+        self.assertEqual(r, {"ok": False, "error": "already installing"})
+        self.assertEqual(downloads, [], "no second download of the same .part")
+
+
 class TestFomodRetryKeepsItsExtraction(unittest.TestCase):
     """Scratch dirs are named per mod file, so retrying a wizard abandoned
     over FOMOD_TTL_SECONDS ago re-extracts into the folder the stale entry

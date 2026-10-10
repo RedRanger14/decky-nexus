@@ -13796,6 +13796,47 @@ def _free_disk_gb(path: str) -> float:
 PREPARED_MARKER = ".decky-prepared"
 
 
+# One install of a mod FILE at a time. Its download (.part), extraction
+# folder (_extract_scratch) and install all live at paths named only by
+# mod and file id, so two runs of the same file at once collide: one
+# deletes the other's extraction mid-write ("bsdtar: Failed to create dir
+# ... No such file or directory", issue #42) and two downloads append to
+# one .part. Found by mjb-it while fixing #40. A collection run already
+# waits for its own prefetch; this covers everything else: a manual
+# install during a collection, a double tap, a retry while the first is
+# still going, two collections sharing a mod.
+_FILE_LOCKS: dict = {}
+
+
+def _file_lock(mod_id, file_id) -> asyncio.Lock:
+    key = (int(mod_id), int(file_id))
+    lock = _FILE_LOCKS.get(key)
+    if lock is None:
+        lock = _FILE_LOCKS[key] = asyncio.Lock()
+    return lock
+
+
+def _one_install_per_file(fn):
+    """Serialise calls of `fn` for the same (mod_id, file_id). A second
+    install of a file waits for the first and then runs as normal, so
+    each still returns its own honest result."""
+    @functools.wraps(fn)
+    async def wrapper(self, *args, **kwargs):
+        try:
+            bound = inspect.signature(fn).bind(self, *args, **kwargs)
+            key = (bound.arguments["mod_id"], bound.arguments["file_id"])
+        except (TypeError, KeyError):
+            return await fn(self, *args, **kwargs)
+        lock = _file_lock(*key)
+        if lock.locked():
+            decky.logger.info(
+                f"install of {key[0]}/{key[1]} waits: the same file is "
+                "already being installed")
+        async with lock:
+            return await fn(self, *args, **kwargs)
+    return wrapper
+
+
 def _extract_scratch(mod_id: int, file_id: int) -> str:
     """Where a mod file is extracted before it is committed to the game.
     Shared by the installer and the extract-ahead worker - the names MUST
@@ -19662,6 +19703,21 @@ query Link($slug: String!, $domainName: String!) {
         api_key = _load_settings().get("api_key")
         if not api_key:
             return {"ok": False, "error": "Not signed in"}
+        lock = _file_lock(mod_id, file_id)
+        if lock.locked():
+            # This file is being installed right now: downloading or
+            # extracting ahead would write the same .part and delete that
+            # install's tree under it (#42). The install does its own;
+            # nothing is lost by stepping aside.
+            return {"ok": False, "error": "already installing"}
+        async with lock:
+            return await self._prepare_locked(game_domain, mod_id, file_id,
+                                              file_name, api_key)
+
+    async def _prepare_locked(self, game_domain, mod_id, file_id, file_name,
+                              api_key) -> dict:
+        """prepare_mod_file's download and extraction, holding the file's
+        lock."""
         err, archive_path = await _download_archive(
             game_domain, mod_id, file_id, file_name, api_key
         )
@@ -19758,6 +19814,7 @@ query Link($slug: String!, $domainName: String!) {
         await _emit_progress(mod_id, "done", 100)
         return {"ok": True, "folder": record_key}
 
+    @_one_install_per_file
     async def _install_mod_inner(
         self,
         game_domain: str,
