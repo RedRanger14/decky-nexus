@@ -1074,6 +1074,26 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     modsSubdir: "._nexus_mods_unused",
     moddedSaveWarning: false,
     processName: "KingdomCome.exe",
+    // LuaDB (kcd2db) is the script library some mods need (KCDUtils and
+    // the ENHANCED weather overhaul in Henry From Skalitz). Its archive,
+    // read on the Legion 2026-10-10, is kcd2db.asi plus dinput8.dll, an ASI
+    // loader: native code for beside the exe, which Wine only loads with
+    // the dinput8 override, like RDR2's. Installed when a collection pins
+    // it or from Step 1; most KCD2 mods do not need it, so not always.
+    framework: {
+      name: "LuaDB",
+      detectFile: "Bin/Win64MasterMasterSteamPGO/kcd2db.asi",
+      url: "nexusmods.com/kingdomcomedeliverance2/mods/1523",
+      nexusModId: 1523,
+      installKind: "copyRoot",
+      installSubdir: "Bin/Win64MasterMasterSteamPGO",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
+      // copyRoot keeps no manifest, so these prefixes ARE the manifest.
+      cleanupPrefixes: [
+        "Bin/Win64MasterMasterSteamPGO/kcd2db.asi",
+        "Bin/Win64MasterMasterSteamPGO/dinput8.dll",
+      ],
+    },
     underConstruction:
       "Kingdom Come: Deliverance II support is new. Mods install the same " +
       "way as for the first game; it has not been played with mods on this " +

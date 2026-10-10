@@ -522,16 +522,20 @@
     "pluginsTxtSubpath": null,
     "pluginsTxtStyle": null,
     "installMode": null,
-    "frameworkName": null,
-    "launchOptionsTemplate": null,
-    "prefixTools": [],
+    "frameworkName": "LuaDB",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dinput8=n,b\" %command%",
+    "prefixTools": [
+      "1523"
+    ],
     "manualTools": 0,
     "hasLauncherBypass": false,
     "hasSetupInis": false,
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
-    "cleanupPrefixes": []
+    "cleanupPrefixes": [
+      "\"Bin/Win64MasterMasterSteamPGO/kcd2db.asi\", \"Bin/Win64MasterMasterSteamPGO/dinput8.dll\","
+    ]
   },
   {
     "appId": "1962700",

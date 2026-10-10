@@ -25061,6 +25061,14 @@ class TestKcdRouting(unittest.TestCase):
             main.Plugin, "_install_mod_inner") else open(main.__file__, encoding="utf-8").read()
         self.assertIn("_kcd_keep_mods_folder(install_path)", src)
 
+    def test_a_lone_xml_patch_is_named_as_one(self):
+        # "magdalena fix" (Henry From Skalitz): one clothing_preset.xml and
+        # a readme, for copying over another mod's file.
+        got, err = self._route(["mag_alt/clothing_preset.xml",
+                                "mag_alt/read me!!!!!!!!.txt"], name="magdalena fix")
+        self.assertEqual(got, [])
+        self.assertIn("by hand", err[1])
+
     def test_kcd2_shares_the_router(self):
         # The top 40 KCD2 mods on Nexus (2026-10-10) are packed like KCD1's.
         self.assertIn("kingdomcomedeliverance2", main.KCD_DOMAINS)

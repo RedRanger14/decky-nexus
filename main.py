@@ -8835,6 +8835,15 @@ def _route_kcd_payload(scratch: str, mod_name: str):
             return [], ("tool", "This download is a program that runs on a "
                         "desktop computer, not a mod the game loads, so there "
                         "is nothing to install here."), ""
+        # Loose data tables and nothing else: a replacement for a file in
+        # ANOTHER mod's pak, copied over it by hand per its readme ("magdalena
+        # fix" in Henry From Skalitz: one clothing_preset.xml).
+        data = [p for p in lows if not p.endswith(_KCD_DOC_EXTS)]
+        if data and all(p.endswith(".xml") for p in data):
+            return [], ("layout", "This file is a patch you copy over another "
+                        "mod's files by hand, as its readme explains. The "
+                        "plugin does not overwrite one mod with another, so "
+                        "it is left out."), ""
         return [], ("layout", "Could not tell where this mod's files go in "
                     "Kingdom Come: Deliverance."), ""
     # Every path lowercase, as the game itself names them (its log reads
