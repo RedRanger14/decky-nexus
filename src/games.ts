@@ -742,6 +742,10 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       // Steam ships the ray-tracing build; the page also carries a build
       // for the old DX11 one, which would not load.
       avoidFileKeywords: ["pre Ray Tracing"],
+      // Every natives/ mod loads through its loose file loader, and
+      // collections never list it: Improving the Game II installed 645
+      // files that nothing read (Legion, 2026-10-25).
+      collectionAlwaysInstalls: true,
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
       // Its archive is a Fluffy package: modinfo.ini, a screenshot and a
       // revision note land beside the dll and go with it on reset, as do
