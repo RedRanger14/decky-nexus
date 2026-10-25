@@ -744,10 +744,12 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       avoidFileKeywords: ["pre Ray Tracing"],
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
       // Its archive is a Fluffy package: modinfo.ini, a screenshot and a
-      // revision note land beside the dll and go with it on reset.
+      // revision note land beside the dll and go with it on reset, as do
+      // the log, configs and folder it writes on first launch (Legion).
       cleanupPrefixes: [
         "dinput8", "modinfo.ini", "screenshot.png",
         "reframework_revision.txt", "re2_fw_config.txt",
+        "re2_framework_log.txt", "ref_ui.ini", "reframework",
       ],
     },
     underConstruction:

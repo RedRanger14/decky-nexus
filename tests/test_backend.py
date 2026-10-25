@@ -25403,6 +25403,33 @@ class TestReFrameworkConfigPerGame(unittest.TestCase):
         self.assertEqual(main._ref_config_name(""), "re4_fw_config.txt")
 
 
+class TestRe2PrefersTheRayTracingBuild(unittest.TestCase):
+    """Steam's RE2 is the ray-tracing build; a mod's DX11 file must not be
+    the Install button just because its name sorts first."""
+
+    def _f(self, name, cat="MAIN", primary=False):
+        return {"name": name, "category_name": cat, "is_primary": primary}
+
+    def test_dx11_files_sort_after_rt_ones(self):
+        files = [self._f("Schoolgirl Claire (Noir) DX11 Non-RT"),
+                 self._f("Schoolgirl Claire (Noir) DX12 RT")]
+        got = main._sort_mod_files(files, main.MOD_FILE_DEMOTE["residentevil22019"])
+        self.assertEqual(got[0]["name"], "Schoolgirl Claire (Noir) DX12 RT")
+
+    def test_names_that_merely_mention_rt_are_not_demoted(self):
+        rx = main.MOD_FILE_DEMOTE["residentevil22019"]
+        for keep in ("Claire Nude Pubic Hair (RTX Update)", "Claire Katz RTX Update",
+                     "REFramework", "Leon RT version"):
+            self.assertIsNone(rx.search(keep), keep)
+        for drop in ("REFramework (pre Ray Tracing update)", "Outfit Non RT",
+                     "Mod - nonRT", "Hair DX11"):
+            self.assertIsNotNone(rx.search(drop), drop)
+
+    def test_other_games_sort_as_before(self):
+        files = [self._f("B"), self._f("A DX11")]
+        self.assertEqual(main._sort_mod_files(files)[0]["name"], "A DX11")
+
+
 class TestFf12Routing(unittest.TestCase):
     """Where Final Fantasy XII mods go: loose files under the External File
     Loader's mods/deploy/ff12data, Lua under x64/. The layouts are the real

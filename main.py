@@ -3105,13 +3105,26 @@ def _map_v1_mod(m: dict) -> dict:
     }
 
 
-def _sort_mod_files(files: list) -> list:
+# Builds a game's Steam copy cannot use, by file name. RE2's 2022 update
+# made the ray-tracing (DX12) build the Steam default; mods ship a second
+# MAIN file for the old DX11 one, and by name "DX11 Non-RT" sorted ahead of
+# "DX12 RT" and became the Install button - textures the game never reads
+# (Schoolgirl Claire, Legion 2026-10-25).
+MOD_FILE_DEMOTE = {
+    "residentevil22019": re.compile(
+        r"non[\s_-]?rt\b|\bdx11\b|pre[\s_-]?(ray[\s_-]?tracing|rt)\b", re.I),
+}
+
+
+def _sort_mod_files(files: list, demote=None) -> list:
     """Old versions last even when Nexus's is_primary flag is stale and
     points at one (seen in the wild: SMAPI's primary flag stuck on a 2020
-    file). Within current files, primary first."""
+    file). Within current files, primary first, and builds for another
+    edition of the game (demote) after the rest."""
     files.sort(
         key=lambda f: (
             f["category_name"] == "OLD_VERSION",
+            bool(demote and demote.search(f["name"])),
             not f["is_primary"],
             f["category_name"],
             f["name"],
@@ -20102,7 +20115,8 @@ query Link($slug: String!, $domainName: String!) {
             decky.logger.warning(
                 f"get_mod_files({game_domain!r}, {mod_id}): 0 visible files"
             )
-        return {"ok": True, "files": _sort_mod_files(files)}
+        return {"ok": True, "files": _sort_mod_files(
+            files, MOD_FILE_DEMOTE.get(game_domain))}
 
     async def install_mod(
         self,

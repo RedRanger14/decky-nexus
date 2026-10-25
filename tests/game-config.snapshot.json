@@ -364,7 +364,7 @@
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
     "cleanupPrefixes": [
-      "\"dinput8\", \"modinfo.ini\", \"screenshot.png\", \"reframework_revision.txt\", \"re2_fw_config.txt\","
+      "\"dinput8\", \"modinfo.ini\", \"screenshot.png\", \"reframework_revision.txt\", \"re2_fw_config.txt\", \"re2_framework_log.txt\", \"ref_ui.ini\", \"reframework\","
     ]
   },
   {
