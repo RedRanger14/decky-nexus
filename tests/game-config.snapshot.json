@@ -47,6 +47,26 @@
     ]
   },
   {
+    "appId": "241930",
+    "displayName": "Shadow of Mordor",
+    "nexusDomain": "middleearthshadowofmordor",
+    "installDirName": "ShadowOfMordor",
+    "modsSubdir": "x64/plugins",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"d3d11=n,b\" %command%",
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "261550",
     "displayName": "Mount & Blade II: Bannerlord",
     "nexusDomain": "mountandblade2bannerlord",

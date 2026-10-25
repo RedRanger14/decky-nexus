@@ -266,13 +266,13 @@ export interface SupportedGame {
    * data/, renumbered per archive hash so two mods patching the same
    * archive coexist instead of the second silently overwriting the first. */
   hd2Layout?: boolean;
-  /** Shadow of War's three tiers, told apart by what the archive holds:
-   * a PacketLoader/ tree (asset swaps) merges into x64/plugins, a bare
-   * .dll is a dll-loader plugin and goes flat into the same folder, and a
-   * loose .arch06 is a whole game archive - it lands in Mods/ and is
-   * registered in x64/default.archcfg, which is the only tier that has to
-   * write to a game file to take effect. */
-  sowLayout?: boolean;
+  /** Monolith's Middle-earth games (Shadow of Mordor, Shadow of War):
+   * the archive extension the engine reads, which is also the flag that
+   * turns the shared router on. Mods are told apart by what the download
+   * holds - a PacketLoader/ tree, a proxy dll or .asi, a game/ tree of
+   * loose replacements, a whole archive, or a bare plugin dll - because
+   * no two authors on these games describe an install the same way. */
+  monolithArchiveExt?: string;
   /** Mods that must never take a hero slot: desktop tools with big
    * endorsement counts (mod managers) that a Gaming Mode plugin cannot run
    * and should not showcase. The install-time tool refusal still catches
@@ -1815,7 +1815,7 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // instructions are "create a plugins folder" - so our installer makes
     // it, and both loaders and every mod land under it.
     modsSubdir: "x64/plugins",
-    sowLayout: true,
+    monolithArchiveExt: ".arch06",
     // Saves are the game's own; nothing this installs touches them.
     moddedSaveWarning: false,
     // Game-root-relative: the exe is in x64/, not at the root, so the PE
@@ -1886,6 +1886,48 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // ones that exercise it rather than the ReShade presets that top the
     // endorsement counts.
     recommendedModIds: [127, 8, 2],
+  },
+  241930: {
+    appId: 241930, // verified on device: appmanifest_241930.acf
+    displayName: "Shadow of Mordor",
+    nexusDomain: "middleearthshadowofmordor", // verified: game id 1730, 41 mods
+    installDirName: "ShadowOfMordor", // verified on device (acf installdir)
+    monolithArchiveExt: ".arch05",
+    // Same engine as Shadow of War two years earlier: exe and loaders in
+    // x64/, archives named in x64/default.archcfg, loose files under
+    // game/ read before the archives.
+    modsSubdir: "x64/plugins",
+    moddedSaveWarning: false,
+    processName: "x64/ShadowOfMordor.exe", // verified on device
+    // No framework, deliberately. The whole catalogue is 41 mods and it
+    // was read end to end (2026-09-06): the dll loader on it has 8
+    // endorsements, nothing requires it, and the one patch pack that
+    // needs a loader ships its own as winmm.dll. Declaring a setup step
+    // here would replace the game's bink2w64.dll for the benefit of
+    // almost nothing.
+    //
+    // What the catalogue actually is: about half ReShade presets, a
+    // large group of save games, three loose-file video removers, two
+    // button-prompt archives, and a handful of trainers and Cheat Engine
+    // tables. The three tiers below cover everything installable.
+    reshade: {
+      subdir: "x64",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="d3d11=n,b" %command%',
+    },
+    heroExcludeModIds: [
+      32, // trainer: a separate Windows program
+      10, // xdelta patcher driven by a .bat - the most endorsed mod here
+      27, // Cheat Engine table
+    ],
+    incompatibleMods: {
+      10: "This mod patches one of the game's own archives by running a Windows batch file (xdelta), which rewrites UI_GFX.arch05 in place. This plugin does not run installers that rewrite shipped archives - its page describes doing it by hand in Desktop Mode.",
+      27: "This is a Cheat Engine table: a script for a separate Windows program that attaches to the running game. There is nothing to install, and no way to run Cheat Engine from Gaming Mode.",
+      32: "This is a trainer - a separate Windows program you run alongside the game. It cannot be installed as a mod, and there is no way to run one from Gaming Mode.",
+    },
+    // One per tier, all three verified against the real download: an
+    // .arch05 that needs registering, a loose game/ tree that replaces
+    // shipped files, and a proxy-dll loader package.
+    recommendedModIds: [41, 26, 36],
   },
 };
 

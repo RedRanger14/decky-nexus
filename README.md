@@ -17,7 +17,7 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Twenty-three games. Every one unmarked below was installed, modded and played
+Twenty-four games. Every one unmarked below was installed, modded and played
 on real hardware before it shipped. That is what supported means here: not
 that the code has a config entry for it, but that someone finished a
 session with mods running.
@@ -30,21 +30,22 @@ session with mods running.
 6. Helldivers 2
 7. Kingdom Come: Deliverance
 8. Mass Effect Legendary Edition
-9. Mount & Blade II: Bannerlord
-10. NieR:Automata
-11. Palworld
-12. Red Dead Redemption 2
-13. Resident Evil 4
-14. Skyrim Special Edition
-15. Slay the Spire 2
-16. STAR WARS Battlefront II (2017)
-17. Stardew Valley
-18. Starfield \*
-19. Subnautica
-20. Subnautica 2
-21. Subnautica: Below Zero
-22. The Witcher 3
-23. Valheim
+9. Middle-earth: Shadow of Mordor \*
+10. Mount & Blade II: Bannerlord
+11. NieR:Automata
+12. Palworld
+13. Red Dead Redemption 2
+14. Resident Evil 4
+15. Skyrim Special Edition
+16. Slay the Spire 2
+17. STAR WARS Battlefront II (2017)
+18. Stardew Valley
+19. Starfield \*
+20. Subnautica
+21. Subnautica 2
+22. Subnautica: Below Zero
+23. The Witcher 3
+24. Valheim
 
 \* Community added game. Not tested by author.
 
