@@ -446,8 +446,12 @@ def _pakpatch_payload(scratch: str):
                 ref_dirs.append(os.path.join(root, d))
                 dirs.remove(d)
         for name in names:
-            if name.lower().endswith(".pak"):
-                paks.append(os.path.join(root, name))
+            # An empty .pak is not a mod: the engine stops reading the
+            # patch chain at it, so every pak after it went unread. The
+            # Darkside Chronicles OST (RE2) ships one (Legion, 2026-10-25).
+            path = os.path.join(root, name)
+            if name.lower().endswith(".pak") and os.path.getsize(path) > 0:
+                paks.append(path)
     paks.sort()
     natives_dirs.sort()
     ref_dirs.sort()

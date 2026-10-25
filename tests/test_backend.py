@@ -25429,6 +25429,16 @@ class TestRe2PacksNativesIntoAPak(unittest.TestCase):
         self.assertEqual(seen[main._re_pak_path_hashes("natives/x64/ui/a.tex.10")], b"AAAA")
         self.assertEqual(seen[main._re_pak_path_hashes("NATIVES/X64/CH/B.MESH.1808312334")], b"BBBBBB")
 
+    def test_an_empty_pak_never_joins_the_patch_chain(self):
+        # The engine stops reading the chain at an empty pak; every mod
+        # after it loaded nothing until it was removed (Legion).
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        open(os.path.join(root, "empty.pak"), "wb").close()
+        with open(os.path.join(root, "real.pak"), "wb") as f:
+            f.write(b"KPKA")
+        paks, _n, _r = main._pakpatch_payload(root)
+        self.assertEqual([os.path.basename(p) for p in paks], ["real.pak"])
+
     def test_the_installer_packs_natives_for_re2_only(self):
         src = inspect.getsource(main.Plugin._install_mod_inner)
         self.assertIn("if natives_dirs and game_domain in RE_PACK_NATIVES_DOMAINS:", src)
