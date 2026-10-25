@@ -25469,6 +25469,12 @@ class TestFf12Routing(unittest.TestCase):
         src = inspect.getsource(main.Plugin._install_mod_inner)
         self.assertIn("and not (game_domain in FF12_DOMAINS", src)
 
+    def test_the_lua_loader_gets_its_empty_scripts_folder(self):
+        # Its archive ships scripts/ empty; without it the loader logs
+        # "There was an error initializing modules" (Legion, 2026-10-25).
+        src = inspect.getsource(main.Plugin._install_mod_inner)
+        self.assertIn('os.makedirs(os.path.join(install_path, "x64", "scripts")', src)
+
 
 class TestKcdRouting(unittest.TestCase):
     """Where Kingdom Come: Deliverance mods go. Every shape lands as

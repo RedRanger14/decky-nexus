@@ -22045,6 +22045,14 @@ query Link($slug: String!, $domainName: String!) {
                     os.remove(dst)
                 shutil.move(src, dst)
                 installed_rel.append(rel)
+            # The Lua Loader iterates x64/scripts at startup and logs "There
+            # was an error initializing modules" when it is missing; its
+            # archive ships the folder empty, and empty folders carry no
+            # files to route (Legion, 2026-10-25).
+            if os.path.isfile(os.path.join(
+                    install_path, "x64", "modules", "ff12-lua-loader.dll")):
+                os.makedirs(os.path.join(install_path, "x64", "scripts"),
+                            exist_ok=True)
             _force_rmtree(scratch)
             try:
                 os.remove(archive_path)
