@@ -458,6 +458,86 @@ def _pakpatch_name(n: int) -> str:
     return f"re_chunk_000.pak.patch_{n:03d}.pak"
 
 
+# RE Engine games whose REFramework has no LooseFileLoader: RE2's build on
+# Nexus (Nightly639) reads none of a mod's natives/ files - inotify on the
+# tree saw 0 opens through a boot and a level load (Legion, 2026-10-25).
+# Their natives/ trees are packed into a patch pak of their own instead,
+# which the game loads by itself, as Fluffy's pak mode does.
+RE_PACK_NATIVES_DOMAINS = ("residentevil22019",)
+
+
+def _murmur3_32(data: bytes, seed: int = 0xFFFFFFFF) -> int:
+    """MurmurHash3 x86_32, the RE Engine pak's path hash (seed -1)."""
+    c1, c2 = 0xCC9E2D51, 0x1B873593
+    h = seed & 0xFFFFFFFF
+    n = len(data) // 4
+    for i in range(n):
+        k = struct.unpack_from("<I", data, i * 4)[0]
+        k = (k * c1) & 0xFFFFFFFF
+        k = ((k << 15) | (k >> 17)) & 0xFFFFFFFF
+        k = (k * c2) & 0xFFFFFFFF
+        h ^= k
+        h = ((h << 13) | (h >> 19)) & 0xFFFFFFFF
+        h = (h * 5 + 0xE6546B64) & 0xFFFFFFFF
+    tail = data[n * 4:]
+    k = 0
+    if len(tail) >= 3:
+        k ^= tail[2] << 16
+    if len(tail) >= 2:
+        k ^= tail[1] << 8
+    if tail:
+        k ^= tail[0]
+        k = (k * c1) & 0xFFFFFFFF
+        k = ((k << 15) | (k >> 17)) & 0xFFFFFFFF
+        k = (k * c2) & 0xFFFFFFFF
+        h ^= k
+    h ^= len(data)
+    h ^= h >> 16
+    h = (h * 0x85EBCA6B) & 0xFFFFFFFF
+    h ^= h >> 13
+    h = (h * 0xC2B2AE35) & 0xFFFFFFFF
+    h ^= h >> 16
+    return h
+
+
+def _re_pak_path_hashes(path: str) -> tuple:
+    """(lower, upper) hashes of a pak path such as natives/x64/ui/a.tex.10.
+    Checked against RE2's own re_chunk_000.pak: both hashes of the full
+    natives/... path are in its index, and no shorter form is."""
+    p = path.replace("\\", "/")
+    return (_murmur3_32(p.lower().encode("utf-16-le")),
+            _murmur3_32(p.upper().encode("utf-16-le")))
+
+
+def _build_re_pak(entries: list, out_path: str) -> int:
+    """Write a KPKA 4.0 pak holding entries [(pak path, source file)].
+
+    The layout RE2 ships (read from its patch_005): a 16-byte header (magic,
+    major 4, minor 0, feature 0, count, fingerprint) and one 48-byte entry
+    per file (lower hash, upper hash, offset, stored size, size, attributes,
+    checksum), then the data. Stored uncompressed (attributes 0), so stored
+    and real sizes are equal. Later entries for the same path win. Returns
+    the number of files packed."""
+    by_hash = {}
+    for path, src in entries:
+        by_hash[_re_pak_path_hashes(path)] = src
+    items = sorted(by_hash.items())
+    header = struct.pack("<4sBBHII", b"KPKA", 4, 0, 0, len(items), 0)
+    offset = len(header) + 48 * len(items)
+    toc = bytearray()
+    for (lo, up), src in items:
+        size = os.path.getsize(src)
+        toc += struct.pack("<IIQQQQQ", lo, up, offset, size, size, 0, 0)
+        offset += size
+    with open(out_path, "wb") as out:
+        out.write(header)
+        out.write(toc)
+        for _hashes, src in items:
+            with open(src, "rb") as f:
+                shutil.copyfileobj(f, out, 1 << 20)
+    return len(items)
+
+
 def _pakpatch_renumber(game_domain: str, install_path: str, settings: dict) -> int:
     """Close gaps in the patch-pak chain after an uninstall: paks no
     record owns (the game's own updates) keep their numbers; every
@@ -21960,6 +22040,25 @@ query Link($slug: String!, $domainName: String!) {
                     return {"ok": False, "needs_choice": True,
                             "options": options,
                             "option_labels": _payload_choice_labels(options)}
+            # No loose file loader to read natives/ (RE2): pack the trees
+            # into a pak of their own, which joins the patch chain below.
+            if natives_dirs and game_domain in RE_PACK_NATIVES_DOMAINS:
+                entries = []
+                for nd in natives_dirs:
+                    for root, _dirs, names in os.walk(nd):
+                        for name in sorted(names):
+                            src_file = os.path.join(root, name)
+                            rel = os.path.relpath(src_file, nd).replace(os.sep, "/")
+                            if _safe_rel_path(rel):
+                                entries.append(("natives/" + rel, src_file))
+                if entries:
+                    packed = os.path.join(scratch, "__natives_packed__.pak")
+                    count = await asyncio.to_thread(
+                        _build_re_pak, entries, packed)
+                    paks.append(packed)
+                    decky.logger.info(
+                        f"{mod_name!r}: packed {count} natives file(s) into a pak")
+                natives_dirs = []
             existing = []
             for name in os.listdir(install_path):
                 m = RE4_PAK_RE.match(name)

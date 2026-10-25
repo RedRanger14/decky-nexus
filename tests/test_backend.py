@@ -25393,6 +25393,48 @@ class TestUnloadAlwaysLetsGo(unittest.TestCase):
         main._DL_CANCEL.clear()
 
 
+class TestRe2PacksNativesIntoAPak(unittest.TestCase):
+    """RE2's REFramework has no loose file loader, so a mod's natives/ tree
+    becomes a patch pak the game loads by itself."""
+
+    def test_murmur3_matches_the_reference_vectors(self):
+        self.assertEqual(main._murmur3_32(b"", 0), 0)
+        self.assertEqual(main._murmur3_32(b"", 1), 0x514E28B7)
+        self.assertEqual(main._murmur3_32(b"\xff\xff\xff\xff", 0), 0x76293B50)
+        self.assertEqual(main._murmur3_32(b"!Ce\x87", 0), 0xF55B516B)
+        self.assertEqual(main._murmur3_32(b"Hello, world!", 1234), 0xFAF6CDB3)
+
+    def test_the_pak_layout_is_kpka_4_with_48_byte_entries(self):
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        a = os.path.join(root, "a.tex.10")
+        b = os.path.join(root, "b.mesh.1808312334")
+        with open(a, "wb") as f:
+            f.write(b"AAAA")
+        with open(b, "wb") as f:
+            f.write(b"BBBBBB")
+        out = os.path.join(root, "x.pak")
+        n = main._build_re_pak([("natives/x64/ui/a.tex.10", a),
+                                ("natives/x64/ch/b.mesh.1808312334", b)], out)
+        self.assertEqual(n, 2)
+        with open(out, "rb") as f:
+            data = f.read()
+        magic, major, minor, feature, count, _fp = struct.unpack_from("<4sBBHII", data)
+        self.assertEqual((magic, major, minor, count), (b"KPKA", 4, 0, 2))
+        seen = {}
+        for i in range(count):
+            lo, up, off, stored, size, attr, _ck = struct.unpack_from(
+                "<IIQQQQQ", data, 16 + 48 * i)
+            self.assertEqual((stored, attr), (size, 0))
+            seen[(lo, up)] = data[off:off + size]
+        self.assertEqual(seen[main._re_pak_path_hashes("natives/x64/ui/a.tex.10")], b"AAAA")
+        self.assertEqual(seen[main._re_pak_path_hashes("NATIVES/X64/CH/B.MESH.1808312334")], b"BBBBBB")
+
+    def test_the_installer_packs_natives_for_re2_only(self):
+        src = inspect.getsource(main.Plugin._install_mod_inner)
+        self.assertIn("if natives_dirs and game_domain in RE_PACK_NATIVES_DOMAINS:", src)
+        self.assertEqual(main.RE_PACK_NATIVES_DOMAINS, ("residentevil22019",))
+
+
 class TestReFrameworkConfigPerGame(unittest.TestCase):
     """REFramework's loose file loader switch lives in a config named after
     the exe; RE2 loose-file mods would have switched on RE4's file."""
