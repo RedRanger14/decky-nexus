@@ -18,6 +18,7 @@ import {
 } from "./api";
 import { SupportedGame, modeParams, stalenessExemptModIds } from "./games";
 import { nameDownload } from "./state";
+import { addLaunchOptions } from "./steam";
 
 /** Download AND extract a pinned file so the installer only has to
  * commit it. Extraction is the CPU-bound half of an install and shares
@@ -167,7 +168,18 @@ export function installModWith(
     game.processName ?? "",
     game.palSchema?.modsSubdir ?? "",
     game.monolithArchiveExt ?? ""
-  );
+  ).then((result) => {
+    // A proxy-dll mod does nothing under Proton until its dll is
+    // overridden. Applied here, where every install path passes, and
+    // merged so whatever the player already had stays.
+    if (result.ok && result.launch_overrides) {
+      addLaunchOptions(
+        game.appId,
+        `WINEDLLOVERRIDES="${result.launch_overrides}" %command%`
+      );
+    }
+    return result;
+  });
 }
 
 /** Install the other REQUIRED files of a mod whose page splits it in two.

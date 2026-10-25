@@ -131,6 +131,9 @@ export interface InstallResult {
    * applied - an override for a dll the package does not contain switches
    * on nothing and switches off whatever the player had. */
   injector?: boolean;
+  /** WINEDLLOVERRIDES entries ("dinput8=n,b") a proxy-dll mod needs under
+   * Proton. Merged into the game's launch options, never assigned. */
+  launch_overrides?: string;
   options?: string[];
   /** Display names for `options`, same order. The value handed back is still
    * the option itself, so only what the user reads changes. */

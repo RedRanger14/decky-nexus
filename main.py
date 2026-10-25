@@ -22198,21 +22198,20 @@ query Link($slug: String!, $domainName: String!) {
                 )
             proxies = extras.get("proxy_dlls") or []
             if proxies:
-                # Said out loud because no Windows guide mentions it:
                 # Wine ships its own build of every one of these names and
                 # loads that in preference to the file next to the exe, so
-                # the mod installs perfectly and then does nothing. Not
-                # applied automatically - this game's launch options may
-                # already carry a frame generator or another injector, and
-                # overwriting those is a worse failure than a message.
-                overrides = ";".join(f"{p[:-4]}=n,b" for p in proxies)
+                # without an override the mod installs and does nothing.
+                # The frontend MERGES this into the launch options
+                # (mergeLaunchOptions), so a frame generator or another
+                # injector already there is kept. Names come from
+                # MONO_PROXY_DLLS, never from the archive.
+                result["launch_overrides"] = ";".join(
+                    f"{p[:-4]}=n,b" for p in proxies
+                )
                 warnings.append(
-                    f"This mod loads through {', '.join(proxies)}, and Wine "
-                    "ships its own build of that name - under Proton the "
-                    "game loads Wine's and the mod does nothing. Add this "
-                    "to the game's launch options, keeping whatever is "
-                    f'already there: WINEDLLOVERRIDES="{overrides}" '
-                    "%command%"
+                    f"This mod loads through {', '.join(proxies)}. Launch "
+                    "options have been set so Proton loads it instead of "
+                    "its own copy."
                 )
             if warnings:
                 result["warning"] = " ".join(warnings)
@@ -29831,13 +29830,33 @@ query CollectionInstructions($slug: String!) {
                 r for r in (rec.get("files") or [])
                 if r.lower() not in shared
             ]
+            # Shadow of Mordor/War: a mod that REPLACED a shipped file leaves
+            # the game without it when parked, so the original goes back in
+            # (the backup stays for uninstall), and an archive the game is
+            # told to read in default.archcfg is untold while it is away.
+            restore = [
+                r for r in (rec.get("mono_restore") or []) if r in movable
+            ]
+            arch_names = rec.get("mono_archcfg") or []
             if enabled:
                 moved = _move_mod_files(park, install_path, movable)
                 _force_rmtree(park)
                 rec.pop("parked", None)
                 rec.pop("disabled_reason", None)
+                if arch_names:
+                    _mono_register_archcfg(install_path, arch_names)
             else:
                 moved = _move_mod_files(install_path, park, movable)
+                for rel in restore:
+                    path = os.path.join(install_path, *rel.split("/"))
+                    backup = path + MONO_BACKUP_SUFFIX
+                    if os.path.isfile(backup) and not os.path.isfile(path):
+                        try:
+                            shutil.copy2(backup, path)
+                        except OSError:
+                            pass
+                if arch_names:
+                    _mono_unregister_archcfg(install_path, arch_names)
                 # Marked off even when nothing moved, for the same reason
                 # the dataDir tier does: a file another record also claims
                 # stays put, and a mod made only of those would otherwise

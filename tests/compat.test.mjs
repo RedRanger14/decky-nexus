@@ -589,6 +589,15 @@ test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
   assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
 });
 
+// PR #48 follow-up: a proxy-dll mod's override is applied, merged into
+// what the player had, at the one place every install passes.
+test("a proxy-dll mod's launch override is merged in on install", () => {
+  const install = readFileSync("src/install.ts", "utf8");
+  assert.match(install, /result\.launch_overrides/);
+  assert.match(install, /addLaunchOptions\(\s*game\.appId,\s*`WINEDLLOVERRIDES="\$\{result\.launch_overrides\}" %command%`/);
+  assert.doesNotMatch(install, /setLaunchOptions/);
+});
+
 // Issue #46: "click on the mod author's username from a mod page to see
 // their other mods".
 test("the author on a mod page opens that author's mods in the store", () => {

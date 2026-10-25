@@ -7101,6 +7101,89 @@ class TestFilesModeToggle(unittest.TestCase):
             os.path.join(self.root, "r6", "scripts", "a.reds")))
 
 
+class TestMonolithToggleKeepsTheGameWhole(unittest.TestCase):
+    """Shadow of Mordor/War: switching a mod off must not leave the game
+    without a file it shipped, nor told to read an archive that has been
+    parked. Switching it back on puts the mod back exactly."""
+
+    GAME = "Mono Toggle Test"
+    INTRO = "game/intro.vib"
+    ARCH = "Mods/a.arch05"
+
+    def setUp(self):
+        self.plugin = main.Plugin()
+        self.root = os.path.join(main.STEAM_COMMON, self.GAME)
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.intro = os.path.join(self.root, "game", "intro.vib")
+        os.makedirs(os.path.dirname(self.intro))
+        os.makedirs(os.path.join(self.root, "x64"))
+        os.makedirs(os.path.join(self.root, "Mods"))
+        with open(self.intro + main.MONO_BACKUP_SUFFIX, "wb") as f:
+            f.write(b"ORIGINAL")
+        with open(self.intro, "wb") as f:
+            f.write(b"NO-INTRO")
+        open(os.path.join(self.root, "Mods", "a.arch05"), "wb").close()
+        self.cfg = os.path.join(self.root, "x64", "default.archcfg")
+        with open(self.cfg, "w", newline="") as f:
+            f.write("..\\Global.Arch05\r\n")
+        main._mono_register_archcfg(self.root, ["a.arch05"])
+        settings = main._load_settings()
+        settings.setdefault("installed", {})["monotest"] = {
+            "Skip": {"mod_id": 1, "name": "Skip", "mode": "files",
+                     "target": ".", "files": [self.INTRO],
+                     "mono_restore": [self.INTRO]},
+            "Arch": {"mod_id": 2, "name": "Arch", "mode": "files",
+                     "target": ".", "files": [self.ARCH],
+                     "mono_archcfg": ["a.arch05"]},
+        }
+        main._save_settings(settings)
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("installed", {}).pop("monotest", None)
+        main._save_settings(settings)
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(
+            os.path.join(main.decky.DECKY_PLUGIN_RUNTIME_DIR, "parked",
+                         "monotest"),
+            ignore_errors=True)
+
+    def _set(self, folder, enabled):
+        return run(self.plugin.set_mod_enabled(
+            self.GAME, "Mods", folder, enabled, "folder",
+            "monotest", 0, "", "starred", None))
+
+    def read(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_off_puts_the_shipped_file_back_and_on_brings_the_mod_back(self):
+        self.assertTrue(self._set("Skip", False)["ok"])
+        self.assertEqual(self.read(self.intro), b"ORIGINAL")
+        self.assertTrue(os.path.isfile(self.intro + main.MONO_BACKUP_SUFFIX))
+        self.assertTrue(self._set("Skip", True)["ok"])
+        self.assertEqual(self.read(self.intro), b"NO-INTRO")
+        # And uninstall still ends on the original.
+        settings = main._load_settings()
+        main._remove_files_record("monotest", "Skip", self.root, settings)
+        self.assertEqual(self.read(self.intro), b"ORIGINAL")
+
+    def test_off_untells_the_archive_and_on_tells_it_again(self):
+        self._set("Arch", False)
+        self.assertNotIn(b"a.arch05", self.read(self.cfg))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, "Mods", "a.arch05")))
+        self._set("Arch", True)
+        self.assertIn(b"Mods\\a.arch05", self.read(self.cfg))
+        self.assertTrue(os.path.exists(
+            os.path.join(self.root, "Mods", "a.arch05")))
+
+    def test_a_proxy_dll_mod_asks_for_its_override_instead_of_explaining(self):
+        src = inspect.getsource(main.Plugin._install_mod_inner)
+        self.assertIn('result["launch_overrides"]', src)
+        self.assertNotIn("Add this to the game's launch options", src)
+
+
 class TestCollectionNeedsDowngrade(unittest.TestCase):
     """A collection that needs an older game says so, and we never read it.
 
