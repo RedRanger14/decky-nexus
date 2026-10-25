@@ -600,6 +600,12 @@ test("the author on a mod page opens that author's mods in the store", () => {
   assert.match(browse, /author\?\.id \?\? 0\s*\)/, "the author reaches get_mods");
   assert.match(browse, /&& !author;/, "an author list is never the home rows");
   assert.match(browse, /Show all mods/);
+  // Michael, 2026-10-25: after the author list, B and the filter could not
+  // get back out. The filter shows the author and B clears it.
+  assert.match(browse, /selectedOption=\{author \? AUTHOR_FILTER : filter\}/);
+  assert.match(browse, /setAuthor\(undefined\);\s*setFilter\(opt\.data\)/);
+  const onCancel = browse.slice(browse.indexOf("onCancel={() => {"));
+  assert.match(onCancel.slice(0, 700), /setAuthor\(undefined\)/, "B leaves the author list");
   const api = readFileSync("src/api.ts", "utf8");
   assert.match(api, /uploader_id\?: number\s*\]/);
 });

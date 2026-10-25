@@ -63,6 +63,9 @@ import { NEXUS_ORANGE, PAGE_SCROLLER } from "./theme";
 import { storeHeaderPlan, STORE_HEADER_EDGE } from "./panelRules";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
 
+// The filter dropdown's value while one author's mods are shown (#46).
+const AUTHOR_FILTER = "author";
+
 const SORT_OPTIONS = [
   { data: "featured", label: "Featured" },
   { data: "trending", label: "Trending" },
@@ -1159,9 +1162,11 @@ export function BrowsePage() {
         }
         if (!isHome) {
           // Entered a results view (view-all / search): B steps back to
-          // the home rails, not out of the page.
+          // the home rails, not out of the page. An author list counts,
+          // or B would leave the user stuck on it (#46).
           setSort("featured");
           setSearch("");
+          setAuthor(undefined);
           return;
         }
         exitTabsToQam();
@@ -1327,6 +1332,11 @@ export function BrowsePage() {
           >
             <Dropdown
               rgOptions={[
+                // One author's mods (#46) is a filter like the rest, so the
+                // filter shows it and "All mods" takes it off.
+                ...(author
+                  ? [{ data: AUTHOR_FILTER, label: `By ${author.name}` }]
+                  : []),
                 { data: "", label: "All mods" },
                 // The recency options lead because they answer the
                 // question this filter exists for on live-service games:
@@ -1338,8 +1348,12 @@ export function BrowsePage() {
                 { data: "d:30", label: "Updated this month" },
                 ...categories.map((c) => ({ data: c, label: c })),
               ]}
-              selectedOption={filter}
-              onChange={(opt) => setFilter(opt.data)}
+              selectedOption={author ? AUTHOR_FILTER : filter}
+              onChange={(opt) => {
+                if (opt.data === AUTHOR_FILTER) return;
+                setAuthor(undefined);
+                setFilter(opt.data);
+              }}
               strDefaultLabel="Filter"
             />
           </div>
