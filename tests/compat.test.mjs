@@ -589,6 +589,20 @@ test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
   assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
 });
 
+// FFXII ENHANCED DEFINITIVE, 2026-10-25: the plugin put Lua Loader 2.0.1
+// in ahead of the collection, which pins 1.9.7, and Dynamic Description
+// failed to load under 2.x. Pinned loaders install the collection's file,
+// and a different build already installed counts as missing.
+test("FF12 collections get the loader builds they pin", () => {
+  const games = readFileSync("src/games.ts", "utf8");
+  const ff12 = games.slice(games.indexOf("appId: 595520"), games.indexOf("appId: 379430"));
+  assert.equal((ff12.match(/collectionPinsVersion: true/g) ?? []).length, 2);
+  const page = readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(page, /const pin = fw\.collectionPinsVersion/);
+  assert.match(page, /\? await installPinned\(\s*game, pin\.modId, pin\.fileId/);
+  assert.match(page, /have\.file_id !== pin\.fileId/);
+});
+
 // KCD2, 2026-10-25: Step 1 said "Most Kingdom Come: Deliverance II mods
 // require LuaDB" beside 70 mods running without it.
 test("KCD2's Step 1 does not claim most mods need LuaDB", () => {

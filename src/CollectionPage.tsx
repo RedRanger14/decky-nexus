@@ -509,6 +509,19 @@ export function CollectionPage() {
             fw.detectFile
           );
           state[fw.name] = Boolean(st.framework_installed);
+          // A pinned loader that is installed at another build (Step 1
+          // takes the newest) is replaced by the collection's build.
+          if (fw.collectionPinsVersion && state[fw.name]) {
+            const ids = [fw.nexusModId, ...(fw.aliasModIds ?? [])];
+            const pin = (detail?.files ?? []).find((f) => ids.includes(f.modId));
+            const have = installedRows.find(
+              (m) => m.mod_id !== undefined && ids.includes(m.mod_id)
+            );
+            if (pin && have && have.file_id !== undefined
+                && have.file_id !== pin.fileId) {
+              state[fw.name] = false;
+            }
+          }
         }
         const queue = collectionMissingLoaders(allLoaders, pinned, state);
         if (queue.length > 0) {
@@ -526,7 +539,21 @@ export function CollectionPage() {
               `Installing ${fw.name} (${i + 1} of ${queue.length})…`
             );
             const isMain = fw.name === game.framework?.name;
-            const r = fw.installAsMod
+            // The curator's pinned build when this loader says its mods
+            // depend on it: FFXII ENHANCED DEFINITIVE pins Lua Loader
+            // 1.9.7, and its Dynamic Description fails to load under 2.0.1
+            // (a for-loop variable became read-only).
+            const pin = fw.collectionPinsVersion
+              ? (detail?.files ?? []).find((f) =>
+                  [fw.nexusModId, ...(fw.aliasModIds ?? [])].includes(f.modId)
+                )
+              : undefined;
+            const r = pin
+              ? await installPinned(
+                  game, pin.modId, pin.fileId, pin.fileName, fw.name,
+                  pin.version, collection.slug
+                )
+              : fw.installAsMod
               ? await installLatest(game, fw.nexusModId!, fw.name)
               : await installFramework(
                   game.nexusDomain,

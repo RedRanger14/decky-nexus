@@ -99,6 +99,10 @@ export interface GameFramework {
    * flattens archives into the game root and would scatter BaseLib's files
    * across mods/ instead of mods/BaseLib/. */
   installAsMod?: boolean;
+  /** A collection that lists this loader gets the exact file it pins, not
+   * the newest. For loaders whose mods break across versions: FF12's Lua
+   * Loader 2.x rejects scripts written for 1.9 that a collection pins. */
+  collectionPinsVersion?: boolean;
   /** Every mod for the game needs this loader, and the game's collections
    * never list it because players outside the plugin install it by hand
    * (RDR2's ScriptHook lived on dev-c.com). A finished collection then
@@ -1102,6 +1106,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       installAsMod: true,
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
       collectionAlwaysInstalls: true,
+      // Pinned with the Lua Loader: the two are released as a matched pair.
+      collectionPinsVersion: true,
       // Its files are on its install record; the log it writes at runtime
       // is not, and a reset to vanilla should not leave it behind.
       cleanupPrefixes: ["x64/hook.log"],
@@ -1114,6 +1120,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         url: "nexusmods.com/finalfantasy12/mods/171",
         nexusModId: 171,
         installAsMod: true,
+        // 2.x made for-loop variables read-only; collections pin the 1.9
+        // build their scripts were written for.
+        collectionPinsVersion: true,
       },
     ],
     // Both loaders want the x64 VC++ 2017+ runtime in the prefix.
