@@ -295,6 +295,29 @@
     "cleanupPrefixes": []
   },
   {
+    "appId": "595520",
+    "displayName": "Final Fantasy XII: The Zodiac Age",
+    "nexusDomain": "finalfantasy12",
+    "installDirName": "FINAL FANTASY XII THE ZODIAC AGE",
+    "modsSubdir": "._nexus_mods_unused",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "FF12 External File Loader",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dinput8=n,b\" %command%",
+    "prefixTools": [
+      "170",
+      "171"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "848450",
     "displayName": "Subnautica: Below Zero",
     "nexusDomain": "subnauticabelowzero",

@@ -56,6 +56,7 @@ Groundwork exists for these and they are NOT ready. They may appear in the
 plugin; treat anything you do with them as untested.
 
 - Fallout 3
+- Final Fantasy XII: The Zodiac Age (marked under construction in the plugin)
 - Hollow Knight: Silksong
 - Middle-earth: Shadow of War
 
@@ -66,7 +67,6 @@ appear in the plugin until they do.
 
 - Crimson Desert
 - Dragon's Dogma 2
-- Final Fantasy XII: The Zodiac Age
 - Horizon Forbidden West
 - Skyrim VR
 - The Blood of Dawnwalker

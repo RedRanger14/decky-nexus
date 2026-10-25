@@ -1060,27 +1060,31 @@ function CurrentGameSection() {
         const fw = queue[i];
         const isMain = fw.name === game.framework.name;
         setFwProgress(`Installing ${fw.name} (${i + 1}/${queue.length})…`);
-        const result = await installFramework(
-          game.nexusDomain,
-          fw.nexusModId!,
-          game.installDirName,
-          fw.installKind ?? (isMain ? "smapi" : "copyRoot"),
-          fw.detectFile,
-          fw.avoidFileKeywords ?? [],
-          fw.installSubdir ?? "",
-          game.modsSubdir,
-          game.appId,
-          game.launcherXmlSubpath ?? "",
-          game.processName ?? "",
-          fw.backupFiles ?? []
-        );
+        // A loader that IS an ordinary mod (FF12's two) goes through the
+        // game's mod router, as the single-framework path already does.
+        const result = fw.installAsMod
+          ? await installLatest(game, fw.nexusModId!, fw.name)
+          : await installFramework(
+              game.nexusDomain,
+              fw.nexusModId!,
+              game.installDirName,
+              fw.installKind ?? (isMain ? "smapi" : "copyRoot"),
+              fw.detectFile,
+              fw.avoidFileKeywords ?? [],
+              fw.installSubdir ?? "",
+              game.modsSubdir,
+              game.appId,
+              game.launcherXmlSubpath ?? "",
+              game.processName ?? "",
+              fw.backupFiles ?? []
+            );
         if (!result.ok) {
           failed++;
           toaster.toast({
             title: `${fw.name} install failed`,
             body: result.error ?? "Unknown error",
           });
-        } else if (isMain && result.install_path) {
+        } else if (isMain && "install_path" in result && result.install_path) {
           mainInstallPath = result.install_path;
         }
       }

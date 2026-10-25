@@ -9055,6 +9055,86 @@ KCD_MODS_DIR = "mods"
 # Both games: KCD2 mods are packed exactly like KCD1's (mod.manifest,
 # Data/*.pak, Localization/*.pak, the odd user.cfg), read from the top 40
 # on Nexus 2026-10-10.
+# --- Final Fantasy XII: The Zodiac Age --------------------------------------
+#
+# Mods are loose game files the FF12 External File Loader (Nexus 170) reads
+# instead of the 30GB VBF archive, from the path its own config names:
+# mods\deploy\ff12data under the game folder. Lua mods go to the Lua
+# Loader's x64/scripts. Archives say where in four ways, all seen in the
+# top 25 (2026-10-25), so the router looks for the first known anchor in
+# each path rather than trusting the wrapper folders around it:
+#
+#   .../mods/deploy/ff12data/...   newer data mods (The Insurgent's ...)
+#   .../ff12data/...               texture packs (Re-Upscaled, Enhanced Faces)
+#   .../ps2data/...                older data mods (All the Chests)
+#   .../x64/...                    Lua scripts and loader modules
+#
+# Everything under ff12data is lowercased, as the VBF's own paths are, so
+# two mods that disagree on case still land in one folder.
+FF12_DOMAINS = ("finalfantasy12",)
+FF12_DEPLOY = "mods/deploy/ff12data"
+FF12_DROP_DIRS = ("fomod", "images", "launcher", "dxgi")
+FF12_DOC_EXTS = (".txt", ".md", ".pdf", ".url", ".jpg", ".jpeg", ".png",
+                 ".log", ".db")
+
+
+def _ff12_is_file_loader(scratch: str) -> bool:
+    """The External File Loader's own archive: its dll plus a dinput8.dll
+    proxy, with a dxgi.dll alternative and a Windows launcher beside them."""
+    names = {n.lower() for _r, _d, fs in os.walk(scratch) for n in fs}
+    return "ff12-file-loader.dll" in names and "dinput8.dll" in names
+
+
+def _route_ff12_payload(scratch: str, mod_name: str):
+    """Classify an FFXII archive. Returns (files, error, note) like the KCD
+    router: files is [(rel to the game folder, src in scratch)]."""
+    loader = _ff12_is_file_loader(scratch)
+    files, seen, unplaced = [], {}, []
+    for root, dirs, names in os.walk(scratch):
+        dirs[:] = [d for d in dirs if d.lower() not in FF12_DROP_DIRS]
+        for n in names:
+            src = os.path.join(root, n)
+            parts = os.path.relpath(src, scratch).replace(os.sep, "/").split("/")
+            low = [p.lower() for p in parts]
+            rel = None
+            for i, p in enumerate(low):
+                if p == "x64":
+                    rel = "x64/" + "/".join(parts[i + 1:])
+                elif p == "mods" and low[i + 1:i + 3] == ["deploy", "ff12data"]:
+                    rel = FF12_DEPLOY + "/" + "/".join(low[i + 3:])
+                elif p == "ff12data":
+                    rel = FF12_DEPLOY + "/" + "/".join(low[i + 1:])
+                elif p == "ps2data":
+                    rel = FF12_DEPLOY + "/" + "/".join(low[i:])
+                elif i == 0 and p in ("modules", "scripts") and len(parts) > 1:
+                    # The Lua Loader's archive is relative to x64.
+                    rel = "x64/" + "/".join(parts)
+                if rel:
+                    break
+            if rel is None and loader and low[-1] == "dinput8.dll":
+                rel = "x64/dinput8.dll"
+            if rel is None:
+                if not low[-1].endswith(FF12_DOC_EXTS):
+                    unplaced.append("/".join(parts))
+                continue
+            if rel.lower().endswith(".log") or not _safe_rel_path(rel):
+                continue
+            key = rel.lower()
+            if key in seen:
+                return [], ("layout",
+                            f"{mod_name} holds several versions of the same "
+                            f"files ({rel}). Install it from its own page "
+                            "and pick one."), ""
+            seen[key] = True
+            files.append((rel, src))
+    if not files:
+        what = ", ".join(unplaced[:3]) or "no game files"
+        return [], ("layout",
+                    f"{mod_name} has no files the game reads ({what}). "
+                    "It may be a Windows tool or a guide."), ""
+    return files, None, ""
+
+
 KCD_DOMAINS = ("kingdomcomedeliverance", "kingdomcomedeliverance2")
 KCD_PAK_DIRS = ("data", "localization")
 KCD_ROOT_FILES = ("user.cfg",)        # cvar tweaks, read from the game folder
@@ -21365,6 +21445,10 @@ query Link($slug: String!, $domainName: String!) {
             install_mode == "folder"
             and not payload_choice
             and _fomod_config_path(scratch)
+            # The FF12 loader's wizard only asks dinput8 or dxgi, and the
+            # answer is always dinput8; Step 1 must not stop for it.
+            and not (game_domain in FF12_DOMAINS
+                     and _ff12_is_file_loader(scratch))
         ):
             gv = ""
             if process_name:
@@ -21931,6 +22015,65 @@ query Link($slug: String!, $domainName: String!) {
                 f"installed RE4 {mod_name!r}: {len(assigned)} pak(s), "
                 f"{len(loose_rel)} loose file(s)"
             )
+            await _emit_progress(mod_id, "done", 100)
+            return {"ok": True, "folder": record_key}
+
+        # Final Fantasy XII: loose files for the External File Loader and
+        # Lua scripts, recorded file by file. See _route_ff12_payload.
+        if game_domain in FF12_DOMAINS:
+            ff_files, ff_err, ff_note = _route_ff12_payload(scratch, mod_name)
+            if ff_err:
+                kind, message = ff_err
+                decky.logger.info(f"FF12 {mod_name!r}: {kind}: {message}")
+                _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, kind)
+                return {"ok": False, "error": message,
+                        "unsupported_layout": True}
+            _record_vanilla_baseline(
+                game_domain, mods_path, app_id, None, install_path)
+            installed_rel = []
+            case_cache = {}
+            for rel, src in ff_files:
+                # x64 is the game's own folder: keep its casing.
+                if rel.startswith("x64/"):
+                    rel = _case_merge_rel(install_path, rel, case_cache)
+                dst = os.path.join(install_path, *rel.split("/"))
+                _makedirs_for(dst)
+                if os.path.isfile(dst):
+                    os.remove(dst)
+                shutil.move(src, dst)
+                installed_rel.append(rel)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            settings = _load_settings()
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            record_key = _safe_name(mod_name)
+            _take_over_files(installed, record_key, installed_rel, mod_name)
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key),
+                {
+                    "mod_id": mod_id,
+                    "file_id": file_id,
+                    "name": mod_name,
+                    "version": mod_version,
+                    "file_name": file_name,
+                    "installed_at": int(time.time()),
+                    "page_version": page_version,
+                    "source": record_source,
+                    "collection_slug": collection_slug,
+                    "mode": "files",
+                    "target": ".",
+                    "files": installed_rel,
+                },
+            )
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed FF12 {mod_name!r}: {len(installed_rel)} file(s)")
             await _emit_progress(mod_id, "done", 100)
             return {"ok": True, "folder": record_key}
 

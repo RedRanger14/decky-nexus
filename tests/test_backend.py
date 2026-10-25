@@ -25393,6 +25393,75 @@ class TestUnloadAlwaysLetsGo(unittest.TestCase):
         main._DL_CANCEL.clear()
 
 
+class TestFf12Routing(unittest.TestCase):
+    """Where Final Fantasy XII mods go: loose files under the External File
+    Loader's mods/deploy/ff12data, Lua under x64/. The layouts are the real
+    ones from the top 25 on Nexus (2026-10-25)."""
+
+    def _route(self, files, name="Some Mod"):
+        root = tempfile.mkdtemp(dir=TEST_ROOT)
+        for rel in files:
+            p = os.path.join(root, *rel.split("/"))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(b"x")
+        got, err, _note = main._route_ff12_payload(root, name)
+        return sorted(r for r, _s in got), err
+
+    def test_a_deploy_tree_inside_a_fomod_data_folder(self):
+        # The Insurgent's Manifesto, after its wizard.
+        got, err = self._route([
+            "data/mods/deploy/ff12data/ps2data/plan_master/us/word.bin",
+            "data/x64/scripts/TheInsurgentsManifesto.lua",
+            "data/x64/scripts/config/TheInsurgentsManifestoConfig.lua",
+            "fomod/ModuleConfig.xml"])
+        self.assertIsNone(err)
+        self.assertEqual(got, [
+            "mods/deploy/ff12data/ps2data/plan_master/us/word.bin",
+            "x64/scripts/TheInsurgentsManifesto.lua",
+            "x64/scripts/config/TheInsurgentsManifestoConfig.lua"])
+
+    def test_a_texture_pack_and_an_old_ps2data_mod(self):
+        got, _ = self._route(["ff12data/gamedata/d3d11/artdata/chr/weapon/W001.DDS"])
+        self.assertEqual(got, ["mods/deploy/ff12data/gamedata/d3d11/artdata/chr/weapon/w001.dds"])
+        got, _ = self._route(["100% Chests V2/ps2data/plan_master/us/plan_map/bts_o/bts_o01/global/bts_o01.ebp",
+                              "100% Chests V2/readme.txt"])
+        self.assertEqual(got, ["mods/deploy/ff12data/ps2data/plan_master/us/plan_map/bts_o/bts_o01/global/bts_o01.ebp"])
+
+    def test_the_file_loader_takes_x64_and_the_dinput8_proxy_only(self):
+        got, err = self._route([
+            "launcher/ff12-launcher.exe", "launcher/launcher.dll",
+            "x64/hook.ini", "x64/hook.log", "x64/ff12-trampoline.dll",
+            "x64/modules/ff12-file-loader.dll",
+            "x64/modules/config/ff12-file-loader.ini",
+            "dinput/dinput8.dll", "dxgi/dxgi.dll",
+            "fomod/ModuleConfig.xml"], "FF12 External File Loader")
+        self.assertIsNone(err)
+        self.assertEqual(got, [
+            "x64/dinput8.dll", "x64/ff12-trampoline.dll", "x64/hook.ini",
+            "x64/modules/config/ff12-file-loader.ini",
+            "x64/modules/ff12-file-loader.dll"])
+
+    def test_the_lua_loader_is_relative_to_x64(self):
+        got, _ = self._route(["modules/ff12-lua-loader.dll",
+                              "modules/plugins/ff12-imgui.lua.dll"])
+        self.assertEqual(got, ["x64/modules/ff12-lua-loader.dll",
+                               "x64/modules/plugins/ff12-imgui.lua.dll"])
+
+    def test_unchosen_variants_and_tools_are_refused_by_name(self):
+        _got, err = self._route([
+            "Faces/Ashe - Blue/ff12data/gamedata/ashe.dds",
+            "Faces/Ashe - Grey/ff12data/gamedata/ashe.dds"], "Enhanced Faces")
+        self.assertEqual(err[0], "layout")
+        self.assertIn("several versions", err[1])
+        _got, err = self._route(["DrakLab.exe", "Newtonsoft.Json.dll"], "DrakLab")
+        self.assertIn("no files the game reads", err[1])
+
+    def test_the_loader_fomod_does_not_stop_step_1(self):
+        src = inspect.getsource(main.Plugin._install_mod_inner)
+        self.assertIn("and not (game_domain in FF12_DOMAINS", src)
+
+
 class TestKcdRouting(unittest.TestCase):
     """Where Kingdom Come: Deliverance mods go. Every shape lands as
     Mods/<name>/..., which the game has loaded since patch 1.9."""

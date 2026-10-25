@@ -1079,6 +1079,46 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // says where its download goes.
     gameNote: "Story Mode only. Turn the mod loader off before Red Dead Online.",
   },
+  595520: {
+    appId: 595520,
+    displayName: "Final Fantasy XII: The Zodiac Age",
+    nexusDomain: "finalfantasy12", // verified: game id 2304
+    // Windows build under Proton; exe in x64/ beside the loader's files.
+    installDirName: "FINAL FANTASY XII THE ZODIAC AGE",
+    // Routed by game (_route_ff12_payload) into mods/deploy/ff12data and
+    // x64/, recorded file by file like KCD, so this folder is never used.
+    modsSubdir: "._nexus_mods_unused",
+    moddedSaveWarning: false,
+    processName: "FFXII_TZA.exe",
+    // The External File Loader (170) is a dinput8.dll module loader plus
+    // the module that reads loose files instead of the VBF. Its archive is
+    // a FOMOD (dinput8 or dxgi, and a Windows launcher), so it goes through
+    // the router, which takes x64/ and the dinput8 proxy and leaves the rest.
+    framework: {
+      name: "FF12 External File Loader",
+      detectFile: "x64/modules/ff12-file-loader.dll",
+      url: "nexusmods.com/finalfantasy12/mods/170",
+      nexusModId: 170,
+      installAsMod: true,
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
+      collectionAlwaysInstalls: true,
+    },
+    extraFrameworks: [
+      {
+        // Lua scripts (every Insurgent's mod) run through this module.
+        name: "FF12 LUA Loader",
+        detectFile: "x64/modules/ff12-lua-loader.dll",
+        url: "nexusmods.com/finalfantasy12/mods/171",
+        nexusModId: 171,
+        installAsMod: true,
+      },
+    ],
+    // Both loaders want the x64 VC++ 2017+ runtime in the prefix.
+    prefixRuntimeFix: true,
+    underConstruction:
+      "Final Fantasy XII support is new and has not been played with mods " +
+      "on this device yet.",
+  },
   379430: {
     appId: 379430,
     displayName: "Kingdom Come: Deliverance",
