@@ -58,6 +58,8 @@ import {
   nameDownload,
   setSelectedMod,
   markManagerReturn,
+  setBrowseAuthor,
+  setBrowseGame,
 } from "./state";
 import { isGameRunning, restartGame, setLaunchOptions } from "./steam";
 import {
@@ -759,9 +761,35 @@ export function ModDetailPage() {
           >
             {mod.name}
           </h2>
-          <div style={{ opacity: 0.75, fontSize: "13.5px", marginBottom: "8px" }}>
-            by {mod.author}
-          </div>
+          {/* The author's other mods for this game, in the store (#46). Plain
+              text until the uploader's member id has loaded. */}
+          {uploader?.memberId ? (
+            <Focusable style={{ marginBottom: "8px" }}>
+              <DialogButton
+                style={{
+                  width: "auto",
+                  minWidth: 0,
+                  padding: "2px 10px",
+                  fontSize: "13.5px",
+                  opacity: 0.9,
+                }}
+                onClick={() => {
+                  setBrowseGame(game);
+                  setBrowseAuthor({
+                    id: Number(uploader.memberId),
+                    name: uploader.name ?? mod.author,
+                  });
+                  Navigation.Navigate("/nexus-mods");
+                }}
+              >
+                by {mod.author} · more from this author
+              </DialogButton>
+            </Focusable>
+          ) : (
+            <div style={{ opacity: 0.75, fontSize: "13.5px", marginBottom: "8px" }}>
+              by {mod.author}
+            </div>
+          )}
           {/* Warned on the mod's OWN page, not only on the collection that
               ships it - a user can arrive here from a search and would
               otherwise install something that stops the game starting with

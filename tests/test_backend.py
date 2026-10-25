@@ -24673,6 +24673,67 @@ class TestFomodReplicatedFileSet(unittest.TestCase):
         self.assertEqual(r["fomod_token"], "tok35b")
 
 
+class TestModsByOneAuthor(unittest.TestCase):
+    """Issue #46: tap the author on a mod page to see their other mods."""
+
+    def test_the_query_filters_by_uploader(self):
+        q = main._build_mods_query(False, uploader_id=703937)
+        self.assertIn('uploaderId: [{ value: "703937" }]', q)
+        self.assertNotIn("uploaderId", main._build_mods_query(False))
+
+    def test_get_mods_passes_it_through_and_hides_nothing_for_it(self):
+        self.assertIn("uploader_id", inspect.signature(main.Plugin.get_mods).parameters)
+        src = inspect.getsource(main.Plugin.get_mods)
+        self.assertIn("uploader_id=int(uploader_id or 0)", src)
+        self.assertIn("0 if (search or uploader_id) else app_id", src)
+
+
+class TestSkipsReleaseWhenTheMasterArrives(unittest.TestCase):
+    """Issue #36: mods skipped because "_ResourcePack.esl is not installed"
+    stayed off after the reporter's game had it, because the skip was
+    remembered and never looked at again."""
+
+    DOMAIN = "skyrimtest36"
+
+    def setUp(self):
+        self.data = tempfile.mkdtemp(dir=TEST_ROOT)
+        for n in ("Needs RP.esp", "Still Missing.esp", "Crashes.esp", "_ResourcePack.esl"):
+            open(os.path.join(self.data, n), "w").close()
+        self.txt = os.path.join(self.data, "Plugins.txt")
+        with open(self.txt, "w") as f:
+            f.write("Needs RP.esp\nStill Missing.esp\nCrashes.esp\n")
+        main._save_skips(self.DOMAIN, {
+            "needs rp.esp": {"reason": "needs _ResourcePack.esl, which is not installed", "root": False},
+            "still missing.esp": {"reason": "needs Gone.esm, which is not installed", "root": False},
+            "crashes.esp": {"reason": "crashes Skyrim during data load", "root": False},
+        })
+
+    def tearDown(self):
+        settings = main._load_settings()
+        settings.get("skipped", {}).pop(self.DOMAIN, None)
+        main._save_settings(settings)
+
+    def test_only_the_skip_whose_master_arrived_is_released(self):
+        released = main._release_skips_whose_masters_arrived(
+            self.DOMAIN, self.data, self.txt, "starred")
+        self.assertEqual(released, ["Needs RP.esp"])
+        with open(self.txt) as f:
+            lines = f.read().splitlines()
+        self.assertIn("*Needs RP.esp", lines)
+        self.assertIn("Still Missing.esp", lines, "its master is still absent")
+        self.assertIn("Crashes.esp", lines, "a different reason is never undone")
+        skips = main._load_skips(self.DOMAIN)
+        self.assertNotIn("needs rp.esp", skips)
+        self.assertIn("still missing.esp", skips)
+        self.assertIn("crashes.esp", skips)
+
+    def test_it_runs_where_the_list_is_built_and_before_switching_off(self):
+        src = inspect.getsource(main.Plugin.get_installed_mods)
+        self.assertIn("_release_skips_whose_masters_arrived", src)
+        src = inspect.getsource(main.Plugin.disable_blocked_plugins)
+        self.assertIn("_release_skips_whose_masters_arrived", src)
+
+
 class TestOneInstallPerFile(unittest.TestCase):
     """Issue #42: the same mod file installed twice at once shares one
     .part and one extraction folder, and one run deleted the other's tree

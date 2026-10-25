@@ -298,7 +298,9 @@ export const getMods = callable<
     category?: string,
     /** Keep only mods updated within N days; -1 = since the game's own
      * last update (the filter that matters on live-service games). */
-    updated_within_days?: number
+    updated_within_days?: number,
+    /** Only this author's mods (their Nexus member id; issue #46). */
+    uploader_id?: number
   ],
   ModsResult
 >("get_mods");

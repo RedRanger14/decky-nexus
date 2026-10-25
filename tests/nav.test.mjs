@@ -1092,7 +1092,7 @@ test("the browse filter sits beside sort and refetches", () => {
   );
   // Changing the filter must refetch and leave the featured home.
   assert.ok(
-    /\[game\.appId, sort, search, filter\]/.test(page),
+    /\[game\.appId, sort, search, filter(, author\?\.id)?\]/.test(page),
     "the fetch effect does not depend on the filter"
   );
   assert.ok(

@@ -589,6 +589,21 @@ test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
   assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
 });
 
+// Issue #46: "click on the mod author's username from a mod page to see
+// their other mods".
+test("the author on a mod page opens that author's mods in the store", () => {
+  const detail = readFileSync("src/ModDetailPage.tsx", "utf8");
+  assert.match(detail, /setBrowseAuthor\(\{\s*id: Number\(uploader\.memberId\)/);
+  assert.match(detail, /Navigation\.Navigate\("\/nexus-mods"\)/);
+  const browse = readFileSync("src/BrowsePage.tsx", "utf8");
+  assert.match(browse, /takeBrowseAuthor\(\)/);
+  assert.match(browse, /author\?\.id \?\? 0\s*\)/, "the author reaches get_mods");
+  assert.match(browse, /&& !author;/, "an author list is never the home rows");
+  assert.match(browse, /Show all mods/);
+  const api = readFileSync("src/api.ts", "utf8");
+  assert.match(api, /uploader_id\?: number\s*\]/);
+});
+
 // Henry From Skalitz (KCD2), 2026-10-10: LuaDB was skipped as "could not
 // tell where" before it became KCD2's loader, and that old skip both hid it
 // from the page's count and kept claiming it could not be placed.

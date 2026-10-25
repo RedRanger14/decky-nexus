@@ -44,6 +44,30 @@ export interface BrowseCache {
   mods: NexusMod[];
   total?: number;
   nextOffset: number;
+  /** The author whose mods the list shows, if any (issue #46). */
+  author?: BrowseAuthor;
+}
+
+// ---- One author's mods ---------------------------------------------------------
+// Issue #46: "click on the mod author's username from a mod page to see
+// their other mods". The mod page hands the author to the store, which
+// lists that author's mods for the game in place of everything.
+export interface BrowseAuthor {
+  id: number;
+  name: string;
+}
+
+let browseAuthor: BrowseAuthor | undefined;
+
+export function setBrowseAuthor(author: BrowseAuthor): void {
+  browseAuthor = author;
+}
+
+/** One-shot: the author the store should open on, if a mod page asked. */
+export function takeBrowseAuthor(): BrowseAuthor | undefined {
+  const a = browseAuthor;
+  browseAuthor = undefined;
+  return a;
 }
 
 let browseCache: BrowseCache | undefined;

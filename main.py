@@ -140,6 +140,7 @@ def _build_mods_query(
     language: str = "",
     category: str = "",
     updated_since: int = 0,
+    uploader_id: int = 0,
 ) -> str:
     """Compose the browse query. WILDCARD does substring matching
     server-side; date filters take epoch seconds (verified - ISO datetimes
@@ -173,6 +174,10 @@ def _build_mods_query(
             'updatedAt: [{ value: "%d", op: GT }]' % int(updated_since)
         )
     params = "$domain: String!, $count: Int!, $offset: Int!"
+    if uploader_id:
+        # One author's mods for this game (issue #46: "click on the mod
+        # author's username ... to see their other mods").
+        filters.append('uploaderId: [{ value: "%d" }]' % int(uploader_id))
     if with_search:
         filters.append("name: [{ value: $search, op: WILDCARD }]")
         params += ", $search: String!"
@@ -5977,6 +5982,51 @@ def _ghost_plugins(data_path: str, names: list) -> list:
     except OSError:
         return []
     return [n for n in names if n.lower() not in real]
+
+
+_ABSENT_MASTER_RE = re.compile(r"^needs (.+), which (?:is|are) not installed$")
+
+
+def _release_skips_whose_masters_arrived(
+    game_domain: str, data_path: str, plugins_txt: str, style: str
+) -> list:
+    """Switch back on plugins that were skipped for a missing master that
+    is now on disk.
+
+    disable_blocked_plugins records its skips so a later tidy-up does not
+    undo them, which is right while the master is absent and wrong forever
+    after: issue #36, a few mods "need _ResourcePack.esl, which is not
+    installed" while the reporter could see it in their Data folder. Only
+    skips with that exact reason are touched; a mod skipped for crashing
+    the game, or by the user, stays off. Returns the plugins switched on.
+    """
+    skips = _load_skips(game_domain)
+    if not skips:
+        return []
+    try:
+        on_disk = {f.lower(): f for f in os.listdir(data_path)}
+    except OSError:
+        return []
+    present = set(on_disk) | {
+        m.lower() for m in IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())}
+    release = []
+    for name, info in skips.items():
+        m = _ABSENT_MASTER_RE.match((info or {}).get("reason") or "")
+        if not m or name.lower() not in on_disk:
+            continue
+        masters = [x.strip().lower() for x in m.group(1).split(",") if x.strip()]
+        if masters and all(x in present for x in masters):
+            release.append(name)
+    if not release:
+        return []
+    _set_plugins_active(plugins_txt, [on_disk[n.lower()] for n in release], True, style)
+    with _SETTINGS_LOCK:
+        settings = _load_settings()
+        store = settings.setdefault("skipped", {}).setdefault(game_domain, {})
+        for n in release:
+            store.pop(n, None)
+        _save_settings(settings)
+    return [on_disk[n.lower()] for n in release]
 
 
 def _missing_masters(data_path: str, names: list, implicit: set = frozenset()):
@@ -17672,6 +17722,7 @@ class Plugin:
         app_id: int = 0,
         category: str = "",
         updated_within_days: int = 0,
+        uploader_id: int = 0,
     ) -> dict:
         """Browse or search a game's mods, sorted server-side. Public data -
         works without a key, but we send it when present.
@@ -17722,6 +17773,7 @@ class Plugin:
                     language=_user_prefs()["mod_language"],
                     category=str(category or ""),
                     updated_since=updated_since,
+                    uploader_id=int(uploader_id or 0),
                 ),
                 "variables": variables,
             }
@@ -17777,7 +17829,7 @@ class Plugin:
                     # Issue #43: 138 verdicts on one device hid Virtual
                     # Atelier and "many other very popular mods" from search.
                     kept, dropped = _hide_known_broken(
-                        game_domain, 0 if search else app_id,
+                        game_domain, 0 if (search or uploader_id) else app_id,
                         _gate_adult_nodes([node])
                     )
                     mods.extend(kept)
@@ -25302,6 +25354,11 @@ query Link($slug: String!, $domainName: String!) {
             return {"ok": False, "error": "Invalid plugins path"}
         path = _plugins_txt_path(app_id, plugins_subpath)
         _, data_path, _unused = _game_paths(install_dir, "Data")
+        # First give back what an earlier pass took for a master that has
+        # since arrived; otherwise it would stay off for good (#36).
+        await asyncio.to_thread(
+            _release_skips_whose_masters_arrived, game_domain, data_path,
+            path, plugins_style)
         implicit = IMPLICIT_MASTERS_BY_DOMAIN.get(game_domain, frozenset())
         entries = _plugin_entries(_read_plugins_txt(path), plugins_style)
         enabled = [n for n, on in entries if on and n.lower() not in implicit]
@@ -28467,6 +28524,20 @@ query CollectionInstructions($slug: String!) {
         the modes return early from their own branches: the first version
         sat at the end of the folder branch, and Skyrim (dataDir) never
         got them."""
+        if install_mode == "dataDir" and plugins_subpath:
+            try:
+                _, data_path, _unused = _game_paths(install_dir, "Data")
+                released = await asyncio.to_thread(
+                    _release_skips_whose_masters_arrived, game_domain,
+                    data_path, _plugins_txt_path(app_id, plugins_subpath),
+                    plugins_style)
+                if released:
+                    decky.logger.info(
+                        f"{game_domain}: switched back on {len(released)} "
+                        f"plugin(s) whose missing master is now installed: "
+                        f"{', '.join(released[:6])}")
+            except Exception as e:  # noqa: BLE001 - the list must still load
+                decky.logger.warning(f"skip re-check skipped: {e}")
         result = await self._get_installed_mods_raw(
             game_domain, install_dir, mods_subdir, install_mode, app_id,
             plugins_subpath, plugins_style, hidden_folders,

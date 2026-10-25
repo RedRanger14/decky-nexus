@@ -1,5 +1,6 @@
 import {
   ButtonItem,
+  DialogButton,
   Dropdown,
   Focusable,
   Router,
@@ -47,9 +48,11 @@ import {
   setDetailOrigin,
   setSelectedCollection,
   setSelectedMod,
+  takeBrowseAuthor,
   takeBrowseRestore,
   takeCollectionsReturn,
 } from "./state";
+import type { BrowseAuthor } from "./state";
 
 // Steam's scroll panel: right-stick scrolling for free. The published types
 // only declare children, but the underlying component takes Focusable-ish
@@ -667,7 +670,16 @@ export function BrowsePage() {
 
   // Coming back from a mod detail restores the previous search/results
   // instead of resetting to the home rails. (Lazy init: runs once.)
-  const [restored] = useState(() => takeBrowseRestore(game.appId));
+  // A mod page asking for one author's mods (#46) opens a fresh list, not
+  // whatever was on screen before; the return flag is still consumed.
+  const [pendingAuthor] = useState(() => takeBrowseAuthor());
+  const [restored] = useState(() => {
+    const r = takeBrowseRestore(game.appId);
+    return pendingAuthor ? undefined : r;
+  });
+  const [author, setAuthor] = useState<BrowseAuthor | undefined>(
+    pendingAuthor ?? restored?.author
+  );
 
   const [sort, setSort] = useState(restored?.sort ?? "featured");
   // The filter beside sort. "" = all; "d:N" = updated within N days
@@ -695,7 +707,8 @@ export function BrowsePage() {
   const skipNextFetch = useRef(
     Boolean(
       restored &&
-        (restored.search.trim() !== "" || restored.sort !== "featured")
+        (restored.search.trim() !== "" || restored.sort !== "featured" ||
+          restored.author)
     )
   );
 
@@ -742,7 +755,8 @@ export function BrowsePage() {
   // The API rejects 1-char wildcard searches - treat them as no search.
   const effectiveSearch = search.trim().length >= 2 ? search.trim() : "";
   // A filter means the user wants the LIST, even from the featured home.
-  const isHome = sort === "featured" && effectiveSearch === "" && filter === "";
+  const isHome =
+    sort === "featured" && effectiveSearch === "" && filter === "" && !author;
   const effectiveSort = sort === "featured" ? "endorsements" : sort;
 
   // Focus restore: switching home<->list unmounts the focused element and
@@ -857,7 +871,8 @@ export function BrowsePage() {
         effectiveSearch,
         game.appId,
         filter.startsWith("d:") ? "" : filter,
-        filter.startsWith("d:") ? parseInt(filter.slice(2), 10) : 0
+        filter.startsWith("d:") ? parseInt(filter.slice(2), 10) : 0,
+        author?.id ?? 0
       );
       if (result.ok) {
         setError(undefined);
@@ -1001,7 +1016,7 @@ export function BrowsePage() {
     // Debounce while typing; instant for sort changes.
     const timer = setTimeout(() => fetchPage(0, false), search ? 500 : 0);
     return () => clearTimeout(timer);
-  }, [game.appId, sort, search, filter]);
+  }, [game.appId, sort, search, filter, author?.id]);
 
   // Keep the hand-back cache current so opening a mod detail can restore.
   useEffect(() => {
@@ -1012,8 +1027,9 @@ export function BrowsePage() {
       mods,
       total,
       nextOffset: nextOffset.current,
+      author,
     });
-  }, [game.appId, sort, search, mods, total]);
+  }, [game.appId, sort, search, mods, total, author?.id]);
 
   const hasMore =
     lastPageFull && total !== undefined && nextOffset.current < total;
@@ -1548,6 +1564,21 @@ export function BrowsePage() {
             )}
             {loading && mods.length === 0 && (
               <div style={{ padding: "24px 0", opacity: 0.8 }}>Loading mods…</div>
+            )}
+            {author && (
+              <Focusable
+                style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "10px" }}
+              >
+                <div style={{ flex: 1 }}>
+                  <SectionHeading title={`Mods by ${author.name}`} />
+                </div>
+                <DialogButton
+                  style={{ width: "auto", minWidth: "160px" }}
+                  onClick={() => setAuthor(undefined)}
+                >
+                  Show all mods
+                </DialogButton>
+              </Focusable>
             )}
             {search.trim() !== "" && linkHit && (
               <div style={{ marginTop: "10px" }}>
