@@ -18,7 +18,22 @@ import {
 } from "./api";
 import { SupportedGame, modeParams, stalenessExemptModIds } from "./games";
 import { nameDownload } from "./state";
-import { addLaunchOptions } from "./steam";
+import { toaster } from "@decky/api";
+import { addLaunchOptions, joinSteamBeta } from "./steam";
+
+/** Move a game to the Steam beta its mods are made for (RE2's dx11_non-rt)
+ * and say so, because Steam now downloads the difference and the next
+ * launch waits for it. Called by Step 1 and by collection installs. */
+export async function switchToModBeta(game: SupportedGame): Promise<void> {
+  if (!game.steamBeta) return;
+  if (await joinSteamBeta(game.appId, game.steamBeta.name)) {
+    toaster.toast({
+      title: `${game.displayName}: switching to ${game.steamBeta.label}`,
+      body: "Steam downloads the change before the next launch.",
+      duration: 12000,
+    });
+  }
+}
 
 /** Download AND extract a pinned file so the installer only has to
  * commit it. Extraction is the CPU-bound half of an install and shares

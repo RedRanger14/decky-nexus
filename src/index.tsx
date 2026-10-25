@@ -154,6 +154,7 @@ import {
   getRunningAppIds,
   getViewedLibraryAppId,
   isGameRunning,
+  joinSteamBeta,
   pickProton,
   restartGame,
   setCompatTool,
@@ -245,7 +246,7 @@ import { ManagerPage } from "./ManagerPage";
 import LoadOrderPage from "./LoadOrderPage";
 import { SettingsPage } from "./SettingsPage";
 import { UpdatesPage } from "./UpdatesPage";
-import { installLatest, toggleMod } from "./install";
+import { installLatest, switchToModBeta, toggleMod } from "./install";
 import HealthCheckPage, { setHealthGame } from "./HealthCheckPage";
 import { scanUpdates } from "./updates";
 import {
@@ -481,6 +482,11 @@ function ResetGameRow({
       );
       if (result.ok && result.use_steam_client) {
         setLaunchOptions(game.appId, "");
+      }
+      // Vanilla is the edition Steam ships, so a game the plugin moved to a
+      // beta for its mods (RE2's dx11_non-rt) goes back to public.
+      if (result.ok && game.steamBeta) {
+        await joinSteamBeta(game.appId, "public");
       }
       // Reset used to report success it had not checked: on device it
       // said "1543 mods removed, 0 errors" while 20GB of mod files stayed
@@ -904,6 +910,7 @@ function CurrentGameSection() {
     if (!game?.framework || !frameworkInstallable(game.framework)) return;
     setFrameworkBusy(true);
     try {
+      if (game.steamBeta) await switchToModBeta(game);
       // Same reason as the multi-framework path: a loader installs fine
       // against an old prefix CRT and then its plugins refuse to load.
       if (game.prefixRuntimeFix) {
@@ -1039,6 +1046,7 @@ function CurrentGameSection() {
     let failed = 0;
     let mainInstallPath: string | undefined;
     try {
+      if (game.steamBeta) await switchToModBeta(game);
       // The runtime fix goes first: without a 14.40+ CRT in the prefix,
       // CET and RED4ext install fine but fail to LOAD (error 998).
       if (game.prefixRuntimeFix) {

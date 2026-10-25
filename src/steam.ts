@@ -101,6 +101,32 @@ export function addLaunchOptions(appId: number, template: string): boolean {
   );
 }
 
+/** The Steam beta branch a game is on ("public" when none). */
+export function getSelectedBeta(appId: number): string {
+  try {
+    const store = (globalThis as any).appDetailsStore;
+    return String(store?.GetAppDetails?.(appId)?.strSelectedBeta || "public");
+  } catch {
+    return "public";
+  }
+}
+
+/** Put a game on a Steam beta branch ("public" leaves betas). Steam
+ * downloads the difference before the next launch. True when a switch was
+ * requested, false when it was already there or the client refused. */
+export async function joinSteamBeta(appId: number, name: string): Promise<boolean> {
+  if (getSelectedBeta(appId) === name) return false;
+  try {
+    const apps = (globalThis as any).SteamClient?.Apps;
+    if (!apps?.JoinAppContentBeta) return false;
+    const result = await apps.JoinAppContentBeta(appId, name);
+    // EResult 1 is OK; anything else is a refusal worth reporting as "no".
+    return result === undefined || result === 1 || result?.result === 1;
+  } catch {
+    return false;
+  }
+}
+
 export function setLaunchOptions(appId: number, options: string): boolean {
   try {
     const apps = (globalThis as any).SteamClient?.Apps;

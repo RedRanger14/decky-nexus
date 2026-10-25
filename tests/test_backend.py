@@ -25403,31 +25403,51 @@ class TestReFrameworkConfigPerGame(unittest.TestCase):
         self.assertEqual(main._ref_config_name(""), "re4_fw_config.txt")
 
 
-class TestRe2PrefersTheRayTracingBuild(unittest.TestCase):
-    """Steam's RE2 is the ray-tracing build; a mod's DX11 file must not be
-    the Install button just because its name sorts first."""
+class TestRe2PrefersTheDx11Build(unittest.TestCase):
+    """RE2 runs on Steam's dx11_non-rt beta, the edition its collections
+    are made for, so a mod's ray-tracing file is never the Install button."""
 
     def _f(self, name, cat="MAIN", primary=False):
         return {"name": name, "category_name": cat, "is_primary": primary}
 
-    def test_dx11_files_sort_after_rt_ones(self):
-        files = [self._f("Schoolgirl Claire (Noir) DX11 Non-RT"),
-                 self._f("Schoolgirl Claire (Noir) DX12 RT")]
+    def test_rt_files_sort_after_dx11_ones(self):
+        files = [self._f("Schoolgirl Claire (Noir) DX12 RT"),
+                 self._f("Schoolgirl Claire (Noir) DX11 Non-RT")]
         got = main._sort_mod_files(files, main.MOD_FILE_DEMOTE["residentevil22019"])
-        self.assertEqual(got[0]["name"], "Schoolgirl Claire (Noir) DX12 RT")
+        self.assertEqual(got[0]["name"], "Schoolgirl Claire (Noir) DX11 Non-RT")
 
-    def test_names_that_merely_mention_rt_are_not_demoted(self):
-        rx = main.MOD_FILE_DEMOTE["residentevil22019"]
-        for keep in ("Claire Nude Pubic Hair (RTX Update)", "Claire Katz RTX Update",
-                     "REFramework", "Leon RT version"):
-            self.assertIsNone(rx.search(keep), keep)
-        for drop in ("REFramework (pre Ray Tracing update)", "Outfit Non RT",
-                     "Mod - nonRT", "Hair DX11"):
-            self.assertIsNotNone(rx.search(drop), drop)
+    def test_files_for_both_editions_are_not_demoted(self):
+        rt_only = main.MOD_FILE_DEMOTE["residentevil22019"]
+        for keep in ("Classic Inventory (Non-RT and RT)", "REFramework",
+                     "REFramework (pre Ray Tracing update)", "Leon Hair DX11"):
+            self.assertFalse(rt_only(keep), keep)
+        for drop in ("Claire Nude Pubic Hair (RTX Update)", "Outfit DX12 RT",
+                     "Leon RT version"):
+            self.assertTrue(rt_only(drop), drop)
 
     def test_other_games_sort_as_before(self):
         files = [self._f("B"), self._f("A DX11")]
         self.assertEqual(main._sort_mod_files(files)[0]["name"], "A DX11")
+
+
+class TestFrameworkKeywordsCanRequire(unittest.TestCase):
+    """RE2's REFramework DX11 build can only be picked by inclusion: the
+    other build is called just "REFramework"."""
+
+    FILES = [
+        {"file_id": 5361, "name": "REFramework (pre Ray Tracing update)",
+         "file_name": "REFramework-1097-Nightly639.zip", "category_name": "MAIN"},
+        {"file_id": 5362, "name": "REFramework",
+         "file_name": "REFramework-1097-Nightly639-b.rar", "category_name": "MAIN"},
+    ]
+
+    def test_a_plus_keyword_must_match(self):
+        got = main._pick_main_file(self.FILES, ["+pre Ray Tracing"])
+        self.assertEqual(got["file_id"], 5361)
+
+    def test_plain_keywords_still_exclude(self):
+        got = main._pick_main_file(self.FILES, ["pre Ray Tracing"])
+        self.assertEqual(got["file_id"], 5362)
 
 
 class TestFf12Routing(unittest.TestCase):

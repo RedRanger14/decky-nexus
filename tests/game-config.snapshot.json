@@ -352,7 +352,7 @@
     "pluginsTxtSubpath": null,
     "pluginsTxtStyle": null,
     "installMode": null,
-    "frameworkName": "REFramework",
+    "frameworkName": "dx11_non-rt",
     "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dinput8=n,b\" %command%",
     "prefixTools": [
       "1097"

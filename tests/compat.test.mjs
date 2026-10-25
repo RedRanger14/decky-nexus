@@ -589,6 +589,21 @@ test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
   assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
 });
 
+// RE2, 2026-10-25 (Michael chose option a): its collections are made for
+// the DX11 edition (dx11_non-rt beta), so Step 1 and collection installs
+// switch the game to it and reset returns it to public.
+test("RE2 runs on the dx11_non-rt beta its mods are made for", () => {
+  const games = readFileSync("src/games.ts", "utf8");
+  const re2 = games.slice(games.indexOf("appId: 883710"), games.indexOf("appId: 22370"));
+  assert.match(re2, /steamBeta: \{\s*name: "dx11_non-rt"/);
+  assert.match(re2, /avoidFileKeywords: \["\+pre Ray Tracing"\]/);
+  const index = readFileSync("src/index.tsx", "utf8");
+  assert.equal((index.match(/if \(game\.steamBeta\) await switchToModBeta\(game\)/g) ?? []).length, 2);
+  assert.match(index, /await joinSteamBeta\(game\.appId, "public"\)/);
+  const page = readFileSync("src/CollectionPage.tsx", "utf8");
+  assert.match(page, /if \(game\.steamBeta\) await switchToModBeta\(game\)/);
+});
+
 // FFXII ENHANCED DEFINITIVE, 2026-10-25: the plugin put Lua Loader 2.0.1
 // in ahead of the collection, which pins 1.9.7, and Dynamic Description
 // failed to load under 2.x. Pinned loaders install the collection's file,

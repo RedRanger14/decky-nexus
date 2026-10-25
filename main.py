@@ -3105,14 +3105,16 @@ def _map_v1_mod(m: dict) -> dict:
     }
 
 
-# Builds a game's Steam copy cannot use, by file name. RE2's 2022 update
-# made the ray-tracing (DX12) build the Steam default; mods ship a second
-# MAIN file for the old DX11 one, and by name "DX11 Non-RT" sorted ahead of
-# "DX12 RT" and became the Install button - textures the game never reads
-# (Schoolgirl Claire, Legion 2026-10-25).
+# Builds the edition the plugin runs a game on cannot use, by file name.
+# RE2 is moved to Steam's dx11_non-rt beta (the edition its collections are
+# made for: Improving the Game II and Editor's Cut install only .tex.10), so
+# a mod's ray-tracing file goes after its DX11 one. Files for both editions
+# ("Non-RT and RT") are not demoted.
+_RE2_RT_ONLY = re.compile(r"\bdx12\b|\brtx?\b|ray[\s_-]?tracing", re.I)
+_RE2_HAS_DX11 = re.compile(r"non[\s_-]?rt|pre[\s_-]?(ray|rt)|\bdx11\b", re.I)
 MOD_FILE_DEMOTE = {
-    "residentevil22019": re.compile(
-        r"non[\s_-]?rt\b|\bdx11\b|pre[\s_-]?(ray[\s_-]?tracing|rt)\b", re.I),
+    "residentevil22019": lambda name: bool(
+        _RE2_RT_ONLY.search(name) and not _RE2_HAS_DX11.search(name)),
 }
 
 
@@ -3124,13 +3126,32 @@ def _sort_mod_files(files: list, demote=None) -> list:
     files.sort(
         key=lambda f: (
             f["category_name"] == "OLD_VERSION",
-            bool(demote and demote.search(f["name"])),
+            bool(demote and demote(f["name"])),
             not f["is_primary"],
             f["category_name"],
             f["name"],
         )
     )
     return files
+
+
+def _keyword_filter(file_list: list, keywords) -> list:
+    """Files whose name or file_name passes a framework's file keywords.
+
+    A plain keyword drops matching files (SKSE's GOG build). A keyword
+    starting with "+" must be present instead: RE2's REFramework page names
+    its DX11 build "REFramework (pre Ray Tracing update)" and its other build
+    just "REFramework", so the one we want can only be chosen by inclusion.
+    """
+    avoid = [k.lower() for k in (keywords or []) if k and not k.startswith("+")]
+    need = [k[1:].lower() for k in (keywords or []) if k and k.startswith("+")]
+
+    def text(f):
+        return ((f.get("name") or "") + " " + (f.get("file_name") or "")).lower()
+
+    return [f for f in file_list
+            if not any(k in text(f) for k in avoid)
+            and all(k in text(f) for k in need)]
 
 
 def _framework_file_for_game_version(file_list: list, avoid_keywords: list,
@@ -3158,16 +3179,9 @@ def _framework_file_for_game_version(file_list: list, avoid_keywords: list,
     needle = ".".join(parts)
     # Bounded so 1.6.117 cannot match inside 1.6.1170 and vice versa.
     pattern = re.compile(r"(?<![\d.])" + re.escape(needle) + r"(?!\d)")
-    avoid = [k.lower() for k in (avoid_keywords or []) if k]
     matches = []
-    for f in file_list:
+    for f in _keyword_filter(file_list, avoid_keywords):
         if f.get("category_name") not in ("MAIN", "OPTIONAL", "OLD_VERSION"):
-            continue
-        if avoid and any(
-            k in (f.get("name") or "").lower()
-            or k in (f.get("file_name") or "").lower()
-            for k in avoid
-        ):
             continue
         text = " ".join((
             f.get("name") or "", f.get("description") or "",
@@ -3226,17 +3240,7 @@ def _pick_main_file(file_list: list, avoid_keywords: list = ()):
     GOG one (uploaded later, so a higher file_id) refuses to run against
     the Steam game. No fallback past the filter - installing a known-wrong
     build is worse than reporting there's nothing suitable."""
-    avoid = [k.lower() for k in avoid_keywords if k]
-    if avoid:
-        file_list = [
-            f
-            for f in file_list
-            if not any(
-                k in (f.get("name") or "").lower()
-                or k in (f.get("file_name") or "").lower()
-                for k in avoid
-            )
-        ]
+    file_list = _keyword_filter(file_list, avoid_keywords)
     mains = [f for f in file_list if f.get("category_name") == "MAIN"]
     if mains:
         return max(mains, key=lambda f: f["file_id"])

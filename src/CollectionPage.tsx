@@ -92,6 +92,7 @@ import {
   finishFomod,
   installLatest,
   installPinned,
+  switchToModBeta,
   prefetchPinned,
   preparePinned,
   toggleMod,
@@ -494,6 +495,9 @@ export function CollectionPage() {
   ) => {
     if (!sel) return;
     const { game } = sel;
+    // RE2's collections are made for its DX11 edition; the game moves to
+    // that beta before anything is installed for it.
+    if (game.steamBeta) await switchToModBeta(game);
     const allLoaders = [
       ...(game.framework ? [game.framework] : []),
       ...(game.extraFrameworks ?? []),

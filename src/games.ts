@@ -327,6 +327,10 @@ export interface SupportedGame {
    * these games route through the frosty* backend calls rather than the
    * normal installer. See docs/frosty-swbf2/WORKING.md. */
   frostbite?: boolean;
+  /** The Steam beta branch the game's mods are made for. Step 1 and
+   * collection installs switch the game to it (Steam then downloads the
+   * difference); reset to vanilla returns it to "public". */
+  steamBeta?: { name: string; label: string };
   /** Shown as a banner at the top of the QAM panel: support for this game
    * is real but rough. Honest signposting beats silent rough edges. */
   underConstruction?: string;
@@ -733,15 +737,24 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     pakPatchLayout: true,
     moddedSaveWarning: false,
     processName: "re2.exe",
+    // RE2's mods and collections are made for the DX11 edition Steam keeps
+    // as a beta since the 2022 ray-tracing update: Improving the Game II
+    // and Editor's Cut install only .tex.10 / .mesh.1808312334, which the
+    // ray-tracing default never reads (Legion, 2026-10-25). Step 1 and
+    // collections switch the game to it; reset puts it back on public.
+    steamBeta: {
+      name: "dx11_non-rt",
+      label: "the DX11 edition mods are made for",
+    },
     framework: {
       name: "REFramework",
       detectFile: "dinput8.dll",
       url: "github.com/praydog/REFramework",
       nexusModId: 1097,
       installKind: "copyRoot",
-      // Steam ships the ray-tracing build; the page also carries a build
-      // for the old DX11 one, which would not load.
-      avoidFileKeywords: ["pre Ray Tracing"],
+      // The game runs on the dx11_non-rt beta (steamBeta below), which
+      // takes this page's "REFramework (pre Ray Tracing update)" build.
+      avoidFileKeywords: ["+pre Ray Tracing"],
       // Every natives/ mod loads through its loose file loader, and
       // collections never list it: Improving the Game II installed 645
       // files that nothing read (Legion, 2026-10-25).
