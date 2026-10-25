@@ -1554,7 +1554,7 @@ function CurrentGameSection() {
                   label={`Step ${fwSteps.install}`}
                   layout="below"
                   disabled={frameworkBusy || !frameworkInstallable(game.framework)}
-                  description={`Most ${game.displayName} mods require ${game.framework.name}. Downloads from Nexus Mods (author gets the credit).`}
+                  description={`${game.framework.stepNote ?? `Most ${game.displayName} mods require ${game.framework.name}.`} Downloads from Nexus Mods (author gets the credit).`}
                   onClick={onInstallFramework}
                 >
                   {frameworkBusy

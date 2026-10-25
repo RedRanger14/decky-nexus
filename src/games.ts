@@ -69,6 +69,9 @@ export interface GameFramework {
   name: string;
   /** Filename prefix inside the install dir that proves it's installed */
   detectFile: string;
+  /** Step 1's line when "Most <game> mods require <name>" is not true:
+   * KCD2's top 12 mods and QoL & Extras all run without LuaDB. */
+  stepNote?: string;
   /** Where to learn about installing it */
   url: string;
   /** The framework's own Nexus mod id - downloads route through Nexus so
@@ -1097,8 +1100,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     appId: 1771300,
     displayName: "Kingdom Come: Deliverance II",
     nexusDomain: "kingdomcomedeliverance2", // verified against the Nexus API: game id 7286
-    // Steam's install folder for 1771300. TODO verify on the Legion once
-    // it is installed, with the exe path and process name.
+    // Steam's install folder for 1771300, verified on the Legion
+    // 2026-10-10 (exe Bin/Win64MasterMasterSteamPGO/KingdomCome.exe).
     installDirName: "KingdomComeDeliverance2",
     // Mods are packed exactly like KCD1's (the top 40 on Nexus, 2026-10-10):
     // routed by game into mods/<name>/ as exact-file records, like KCD1.
@@ -1114,6 +1117,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     framework: {
       name: "LuaDB",
       detectFile: "Bin/Win64MasterMasterSteamPGO/kcd2db.asi",
+      stepNote:
+        "Only some mods need LuaDB, and collections that need it install " +
+        "it for you.",
       url: "nexusmods.com/kingdomcomedeliverance2/mods/1523",
       nexusModId: 1523,
       installKind: "copyRoot",

@@ -589,6 +589,16 @@ test("RDR2: no construction badge, but the Story-Mode-only note stays", () => {
   assert.match(idx, /game\.gameNote && \(/, "the panel renders it");
 });
 
+// KCD2, 2026-10-25: Step 1 said "Most Kingdom Come: Deliverance II mods
+// require LuaDB" beside 70 mods running without it.
+test("KCD2's Step 1 does not claim most mods need LuaDB", () => {
+  const games = readFileSync("src/games.ts", "utf8");
+  const kcd2 = games.slice(games.indexOf("appId: 1771300"), games.indexOf("appId: 1623730"));
+  assert.match(kcd2, /stepNote:\s*\n?\s*"Only some mods need LuaDB/);
+  const index = readFileSync("src/index.tsx", "utf8");
+  assert.match(index, /game\.framework\.stepNote \?\? `Most \$\{game\.displayName\} mods require/);
+});
+
 // PR #48 follow-up: a proxy-dll mod's override is applied, merged into
 // what the player had, at the one place every install passes.
 test("a proxy-dll mod's launch override is merged in on install", () => {
