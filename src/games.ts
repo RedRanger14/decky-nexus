@@ -749,6 +749,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     framework: {
       name: "REFramework",
       detectFile: "dinput8.dll",
+      stepNote:
+        "Switches the game to the DX11 edition RE2 mods are made for " +
+        "(Steam downloads about 24 GB once), then installs REFramework.",
       url: "github.com/praydog/REFramework",
       nexusModId: 1097,
       installKind: "copyRoot",
