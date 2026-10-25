@@ -17,7 +17,7 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Twenty-four games. Every one unmarked below was installed, modded and played
+Twenty-five games. Every one unmarked below was installed, modded and played
 on real hardware before it shipped. That is what supported means here: not
 that the code has a config entry for it, but that someone finished a
 session with mods running.
@@ -29,23 +29,24 @@ session with mods running.
 5. Fallout: New Vegas
 6. Helldivers 2
 7. Kingdom Come: Deliverance
-8. Mass Effect Legendary Edition
-9. Middle-earth: Shadow of Mordor \*
-10. Mount & Blade II: Bannerlord
-11. NieR:Automata
-12. Palworld
-13. Red Dead Redemption 2
-14. Resident Evil 4
-15. Skyrim Special Edition
-16. Slay the Spire 2
-17. STAR WARS Battlefront II (2017)
-18. Stardew Valley
-19. Starfield \*
-20. Subnautica
-21. Subnautica 2
-22. Subnautica: Below Zero
-23. The Witcher 3
-24. Valheim
+8. Kingdom Come: Deliverance II
+9. Mass Effect Legendary Edition
+10. Middle-earth: Shadow of Mordor \*
+11. Mount & Blade II: Bannerlord
+12. NieR:Automata
+13. Palworld
+14. Red Dead Redemption 2
+15. Resident Evil 4
+16. Skyrim Special Edition
+17. Slay the Spire 2
+18. STAR WARS Battlefront II (2017)
+19. Stardew Valley
+20. Starfield \*
+21. Subnautica
+22. Subnautica 2
+23. Subnautica: Below Zero
+24. The Witcher 3
+25. Valheim
 
 \* Community added game. Not tested by author.
 
@@ -56,7 +57,6 @@ plugin; treat anything you do with them as untested.
 
 - Fallout 3
 - Hollow Knight: Silksong
-- Kingdom Come: Deliverance II (marked under construction in the plugin)
 - Middle-earth: Shadow of War
 
 ### Requested, not started

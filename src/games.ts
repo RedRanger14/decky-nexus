@@ -1131,10 +1131,8 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
         "Bin/Win64MasterMasterSteamPGO/dinput8.dll",
       ],
     },
-    underConstruction:
-      "Kingdom Come: Deliverance II support is new. Mods install the same " +
-      "way as for the first game; it has not been played with mods on this " +
-      "device yet.",
+    // Out of construction 2026-10-25 (v1.21.40): top 12 mods and the top 3
+    // collections installed through the UI, loaded and played from a save.
   },
   1623730: {
     appId: 1623730,
