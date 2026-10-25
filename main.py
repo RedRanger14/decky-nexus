@@ -9075,7 +9075,7 @@ FF12_DOMAINS = ("finalfantasy12",)
 FF12_DEPLOY = "mods/deploy/ff12data"
 FF12_DROP_DIRS = ("fomod", "images", "launcher", "dxgi")
 FF12_DOC_EXTS = (".txt", ".md", ".pdf", ".url", ".jpg", ".jpeg", ".png",
-                 ".log", ".db")
+                 ".log", ".db", ".ini")
 
 
 def _ff12_is_file_loader(scratch: str) -> bool:
@@ -9104,7 +9104,9 @@ def _route_ff12_payload(scratch: str, mod_name: str):
                     rel = FF12_DEPLOY + "/" + "/".join(low[i + 3:])
                 elif p == "ff12data":
                     rel = FF12_DEPLOY + "/" + "/".join(low[i + 1:])
-                elif p == "ps2data":
+                elif p in ("ps2data", "gamedata"):
+                    # gamedata/ alone is a texture mod packed without its
+                    # ff12data parent (Vaan Reskins, Dancer's Battlesuit).
                     rel = FF12_DEPLOY + "/" + "/".join(low[i:])
                 elif i == 0 and p in ("modules", "scripts") and len(parts) > 1:
                     # The Lua Loader's archive is relative to x64.

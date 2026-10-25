@@ -25442,6 +25442,14 @@ class TestFf12Routing(unittest.TestCase):
             "x64/modules/config/ff12-file-loader.ini",
             "x64/modules/ff12-file-loader.dll"])
 
+    def test_a_bare_gamedata_tree_is_a_texture_mod(self):
+        got, err = self._route([
+            "Vaan White Shirt/gamedata/d3d11/artdata/chr/chara/c10/c1004/tex/a.dds.phyre",
+            "Vaan White Shirt/mod.ini"])
+        self.assertIsNone(err)
+        self.assertEqual(got, [
+            "mods/deploy/ff12data/gamedata/d3d11/artdata/chr/chara/c10/c1004/tex/a.dds.phyre"])
+
     def test_the_lua_loader_is_relative_to_x64(self):
         got, _ = self._route(["modules/ff12-lua-loader.dll",
                               "modules/plugins/ff12-imgui.lua.dll"])
