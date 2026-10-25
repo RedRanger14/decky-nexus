@@ -7289,11 +7289,22 @@ def _remove_files_record(
     # were; only files the mod ADDED are deleted. Deleting a replacement
     # leaves the game looking for a file that is no longer there.
     restore = {r for r in (rec.get("mono_restore") or [])}
+    # Two mods can replace the same shipped file (two intro skips). The
+    # first one out must leave the file and the backup alone, or the last
+    # one out finds no backup and deletes the game's own file.
+    claimed = {
+        r.lower()
+        for k, other in records.items()
+        if k != record_key and other is not rec
+        for r in (other or {}).get("mono_restore") or []
+    }
     for rel in rec.get("files") or []:
         if not _safe_rel_path(rel):
             continue
         path = os.path.join(base, *rel.split("/"))
         backup = path + ".decky-nexus.bak"
+        if rel in restore and rel.lower() in claimed:
+            continue
         try:
             if rel in restore and os.path.isfile(backup):
                 shutil.copy2(backup, path)

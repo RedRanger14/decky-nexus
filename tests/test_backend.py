@@ -21557,6 +21557,49 @@ class TestMonolithRouting(unittest.TestCase):
         self.assertIn(".arch06", err[1])
 
 
+class TestTwoModsReplaceOneShippedFile(unittest.TestCase):
+    """Two Mordor mods replacing the same shipped file (two intro skips).
+    Uninstalling both, in either order, has to leave the game's original,
+    never delete it."""
+
+    REL = "game/intro.vib"
+
+    def setUp(self):
+        self.game = os.path.join(TEST_ROOT, "mordor-game")
+        shutil.rmtree(self.game, ignore_errors=True)
+        self.path = os.path.join(self.game, "game", "intro.vib")
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "wb") as f:
+            f.write(b"ORIGINAL")
+        shutil.copy2(self.path, self.path + main.MONO_BACKUP_SUFFIX)
+        with open(self.path, "wb") as f:
+            f.write(b"B-intro")
+        rec = {"mode": "files", "target": ".", "files": [self.REL],
+               "mono_restore": [self.REL]}
+        self.settings = {"installed": {"middleearthshadowofmordor": {
+            "A": dict(rec), "B": dict(rec)}}}
+
+    def read(self):
+        with open(self.path, "rb") as f:
+            return f.read()
+
+    def remove(self, key):
+        main._remove_files_record(
+            "middleearthshadowofmordor", key, self.game, self.settings)
+
+    def test_first_out_leaves_the_other_mods_file(self):
+        self.remove("A")
+        self.assertEqual(self.read(), b"B-intro")
+        self.remove("B")
+        self.assertEqual(self.read(), b"ORIGINAL")
+        self.assertFalse(os.path.exists(self.path + main.MONO_BACKUP_SUFFIX))
+
+    def test_either_order_ends_on_the_original(self):
+        self.remove("B")
+        self.remove("A")
+        self.assertEqual(self.read(), b"ORIGINAL")
+
+
 class TestMonolithArchcfg(unittest.TestCase):
     """default.archcfg is a game file, so every write to it has to be
     undoable per mod. Restoring the backup wholesale would deregister
