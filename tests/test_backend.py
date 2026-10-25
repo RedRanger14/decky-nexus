@@ -25393,6 +25393,16 @@ class TestUnloadAlwaysLetsGo(unittest.TestCase):
         main._DL_CANCEL.clear()
 
 
+class TestReFrameworkConfigPerGame(unittest.TestCase):
+    """REFramework's loose file loader switch lives in a config named after
+    the exe; RE2 loose-file mods would have switched on RE4's file."""
+
+    def test_named_after_the_exe(self):
+        self.assertEqual(main._ref_config_name("re2.exe"), "re2_fw_config.txt")
+        self.assertEqual(main._ref_config_name("re4.exe"), "re4_fw_config.txt")
+        self.assertEqual(main._ref_config_name(""), "re4_fw_config.txt")
+
+
 class TestFf12Routing(unittest.TestCase):
     """Where Final Fantasy XII mods go: loose files under the External File
     Loader's mods/deploy/ff12data, Lua under x64/. The layouts are the real

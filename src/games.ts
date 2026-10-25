@@ -720,6 +720,40 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // verified live 2026-08-05: top non-tool, non-adult content mods
     recommendedModIds: [117, 1479],
   },
+  883710: {
+    appId: 883710,
+    displayName: "Resident Evil 2",
+    nexusDomain: "residentevil22019", // verified: game id 2702
+    // Two spaces, like RE4's (verified on the Legion 2026-10-25).
+    installDirName: "RESIDENT EVIL 2  BIOHAZARD RE2",
+    // Same RE Engine layout as RE4: paks take the next patch number
+    // (the game ships 001-002 plus empty 003-007, so mods start at 008),
+    // natives/ trees load through REFramework's loose file loader.
+    modsSubdir: "._nexus_mods_unused",
+    pakPatchLayout: true,
+    moddedSaveWarning: false,
+    processName: "re2.exe",
+    framework: {
+      name: "REFramework",
+      detectFile: "dinput8.dll",
+      url: "github.com/praydog/REFramework",
+      nexusModId: 1097,
+      installKind: "copyRoot",
+      // Steam ships the ray-tracing build; the page also carries a build
+      // for the old DX11 one, which would not load.
+      avoidFileKeywords: ["pre Ray Tracing"],
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
+      // Its archive is a Fluffy package: modinfo.ini, a screenshot and a
+      // revision note land beside the dll and go with it on reset.
+      cleanupPrefixes: [
+        "dinput8", "modinfo.ini", "screenshot.png",
+        "reframework_revision.txt", "re2_fw_config.txt",
+      ],
+    },
+    underConstruction:
+      "Resident Evil 2 support is new and has not been played with mods " +
+      "on this device yet.",
+  },
   22370: {
     appId: 22370,
     displayName: "Fallout 3",

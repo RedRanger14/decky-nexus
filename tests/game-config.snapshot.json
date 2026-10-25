@@ -344,6 +344,30 @@
     ]
   },
   {
+    "appId": "883710",
+    "displayName": "Resident Evil 2",
+    "nexusDomain": "residentevil22019",
+    "installDirName": "RESIDENT EVIL 2  BIOHAZARD RE2",
+    "modsSubdir": "._nexus_mods_unused",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "REFramework",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"dinput8=n,b\" %command%",
+    "prefixTools": [
+      "1097"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"dinput8\", \"modinfo.ini\", \"screenshot.png\", \"reframework_revision.txt\", \"re2_fw_config.txt\","
+    ]
+  },
+  {
     "appId": "892970",
     "displayName": "Valheim",
     "nexusDomain": "valheim",

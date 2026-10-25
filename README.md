@@ -59,6 +59,7 @@ plugin; treat anything you do with them as untested.
 - Final Fantasy XII: The Zodiac Age (marked under construction in the plugin)
 - Hollow Knight: Silksong
 - Middle-earth: Shadow of War
+- Resident Evil 2 (marked under construction in the plugin)
 
 ### Requested, not started
 

@@ -404,6 +404,13 @@ RE4_REF_CONFIG = "re4_fw_config.txt"
 REF_LOOSE_KEY = "LooseFileLoader_Enabled"
 
 
+def _ref_config_name(process_name: str) -> str:
+    """REFramework names its config after the game's exe: re4_fw_config.txt
+    beside re4.exe, re2_fw_config.txt beside re2.exe."""
+    stem = os.path.splitext(os.path.basename(process_name or ""))[0].lower()
+    return f"{stem}_fw_config.txt" if stem else RE4_REF_CONFIG
+
+
 def _ensure_config_key(path: str, key: str, value: str) -> None:
     """Set key=value in a flat (sectionless) config file, creating the
     file if needed and replacing an existing line for the key."""
@@ -21982,7 +21989,7 @@ query Link($slug: String!, $domainName: String!) {
             await asyncio.to_thread(_merge_loose)
             if natives_dirs:
                 _ensure_config_key(
-                    os.path.join(install_path, RE4_REF_CONFIG),
+                    os.path.join(install_path, _ref_config_name(process_name)),
                     REF_LOOSE_KEY,
                     "true",
                 )
