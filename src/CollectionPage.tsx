@@ -1076,12 +1076,13 @@ export function CollectionPage() {
   const partialFromRun = runIsOurs && !run!.running && run!.finished > 0;
   // Actually-installed count (skipped tools are NOT installed - the old
   // required-minus-remaining math counted them and overstated).
-  const installedRequiredCount = required.filter(
-    (f) =>
-      fileIn(f) ||
-      rowState[f.fileId] === "done" ||
-      justResolved.has(f.fileId)
-  ).length;
+  const isInstalled = (f: CollectionFile) =>
+    fileIn(f) || rowState[f.fileId] === "done" || justResolved.has(f.fileId);
+  const installedRequiredCount = required.filter(isInstalled).length;
+  // The header chip counts optional files too: with all 70 of QoL &
+  // Extras installed it read "29 installed" beside "Uninstall (70)".
+  const installedTotalCount =
+    installedRequiredCount + optional.filter(isInstalled).length;
 
   // Secondary buttons actually rendered below the hero: the hero takes
   // its width from this, so the two rows always share an edge.
@@ -2051,8 +2052,8 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               <StatChip icon={<FaArrowDown size={11} />}>
                 {fmtBytes(detail ? detail.totalSize : collection.totalSize)}
               </StatChip>
-              {installedRequiredCount > 0 && (
-                <StatChip>✓ {installedRequiredCount} installed</StatChip>
+              {installedTotalCount > 0 && (
+                <StatChip>✓ {installedTotalCount} installed</StatChip>
               )}
             </Focusable>
             {unsupported && (
