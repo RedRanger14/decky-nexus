@@ -25469,6 +25469,13 @@ class TestFf12Routing(unittest.TestCase):
         src = inspect.getsource(main.Plugin._install_mod_inner)
         self.assertIn("and not (game_domain in FF12_DOMAINS", src)
 
+    def test_picking_vanilla_everywhere_is_not_called_a_broken_archive(self):
+        # Enhanced Faces: every step's first option, "Vanilla (Unchanged)",
+        # has no files. Staging nothing then is the player's choice.
+        src = inspect.getsource(main.Plugin.install_fomod)
+        self.assertIn("The options picked add no files", src)
+        self.assertIn("chose_nothing = not entry.get(\"replicated\")", src)
+
     def test_the_lua_loader_gets_its_empty_scripts_folder(self):
         # Its archive ships scripts/ empty; without it the loader logs
         # "There was an error initializing modules" (Legion, 2026-10-25).

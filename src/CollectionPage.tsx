@@ -1811,7 +1811,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
         updateDownload(item.mod_id, "done", 100);
         toaster.toast({
           title: `${item.mod_name}: nothing to install`,
-          body: "Skipped - see the note on the collection",
+          // The backend says which nothing: options with no files picked,
+          // or options whose files are missing from the archive.
+          body: result.error ?? "Skipped - see the note on the collection",
         });
         return "empty";
       }

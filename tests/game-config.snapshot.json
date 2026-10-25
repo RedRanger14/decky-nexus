@@ -315,7 +315,9 @@
     "hasLogAdapter": false,
     "hasOwnLauncher": false,
     "longWaitAtMods": null,
-    "cleanupPrefixes": []
+    "cleanupPrefixes": [
+      "\"x64/hook.log\""
+    ]
   },
   {
     "appId": "848450",

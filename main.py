@@ -23018,10 +23018,20 @@ query Link($slug: String!, $domainName: String!) {
                 # in the archive - so every attempt stages nothing, and
                 # Finish setup kept presenting it as work outstanding. The
                 # mod itself was already installed from its main file.
+                # Two different nothings. Enhanced Faces (FF12) offers
+                # "Vanilla (Unchanged)" first on every step, and taking it
+                # everywhere picks options with no files at all - the
+                # archive is fine, the choice was "change nothing".
+                chose_nothing = not entry.get("replicated") and not (
+                    _fomod_selected_files(
+                        entry["ctx"], list(selected_ids or []))[0])
                 return {
                     "ok": False,
                     "nothing_staged": True,
                     "error": (
+                        "The options picked add no files, so nothing was "
+                        "changed. Install it again from its page to pick "
+                        "others." if chose_nothing else
                         "This installer has nothing to install - the "
                         "options it offers are not in the archive. Skipped."
                     ),

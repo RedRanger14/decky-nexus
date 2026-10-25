@@ -1102,6 +1102,9 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
       installAsMod: true,
       launchOptionsTemplate: 'WINEDLLOVERRIDES="dinput8=n,b" %command%',
       collectionAlwaysInstalls: true,
+      // Its files are on its install record; the log it writes at runtime
+      // is not, and a reset to vanilla should not leave it behind.
+      cleanupPrefixes: ["x64/hook.log"],
     },
     extraFrameworks: [
       {
