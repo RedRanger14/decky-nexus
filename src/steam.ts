@@ -2,6 +2,9 @@
 import { Router } from "@decky/ui";
 
 import type { CompatTool } from "./protonPick";
+import { mergeLaunchOptions } from "./launchOptions";
+
+export { mergeLaunchOptions } from "./launchOptions";
 
 export { pickProton } from "./protonPick";
 export type { CompatTool } from "./protonPick";
@@ -76,6 +79,28 @@ export function getAppDisplayName(appId: number): string | undefined {
 
 /** Set a Steam game's launch options (e.g. the SMAPI wrapper command).
  * Returns false if the client API isn't available. */
+/** The launch options Steam currently has for this app. */
+export function getLaunchOptions(appId: number): string {
+  try {
+    const store = (globalThis as any).appDetailsStore;
+    const details = store?.GetAppDetails?.(appId);
+    return String(details?.strLaunchOptions ?? "");
+  } catch {
+    return "";
+  }
+}
+
+/** Add an override to what the game already has, keeping the rest.
+ *
+ * Never call SetAppLaunchOptions with a bare template: that line may
+ * carry a frame generator, a wrapper script or an env var the player put
+ * there, and replacing it takes all of that away. */
+export function addLaunchOptions(appId: number, template: string): boolean {
+  return setLaunchOptions(
+    appId, mergeLaunchOptions(getLaunchOptions(appId), template)
+  );
+}
+
 export function setLaunchOptions(appId: number, options: string): boolean {
   try {
     const apps = (globalThis as any).SteamClient?.Apps;

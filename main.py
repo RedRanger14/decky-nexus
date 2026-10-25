@@ -7301,6 +7301,11 @@ def _remove_files_record(
             except OSError:
                 break
             parent = os.path.dirname(parent)
+    # Shadow of War archives are only read because a line in
+    # default.archcfg names them; removing the file without the line
+    # leaves the game reading an archive that is no longer there.
+    if rec.get("sow_archcfg"):
+        _sow_unregister_archcfg(install_path, rec["sow_archcfg"])
     records.pop(record_key, None)
     return True
 
@@ -8211,6 +8216,433 @@ def _tool_file_present(install_path: str, name: str) -> bool:
         return True
     first = ASI_LOAD_FIRST.get(name.lower())
     return bool(first) and os.path.isfile(os.path.join(install_path, first))
+
+
+# The names ReShade ships its injector under. A package with one of these
+# IS ReShade; a package without one is a preset for somebody else's.
+RESHADE_INJECTOR_DLLS = (
+    "dxgi.dll", "d3d11.dll", "d3d10.dll", "d3d9.dll", "d3d12.dll",
+    "opengl32.dll", "dinput8.dll",
+)
+
+
+async def _install_reshade_package(
+    scratch: str,
+    archive_path: str,
+    install_path: str,
+    reshade_subdir: str,
+    game_domain: str,
+    mod_id: int,
+    file_id: int,
+    file_name: str,
+    mod_name: str,
+    mod_version: str,
+    page_version: str,
+    record_source: str,
+    collection_slug: str,
+    anti_cheat: bool = False,
+) -> dict:
+    """Install a ReShade package beside the game's exe.
+
+    The injector dll, the preset inis and the reshade-shaders tree, with
+    relative paths preserved, recorded per file into the target subdir so
+    uninstall removes exactly these. Asked for by Michael with the risk
+    stated up front: "Build the reshade but lets just put a warning on
+    related mods that it might trigger the anti cheat because its
+    injected."
+
+    anti_cheat carries that warning, and only for the games that have one -
+    Helldivers 2 ships GameGuard. Saying it on a single-player game that
+    has never had anti-cheat would be a warning about nothing, and a
+    warning that is wrong once is ignored the next time it is right.
+    """
+    dest_base = os.path.join(install_path, *reshade_subdir.split("/"))
+    moved_rel = []
+    for root, _dirs, names in os.walk(scratch):
+        for n in names:
+            src = os.path.join(root, n)
+            rel = os.path.relpath(src, scratch).replace(os.sep, "/")
+            if not _safe_rel_path(rel):
+                continue
+            dst = os.path.join(dest_base, *rel.split("/"))
+            _makedirs_for(dst)
+            if os.path.isfile(dst):
+                os.remove(dst)
+            shutil.move(src, dst)
+            moved_rel.append(rel)
+    _force_rmtree(scratch)
+    try:
+        os.remove(archive_path)
+    except OSError:
+        pass
+    settings = _load_settings()
+    installed = settings.setdefault("installed", {}).setdefault(
+        game_domain, {}
+    )
+    record_key = _safe_name(mod_name)
+    installed[record_key] = _merge_install_record(
+        installed.get(record_key) or {},
+        {
+            "mod_id": mod_id, "file_id": file_id,
+            "name": mod_name, "version": mod_version,
+            "file_name": file_name,
+            "installed_at": int(time.time()),
+            "page_version": page_version,
+            "source": record_source,
+            "collection_slug": collection_slug,
+            "mode": "files", "target": reshade_subdir,
+            "files": moved_rel, "reshade": True,
+        },
+    )
+    _save_settings(settings)
+    # Did this package bring the injector, or only a preset?
+    #
+    # It decides whether launch options are touched at all. A preset is
+    # some .ini and .fx files for a ReShade that is ALREADY there, and
+    # setting an override for an injector the package does not contain
+    # switches on a dll that does not exist while switching off whatever
+    # the player had wired up. That is not a hypothetical: a preset-only
+    # package took a hand-installed ReShade off a device this way.
+    injector = any(
+        os.path.basename(r).lower() in RESHADE_INJECTOR_DLLS
+        for r in moved_rel
+    )
+    decky.logger.info(
+        f"installed ReShade package {mod_name!r}: "
+        f"{len(moved_rel)} file(s) -> {reshade_subdir}"
+        f" ({'with' if injector else 'no'} injector)"
+    )
+    await _emit_progress(mod_id, "done", 100)
+    if not injector:
+        warning = (
+            "This is a ReShade preset, not ReShade itself - it needs a "
+            "ReShade already installed for this game to have any effect. "
+            "Launch options were left alone, because switching on an "
+            "injector this package does not contain would only switch off "
+            "whatever you already had."
+        )
+    elif anti_cheat:
+        warning = (
+            "ReShade injects a DLL into the game's own process. This game "
+            "runs anti-cheat, and while asset-swap mods are known to be "
+            "tolerated, injection is a different category - use at your "
+            "own risk. Launch options have been set so the injector loads "
+            "under Proton."
+        )
+    else:
+        warning = (
+            "ReShade injects a DLL into the game's own process. Launch "
+            "options have been set so the injector loads under Proton."
+        )
+    return {
+        "ok": True,
+        "folder": record_key,
+        "reshade": True,
+        "injector": injector,
+        "warning": warning,
+    }
+
+
+# --- loader consoles ---------------------------------------------------------
+#
+# Shadow of War's Packet Loader calls AllocConsole, and under gamescope that
+# console is a second X window - which is the one the compositor presents.
+# The game runs perfectly behind it; the player just cannot see it, and
+# reasonably reports the game as broken. Verified on device 2026-09-07:
+# DISPLAY=:1 held two windows, "Middle-earth: Shadow of War" (1920x1080,
+# viewable) and "SoWPL:> Signatures: Generate ..." (1161x896), and
+# unmapping the second revealed the game.
+#
+# The loader's own `log = 0` does NOT suppress it - that was tried first and
+# the console came back, so this is not a config problem to document away.
+LOADER_CONSOLE_DISPLAYS = (":1", ":0")
+
+
+async def _run_xdotool(display: str, *args) -> str:
+    """xdotool on a given X display, stdout or "" on any failure."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "xdotool", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env={**os.environ, "DISPLAY": display},
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        return (out or b"").decode("utf-8", "replace")
+    except (OSError, asyncio.TimeoutError, ValueError):
+        return ""
+
+
+async def _unmap_windows_by_prefix(prefix: str) -> int:
+    """Unmap every window whose title starts with prefix. Returns how many.
+
+    Unmap rather than kill: the console belongs to the game's own process,
+    and closing it would take the loader - or the game - with it. Unmapped
+    it keeps running and keeps writing to its file log.
+    """
+    if not prefix or not re.fullmatch(r"[A-Za-z0-9_.:>-]{2,32}", prefix):
+        return 0
+    hidden = 0
+    for display in LOADER_CONSOLE_DISPLAYS:
+        for wid in (await _run_xdotool(
+            display, "search", "--name", f"^{prefix}"
+        )).split():
+            if not wid.isdigit():
+                continue
+            await _run_xdotool(display, "windowunmap", wid)
+            hidden += 1
+            decky.logger.info(f"loader console: unmapped {wid} on {display}")
+    return hidden
+
+
+# --- Middle-earth: Shadow of War -------------------------------------------
+#
+# Three tiers, told apart by what the archive HOLDS rather than by what its
+# page says. No two authors on this game describe an install the same way -
+# the wiki still documents a "Loader/Loader.ini" layout the current Packet
+# Loader stopped using two versions ago - so the archive is the only honest
+# source:
+#
+#   a PacketLoader/ tree  ->  x64/plugins/PacketLoader/...  (asset swaps)
+#   a bare .dll           ->  x64/plugins/<name>.dll        (loader plugins)
+#   a loose .arch06       ->  Mods/<name>.arch06, plus a pair of lines in
+#                             x64/default.archcfg           (whole archives)
+#
+# The third tier is the only one that has to write to a game file to take
+# effect, so it is also the only one with something to undo.
+SOW_PLUGINS_REL = "x64/plugins"
+SOW_PACKET_ROOT = "PacketLoader"
+SOW_ARCH_REL = "Mods"
+SOW_ARCHCFG_REL = "x64/default.archcfg"
+# ReShade ships its injector under the name of the API it stands in for.
+SOW_INJECTOR_DLLS = ("dxgi.dll", "d3d11.dll", "d3d9.dll", "opengl32.dll")
+
+
+def _sow_archcfg_lines(name: str) -> list:
+    """The two lines the game needs to read a mod archive out of Mods/.
+
+    Both forms, because the game's own file says why: "DLC archives. '../'
+    needed for steam, flat needed for UWP". The mod pages tell people to
+    add both, so we add both.
+    """
+    return [f"..\\{SOW_ARCH_REL}\\{name}", f"{SOW_ARCH_REL}\\{name}"]
+
+
+def _sow_register_archcfg(install_path: str, names: list) -> str:
+    """Append archive entries to default.archcfg. Returns "" or an error.
+
+    Appended, not inserted, and that IS the load order: the file's own
+    comment reads "file search order is from the bottom up", so entries at
+    the end win over the game's shipped archives - which is the entire
+    point of a replacement archive. Backed up once as .decky-nexus.bak,
+    the same convention the ini patcher uses.
+    """
+    path = os.path.join(install_path, *SOW_ARCHCFG_REL.split("/"))
+    if not os.path.isfile(path):
+        return f"{SOW_ARCHCFG_REL} not found - is this a Shadow of War install?"
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
+            raw = f.read()
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        backup = path + ".decky-nexus.bak"
+        if not os.path.isfile(backup):
+            shutil.copy2(path, backup)
+        have = {line.strip().lower() for line in raw.splitlines()}
+        add = [
+            line
+            for name in names
+            for line in _sow_archcfg_lines(name)
+            if line.lower() not in have
+        ]
+        if not add:
+            return ""
+        text = raw if raw.endswith(("\n", "\r")) else raw + newline
+        text += newline.join(add) + newline
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+    except OSError as e:
+        return f"could not register the archive in default.archcfg: {e}"
+    decky.logger.info(f"archcfg: registered {names}")
+    return ""
+
+
+def _sow_unregister_archcfg(install_path: str, names: list) -> None:
+    """Take a mod's archive entries back out of default.archcfg.
+
+    Line-exact and by name, never by rewriting the file from the backup:
+    the backup is from the FIRST mod ever installed, so restoring it would
+    silently deregister every archive installed since.
+    """
+    path = os.path.join(install_path, *SOW_ARCHCFG_REL.split("/"))
+    if not os.path.isfile(path):
+        return
+    drop = {
+        line.lower()
+        for name in names
+        for line in _sow_archcfg_lines(name)
+    }
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
+            raw = f.read()
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        kept = [
+            line for line in raw.splitlines()
+            if line.strip().lower() not in drop
+        ]
+        if len(kept) == len(raw.splitlines()):
+            return
+        text = newline.join(kept)
+        if raw.endswith(("\n", "\r")):
+            text += newline
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        decky.logger.info(f"archcfg: deregistered {names}")
+    except OSError as e:
+        decky.logger.warning(f"archcfg deregister failed: {e}")
+
+
+def _sow_find_dir(scratch: str, name: str):
+    """The shallowest directory with this name, or None. Authors wrap the
+    real payload in a version folder often enough that the depth cannot be
+    assumed."""
+    best = None
+    best_depth = None
+    for root, dirs, _names in os.walk(scratch):
+        for d in dirs:
+            if d.lower() != name.lower():
+                continue
+            path = os.path.join(root, d)
+            depth = os.path.relpath(path, scratch).count(os.sep)
+            if best_depth is None or depth < best_depth:
+                best, best_depth = path, depth
+    return best
+
+
+def _route_sow_payload(scratch: str, mod_name: str):
+    """Classify a Shadow of War archive.
+
+    Returns (files, err, arch_names): files is a list of (game-root-relative
+    rel, source path) like the CP77 router's, err is None or a (kind,
+    message) tuple, and arch_names lists the .arch06 files that need
+    registering in default.archcfg. The err kind "reshade" is a signal
+    rather than a refusal - the caller has an installer for those.
+    """
+    every = []
+    for root, _dirs, names in os.walk(scratch):
+        for n in names:
+            every.append(os.path.join(root, n))
+    if not every:
+        return [], ("layout", f"{mod_name}'s download is empty."), []
+
+    bases = [os.path.basename(p).lower() for p in every]
+
+    # 0. The dll loader itself. It ships the game's OWN bink2w64.dll,
+    # patched - installed as an ordinary mod it would land in plugins/,
+    # where it does nothing at all while reporting success. It has a setup
+    # step of its own, and that step is also the only path that keeps a
+    # backup of the file it replaces.
+    if any(b == "bink2w64.dll" for b in bases):
+        return [], (
+            "layout",
+            "This is the Shadow of War DLL Loader, which replaces one of "
+            "the game's own files. Install it from the setup step on this "
+            "game's panel instead - that route backs up the original "
+            "first, so the game can be put back to vanilla.",
+        ), []
+
+    # 1. Packet mods. The tree keeps its exact shape: the loader finds
+    # PLG1Packets/<name>/{Config.ini,Find,Replace} and the signatures
+    # beside them by path, and a packet whose Find/ is one directory off
+    # silently replaces nothing.
+    #
+    # A plugins/ folder wins over the PacketLoader/ folder inside it,
+    # because archives shaped that way put loadable dlls BESIDE
+    # PacketLoader/ - the Packet Loader's own download is exactly this -
+    # and routing from PacketLoader/ down would take the asset tree and
+    # quietly leave the dll that reads it behind.
+    plugins_root = _sow_find_dir(scratch, "plugins")
+    packet_root = _sow_find_dir(scratch, SOW_PACKET_ROOT)
+    base = tree = None
+    prefix = ""
+    if plugins_root and (
+        packet_root or any(
+            n.lower().endswith(".dll")
+            for _r, _d, ns in os.walk(plugins_root) for n in ns
+        )
+    ):
+        # Measured from the parent, so every entry keeps its leading
+        # "plugins/" - and x64/ is where that lands.
+        base, tree = os.path.dirname(plugins_root), plugins_root
+        prefix = "x64"
+    elif packet_root:
+        base, tree = os.path.dirname(packet_root), packet_root
+        prefix = SOW_PLUGINS_REL
+    if base is not None:
+        files = []
+        for root, _dirs, names in os.walk(tree):
+            for n in names:
+                src = os.path.join(root, n)
+                inner = os.path.relpath(src, base).replace(os.sep, "/")
+                rel = f"{prefix}/{inner}"
+                if _safe_rel_path(rel):
+                    files.append((rel, src))
+        if files:
+            return files, None, []
+
+    # 2. ReShade, checked BEFORE the dll sweep because a ReShade package
+    # ships its injector AS dxgi.dll - the sweep would take that for a
+    # loader plugin and drop it into plugins/, where it does nothing and
+    # looks installed. A third of this game's catalogue is presets.
+    if any(b in SOW_INJECTOR_DLLS for b in bases) or (
+        any(b.endswith(".fx") for b in bases)
+        or any("reshade" in p.lower() for p in every)
+    ):
+        if not any(b.endswith(".arch06") for b in bases):
+            return [], ("reshade", ""), []
+
+    # 3. DLL mods: the loader loads every dll in plugins/. A config file
+    # named after one comes along; a README does not.
+    dlls = [p for p in every if p.lower().endswith(".dll")]
+    if dlls:
+        stems = {
+            os.path.splitext(os.path.basename(p))[0].lower() for p in dlls
+        }
+        files = [
+            (f"{SOW_PLUGINS_REL}/{os.path.basename(p)}", p) for p in dlls
+        ]
+        for p in every:
+            stem, ext = os.path.splitext(os.path.basename(p))
+            if ext.lower() in (".ini", ".json", ".cfg") and stem.lower() in stems:
+                files.append((f"{SOW_PLUGINS_REL}/{os.path.basename(p)}", p))
+        return files, None, []
+
+    # 4. Whole archives. These do not go in plugins/ at all - they sit in
+    # Mods/ next to the game's own .arch06 files and are read only once
+    # they are named in default.archcfg.
+    archs = [p for p in every if p.lower().endswith(".arch06")]
+    if archs:
+        files = [
+            (f"{SOW_ARCH_REL}/{os.path.basename(p)}", p) for p in archs
+        ]
+        return files, None, [os.path.basename(p) for p in archs]
+
+    # 5. A Windows program, not a mod. This game's most-downloaded entry is
+    # a trainer, so someone will try.
+    if any(b.endswith(".exe") for b in bases):
+        return [], (
+            "tool",
+            f"{mod_name} is a Windows program you run alongside the game, "
+            "not a mod that installs into it. There is no way to run one "
+            "from Gaming Mode.",
+        ), []
+
+    return [], (
+        "layout",
+        f"{mod_name} does not look like a Shadow of War mod this plugin "
+        "can install: no PacketLoader folder, no dll and no .arch06 "
+        "archive in the download. Its page may describe an install by "
+        "hand, or it may be a save file.",
+    ), []
 
 
 def _rdr2_running() -> bool:
@@ -19509,6 +19941,7 @@ query Link($slug: String!, $domainName: String!) {
         reshade_subdir: str = "",
         process_name: str = "",
         palschema_subdir: str = "",
+        sow_layout: bool = False,
     ) -> dict:
         """Wrapper so any unexpected failure reaches the UI as a real message
         instead of decky's generic 'Python Exception'. dl_key/dl_expires are
@@ -19653,6 +20086,7 @@ query Link($slug: String!, $domainName: String!) {
                 reshade_subdir,
                 process_name,
                 palschema_subdir,
+                sow_layout,
             )
             if result.get("ok") and game_domain == "mountandblade2bannerlord":
                 try:
@@ -19961,6 +20395,7 @@ query Link($slug: String!, $domainName: String!) {
         reshade_subdir: str = "",
         process_name: str = "",
         palschema_subdir: str = "",
+        sow_layout: bool = False,
     ) -> dict:
         settings = _load_settings()
         api_key = settings.get("api_key")
@@ -20893,6 +21328,7 @@ query Link($slug: String!, $domainName: String!) {
                             "reshade_subdir": reshade_subdir,
                             "process_name": process_name,
                             "palschema_subdir": palschema_subdir,
+                            "sow_layout": sow_layout,
                         },
                     }
                     await _emit_progress(mod_id, "error", 0, "fomod wizard")
@@ -21534,6 +21970,97 @@ query Link($slug: String!, $domainName: String!) {
         # Cyberpunk layout: game-root-relative payloads across the known
         # roots (bin/red4ext/r6/engine/archive) or bare .archive files -
         # everything lands as an exact-file record for clean uninstall.
+        if sow_layout:
+            sow_files, sow_err, arch_names = _route_sow_payload(
+                scratch, mod_name
+            )
+            if sow_err and sow_err[0] == "reshade":
+                # Not a refusal: a third of this game's catalogue is
+                # presets and we have an installer for them.
+                if not reshade_subdir:
+                    _force_rmtree(scratch)
+                    return {
+                        "ok": False,
+                        "error": (
+                            "This is a ReShade package, and no ReShade "
+                            "target is configured for this game."
+                        ),
+                    }
+                return await _install_reshade_package(
+                    scratch, archive_path, install_path, reshade_subdir,
+                    game_domain, mod_id, file_id, file_name, mod_name,
+                    mod_version, page_version, record_source,
+                    collection_slug,
+                )
+            if sow_err:
+                kind, message = sow_err
+                decky.logger.info(f"SoW {mod_name!r}: {kind}: {message}")
+                _force_rmtree(scratch)
+                await _emit_progress(mod_id, "error", 0, kind)
+                result = {"ok": False, "error": message}
+                if kind == "tool":
+                    result["unsupported_tool"] = True
+                else:
+                    result["unsupported_layout"] = True
+                return result
+            installed_rel = []
+            for rel, src_path in sow_files:
+                dst = os.path.join(install_path, *rel.split("/"))
+                _makedirs_for(dst)
+                if os.path.isfile(dst):
+                    os.remove(dst)
+                shutil.move(src_path, dst)
+                installed_rel.append(rel)
+            # The files are on disk before the registration, so a failure
+            # to write default.archcfg leaves a mod that is installed but
+            # inert rather than half-copied - and it says so.
+            arch_error = ""
+            if arch_names:
+                arch_error = _sow_register_archcfg(install_path, arch_names)
+            _force_rmtree(scratch)
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
+            settings = _load_settings()
+            installed = settings.setdefault("installed", {}).setdefault(
+                game_domain, {}
+            )
+            record_key = _safe_name(mod_name)
+            installed[record_key] = _merge_install_record(
+                installed.get(record_key),
+                {
+                    "mod_id": mod_id,
+                    "file_id": file_id,
+                    "name": mod_name,
+                    "version": mod_version,
+                    "file_name": file_name,
+                    "installed_at": int(time.time()),
+                    "page_version": page_version,
+                    "source": record_source,
+                    "collection_slug": collection_slug,
+                    "mode": "files",
+                    "target": ".",
+                    "files": installed_rel,
+                    # Uninstall reads this to take the lines back out.
+                    "sow_archcfg": arch_names,
+                },
+            )
+            _save_settings(settings)
+            decky.logger.info(
+                f"installed SoW {mod_name!r}: {len(installed_rel)} file(s)"
+                + (f", archcfg {arch_names}" if arch_names else "")
+            )
+            await _emit_progress(mod_id, "done", 100)
+            result = {"ok": True, "folder": record_key}
+            if arch_error:
+                result["warning"] = (
+                    f"The mod files are installed, but {arch_error} "
+                    "The game will not read the archive until that line is "
+                    "added by hand."
+                )
+            return result
+
         if cp77_layout:
             cp_files, cp_err = _route_cp77_payload(scratch, mod_name)
             if cp_err:
@@ -21612,75 +22139,12 @@ query Link($slug: String!, $domainName: String!) {
                     for _r, _d, names in os.walk(scratch) for n in names
                 )
                 if is_reshade and reshade_subdir:
-                    # ReShade installs beside the game's exe: the injector
-                    # dll, the preset inis, and the reshade-shaders tree,
-                    # relative paths preserved. Per-file records into the
-                    # target subdir, so uninstall removes exactly these.
-                    # Asked for by Michael with the risk stated up front:
-                    # "Build the reshade but lets just put a warning on
-                    # related mods that it might trigger the anti cheat
-                    # because its injected."
-                    dest_base = os.path.join(
-                        install_path, *reshade_subdir.split("/")
+                    return await _install_reshade_package(
+                        scratch, archive_path, install_path, reshade_subdir,
+                        game_domain, mod_id, file_id, file_name, mod_name,
+                        mod_version, page_version, record_source,
+                        collection_slug, anti_cheat=True,
                     )
-                    moved_rel = []
-                    for root, _dirs, names in os.walk(scratch):
-                        for n in names:
-                            src = os.path.join(root, n)
-                            rel = os.path.relpath(src, scratch).replace(
-                                os.sep, "/"
-                            )
-                            if not _safe_rel_path(rel):
-                                continue
-                            dst = os.path.join(dest_base, *rel.split("/"))
-                            _makedirs_for(dst)
-                            if os.path.isfile(dst):
-                                os.remove(dst)
-                            shutil.move(src, dst)
-                            moved_rel.append(rel)
-                    _force_rmtree(scratch)
-                    try:
-                        os.remove(archive_path)
-                    except OSError:
-                        pass
-                    settings = _load_settings()
-                    installed = settings.setdefault(
-                        "installed", {}
-                    ).setdefault(game_domain, {})
-                    record_key = _safe_name(mod_name)
-                    installed[record_key] = _merge_install_record(
-                        installed.get(record_key) or {},
-                        {
-                            "mod_id": mod_id, "file_id": file_id,
-                            "name": mod_name, "version": mod_version,
-                            "file_name": file_name,
-                            "installed_at": int(time.time()),
-                            "page_version": page_version,
-                            "source": record_source,
-                            "collection_slug": collection_slug,
-                            "mode": "files", "target": reshade_subdir,
-                            "files": moved_rel, "reshade": True,
-                        },
-                    )
-                    _save_settings(settings)
-                    decky.logger.info(
-                        f"installed ReShade package {mod_name!r}: "
-                        f"{len(moved_rel)} file(s) -> {reshade_subdir}"
-                    )
-                    await _emit_progress(mod_id, "done", 100)
-                    return {
-                        "ok": True,
-                        "folder": record_key,
-                        "reshade": True,
-                        "warning": (
-                            "ReShade injects a DLL into the game's own "
-                            "process. This game runs anti-cheat, and while "
-                            "asset-swap mods are known to be tolerated, "
-                            "injection is a different category - use at "
-                            "your own risk. Launch options have been set "
-                            "so the injector loads under Proton."
-                        ),
-                    }
                 # What the archive IS, for the refusal, read before
                 # scratch goes.
                 leftover = [
@@ -22688,6 +23152,24 @@ query Link($slug: String!, $domainName: String!) {
             "game_version": game_version,
         }
 
+    async def hide_loader_console(
+        self, title_prefix: str, timeout_sec: int = 120
+    ) -> dict:
+        """Watch for a mod loader's console window and unmap it.
+
+        Polled rather than fired once: the console appears when the loader
+        initialises, which is seconds into a launch that can take a minute
+        off an SD card. Gives up quietly when the game never opens one.
+        """
+        deadline = time.time() + max(5, min(int(timeout_sec or 0), 600))
+        hidden = 0
+        while time.time() < deadline:
+            hidden = await _unmap_windows_by_prefix(title_prefix)
+            if hidden:
+                break
+            await asyncio.sleep(2)
+        return {"ok": True, "hidden": hidden}
+
     async def install_framework(
         self,
         game_domain: str,
@@ -22701,6 +23183,7 @@ query Link($slug: String!, $domainName: String!) {
         app_id: int = 0,
         launcher_xml_subpath: str = "",
         process_name: str = "",
+        backup_files: list = None,
     ) -> dict:
         """Download a mod-loader framework (e.g. SMAPI) from Nexus - so the
         author gets the download credit - and run its unattended installer
@@ -22731,6 +23214,7 @@ query Link($slug: String!, $domainName: String!) {
             avoid_file_keywords,
             install_subdir,
             process_name,
+            backup_files,
         )
         # A framework that IS a game module has to be switched on like any
         # other module, and our framework installs never did it: Harmony
@@ -23491,6 +23975,7 @@ query Link($slug: String!, $domainName: String!) {
         avoid_file_keywords: list,
         install_subdir: str,
         process_name: str = "",
+        backup_files: list = None,
     ) -> dict:
         try:
             api_key = _load_settings().get("api_key")
@@ -23592,6 +24077,26 @@ query Link($slug: String!, $domainName: String!) {
                 {"matched_game_version": matched_version} if matched_version
                 else {}
             )
+            # A loader that REPLACES a game file rather than adding one
+            # of its own: keep the original before the copy lands on it.
+            # Shadow of War's dll loader ships a patched bink2w64.dll, and
+            # without this the only route back to vanilla is verifying
+            # 100GB of game files for the sake of 367KB.
+            for rel in backup_files or []:
+                if not _safe_rel_path(rel):
+                    continue
+                original = os.path.join(install_path, *rel.split("/"))
+                backup = original + ".decky-nexus.bak"
+                if os.path.isfile(original) and not os.path.isfile(backup):
+                    try:
+                        shutil.copy2(original, backup)
+                        decky.logger.info(f"framework backed up {rel!r}")
+                    except OSError as e:
+                        return {
+                            "ok": False,
+                            "error": f"Could not back up {rel}: {e}",
+                        }
+
             if install_kind == "copyRoot":
                 # SKSE-style: the archive is the game-dir payload, usually
                 # inside one versioned wrapper folder - flatten and merge.

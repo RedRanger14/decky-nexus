@@ -165,7 +165,8 @@ export function installModWith(
     game.hd2Layout ?? false,
     game.reshade?.subdir ?? "",
     game.processName ?? "",
-    game.palSchema?.modsSubdir ?? ""
+    game.palSchema?.modsSubdir ?? "",
+    game.sowLayout ?? false
   );
 }
 
