@@ -130,6 +130,12 @@ Mods apply the next time the game starts. Nothing is written into the game
 until you install something, and every supported game can be put back to
 vanilla from the plugin.
 
+For Mass Effect Legendary Edition, enable **Merge mod support** in the game
+panel before installing mods that edit game packages. Mods such as Advanced
+Weapon Models for LE1 offer **Full Mode** and **Lite Mode** in the install
+wizard. Full Mode includes its dependent merge and overlays its extra files
+onto the base DLC; Lite Mode installs the base DLC without that merge.
+
 ## What you need
 
 - **A Nexus Mods Premium account.** This is not optional. Free accounts

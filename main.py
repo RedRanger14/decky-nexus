@@ -16433,8 +16433,6 @@ def _me_plan(scratch: str, install_path: str) -> dict:
             if unconditional_merges:
                 plan["needs_m3"] = True
                 plan["merge_files"].extend(unconditional_merges)
-                plan.update(ok=False, error=ME_MERGE_REFUSAL)
-                return plan
             moddir = _me_resolve(mod_root, section.get("moddir", "."))
             news = _me_split_semis(section.get("newfiles", ""))
             reps = _me_split_semis(section.get("replacefiles", ""))
@@ -16497,10 +16495,13 @@ def _me_plan(scratch: str, install_path: str) -> dict:
                 continue
             plan["merge_files"].extend(
                 _me_split_semis(alt.get("mergefiles", "")))
-            plan.update(ok=False, error=ME_MERGE_REFUSAL)
-            return plan
+            continue
         kept.append(alt)
     plan["alts"] = kept
+
+    if plan["merge_files"]:
+        plan.update(ok=False, error=ME_MERGE_REFUSAL)
+        return plan
 
     if not plan["dlc"] and not plan["basegame"] and not plan["localization"] \
             and not any((a.get("modoperation") or "").upper() == "OP_ADD_CUSTOMDLC"
@@ -16694,6 +16695,63 @@ def _me_m3_verdict(new_lines: list) -> dict:
     return {"state": "running", "error": ""}
 
 
+def _me_m3_selected_options(plan: dict, selected: set) -> set:
+    """Resolve option-key dependencies, including hidden merge switches.
+
+    Hidden switches cannot come back from the wizard. Their dependency
+    actions, not their visibility, decide whether they are selected.
+    """
+    options = {
+        **{f"alt.{i}": a for i, a in enumerate(plan.get("merge_alts") or [])},
+        **{f"dlc.{i}": a for i, a in enumerate(plan.get("alts") or [])},
+    }
+    keys = {}
+    for sid, alt in options.items():
+        key = alt.get("optionkey") or ""
+        if key:
+            if key in keys:
+                raise ValueError(f"Duplicate Mod Manager option key: {key}")
+            keys[key] = sid
+    resolved, visiting = {}, set()
+
+    def resolve(sid):
+        if sid in resolved:
+            return resolved[sid]
+        if sid in visiting:
+            raise ValueError("Mod Manager option dependencies contain a cycle.")
+        visiting.add(sid)
+        alt = options[sid]
+        hidden = (alt.get("hidden") or "").lower() == "true"
+        checked = sid in selected or (
+            hidden and (alt.get("checkedbydefault") or "").lower() == "true")
+        deps = _me_split_semis(alt.get("dependsonkeys", ""))
+        if deps:
+            met = True
+            for dep in deps:
+                if dep[:1] not in ("+", "-") or dep[1:] not in keys:
+                    raise ValueError(
+                        f"Unknown or invalid Mod Manager option dependency: {dep}")
+                matches = resolve(keys[dep[1:]]) == (dep[0] == "+")
+                met = met and matches
+            action = (alt.get(
+                "dependsonmetaction" if met else "dependsonnotmetaction"
+            ) or "").upper()
+            if action in ("ACTION_DISALLOW_SELECT",
+                          "ACTION_DISALLOW_SELECT_CHECKED"):
+                checked = action == "ACTION_DISALLOW_SELECT_CHECKED"
+            elif action in ("ACTION_ALLOW_SELECT", "ACTION_ALLOW_SELECT_CHECKED"):
+                if hidden:
+                    checked = action == "ACTION_ALLOW_SELECT_CHECKED"
+            else:
+                raise ValueError(
+                    f"Unsupported Mod Manager option dependency action: {action}")
+        visiting.remove(sid)
+        resolved[sid] = checked
+        return checked
+
+    return {sid for sid in options if resolve(sid)}
+
+
 def _me_m3_merge_choice(plan: dict, selected: set) -> dict:
     """What to hand M3 for a mod whose merge mods sit behind options.
 
@@ -16703,17 +16761,22 @@ def _me_m3_merge_choice(plan: dict, selected: set) -> dict:
     named unconditionally. Measured with One Probe All Resources: the panel
     then opens and closes in 46ms and the install runs.
 
-    Returns {ok, merges, dlc, error}, where `dlc` is (source, dest) for
-    each optional DLC folder the user asked for. An option we cannot
-    express in a moddesc at all is refused rather than guessed at, because
-    installing the wrong half of a mod quietly is worse than not installing
-    it.
+    `dlc` contains new (source, dest) folders; `overlays` contains folders
+    whose contents must be merged into an existing payload. An option we
+    cannot express in a moddesc at all is refused rather than guessed at,
+    because installing the wrong half quietly is worse than not installing it.
     """
+    selected = set(selected)
+    selected.update({f"alt.{i}" for i in selected if isinstance(i, int)})
+    try:
+        selected = _me_m3_selected_options(plan, selected)
+    except ValueError as e:
+        return {"ok": False, "merges": [], "dlc": [], "error": str(e)}
     # Merges the mod applies whatever the user picks, recorded by _me_plan.
     merges = list(plan.get("merge_files") or [])
-    dlc = []
+    dlc, overlays = [], []
     for i, alt in enumerate(plan.get("merge_alts") or []):
-        if i in selected:
+        if f"alt.{i}" in selected:
             merges.extend(_me_split_semis(alt.get("mergefiles", "")))
     # A merge mod may also offer ordinary DLC folders. The LE3 Community
     # Patch offers localised audio that way. Not picking one means dropping
@@ -16735,16 +16798,42 @@ def _me_m3_merge_choice(plan: dict, selected: set) -> dict:
             }
         if op == "OP_NOTHING" or f"dlc.{i}" not in selected:
             continue
-        src = (alt.get("modaltdlc") or "").strip()
-        dst = (alt.get("moddestdlc") or "").strip()
-        if src and dst and _safe_rel_path(src) and _safe_rel_path(dst):
-            dlc.append((src, dst))
-    if not merges:
+        src = (alt.get("modaltdlc") or "").strip().replace("\\", "/").rstrip("/")
+        dst = (alt.get("moddestdlc") or "").strip().replace("\\", "/").rstrip("/")
+        if not src or not dst or not _safe_rel_path(src) or not _safe_rel_path(dst):
+            return {"ok": False, "merges": [], "dlc": [],
+                    "error": "The selected Mod Manager option has an invalid DLC path."}
+        target = overlays if op == "OP_ADD_FOLDERFILES_TO_CUSTOMDLC" else dlc
+        target.append((src, dst))
+    if not merges and not (plan.get("dlc") or plan.get("basegame") or dlc):
         return {
             "ok": False, "merges": [], "dlc": [],
             "error": "No merge mod was chosen, so there is nothing to install.",
         }
-    return {"ok": True, "merges": merges, "dlc": dlc, "error": ""}
+    return {"ok": True, "merges": merges, "dlc": dlc,
+            "overlays": overlays, "error": ""}
+
+
+def _me_m3_stage_overlays(plan: dict, choice: dict) -> None:
+    """Flatten selected folder overlays into the extracted DLC payload.
+
+    Only the disposable archive extraction is changed, before M3 sees it.
+    A second source mapped to the same destination is not an overlay.
+    """
+    mod_root = plan["mod_root"]
+    folders = list(plan.get("dlc") or []) + [
+        (_me_resolve(mod_root, src), dst) for src, dst in choice["dlc"]
+    ]
+    for src, dst in choice.get("overlays") or []:
+        normalized = dst.replace("\\", "/").strip("/").lower()
+        targets = [path for path, dest in folders
+                   if dest.replace("\\", "/").strip("/").lower() == normalized]
+        source = _me_resolve(mod_root, src)
+        if len(targets) != 1 or not os.path.isdir(targets[0]):
+            raise ValueError(f"Could not find the DLC payload for option: {dst}")
+        if not os.path.isdir(source):
+            raise ValueError(f"Could not find the option's folder: {src}")
+        _me_copy_tree_into(source, targets[0])
 
 
 def _me_m3_moddesc(original: str, merges: list, dlc: list = None) -> str:
@@ -18031,12 +18120,12 @@ def _me_merge_wizard(plan: dict):
     # Optional DLC folders on a merge mod are options too: the LE3
     # Community Patch offers localised audio this way, and refusing the
     # whole mod over one tick box would lose the third most endorsed mod
-    # for this game.
+    # for this game. OP_NOTHING can be a real mode choice whose OptionKey
+    # controls hidden merges, as with Advanced Weapon Models' Lite Mode.
     manual += [
         ("dlc", i, a) for i, a in enumerate(plan.get("alts") or [])
         if (a.get("condition") or "").upper() == "COND_MANUAL"
         and (a.get("hidden") or "").lower() != "true"
-        and (a.get("modoperation") or "").upper() != "OP_NOTHING"
     ]
     if not manual:
         return None
@@ -18090,19 +18179,22 @@ async def _me_m3_complete(entry: dict, selected_ids: list) -> dict:
         return {"ok": False, "error": _me_merge_refusal(False)}
 
     # Merge options come back as alt.N (an index into merge_alts) and DLC
-    # options as dlc.N (an index into alts); both are needed, so the raw
-    # ids go through alongside the numbers.
+    # options as dlc.N (an index into alts), the same ids used by the
+    # option-key resolver.
     selected = set(str(s) for s in (selected_ids or []))
-    for sid in selected_ids or []:
-        m = re.fullmatch(r"alt\.(\d+)", str(sid))
-        if m:
-            selected.add(int(m.group(1)))
     choice = _me_m3_merge_choice(plan, selected)
     if not choice["ok"]:
         _force_rmtree(scratch)
         await _emit_progress(mod_id, "error", 0, "options")
         return {"ok": False, "error": choice["error"]}
     merges = choice["merges"]
+
+    try:
+        await asyncio.to_thread(_me_m3_stage_overlays, plan, choice)
+    except (OSError, ValueError) as e:
+        _force_rmtree(scratch)
+        await _emit_progress(mod_id, "error", 0, "options")
+        return {"ok": False, "error": f"Could not prepare the mod's options: {e}"}
 
     # Hold the vanilla packages this will rewrite. Best effort: a mod whose
     # manifest we cannot read still installs, but reset will only be able
