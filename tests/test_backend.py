@@ -24295,14 +24295,15 @@ MergeFiles = me2_normal.m3m)
         got = main._me_m3_merge_choice(plan, set())
         self.assertTrue(got["ok"], got)
 
-    def test_a_dlc_name_that_escapes_the_folder_is_ignored(self):
+    def test_a_dlc_name_that_escapes_the_folder_is_refused(self):
         plan = {"merge_files": ["a.m3m"], "merge_alts": [],
                 "alts": [{"condition": "COND_MANUAL",
                           "modoperation": "OP_ADD_CUSTOMDLC",
                           "modaltdlc": "../../etc", "moddestdlc": "../../etc",
                           "friendlyname": "Nope"}]}
         got = main._me_m3_merge_choice(plan, {"dlc.0"})
-        self.assertTrue(got["ok"])
+        self.assertFalse(got["ok"])
+        self.assertIn("invalid DLC path", got["error"])
         self.assertEqual(got["dlc"], [])
 
     def test_a_picked_dlc_folder_is_written_into_customdlc(self):
@@ -24364,6 +24365,239 @@ MergeFiles = me2_normal.m3m)
         out = main._me_m3_moddesc(text, ["new.m3m"])
         self.assertEqual(out.count("mergemods"), 1)
         self.assertIn("mergemods = new.m3m", out)
+
+
+class TestMassEffectM3DependentOptions(unittest.TestCase):
+    """Synthetic package matching the Full/Lite descriptor shape in #53.
+
+    The real archive is not bundled here; payload bytes and metadata are
+    placeholders. The hidden dependency and trailing slash are significant.
+    """
+
+    MODDESC = """[ModManager]
+cmmver = 8.2
+[ModInfo]
+game = LE1
+modname = Advanced Weapon Models for LE1
+modver = 2.4
+[BASEGAME]
+moddir = .
+altfiles = (FriendlyName="AWM Full Merge", Condition=COND_MANUAL, \
+ModOperation=OP_APPLY_MERGEMODS, MergeFiles=AdvancedWeapons.m3m, \
+Hidden=true, DependsOnKeys=+OPT_FULL, \
+DependsOnMetAction=ACTION_DISALLOW_SELECT_CHECKED, \
+DependsOnNotMetAction=ACTION_DISALLOW_SELECT)
+[CUSTOMDLC]
+sourcedirs = DLC_MOD_AdvancedWeaponModels
+destdirs = DLC_MOD_AdvancedWeaponModels
+altdlc = (FriendlyName="Base models", Condition=COND_ALWAYS, \
+ModOperation=OP_NOTHING), \
+(FriendlyName="Full Mode", Condition=COND_MANUAL, OptionGroup=Mode, \
+OptionKey=OPT_FULL, CheckedByDefault=true, \
+ModOperation=OP_ADD_FOLDERFILES_TO_CUSTOMDLC, \
+ModAltDLC=Full_Mode, ModDestDLC="DLC_MOD_AdvancedWeaponModels\\"), \
+(FriendlyName="Lite Mode", Condition=COND_MANUAL, OptionGroup=Mode, \
+OptionKey=OPT_LITE, ModOperation=OP_NOTHING)
+"""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(dir=TEST_ROOT)
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.scratch = os.path.join(self.root, "archive")
+        self.install = os.path.join(self.root, "game")
+        self.base = os.path.join(self.scratch, "DLC_MOD_AdvancedWeaponModels")
+        self.overlay = os.path.join(self.scratch, "Full_Mode")
+        os.makedirs(os.path.join(self.base, "CookedPCConsole"))
+        os.makedirs(os.path.join(self.overlay, "CookedPCConsole"))
+        os.makedirs(main._me_dlc_dir(self.install, "LE1"))
+        for folder, name, data in [
+                (self.base, "base.pcc", b"base"),
+                (self.base, "shared.pcc", b"lite"),
+                (self.overlay, "shared.pcc", b"full"),
+                (self.overlay, "full.pcc", b"full only")]:
+            with open(os.path.join(folder, "CookedPCConsole", name), "wb") as f:
+                f.write(data)
+        with open(os.path.join(self.scratch, "moddesc.ini"), "w") as f:
+            f.write(self.MODDESC)
+        self.plan = main._me_plan(self.scratch, self.install)
+
+    def test_wizard_keeps_both_modes_but_not_the_hidden_merge(self):
+        wizard, _ctx = main._me_merge_wizard(self.plan)
+        groups = wizard["steps"][0]["groups"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["type"], "SelectExactlyOne")
+        self.assertEqual(
+            [(p["id"], p["name"], p["type"]) for p in groups[0]["plugins"]],
+            [("dlc.1", "Full Mode", "Recommended"),
+             ("dlc.2", "Lite Mode", "Optional")])
+
+    def test_full_mode_selects_the_hidden_merge_and_overlays_one_dlc(self):
+        choice = main._me_m3_merge_choice(self.plan, {"dlc.1"})
+        self.assertTrue(choice["ok"], choice)
+        self.assertEqual(choice["merges"], ["AdvancedWeapons.m3m"])
+        self.assertEqual(choice["dlc"], [])
+        self.assertEqual(choice["overlays"],
+                         [("Full_Mode", "DLC_MOD_AdvancedWeaponModels")])
+        main._me_m3_stage_overlays(self.plan, choice)
+        with open(os.path.join(self.base, "CookedPCConsole", "shared.pcc"), "rb") as f:
+            self.assertEqual(f.read(), b"full")
+        for name in ("base.pcc", "full.pcc"):
+            self.assertTrue(os.path.isfile(
+                os.path.join(self.base, "CookedPCConsole", name)))
+        ini = main._me_parse_moddesc(main._me_m3_moddesc(
+            self.MODDESC, choice["merges"], choice["dlc"]))
+        self.assertEqual(ini["BASEGAME"]["mergemods"], "AdvancedWeapons.m3m")
+        self.assertEqual(ini["CUSTOMDLC"]["sourcedirs"],
+                         "DLC_MOD_AdvancedWeaponModels")
+        self.assertEqual(ini["CUSTOMDLC"]["destdirs"],
+                         "DLC_MOD_AdvancedWeaponModels")
+
+    def test_lite_mode_installs_the_unchanged_base_without_a_merge(self):
+        choice = main._me_m3_merge_choice(self.plan, {"dlc.2"})
+        self.assertTrue(choice["ok"], choice)
+        self.assertEqual(choice["merges"], [])
+        self.assertEqual(choice["overlays"], [])
+        main._me_m3_stage_overlays(self.plan, choice)
+        with open(os.path.join(self.base, "CookedPCConsole", "shared.pcc"), "rb") as f:
+            self.assertEqual(f.read(), b"lite")
+        self.assertFalse(os.path.exists(
+            os.path.join(self.base, "CookedPCConsole", "full.pcc")))
+
+    def test_explicit_hidden_selection_cannot_override_the_dependency(self):
+        choice = main._me_m3_merge_choice(self.plan, {"dlc.2", "alt.0"})
+        self.assertTrue(choice["ok"], choice)
+        self.assertEqual(choice["merges"], [])
+
+    def test_negative_dependencies_and_chains_resolve_across_option_kinds(self):
+        self.plan["merge_alts"][0]["dependsonkeys"] = "+CHAIN;-OPT_LITE"
+        self.plan["merge_alts"].append({
+            "hidden": "true", "optionkey": "CHAIN",
+            "dependsonkeys": "+OPT_FULL",
+            "dependsonmetaction": "ACTION_DISALLOW_SELECT_CHECKED",
+            "dependsonnotmetaction": "ACTION_DISALLOW_SELECT"})
+        full = main._me_m3_merge_choice(self.plan, {"dlc.1"})
+        lite = main._me_m3_merge_choice(self.plan, {"dlc.2"})
+        self.assertEqual(full["merges"], ["AdvancedWeapons.m3m"])
+        self.assertEqual(lite["merges"], [])
+
+    def test_invalid_dependencies_fail_explicitly(self):
+        for dependency in ("+MISSING", "OPT_FULL"):
+            with self.subTest(dependency=dependency):
+                self.plan["merge_alts"][0]["dependsonkeys"] = dependency
+                choice = main._me_m3_merge_choice(self.plan, {"dlc.1"})
+                self.assertFalse(choice["ok"])
+                self.assertIn("dependency", choice["error"])
+
+    def test_cyclic_dependencies_fail_without_recursing_forever(self):
+        self.plan["alts"][1].update(
+            dependsonkeys="+LOOP",
+            dependsonmetaction="ACTION_DISALLOW_SELECT_CHECKED",
+            dependsonnotmetaction="ACTION_DISALLOW_SELECT")
+        self.plan["merge_alts"][0]["optionkey"] = "LOOP"
+        choice = main._me_m3_merge_choice(self.plan, {"dlc.1"})
+        self.assertFalse(choice["ok"])
+        self.assertIn("cycle", choice["error"])
+
+    def test_unknown_dependency_actions_are_refused(self):
+        self.plan["merge_alts"][0]["dependsonmetaction"] = "ACTION_UNKNOWN"
+        choice = main._me_m3_merge_choice(self.plan, {"dlc.1"})
+        self.assertFalse(choice["ok"])
+        self.assertIn("Unsupported", choice["error"])
+
+    def test_allow_actions_preserve_an_explicit_visible_choice(self):
+        alt = self.plan["merge_alts"][0]
+        alt.update(hidden="false", dependsonmetaction="ACTION_ALLOW_SELECT_CHECKED")
+        selected = main._me_m3_selected_options(self.plan, {"dlc.1", "alt.0"})
+        self.assertIn("alt.0", selected)
+        deselected = main._me_m3_selected_options(self.plan, {"dlc.1"})
+        self.assertNotIn("alt.0", deselected)
+
+    def test_hidden_defaults_still_apply_without_dependencies(self):
+        alt = self.plan["merge_alts"][0]
+        alt.pop("dependsonkeys")
+        alt["checkedbydefault"] = "true"
+        choice = main._me_m3_merge_choice(self.plan, {"dlc.2"})
+        self.assertEqual(choice["merges"], ["AdvancedWeapons.m3m"])
+
+    def test_a_missing_overlay_is_an_error_not_a_partial_install(self):
+        choice = main._me_m3_merge_choice(self.plan, {"dlc.1"})
+        shutil.rmtree(self.overlay)
+        with self.assertRaisesRegex(ValueError, "option's folder"):
+            main._me_m3_stage_overlays(self.plan, choice)
+
+    def test_a_missing_overlay_target_is_refused(self):
+        choice = main._me_m3_merge_choice(self.plan, {"dlc.1"})
+        self.plan["dlc"] = []
+        with self.assertRaisesRegex(ValueError, "DLC payload"):
+            main._me_m3_stage_overlays(self.plan, choice)
+
+    def test_unconditional_merges_do_not_hide_later_options_or_dlc(self):
+        text = self.MODDESC.replace("moddir = .", "moddir = .\nmergemods = always.m3m")
+        with open(os.path.join(self.scratch, "moddesc.ini"), "w") as f:
+            f.write(text)
+        plan = main._me_plan(self.scratch, self.install)
+        choice = main._me_m3_merge_choice(plan, {"dlc.1"})
+        self.assertTrue(choice["ok"], choice)
+        self.assertEqual(choice["merges"], ["always.m3m", "AdvancedWeapons.m3m"])
+        self.assertEqual(len(plan["dlc"]), 1)
+        self.assertIsNotNone(main._me_merge_wizard(plan))
+
+    def _install_mode(self, mode):
+        """Exercise the install/wizard/completion endpoints with M3 stubbed."""
+        selected = "dlc.1" if mode == "full" else "dlc.2"
+        settings = {}
+
+        async def launch(_proton, _compat, _steam, args, _timeout):
+            self.assertEqual(args[0], "--installmod")
+            with open(os.path.join(self.scratch, "moddesc.ini")) as f:
+                text = f.read()
+            ini = main._me_parse_moddesc(text)
+            self.assertNotIn("altfiles", text)
+            self.assertNotIn("altdlc", text)
+            self.assertEqual(ini["BASEGAME"]["mergemods"],
+                             "AdvancedWeapons.m3m" if mode == "full" else "")
+            self.assertEqual(ini["CUSTOMDLC"]["sourcedirs"],
+                             "DLC_MOD_AdvancedWeaponModels")
+            with open(os.path.join(self.base, "CookedPCConsole", "shared.pcc"), "rb") as f:
+                self.assertEqual(f.read(), b"full" if mode == "full" else b"lite")
+            shutil.copytree(
+                self.base,
+                os.path.join(main._me_dlc_dir(self.install, "LE1"),
+                             "DLC_MOD_AdvancedWeaponModels"))
+            return {"ok": True}
+
+        with mock.patch.object(main, "_game_dir", return_value=self.install), \
+                mock.patch.object(main, "_me_running", return_value=False), \
+                mock.patch.object(main, "_proton_binary_for",
+                                  return_value=("proton", "prefix", "steam", "")), \
+                mock.patch.object(main, "_me_m3_ready", return_value=True), \
+                mock.patch.object(main, "_me_bypass_installed", return_value=True), \
+                mock.patch.object(main, "_me_merge_targets", return_value=[]), \
+                mock.patch.object(main, "_load_settings", return_value=settings), \
+                mock.patch.object(main, "_save_settings") as save, \
+                mock.patch.object(main, "_me_m3_launch", side_effect=launch) as m3:
+            result = run(main._me_install_from_scratch(
+                self.scratch, 853, 12697, "Advanced Weapon Models for LE1",
+                "2.4", "awm.zip", "Game", "masseffectlegendaryedition",
+                "2.4", "", "", 1328670))
+            self.assertTrue(result.get("needs_fomod"), result)
+            token = result["fomod_token"]
+            self.addCleanup(main.PENDING_FOMODS.pop, token, None)
+            done = run(main.Plugin().install_fomod(token, [selected]))
+            self.assertTrue(done["ok"], done)
+            m3.assert_awaited_once()
+            save.assert_called_once_with(settings)
+        self.assertFalse(os.path.exists(self.scratch))
+        record = next(iter(settings["installed"]["masseffectlegendaryedition"].values()))
+        self.assertEqual(record["merge_files"],
+                         ["AdvancedWeapons.m3m"] if mode == "full" else [])
+        self.assertEqual(record["dlc"], ["DLC_MOD_AdvancedWeaponModels"])
+
+    def test_full_mode_reaches_m3_with_the_combined_payload(self):
+        self._install_mode("full")
+
+    def test_lite_mode_reaches_m3_without_the_hidden_merge(self):
+        self._install_mode("lite")
 
 
 class TestMassEffectMergeRefusal(unittest.TestCase):
