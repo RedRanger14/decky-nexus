@@ -53,6 +53,28 @@ export interface MoveBounds {
 
 const EXT = /\.es[lmp]$/i;
 
+type Translate = (text: string, vars?: Record<string, string | number>) => string;
+
+let tr: Translate = (text, vars) => {
+  if (!vars) return text;
+  let out = text;
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split(`{${key}}`).join(String(value));
+  }
+  return out;
+};
+let ordinalFn: (n: number) => string = (n) => ordinal(n);
+
+/** Install the UI translator (and its ordinal formatter). Called once by
+ * the panel entry point; the node tests keep the English default. */
+export function setLoadOrderTranslator(
+  fn: Translate,
+  ord: (n: number) => string = (n) => ordinal(n)
+): void {
+  tr = fn;
+  ordinalFn = ord;
+}
+
 /** "Some Mod - Patch.esp" reads as "Some Mod - Patch" everywhere on the page. */
 export function pluginTitle(name: string): string {
   return (name ?? "").replace(EXT, "");
@@ -65,10 +87,10 @@ export function kindTag(e: LoadOrderEntry): "ESM" | "ESL" | "ESP" {
 }
 
 export function kindLabel(e: LoadOrderEntry): string {
-  if (e.light && e.master) return "Light master file";
-  if (e.light) return "Light plugin";
-  if (e.master) return "Master file";
-  return "Plugin";
+  if (e.light && e.master) return tr("Light master file");
+  if (e.light) return tr("Light plugin");
+  if (e.master) return tr("Master file");
+  return tr("Plugin");
 }
 
 const low = (s: string) => s.toLowerCase();
@@ -112,14 +134,14 @@ export function moveBounds(list: LoadOrderEntry[], from: number): MoveBounds {
     max = masters - 1;
     down = {
       name: list[masters]?.name ?? "",
-      why: "Master files load before the other plugins, whatever the order",
+      why: tr("Master files load before the other plugins, whatever the order"),
       kind: "masters",
     };
   } else {
     min = masters;
     up = {
       name: list[masters - 1]?.name ?? "",
-      why: "Master files always load first",
+      why: tr("Master files always load first"),
       kind: "masters",
     };
   }
@@ -135,7 +157,10 @@ export function moveBounds(list: LoadOrderEntry[], from: number): MoveBounds {
       min = floor;
       up = {
         name: need,
-        why: `${title} needs ${pluginTitle(need)} loaded before it`,
+        why: tr("{title} needs {name} loaded before it", {
+          title,
+          name: pluginTitle(need),
+        }),
         kind: "needs",
       };
     }
@@ -148,7 +173,10 @@ export function moveBounds(list: LoadOrderEntry[], from: number): MoveBounds {
       max = ceiling;
       down = {
         name: dep.name,
-        why: `${pluginTitle(dep.name)} needs ${title} loaded before it`,
+        why: tr("{name} needs {title} loaded before it", {
+          name: pluginTitle(dep.name),
+          title,
+        }),
         kind: "dependent",
       };
     }
@@ -174,13 +202,13 @@ export function stepTarget(
   if (wanted < b.min) {
     return {
       to: b.min,
-      wall: current === b.min ? b.up ?? { name: "", why: "Already first" } : undefined,
+      wall: current === b.min ? b.up ?? { name: "", why: tr("Already first") } : undefined,
     };
   }
   if (wanted > b.max) {
     return {
       to: b.max,
-      wall: current === b.max ? b.down ?? { name: "", why: "Already last" } : undefined,
+      wall: current === b.max ? b.down ?? { name: "", why: tr("Already last") } : undefined,
     };
   }
   return { to: wanted };
@@ -217,27 +245,28 @@ export function shiftFor(i: number, from: number, to: number): -1 | 0 | 1 {
 export function lockReason(list: LoadOrderEntry[], index: number): string {
   const e = list[index];
   if (!e) return "";
-  if (!e.positioned) return "Switch it on to give it a place in the order";
+  if (!e.positioned) return tr("Switch it on to give it a place in the order");
   const b = moveBounds(list, index);
   if (b.min !== b.max) return "";
   const masters = list.filter((x) => x.master).length;
   if (e.master && masters === 1) {
-    return "The only master file, so it always loads first";
+    return tr("The only master file, so it always loads first");
   }
   const after = !b.up
     ? ""
     : b.up.kind === "masters"
-    ? "the master files"
+    ? tr("the master files")
     : pluginTitle(b.up.name);
   const before = !b.down
     ? ""
     : b.down.kind === "masters"
-    ? "the plugins"
+    ? tr("the plugins")
     : pluginTitle(b.down.name);
-  if (after && before) return `Has to stay after ${after} and before ${before}`;
-  if (after) return `Has to stay after ${after}`;
-  if (before) return `Has to stay before ${before}`;
-  return "Nothing to swap it with";
+  if (after && before)
+    return tr("Has to stay after {after} and before {before}", { after, before });
+  if (after) return tr("Has to stay after {after}", { after });
+  if (before) return tr("Has to stay before {before}", { before });
+  return tr("Nothing to swap it with");
 }
 
 /** Every lock reason at once, by plugin name. Computed per load rather
@@ -253,7 +282,7 @@ export function lockReasons(
     if (why) out[e.name] = why;
   });
   for (const e of off) {
-    out[e.name] = "Switch it on to give it a place in the order";
+    out[e.name] = tr("Switch it on to give it a place in the order");
   }
   return out;
 }
@@ -282,13 +311,16 @@ export function problemNote(
   problems: { name: string; needs: string }[]
 ): string {
   if (problems.length === 0) return "";
-  const first =
-    `${pluginTitle(problems[0].name)} loads before ` +
-    `${pluginTitle(problems[0].needs)}, which it needs`;
+  const first = tr("{name} loads before {needs}, which it needs", {
+    name: pluginTitle(problems[0].name),
+    needs: pluginTitle(problems[0].needs),
+  });
   return problems.length === 1
-    ? `${first}. Sort for me puts it right.`
-    : `${first}, and ${problems.length - 1} more like it. ` +
-      "Sort for me puts them right.";
+    ? tr("{first}. Sort for me puts it right.", { first })
+    : tr("{first}, and {n} more like it. Sort for me puts them right.", {
+        first,
+        n: problems.length - 1,
+      });
 }
 
 export function matchesFilter(e: LoadOrderEntry, query: string): boolean {
@@ -313,7 +345,10 @@ export function ordinal(n: number): string {
 }
 
 export function positionLabel(index: number, total: number): string {
-  return `Loads ${ordinal(index + 1)} of ${total}`;
+  return tr("Loads {ord} of {total}", {
+    ord: ordinalFn(index + 1),
+    total,
+  });
 }
 
 /** The one line under the title, for someone who has never heard the
@@ -322,9 +357,9 @@ export function orderSummary(list: LoadOrderEntry[]): string {
   const total = list.length;
   const on = list.filter((e) => e.enabled).length;
   const plural = total === 1 ? "plugin" : "plugins";
-  return (
-    `${total} ${plural}, ${on} on. Loads top to bottom: when two mods ` +
-    "change the same thing, the lower one wins."
+  return tr(
+    "{total} {plural}, {on} on. Loads top to bottom: when two mods change the same thing, the lower one wins.",
+    { total, plural, on }
   );
 }
 
@@ -343,19 +378,29 @@ export function sortToast(
   });
   const on =
     mastersSwitchedOn > 0
-      ? ` ${mastersSwitchedOn} master file${mastersSwitchedOn === 1 ? "" : "s"} that other mods need ${mastersSwitchedOn === 1 ? "was" : "were"} switched on.`
+      ? mastersSwitchedOn === 1
+        ? tr(" {n} master file that other mods need was switched on.", {
+            n: mastersSwitchedOn,
+          })
+        : tr(" {n} master files that other mods need were switched on.", {
+            n: mastersSwitchedOn,
+          })
       : "";
   if (moved === 0) {
     return {
-      title: "Already in a good order",
-      body: "Every plugin loads after the ones it needs." + on,
+      title: tr("Already in a good order"),
+      body: tr("Every plugin loads after the ones it needs.") + on,
     };
   }
   return {
-    title: `Moved ${moved} plugin${moved === 1 ? "" : "s"}`,
+    title:
+      moved === 1
+        ? tr("Moved 1 plugin")
+        : tr("Moved {n} plugins", { n: moved }),
     body:
-      "Each one now loads after the plugins it needs. Nothing else was changed." +
-      on,
+      tr(
+        "Each one now loads after the plugins it needs. Nothing else was changed."
+      ) + on,
   };
 }
 
@@ -367,15 +412,30 @@ export function toggleToast(
 ): { title: string; body: string } | undefined {
   if (!also || also.length === 0) return undefined;
   const names = also.slice(0, 3).map(pluginTitle).join(", ");
-  const more = also.length > 3 ? ` and ${also.length - 3} more` : "";
+  const suffix =
+    also.length > 3 ? tr(" and {n} more", { n: also.length - 3 }) : "";
   return enabled
     ? {
-        title: `Also switched on ${names}${more}`,
-        body: `${pluginTitle(e.name)} needs ${also.length === 1 ? "it" : "them"} loaded first.`,
+        title: tr("Also switched on {names}{more}", { names, more: suffix }),
+        body:
+          also.length === 1
+            ? tr("{name} needs it loaded first.", {
+                name: pluginTitle(e.name),
+              })
+            : tr("{name} needs them loaded first.", {
+                name: pluginTitle(e.name),
+              }),
       }
     : {
-        title: `Also switched off ${names}${more}`,
-        body: `${also.length === 1 ? "It needs" : "They need"} ${pluginTitle(e.name)}, so ${also.length === 1 ? "it" : "they"} can't load without it.`,
+        title: tr("Also switched off {names}{more}", { names, more: suffix }),
+        body:
+          also.length === 1
+            ? tr("It needs {name}, so it can't load without it.", {
+                name: pluginTitle(e.name),
+              })
+            : tr("They need {name}, so they can't load without it.", {
+                name: pluginTitle(e.name),
+              }),
       };
 }
 
@@ -387,8 +447,8 @@ export const IDLE_HINT =
 
 /** Games with nothing to arrange get told so in one sentence. */
 export function unsupportedNote(gameName: string): string {
-  return (
-    `${gameName} loads its mods in a fixed way, so there is no order to ` +
-    "arrange there."
+  return tr(
+    "{game} loads its mods in a fixed way, so there is no order to arrange there.",
+    { game: gameName }
   );
 }

@@ -40,6 +40,7 @@ import { fitReportBody, healthVerdict } from "./panelRules";
 import { installLatest } from "./install";
 import { LINK_CHIP_CLASS, PAGE_SCROLLER } from "./theme";
 import { setDetailOrigin, setSelectedMod } from "./state";
+import { t, useT } from "./i18n";
 
 const WARN = "230, 180, 80";
 const NEXUS_ORANGE = "#da8e35";
@@ -113,7 +114,7 @@ async function openMod(game: SupportedGame, modId: number, name: string) {
     setDetailOrigin("browse"); // B pops back to where we came from
     pushOurPage("/nexus-mods/mod");
   } else {
-    toaster.toast({ title: "Could not open mod", body: result.error ?? name });
+    toaster.toast({ title: t("Could not open mod"), body: result.error ?? name });
   }
 }
 
@@ -213,6 +214,7 @@ function FindingCard({
 }
 
 export default function HealthCheckPage() {
+  useT();
   const game = healthGame ?? getActiveGame(undefined);
   const [report, setReport] = useState<{
     checked: number;
@@ -377,10 +379,9 @@ export default function HealthCheckPage() {
             letterSpacing: "0.5px",
           }}
         >
-          Health check
-        </h1>
+          {t("Health check")}</h1>
         <div style={{ fontSize: "13px", opacity: 0.6, marginBottom: "14px" }}>
-          {game ? game.displayName : "No game selected"}
+          {game ? game.displayName : t("No game selected")}
         </div>
         {/* The verdict, sized to be read from a sofa. Somebody opens this
             screen already annoyed; the first thing they should get is an
@@ -431,12 +432,10 @@ export default function HealthCheckPage() {
           }}
         >
           <StatChip icon={<FaCube />}>
-            {report?.checked ?? 0} mods checked
-          </StatChip>
+            {report?.checked ?? 0} {" "}{t("mods checked")}</StatChip>
           {(report?.owned_dlc.length ?? 0) > 0 && (
             <StatChip icon={<FaBoxOpen />}>
-              {report!.owned_dlc.length} DLC found
-            </StatChip>
+              {report!.owned_dlc.length} {" "}{t("DLC found")}</StatChip>
           )}
         </div>
         {/* Below the verdict rather than inside it: re-running is an action
@@ -456,7 +455,7 @@ export default function HealthCheckPage() {
               }}
             >
               <FaSyncAlt />
-              {busy ? "Checking…" : "Check again"}
+              {busy ? t("Checking…") : t("Check again")}
             </span>
           </DialogButton>
         </Focusable>
@@ -470,25 +469,17 @@ export default function HealthCheckPage() {
             a black screen, which names nothing he can act on. */}
         {shown?.address_library && !shown.address_library.matches && (
           <>
-            <SectionHeading title="Built for a different Fallout" />
+            <SectionHeading title={t("Built for a different Fallout")} />
             <FindingCard
               tone="220, 110, 110"
               icon={<FaPuzzlePiece size={16} />}
-              title="This collection needs an older version of the game"
+              title={t("This collection needs an older version of the game")}
               detail={
                 <>
-                  Its Address Library is for Fallout{" "}
-                  <b>{shown.address_library.have.join(", ")}</b>, and you are
-                  running <b>{shown.address_library.runtime}</b>. That library
-                  is a table of addresses for one exact build, so every script
-                  mod built on it fails — which is why several plugins were
-                  refused and the game crashed on the way in.
+                  {t("Its Address Library is for Fallout")}{" "}
+                  <b>{shown.address_library.have.join(", ")}</b>{t(", and you are running")}{" "}<b>{shown.address_library.runtime}</b>{t(". That library is a table of addresses for one exact build, so every script mod built on it fails — which is why several plugins were refused and the game crashed on the way in.")}<br />
                   <br />
-                  <br />
-                  Nothing here can fix that: the collection was built before
-                  the game was updated, and it needs the older build. The mods
-                  that don't use scripts are unaffected.
-                </>
+                  {t("Nothing here can fix that: the collection was built before the game was updated, and it needs the older build. The mods that don't use scripts are unaffected.")}</>
               }
             />
           </>
@@ -496,23 +487,19 @@ export default function HealthCheckPage() {
 
         {(shown?.script_extender.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Mods the game refused to load" />
+            <SectionHeading title={t("Mods the game refused to load")} />
             {(shown?.se_parked.length ?? 0) > 0 && (
               <FindingCard
                 tone="143, 212, 143"
                 icon={<FaCheck size={14} />}
-                title={`${report!.se_parked.length} set aside for you`}
+                title={t("{n} set aside for you", { n: report!.se_parked.length })}
                 detail={
                   <>
                     <b>{report!.se_parked.join(", ")}</b> —{" "}
-                    {report!.se_parked.length === 1 ? "this was" : "these were"}{" "}
-                    built for a different version of the game, so the game
-                    refused {report!.se_parked.length === 1 ? "it" : "them"}{" "}
-                    every launch and asked you about{" "}
-                    {report!.se_parked.length === 1 ? "it" : "them"} before the
-                    main menu. Nothing has changed about what loads — that had
-                    already been refused — you just won't be asked again.
-                  </>
+                    {report!.se_parked.length === 1 ? t("this was") : t("these were")}{" "}
+                    {t("built for a different version of the game, so the game refused")}{" "}{report!.se_parked.length === 1 ? t("it") : t("them")}{" "}
+                    {t("every launch and asked you about")}{" "}
+                    {report!.se_parked.length === 1 ? t("it") : t("them")} {" "}{t("before the main menu. Nothing has changed about what loads — that had already been refused — you just won't be asked again.")}</>
                 }
               />
             )}
@@ -524,22 +511,16 @@ export default function HealthCheckPage() {
                 title={p.mod || p.dll}
                 detail={
                   <>
-                    The game's script extender would not load{" "}
+                    {t("The game's script extender would not load")}{" "}
                     <b>{p.dll}</b> — {p.reason}.
                     {p.outdated ? (
                       <>
                         {" "}
-                        That means this mod was built for a different version
-                        of the game than the one you have, so only its author
-                        can fix it. The rest of your mods are unaffected;
-                        this one just does nothing.
-                      </>
+                        {t("That means this mod was built for a different version of the game than the one you have, so only its author can fix it. The rest of your mods are unaffected; this one just does nothing.")}</>
                     ) : (
                       <>
                         {" "}
-                        That usually means something it depends on is missing
-                        rather than the mod being broken.
-                      </>
+                        {t("That usually means something it depends on is missing rather than the mod being broken.")}</>
                     )}
                     {p.mod && p.mod_id && game ? (
                       <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
@@ -558,19 +539,15 @@ export default function HealthCheckPage() {
 
         {shown && log?.ran && (
           <>
-            <SectionHeading title="What the game said" />
+            <SectionHeading title={t("What the game said")} />
             {staleLog && (
               <FindingCard
                 tone={WARN}
                 icon={<FaSyncAlt size={14} />}
-                title="The game hasn't run since you changed your mods"
+                title={t("The game hasn't run since you changed your mods")}
                 detail={
                   <>
-                    Everything below describes the last time it started, which
-                    was before your latest change — so it may name mods you
-                    have since removed. Launch the game once and come back,
-                    and this section will describe what you actually have.
-                  </>
+                    {t("Everything below describes the last time it started, which was before your latest change — so it may name mods you have since removed. Launch the game once and come back, and this section will describe what you actually have.")}</>
                 }
               />
             )}
@@ -579,15 +556,10 @@ export default function HealthCheckPage() {
                 key={`off:${s.name}`}
                 tone="143, 212, 143"
                 icon={<FaCheck size={14} />}
-                title={`${s.name} — switched off`}
+                title={t("{name} — switched off", { name: s.name })}
                 detail={
                   <>
-                    Its script <b>{s.script}</b> would not compile, and the
-                    game stops loading <b>every</b> script mod when one fails
-                    — so this single mod was stopping all the others. It has
-                    been switched off for you. Start the game once and the
-                    rest should come back.
-                  </>
+                    {t("Its script")}{" "}<b>{s.script}</b> {" "}{t("would not compile, and the game stops loading")}{" "}<b>{t("every")}</b> {" "}{t("script mod when one fails — so this single mod was stopping all the others. It has been switched off for you. Start the game once and the rest should come back.")}</>
                 }
               />
             ))}
@@ -599,11 +571,8 @@ export default function HealthCheckPage() {
                 title={o.script}
                 detail={
                   <>
-                    This script is failing to compile and no installed mod
-                    owns it — it was left behind by an install whose record
-                    was lost. It stops every other script mod loading. Use{" "}
-                    <b>Reset modding</b> in Settings to clear it out.
-                  </>
+                    {t("This script is failing to compile and no installed mod owns it — it was left behind by an install whose record was lost. It stops every other script mod loading. Use")}{" "}
+                    <b>{t("Reset modding")}</b> {" "}{t("in Settings to clear it out.")}</>
                 }
               />
             ))}
@@ -611,13 +580,10 @@ export default function HealthCheckPage() {
               <FindingCard
                 tone="143, 212, 143"
                 icon={<FaCheck size={14} />}
-                title="Your script mods all compiled"
+                title={t("Your script mods all compiled")}
                 detail={
                   <>
-                    The game read every script mod you have installed and
-                    accepted all of them. This is the game's own answer, not
-                    a guess — which is why anything below it is worth less.
-                  </>
+                    {t("The game read every script mod you have installed and accepted all of them. This is the game's own answer, not a guess — which is why anything below it is worth less.")}</>
                 }
               />
             )}
@@ -627,7 +593,7 @@ export default function HealthCheckPage() {
         {missingCount > 0 && shown && (
           <>
             <SectionHeading
-              title="Mods that need other mods"
+              title={t("Mods that need other mods")}
               right={
                 // Never while the script stack is dead. A broken script
                 // suspends the only evidence that says whether these matter
@@ -643,8 +609,8 @@ export default function HealthCheckPage() {
                     onClick={installAllMissing}
                   >
                     {fixing
-                      ? `Installing ${fixing}…`
-                      : `Install the ${missingCount} missing`}
+                      ? t("Installing {name}…", { name: fixing })
+                      : t("Install the {n} missing", { n: missingCount })}
                   </DialogButton>
                 )
               }
@@ -658,11 +624,7 @@ export default function HealthCheckPage() {
                   margin: "-2px 0 10px",
                 }}
               >
-                Sort the script problem above out first. Until the game can
-                compile again there is no way to tell whether any of these
-                actually matter — and installing them now would add mods on
-                top of a setup that is not running.
-              </div>
+                {t("Sort the script problem above out first. Until the game can compile again there is no way to tell whether any of these actually matter — and installing them now would add mods on top of a setup that is not running.")}</div>
             )}
             {report!.needs_mods.map((f) => (
               <FindingCard
@@ -672,12 +634,8 @@ export default function HealthCheckPage() {
                 title={f.name}
                 detail={
                   <>
-                    Needs {(f.missing ?? []).length === 1 ? "this" : "these"},
-                    which {(f.missing ?? []).length === 1 ? "is" : "are"} not
-                    installed. Without{" "}
-                    {(f.missing ?? []).length === 1 ? "it" : "them"} this mod
-                    may do nothing at all, and the game will not always say so.
-                    <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
+                    {t("Needs")}{" "}{(f.missing ?? []).length === 1 ? t("this") : t("these")}{t(", which")}{" "}{(f.missing ?? []).length === 1 ? t("is") : t("are")} {" "}{t("not installed. Without")}{" "}
+                    {(f.missing ?? []).length === 1 ? t("it") : t("them")} {" "}{t("this mod may do nothing at all, and the game will not always say so.")}<Focusable style={{ display: "flex", flexWrap: "wrap" }}>
                       {(f.missing ?? []).map((m) =>
                         m.mod_id && game ? (
                           <LinkChip
@@ -699,7 +657,7 @@ export default function HealthCheckPage() {
 
         {(shown?.needs_dlc.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Mods that need game DLC" />
+            <SectionHeading title={t("Mods that need game DLC")} />
             {report!.needs_dlc.map((f) => (
               <FindingCard
                 key={f.name}
@@ -708,12 +666,7 @@ export default function HealthCheckPage() {
                 title={f.name}
                 detail={
                   <>
-                    Needs <b>{(f.dlc ?? []).join(", ")}</b>, which we cannot
-                    find installed. This is the one that stops the game
-                    starting rather than just not working — the DLC has to be
-                    bought and installed in Steam, and no mod can substitute
-                    for it.
-                  </>
+                    {t("Needs")}{" "}<b>{(f.dlc ?? []).join(", ")}</b>{t(", which we cannot find installed. This is the one that stops the game starting rather than just not working — the DLC has to be bought and installed in Steam, and no mod can substitute for it.")}</>
                 }
               />
             ))}
@@ -722,7 +675,7 @@ export default function HealthCheckPage() {
 
         {(shown?.needs_external.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Files that aren't on Nexus" />
+            <SectionHeading title={t("Files that aren't on Nexus")} />
             {report!.needs_external.map((f) => (
               <FindingCard
                 key={f.name}
@@ -731,11 +684,9 @@ export default function HealthCheckPage() {
                 title={f.name}
                 detail={
                   <>
-                    Needs {(f.files ?? []).length === 1 ? "a file" : "files"}{" "}
-                    hosted somewhere we cannot download from. Open{" "}
-                    {(f.files ?? []).length === 1 ? "it" : "them"} to read the
-                    page, then get the file on a computer and copy it across.
-                    <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
+                    {t("Needs")}{" "}{(f.files ?? []).length === 1 ? t("a file") : t("files")}{" "}
+                    {t("hosted somewhere we cannot download from. Open")}{" "}
+                    {(f.files ?? []).length === 1 ? t("it") : t("them")} {" "}{t("to read the page, then get the file on a computer and copy it across.")}<Focusable style={{ display: "flex", flexWrap: "wrap" }}>
                       {(f.files ?? []).map((x) =>
                         x.url ? (
                           <LinkChip
@@ -760,7 +711,7 @@ export default function HealthCheckPage() {
 
         {(shown?.known_bad.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Not recommending these" />
+            <SectionHeading title={t("Not recommending these")} />
             {report!.known_bad.map((k, i) => (
               <FindingCard
                 key={`bad:${k.name}:${i}`}
@@ -769,11 +720,7 @@ export default function HealthCheckPage() {
                 title={k.name}
                 detail={
                   <>
-                    <b>{k.for}</b> lists this as required, and we are not
-                    suggesting it: {k.why || "it has already failed on this device"}.
-                    Installing it would break more than it fixes — open it if
-                    you want to judge for yourself.
-                    {k.mod_id && game ? (
+                    <b>{k.for}</b> {" "}{t("lists this as required, and we are not suggesting it:")}{" "}{k.why || t("it has already failed on this device")}{t(". Installing it would break more than it fixes — open it if you want to judge for yourself.")}{k.mod_id && game ? (
                       <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
                         <LinkChip
                           label={k.name}
@@ -815,18 +762,17 @@ export default function HealthCheckPage() {
               );
             }}
           >
-            Report a problem
-          </ButtonItem>
+            {t("Report a problem")}</ButtonItem>
         </Focusable>
 
         {(report?.cc_catalog_fixed ?? "") !== "" && (
           <>
-            <SectionHeading title="Fixed for you" />
+            <SectionHeading title={t("Fixed for you")} />
             <FindingCard
               key="cc-catalog"
               tone="150, 160, 220"
               icon={<FaPuzzlePiece size={16} />}
-              title="Removed a game file that crashes downgraded Skyrim"
+              title={t("Removed a game file that crashes downgraded Skyrim")}
               detail={
                 "Skyrim's 2026 update changed the format of " +
                 "ContentCatalog.txt (the Creation Club catalog), and the " +
@@ -841,12 +787,12 @@ export default function HealthCheckPage() {
 
         {(report?.era_quarantined?.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Fixed for you" />
+            <SectionHeading title={t("Fixed for you")} />
             <FindingCard
               key="era-quarantine"
               tone="150, 160, 220"
               icon={<FaPuzzlePiece size={16} />}
-              title="Switched off mods built for an older game version"
+              title={t("Switched off mods built for an older game version")}
               detail={
                 report!.era_quarantined.join(", ") +
                 " - code mods from a collection built for an older version " +
@@ -859,66 +805,64 @@ export default function HealthCheckPage() {
 
         {(report?.load_order_moved ?? 0) > 0 && (
           <>
-            <SectionHeading title="Fixed for you" />
+            <SectionHeading title={t("Fixed for you")} />
             <FindingCard
               key="load-order"
               tone="150, 160, 220"
               icon={<FaPuzzlePiece size={16} />}
-              title="Corrected the mod load order"
-              detail={
-                `${report!.load_order_moved} module` +
-                `${report!.load_order_moved === 1 ? "" : "s"} ` +
-                "were loading in an order the mods themselves say is wrong, " +
-                "which shows up as warnings like 'X is loaded before Y' at " +
-                "launch. Reordered to what the mods declare. Nothing was " +
-                "enabled or disabled."
-              }
+              title={t("Corrected the mod load order")}
+              detail={t(
+                "{n} module{fs} were loading in an order the mods themselves say is wrong, which shows up as warnings like 'X is loaded before Y' at launch. Reordered to what the mods declare. Nothing was enabled or disabled.",
+                {
+                  n: report!.load_order_moved,
+                  fs: report!.load_order_moved === 1 ? "" : "s",
+                }
+              )}
             />
           </>
         )}
 
         {(report?.shader_caches_fixed?.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Fixed for you" />
+            <SectionHeading title={t("Fixed for you")} />
             <FindingCard
               key="shader-cache"
               tone="150, 160, 220"
               icon={<FaPuzzlePiece size={16} />}
-              title="Cleared a shader cache the game refused"
-              detail={
-                `${report!.shader_caches_fixed.join(", ")} shipped a shader ` +
-                "cache built for an older version of the game, and the game " +
-                "refuses it and closes before reaching the menu. Removed, so " +
-                "the game builds its own instead. The next launch takes " +
-                "longer than usual while it does that, once."
-              }
+              title={t("Cleared a shader cache the game refused")}
+              detail={t(
+                "{names} shipped a shader cache built for an older version of the game, and the game refuses it and closes before reaching the menu. Removed, so the game builds its own instead. The next launch takes longer than usual while it does that, once.",
+                { names: report!.shader_caches_fixed.join(", ") }
+              )}
             />
           </>
         )}
 
         {(report?.debug_quieted?.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Fixed for you" />
+            <SectionHeading title={t("Fixed for you")} />
             <FindingCard
               key="debug-quieted"
               tone="150, 160, 220"
               icon={<FaPuzzlePiece size={16} />}
-              title="Turned off a mod's debug display"
-              detail={
-                `${report!.debug_quieted.join(", ")} — ` +
-                `${report!.debug_quieted.length === 1 ? "a mod" : "mods"} ` +
-                "left a debug display switched on, putting a panel of text " +
-                "over the game. Turned off in the game's own settings; the " +
-                "file was backed up first and the mods are untouched. Turn " +
-                "it back on in the game's Mods menu if you want it."
-              }
+              title={t("Turned off a mod's debug display")}
+              detail={t(
+                "{names} — {subject} left a debug display switched on, putting a panel of text over the game. Turned off in the game's own settings; the file was backed up first and the mods are untouched. Turn it back on in the game's Mods menu if you want it.",
+                {
+                  names: report!.debug_quieted.join(", "),
+                  subject:
+                    report!.debug_quieted.length === 1
+                      ? t("a mod")
+                      : t("mods"),
+                }
+              )}
             />
           </>
         )}
 
         {(shown?.needs_mods_info.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Left out on purpose" />
+            <SectionHeading title={t("Left out on purpose")} />
             {report!.needs_mods_info.map((f) => (
               <FindingCard
                 key={`info:${f.name}`}
@@ -927,14 +871,9 @@ export default function HealthCheckPage() {
                 title={f.name}
                 detail={
                   <>
-                    Its page lists{" "}
-                    {(f.missing ?? []).length === 1 ? "this" : "these"} as
-                    required, and the collection you installed left{" "}
-                    {(f.missing ?? []).length === 1 ? "it" : "them"} out. The
-                    game has not complained, so this is the curator's choice
-                    rather than a fault — nothing to do unless something is
-                    actually missing in-game.
-                    <Focusable style={{ display: "flex", flexWrap: "wrap" }}>
+                    {t("Its page lists")}{" "}
+                    {(f.missing ?? []).length === 1 ? t("this") : t("these")} {" "}{t("as required, and the collection you installed left")}{" "}
+                    {(f.missing ?? []).length === 1 ? t("it") : t("them")} {" "}{t("out. The game has not complained, so this is the curator's choice rather than a fault — nothing to do unless something is actually missing in-game.")}<Focusable style={{ display: "flex", flexWrap: "wrap" }}>
                       {(f.missing ?? []).map((m) =>
                         m.mod_id && game ? (
                           <LinkChip
@@ -956,7 +895,7 @@ export default function HealthCheckPage() {
 
         {(shown?.already_fixed.length ?? 0) > 0 && (
           <>
-            <SectionHeading title="Sorted out already" />
+            <SectionHeading title={t("Sorted out already")} />
             {report!.already_fixed.map((d, i) => (
               <FindingCard
                 key={`${d.name}:${i}`}
@@ -965,10 +904,7 @@ export default function HealthCheckPage() {
                 title={d.name}
                 detail={
                   <>
-                    Installed for you because <b>{d.for || "a mod"}</b> needs
-                    it and it was missing. This is why the check above may
-                    find nothing — it was already dealt with.
-                  </>
+                    {t("Installed for you because")}{" "}<b>{d.for || t("a mod")}</b> {" "}{t("needs it and it was missing. This is why the check above may find nothing — it was already dealt with.")}</>
                 }
               />
             ))}
@@ -987,17 +923,11 @@ export default function HealthCheckPage() {
           >
             {(shown?.needs_mods_info.length ?? 0) > 0 ? (
               <>
-                Nothing here needs your attention. The mods listed above are
-                ones your collection chose to leave out, and the game is
-                running them as the curator intended.
-              </>
+                {t("Nothing here needs your attention. The mods listed above are ones your collection chose to leave out, and the game is running them as the curator intended.")}</>
             ) : (
               <>
-                Every installed mod has what it says it needs, and every DLC
-                any of them asks for is present.
-                <br />
-                Nothing here needs your attention.
-              </>
+                {t("Every installed mod has what it says it needs, and every DLC any of them asks for is present.")}<br />
+                {t("Nothing here needs your attention.")}</>
             )}
           </div>
         )}

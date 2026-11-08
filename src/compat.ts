@@ -4,6 +4,22 @@
 // long-term home for this is a community/Nexus-side signal, not a hardcoded
 // list.
 
+type Translate = (text: string, vars?: Record<string, string | number>) => string;
+
+let tr: Translate = (text, vars) => {
+  if (!vars) return text;
+  let out = text;
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split(`{${key}}`).join(String(value));
+  }
+  return out;
+};
+
+/** Install the UI translator. Called once by the panel entry point. */
+export function setCompatTranslator(fn: Translate): void {
+  tr = fn;
+}
+
 export interface CompatHint {
   nexusDomain: string;
   modId: number;
@@ -729,9 +745,10 @@ export function getStrandingWarning(
   const direct = findStrandingUi(nexusDomain, modId);
   if (direct) {
     return (
-      `${direct.name} ${direct.effect} Only install it if you also play ` +
-      `this game on a desktop, where its window can be set up once and ` +
-      `put away.`
+      `${direct.name} ${tr(direct.effect)} ` +
+      tr(
+        "Only install it if you also play this game on a desktop, where its window can be set up once and put away."
+      )
     );
   }
   const reqIds = (requirements ?? []).map((r) => r.modId);
@@ -743,9 +760,15 @@ export function getStrandingWarning(
         : undefined;
     if (via) {
       return (
-        `This mod is configured through ${via.name}, which it requires. ` +
-        `${via.effect} The mod itself may work, but its settings are out ` +
-        `of reach in Gaming Mode.`
+        tr("This mod is configured through {name}, which it requires.", {
+          name: via.name,
+        }) +
+        " " +
+        tr(via.effect) +
+        " " +
+        tr(
+          "The mod itself may work, but its settings are out of reach in Gaming Mode."
+        )
       );
     }
   }

@@ -45,6 +45,7 @@ import { PAGE_SCROLLER } from "./theme";
 import { toaster } from "@decky/api";
 import { getSupportedGame, modeParams } from "./games";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
+import { t, useT } from "./i18n";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -108,7 +109,7 @@ function SpeedGraph({ samples, current }: { samples: number[]; current: number }
         )}
       </svg>
       <span style={{ fontSize: "12px", opacity: 0.85 }}>
-        {current > 0 ? formatSpeed(current) : "idle"}
+        {current > 0 ? formatSpeed(current) : t("idle")}
       </span>
     </div>
   );
@@ -266,8 +267,7 @@ function DiskGauge({
           color: nearFloor ? "#e05c5c" : undefined,
         }}
       >
-        {freeGb >= 100 ? Math.round(freeGb) : freeGb.toFixed(1)} GB free
-      </span>
+        {freeGb >= 100 ? Math.round(freeGb) : freeGb.toFixed(1)} {" "}{t("GB free")}</span>
     </div>
   );
 }
@@ -362,7 +362,7 @@ function CollectionHero({
               opacity: 0.7,
             }}
           >
-            {run.running ? "Installing collection" : "Collection finished"}
+            {run.running ? t("Installing collection") : t("Collection finished")}
           </div>
           <div
             style={{
@@ -373,13 +373,12 @@ function CollectionHero({
               textOverflow: "ellipsis",
             }}
           >
-            {run.name ?? "Collection"}
+            {run.name ?? t("Collection")}
           </div>
           <div style={{ fontSize: "13px", opacity: 0.85 }}>
-            {run.finished} of {run.total} mods
-            {eta ? ` · ${eta}` : ""}
+            {run.finished} {" "}{t("of")}{" "}{run.total} {" "}{t("mods")}{eta ? ` · ${eta}` : ""}
             {skipped > 0 && (
-              <span style={{ opacity: 0.8 }}> · {skipped} skipped</span>
+              <span style={{ opacity: 0.8 }}> · {skipped} {" "}{t("skipped")}</span>
             )}
           </div>
           {run.running && activeNames.length > 0 && (
@@ -410,7 +409,7 @@ function CollectionHero({
                   were skipped ON PURPOSE (older-game, tools) - Michael went
                   looking and there was nothing to finish. The collection
                   page says what needs doing, when anything does. */}
-              <span>{run.running ? "tap to open" : "tap to view"}</span>
+              <span>{run.running ? t("tap to open") : t("tap to view")}</span>
             </div>
             <div
               style={{
@@ -439,6 +438,7 @@ function CollectionHero({
 }
 
 export function DownloadsPage() {
+  useT();
   const [, force] = useState(0);
   const [disk, setDisk] = useState<
     { totalGb: number; freeGb: number; minFreeGb: number } | undefined
@@ -524,7 +524,7 @@ export function DownloadsPage() {
             margin: "12px 0 10px",
           }}
         >
-          <h2 style={{ margin: 0 }}>Downloads</h2>
+          <h2 style={{ margin: 0 }}>{t("Downloads")}</h2>
           <div style={{ display: "flex", gap: "14px" }}>
             {disk && (
               <DiskGauge
@@ -555,7 +555,7 @@ export function DownloadsPage() {
           }}
         >
           <span style={{ fontSize: "13px", fontWeight: 600 }}>
-            Active ({active.length})
+            {t("Active (")}{active.length})
           </span>
           <Focusable style={{ display: "flex", gap: "6px" }}>
             {pauseAllControl(active.length, paused).show && (
@@ -582,16 +582,15 @@ export function DownloadsPage() {
               <DialogButton
                 onClick={() => showModal(
                   <ConfirmModal
-                    strTitle={`Cancel ${run.name ?? "this collection"}?`}
-                    strDescription={
-                      `Stops the download and removes the ` +
-                      `${run.installedModIds.length} mod` +
-                      `${run.installedModIds.length === 1 ? "" : "s"} it has ` +
-                      `installed so far. Mods you already had - your own, or ` +
-                      `from another collection - are kept, even if this one ` +
-                      `lists them. Nothing else is touched.`
-                    }
-                    strOKButtonText="Cancel collection"
+                    strTitle={t("Cancel {name}?", { name: run.name ?? t("this collection") })}
+                    strDescription={t(
+                      "Stops the download and removes the {n} mod{fs} it has installed so far. Mods you already had - your own, or from another collection - are kept, even if this one lists them. Nothing else is touched.",
+                      {
+                        n: run.installedModIds.length,
+                        fs: run.installedModIds.length === 1 ? "" : "s",
+                      }
+                    )}
+                    strOKButtonText={t("Cancel collection")}
                     bDestructiveWarning={true}
                     onOK={async () => {
                       const game = getSupportedGame(run.gameAppId ?? 0);
@@ -613,10 +612,13 @@ export function DownloadsPage() {
                         );
                         toaster.toast({
                           title: r.ok
-                            ? `Collection cancelled`
-                            : "Could not finish cancelling",
+                            ? t("Collection cancelled")
+                            : t("Could not finish cancelling"),
                           body: r.ok
-                            ? `${r.removed ?? 0} removed, ${r.kept ?? 0} kept`
+                            ? t("{removed} removed, {kept} kept", {
+                                removed: r.removed ?? 0,
+                                kept: r.kept ?? 0,
+                              })
                             : r.error ?? "",
                         });
                       }
@@ -631,8 +633,7 @@ export function DownloadsPage() {
                   fontSize: "12px",
                 }}
               >
-                ✕ Cancel collection
-              </DialogButton>
+                {t("✕ Cancel collection")}</DialogButton>
             )}
           </Focusable>
         </div>
@@ -643,11 +644,13 @@ export function DownloadsPage() {
                   downloading" - it is a collection reading its own
                   manifest, which is megabytes and emits no progress. */}
               {!run?.running
-                ? "Nothing downloading right now."
+                ? t("Nothing downloading right now.")
                 : run.note
                   ? run.note
-                  : `Installing ${run.finished} of ${run.total} — nothing ` +
-                    `left to download`}
+                  : t("Installing {n} of {total} — nothing left to download", {
+                      n: run.finished,
+                      total: run.total,
+                    })}
             </div>
           )}
           {active.map((d) => (
@@ -689,7 +692,7 @@ export function DownloadsPage() {
                       : d.phase === "extracting"
                       ? "⚙ Installing…"
                       : d.phase === "converting"
-                      ? `⚙ Converting textures · ${d.percent}%`
+                      ? t("⚙ Converting textures · {n}%", { n: d.percent })
                       : d.phase === "paused"
                       ? "⏸ Paused"
                       : d.phase === "queued"
@@ -725,7 +728,7 @@ export function DownloadsPage() {
           }}
         >
           <span style={{ fontSize: "13px", fontWeight: 600 }}>
-            Completed ({completed.length})
+            {t("Completed (")}{completed.length})
           </span>
           {completed.length > 0 && (
             <DialogButton
@@ -737,8 +740,7 @@ export function DownloadsPage() {
                 fontSize: "12px",
               }}
             >
-              Clear
-            </DialogButton>
+              {t("Clear")}</DialogButton>
           )}
         </div>
         <Focusable style={{ display: "flex", flexDirection: "column", gap: "4px" }}>

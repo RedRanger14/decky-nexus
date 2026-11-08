@@ -72,6 +72,7 @@ import {
   pushOurPage,
 } from "./Tabs";
 import { NEXUS_ORANGE, PAGE_SCROLLER, PRIMARY_BUTTON_CSS } from "./theme";
+import { t, useT } from "./i18n";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -170,11 +171,13 @@ const Row = memo(function Row({
   const off = !entry.enabled;
   const held = Boolean(entry.skipped) || entry.missing.length > 0 || !entry.on_disk;
   const note = entry.skipped
-    ? `Off: ${entry.skipped}`
+    ? t("Off: {reason}", { reason: entry.skipped })
     : entry.missing.length > 0
-    ? `Needs ${entry.missing.map(pluginTitle).join(", ")}, which is not installed`
+    ? t("Needs {names}, which is not installed", {
+        names: entry.missing.map(pluginTitle).join(", "),
+      })
     : !entry.on_disk
-    ? "Not installed any more"
+    ? t("Not installed any more")
     : lock
     ? lock
     : "";
@@ -249,7 +252,7 @@ const Row = memo(function Row({
             textOverflow: "ellipsis",
           }}
         >
-          {note || entry.mod || "Not installed by this plugin"}
+          {note || entry.mod || t("Not installed by this plugin")}
         </div>
       </div>
       <span className="nexus-lo-tag">{kindTag(entry)}</span>
@@ -261,7 +264,7 @@ const Row = memo(function Row({
         }}
       >
         {held && off ? <FaLock size={10} /> : null}
-        {entry.enabled ? "On" : "Off"}
+        {entry.enabled ? t("On") : t("Off")}
       </div>
     </Focusable>
   );
@@ -282,6 +285,7 @@ const EMPTY: LoadOrderState = {
 };
 
 export default function LoadOrderPage() {
+  useT();
   const pluginGames = ALL_GAMES.filter((g) => g.pluginsTxtSubpath);
   // Same scope as My Mods: the game being browsed or run.
   const scoped =
@@ -458,8 +462,8 @@ export default function LoadOrderPage() {
     const from = list.findIndex((e) => e.name === name);
     if (from < 0) {
       toaster.toast({
-        title: "Switch it on first",
-        body: `${pluginTitle(name)} is off, so it has no place in the order yet.`,
+        title: t("Switch it on first"),
+        body: t("{name} is off, so it has no place in the order yet.", { name: pluginTitle(name) }),
       });
       return;
     }
@@ -499,7 +503,7 @@ export default function LoadOrderPage() {
     try {
       const r = await setLoadOrder(...args(g), next);
       if (!r.ok) {
-        toaster.toast({ title: "Could not move it", body: r.error ?? "" });
+        toaster.toast({ title: t("Could not move it"), body: r.error ?? "" });
       } else {
         setUndo((u) => [...u.slice(-19), before]);
         setState(r);
@@ -638,8 +642,8 @@ export default function LoadOrderPage() {
       const e = (s.entries ?? []).find((x) => x.name === name);
       if (!e?.mod_id) {
         toaster.toast({
-          title: "No mod page for this one",
-          body: `${pluginTitle(name)} was not installed by this plugin, so there is nothing to open.`,
+          title: t("No mod page for this one"),
+          body: t("{name} was not installed by this plugin, so there is nothing to open.", { name: pluginTitle(name) }),
         });
         return;
       }
@@ -649,7 +653,7 @@ export default function LoadOrderPage() {
         setDetailOrigin("browse");
         pushOurPage("/nexus-mods/mod");
       } else {
-        toaster.toast({ title: "Could not open mod", body: result.error ?? "" });
+        toaster.toast({ title: t("Could not open mod"), body: result.error ?? "" });
       }
     },
     focus(name) {
@@ -684,7 +688,7 @@ export default function LoadOrderPage() {
       const before = positioned(s).map((e) => e.name);
       const r = await fixLoadOrder(...args(g));
       if (!r.ok) {
-        toaster.toast({ title: "Could not sort", body: r.error ?? "" });
+        toaster.toast({ title: t("Could not sort"), body: r.error ?? "" });
         return;
       }
       const fresh = await getLoadOrder(...args(g));
@@ -717,11 +721,11 @@ export default function LoadOrderPage() {
         // Said out loud, because on a 220-row list the row that moved
         // back is usually off screen and nothing else changes.
         toaster.toast({
-          title: "Put back",
-          body: "The load order is as it was before that change.",
+          title: t("Put back"),
+          body: t("The load order is as it was before that change."),
         });
       } else {
-        toaster.toast({ title: "Could not undo", body: r.error ?? "" });
+        toaster.toast({ title: t("Could not undo"), body: r.error ?? "" });
       }
     } finally {
       setBusy(false);
@@ -825,8 +829,7 @@ export default function LoadOrderPage() {
           }}
         >
           <h2 style={{ margin: 0 }}>
-            Load Order
-            {game && (
+            {t("Load Order")}{game && (
               <span style={{ opacity: 0.6, fontWeight: 400 }}>
                 {"  ·  "}
                 {game.displayName}
@@ -841,7 +844,7 @@ export default function LoadOrderPage() {
             // walk out of it and the vertical path never enters it.
             <div style={{ flex: "1 1 auto", minWidth: "200px", maxWidth: "420px" }}>
               <TextField
-                label="Find a plugin or mod"
+                label={t("Find a plugin or mod")}
                 value={filter}
                 bShowClearAction={true}
                 disabled={Boolean(carry)}
@@ -866,8 +869,7 @@ export default function LoadOrderPage() {
                 gap: "8px",
               }}
             >
-              <FaSortAmountDown size={12} /> Sort for me
-            </DialogButton>
+              <FaSortAmountDown size={12} /> {" "}{t("Sort for me")}</DialogButton>
             <DialogButton
               onClick={undoLast}
               disabled={busy || undo.length === 0 || Boolean(carry)}
@@ -881,8 +883,7 @@ export default function LoadOrderPage() {
                 gap: "8px",
               }}
             >
-              <FaUndo size={12} /> Undo
-            </DialogButton>
+              <FaUndo size={12} /> {" "}{t("Undo")}</DialogButton>
           </div>
         </Focusable>
 
@@ -921,7 +922,7 @@ export default function LoadOrderPage() {
           </Focusable>
         )}
 
-        {loading && <div style={{ opacity: 0.8, marginTop: "12px" }}>Reading the load order…</div>}
+        {loading && <div style={{ opacity: 0.8, marginTop: "12px" }}>{t("Reading the load order…")}</div>}
 
         {!loading && (!game || !state?.supported) && (
           <div style={{ opacity: 0.85, marginTop: "12px", maxWidth: "720px", lineHeight: 1.5 }}>
@@ -930,17 +931,14 @@ export default function LoadOrderPage() {
             )}
             {game ? (
               <div>
-                {game.displayName} has no plugins yet. Install a mod with an .esp or
-                .esm file and it appears here.
-              </div>
+                {game.displayName} {" "}{t("has no plugins yet. Install a mod with an .esp or .esm file and it appears here.")}</div>
             ) : (available?.length ?? 0) === 0 ? (
               <div>
-                Nothing to arrange yet. Install a mod for one of these games and it
-                appears here:{" "}
+                {t("Nothing to arrange yet. Install a mod for one of these games and it appears here:")}{" "}
                 {pluginGames.map((g) => g.displayName).join(", ")}.
               </div>
             ) : (
-              <div>Pick a game above.</div>
+              <div>{t("Pick a game above.")}</div>
             )}
           </div>
         )}
@@ -958,11 +956,11 @@ export default function LoadOrderPage() {
               <WarningBox
                 title={
                   problems.length === 1
-                    ? "One plugin loads too early"
-                    : `${problems.length} plugins load too early`
+                    ? t("One plugin loads too early")
+                    : t("{n} plugins load too early", { n: problems.length })
                 }
                 body={problemNote(problems)}
-                action={{ label: "Sort for me", onClick: sortForMe }}
+                action={{ label: t("Sort for me"), onClick: sortForMe }}
               />
             )}
 
@@ -985,27 +983,26 @@ export default function LoadOrderPage() {
               >
                 {(state.implicit?.length ?? 0) > 0 && (
                   <div style={{ fontSize: "12px", opacity: 0.55, margin: "6px 0 2px 4px" }}>
-                    The game's own files load first: {state.implicit!.join(", ")}.
+                    {t("The game's own files load first:")}{" "}{state.implicit!.join(", ")}.
                   </div>
                 )}
 
                 {masters.length > 0 && (
-                  <SectionHeading title={`Master files · ${masters.length}`} />
+                  <SectionHeading title={t("Master files") + ` · ${masters.length}`} />
                 )}
                 {masters.filter((e) => matchesFilter(e, filter)).map(renderRow)}
 
                 <SectionHeading title={`Plugins · ${plugins.length}`} />
                 {plugins.length === 0 && (
                   <div style={{ opacity: 0.65, fontSize: "12.5px" }}>
-                    No plugins yet. Mods with an .esp or .esm file land here.
-                  </div>
+                    {t("No plugins yet. Mods with an .esp or .esm file land here.")}</div>
                 )}
                 {plugins.filter((e) => matchesFilter(e, filter)).map(renderRow)}
 
                 {filtering &&
                   ordered.filter((e) => matchesFilter(e, filter)).length === 0 && (
                     <div style={{ opacity: 0.65, fontSize: "12.5px", marginTop: "6px" }}>
-                      Nothing matches "{filter.trim()}".
+                      {t("Nothing matches \"")}{filter.trim()}".
                     </div>
                   )}
 
@@ -1013,9 +1010,7 @@ export default function LoadOrderPage() {
                   <>
                     <SectionHeading title={`Off · ${offTail.length}`} />
                     <div style={{ fontSize: "12px", opacity: 0.6, margin: "-4px 0 4px 4px" }}>
-                      {game.displayName} has no place for a plugin that is off.
-                      Switch one on and it joins the order.
-                    </div>
+                      {game.displayName} {" "}{t("has no place for a plugin that is off. Switch one on and it joins the order.")}</div>
                   </>
                 )}
                 {offTail.filter((e) => matchesFilter(e, filter)).map(renderRow)}
@@ -1052,8 +1047,7 @@ export default function LoadOrderPage() {
                         textTransform: "uppercase",
                       }}
                     >
-                      <FaArrowsAltV /> Moving
-                    </div>
+                      <FaArrowsAltV /> {" "}{t("Moving")}</div>
                     <div style={{ fontSize: "19px", fontWeight: 700, margin: "6px 0 2px" }}>
                       {pluginTitle(carriedEntry.name)}
                     </div>
@@ -1065,7 +1059,7 @@ export default function LoadOrderPage() {
                           }`}
                     </div>
                     <div style={{ fontSize: "13px", opacity: 0.85, marginTop: "14px", lineHeight: 1.5 }}>
-                      {CARRY_HINT}
+                      {t(CARRY_HINT)}
                     </div>
                     {wall && (
                       <div
@@ -1110,28 +1104,25 @@ export default function LoadOrderPage() {
                     <div style={{ fontSize: "13px", opacity: 0.8 }}>
                       {inspected.positioned && indexOf.has(inspected.name)
                         ? positionLabel(indexOf.get(inspected.name)!, ordered.length)
-                        : "Not in the order yet"}
+                        : t("Not in the order yet")}
                       {" · "}
-                      {inspected.enabled ? "On" : "Off"}
+                      {inspected.enabled ? t("On") : t("Off")}
                     </div>
                     <div style={{ fontSize: "13px", marginTop: "12px", lineHeight: 1.5 }}>
                       <div style={{ opacity: 0.6, fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                        Part of
-                      </div>
-                      <div>{inspected.mod || "Not installed by this plugin"}</div>
+                        {t("Part of")}</div>
+                      <div>{inspected.mod || t("Not installed by this plugin")}</div>
                     </div>
                     {(inspected.needs.length > 0 || inspected.missing.length > 0) && (
                       <div style={{ fontSize: "13px", marginTop: "10px", lineHeight: 1.5 }}>
                         <div style={{ opacity: 0.6, fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                          Needs above it
-                        </div>
+                          {t("Needs above it")}</div>
                         <div>
                           {inspected.needs.map(pluginTitle).join(", ")}
                           {inspected.missing.length > 0 && (
                             <span style={{ color: NEXUS_ORANGE }}>
                               {inspected.needs.length > 0 ? ", " : ""}
-                              {inspected.missing.map(pluginTitle).join(", ")} (not installed)
-                            </span>
+                              {inspected.missing.map(pluginTitle).join(", ")} {" "}{t("(not installed)")}</span>
                           )}
                         </div>
                       </div>
@@ -1139,22 +1130,23 @@ export default function LoadOrderPage() {
                     {dependentsOf(ordered, inspected.name).length > 0 && (
                       <div style={{ fontSize: "13px", marginTop: "10px", lineHeight: 1.5 }}>
                         <div style={{ opacity: 0.6, fontSize: "11.5px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                          Needed by
-                        </div>
+                          {t("Needed by")}</div>
                         <div>
                           {dependentsOf(ordered, inspected.name)
                             .slice(0, 6)
                             .map((d) => pluginTitle(d.name))
                             .join(", ")}
                           {dependentsOf(ordered, inspected.name).length > 6
-                            ? ` and ${dependentsOf(ordered, inspected.name).length - 6} more`
+                            ? t(" and {n} more", {
+                                n: dependentsOf(ordered, inspected.name).length - 6,
+                              })
                             : ""}
                         </div>
                       </div>
                     )}
                     {inspected.skipped && (
                       <div style={{ fontSize: "13px", marginTop: "10px", color: NEXUS_ORANGE, lineHeight: 1.45 }}>
-                        Switched off by the plugin: {inspected.skipped}.
+                        {t("Switched off by the plugin:")}{" "}{inspected.skipped}.
                       </div>
                     )}
                     {Boolean(inspected.mod_id) && (
@@ -1172,24 +1164,19 @@ export default function LoadOrderPage() {
                           gap: "8px",
                         }}
                       >
-                        <FaExternalLinkAlt size={11} /> Mod page
-                      </DialogButton>
+                        <FaExternalLinkAlt size={11} /> {" "}{t("Mod page")}</DialogButton>
                     )}
                     <div style={{ fontSize: "12px", opacity: 0.6, marginTop: "14px", lineHeight: 1.5 }}>
-                      {IDLE_HINT}
+                      {t(IDLE_HINT)}
                     </div>
                   </>
                 ) : (
                   <>
-                    <div style={{ fontSize: "17px", fontWeight: 700 }}>How this works</div>
+                    <div style={{ fontSize: "17px", fontWeight: 700 }}>{t("How this works")}</div>
                     <div style={{ fontSize: "13px", opacity: 0.85, marginTop: "8px", lineHeight: 1.55 }}>
-                      Mods load from the top down. If two of them change the same
-                      thing, the one lower in the list wins.
-                    </div>
+                      {t("Mods load from the top down. If two of them change the same thing, the one lower in the list wins.")}</div>
                     <div style={{ fontSize: "13px", opacity: 0.85, marginTop: "10px", lineHeight: 1.55 }}>
-                      {IDLE_HINT} A plugin can't be moved above something it needs,
-                      and the page tells you when you bump into that.
-                    </div>
+                      {t(IDLE_HINT)} {" "}{t("A plugin can't be moved above something it needs, and the page tells you when you bump into that.")}</div>
                   </>
                 )}
               </Focusable>

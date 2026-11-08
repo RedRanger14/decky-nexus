@@ -6,6 +6,7 @@ import { GamepadButton } from "@decky/ui";
 
 import { popsToExitToQam } from "./navRules";
 import { NEXUS_ORANGE } from "./theme";
+import { t, useT } from "./i18n";
 
 export interface TabDef {
   id: string;
@@ -142,6 +143,7 @@ export function handleTabButtons(currentId: string) {
 }
 
 export function TabBar({ currentId }: { currentId: string }) {
+  const translate = useT();
   return (
     <Focusable
       style={{
@@ -152,8 +154,7 @@ export function TabBar({ currentId }: { currentId: string }) {
       }}
     >
       <span style={{ fontSize: "11px", opacity: 0.5, marginRight: "4px" }}>
-        LB
-      </span>
+        {t("LB")}</span>
       {TABS.map((tab) => {
         const active = tab.id === currentId;
         return (
@@ -176,13 +177,12 @@ export function TabBar({ currentId }: { currentId: string }) {
               color: active ? "#1a1d24" : undefined,
             }}
           >
-            {tab.label}
+            {translate(tab.label)}
           </Focusable>
         );
       })}
       <span style={{ fontSize: "11px", opacity: 0.5, marginLeft: "4px" }}>
-        RB
-      </span>
+        {t("RB")}</span>
     </Focusable>
   );
 }

@@ -17,6 +17,7 @@ import { FaThumbsUp } from "react-icons/fa";
 import { getEndorsement, setEndorsement } from "./api";
 import { ENDORSE_PILL_CLASS } from "./theme";
 import { endorseControl } from "./panelRules";
+import { t } from "./i18n";
 
 const NEXUS_ORANGE = "#da8e35";
 const GREEN = "143, 212, 143";
@@ -165,7 +166,7 @@ export function EndorsableFrameworkRow({
           body: modName,
         });
       } else {
-        toaster.toast({ title: "Could not endorse", body: result.error ?? "" });
+        toaster.toast({ title: t("Could not endorse"), body: result.error ?? "" });
       }
     } finally {
       setBusy(false);

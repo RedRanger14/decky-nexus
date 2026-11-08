@@ -6,6 +6,7 @@ import { DialogButton, Focusable, GamepadButton, ModalRoot } from "@decky/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { NEXUS_ORANGE } from "./theme";
+import { t } from "./i18n";
 
 export interface FomodDepTree {
   kind: "group" | "flag" | "const";
@@ -187,14 +188,13 @@ export function FomodWizardModal({
         }}
       >
       <h3 style={{ marginTop: 0, marginBottom: "2px" }}>
-        {wizard.moduleName || "Mod options"}
+        {wizard.moduleName || t("Mod options")}
       </h3>
       {step && (
         <div style={{ fontSize: "12.5px", opacity: 0.7, marginBottom: "8px" }}>
-          {step.name} · step {stepIdx + 1} of {visibleSteps.length}
+          {step.name} {" "}{t("· step")}{" "}{stepIdx + 1} {" "}{t("of")}{" "}{visibleSteps.length}
           <span style={{ float: "right", opacity: 0.8 }}>
-            LB ← step · step → RB
-          </span>
+            {t("LB ← step · step → RB")}</span>
         </div>
       )}
       <div
@@ -207,10 +207,10 @@ export function FomodWizardModal({
             {group.name}
             <span style={{ opacity: 0.55, fontWeight: 400, fontSize: "11.5px" }}>
               {RADIO_TYPES.has(group.type)
-                ? "  · pick one"
+                ? t("· pick one")
                 : group.type === "SelectAll"
-                ? "  · all included"
-                : "  · pick any"}
+                ? t("· all included")
+                : t("· pick any")}
             </span>
           </div>
           <Focusable style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
@@ -240,7 +240,7 @@ export function FomodWizardModal({
                     {on ? "◉ " : "○ "}
                     {plugin.name}
                     {plugin.type === "Required" && (
-                      <span style={{ opacity: 0.6 }}> (required)</span>
+                      <span style={{ opacity: 0.6 }}> {" "}{t("(required)")}</span>
                     )}
                   </div>
                   {plugin.description && (
@@ -263,10 +263,9 @@ export function FomodWizardModal({
           onClick={goBack}
           style={{ flex: 1, minWidth: 0 }}
         >
-          ← Back
-        </DialogButton>
+          {t("← Back")}</DialogButton>
         <DialogButton onClick={goNext} style={{ flex: 1, minWidth: 0 }}>
-          {isLast ? "Install with these options" : "Next →"}
+          {isLast ? t("Install with these options") : t("Next →")}
         </DialogButton>
       </Focusable>
       </Focusable>

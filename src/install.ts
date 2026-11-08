@@ -18,6 +18,7 @@ import {
 } from "./api";
 import { SupportedGame, modeParams, stalenessExemptModIds } from "./games";
 import { nameDownload } from "./state";
+import { t } from "./i18n";
 import { toaster } from "@decky/api";
 import { addLaunchOptions, joinSteamBeta } from "./steam";
 
@@ -28,8 +29,11 @@ export async function switchToModBeta(game: SupportedGame): Promise<void> {
   if (!game.steamBeta) return;
   if (await joinSteamBeta(game.appId, game.steamBeta.name)) {
     toaster.toast({
-      title: `${game.displayName}: switching to ${game.steamBeta.label}`,
-      body: "Steam downloads the change before the next launch.",
+      title: t("{game}: switching to {label}", {
+        game: game.displayName,
+        label: t(game.steamBeta.label),
+      }),
+      body: t("Steam downloads the change before the next launch."),
       duration: 12000,
     });
   }
@@ -334,7 +338,7 @@ export async function installLatest(
     }
   }
   if (!file) {
-    return { ok: false, error: "No downloadable file found" };
+    return { ok: false, error: t("No downloadable file found") };
   }
   nameDownload(modId, modName, game.appId);
   const result = await installModWith(

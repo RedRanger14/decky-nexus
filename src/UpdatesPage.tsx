@@ -31,10 +31,12 @@ import {
   PRIMARY_BUTTON_CSS,
 } from "./theme";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
+import { t, useT } from "./i18n";
 
 const Scroller: any = ScrollPanelGroup;
 
 export function UpdatesPage() {
+  useT();
   const [pending, setPending] = useState<PendingUpdate[] | undefined>();
   const [busy, setBusy] = useState(false);
   // The plugin's own update. It sits above the mods because it is the one
@@ -93,7 +95,7 @@ export function UpdatesPage() {
     // A blocked row is information, not an action: there is no build to
     // install. Guarded here too so "Update all" cannot try.
     if (u.blocked) {
-      toaster.toast({ title: u.name, body: u.blocked });
+      toaster.toast({ title: u.name, body: t(u.blocked) });
       return false;
     }
     if (u.framework && u.game.framework) {
@@ -115,17 +117,19 @@ export function UpdatesPage() {
       if (result.ok) {
         setPending((prev) => prev?.filter((p) => p !== u));
         toaster.toast({
-          title: `${u.name} updated`,
+          title: t("{name} updated", { name: u.name }),
           body:
             "matched_game_version" in result && result.matched_game_version
-              ? `Now the build for game ${result.matched_game_version}`
+              ? t("Now the build for game {version}", {
+                  version: result.matched_game_version,
+                })
               : "",
         });
         return true;
       }
       toaster.toast({
-        title: `${u.name} update failed`,
-        body: result.error ?? "Unknown error",
+        title: t("{name} update failed", { name: u.name }),
+        body: result.error ?? t("Unknown error"),
       });
       return false;
     }
@@ -162,7 +166,7 @@ export function UpdatesPage() {
       });
     }
     toaster.toast({
-      title: `${u.name} update failed`,
+      title: t("{name} update failed", { name: u.name }),
       body: result.error ?? "Unknown error - check the mod's page",
     });
     return false;
@@ -194,18 +198,21 @@ export function UpdatesPage() {
       toaster.toast(
         failed === 0 && ok > 0
           ? {
-              title: `${ok} update${ok === 1 ? "" : "s"} applied`,
-              body: "Restart affected games to load them",
+              title: t("{n} update{fs} applied", {
+                n: ok,
+                fs: ok === 1 ? "" : "s",
+              }),
+              body: t("Restart affected games to load them"),
             }
           : {
               title:
                 ok === 0
-                  ? "No updates applied"
-                  : `${ok} applied, ${failed} failed`,
+                  ? t("No updates applied")
+                  : t("{ok} applied, {failed} failed", { ok, failed }),
               body:
                 failed > 0
-                  ? "The failed ones say why in their own toasts"
-                  : "Nothing was pending",
+                  ? t("The failed ones say why in their own toasts")
+                  : t("Nothing was pending"),
             }
       );
       // Re-scan rather than trusting local bookkeeping: if a row comes
@@ -231,11 +238,9 @@ export function UpdatesPage() {
       >
         <style>{PRIMARY_BUTTON_CSS}</style>
         <TabBar currentId="updates" />
-        <h2 style={{ margin: "12px 0 4px" }}>Updates</h2>
+        <h2 style={{ margin: "12px 0 4px" }}>{t("Updates")}</h2>
         <div style={{ fontSize: "12.5px", opacity: 0.65, marginBottom: "10px" }}>
-          Mods installed as part of a collection aren't shown - collections
-          pin their versions on purpose.
-        </div>
+          {t("Mods installed as part of a collection aren't shown - collections pin their versions on purpose.")}</div>
 
         {self && (
           <Focusable
@@ -249,11 +254,13 @@ export function UpdatesPage() {
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: "2px" }}>
-              {selfDone ? `Updated to v${self.version} ✓` : pluginUpdateLabel(self)}
+              {selfDone
+                ? t("Updated to v{version} ✓", { version: self.version ?? "" })
+                : pluginUpdateLabel(self)}
             </div>
             <div style={{ fontSize: "12.5px", opacity: 0.8, marginBottom: "8px" }}>
               {selfDone
-                ? "Decky has installed it. Close this page and reopen the panel to see the new version."
+                ? t("Decky has installed it. Close this page and reopen the panel to see the new version.")
                 : pluginUpdateBlocked(self) || pluginUpdateBody(self)}
             </div>
 
@@ -271,8 +278,7 @@ export function UpdatesPage() {
                 }}
               >
                 <div style={{ fontWeight: 600, marginBottom: "4px" }}>
-                  What is in this update
-                </div>
+                  {t("What is in this update")}</div>
                 {notes.map((line, i) =>
                   line === "" ? (
                     <div key={i} style={{ height: "6px" }} />
@@ -302,21 +308,21 @@ export function UpdatesPage() {
                     const err = await requestPluginUpdate(self);
                     if (err) {
                       setSelfSentAt(0);
-                      toaster.toast({ title: "Nexus Mods", body: err });
+                      toaster.toast({ title: t("Nexus Mods"), body: err });
                       return;
                     }
                     toaster.toast({
-                      title: "Nexus Mods",
-                      body: "Decky will ask you to confirm the update.",
+                      title: t("Nexus Mods"),
+                      body: t("Decky will ask you to confirm the update."),
                     });
                   }}
                 >
-                  {selfWaiting ? "Waiting for Decky…" : "⬆ Update the plugin"}
+                  {selfWaiting ? t("Waiting for Decky…") : t("⬆ Update the plugin")}
                 </DialogButton>
               )}
               {!selfDone && notes.length > 0 && (
                 <DialogButton onClick={() => setNotesOpen((v) => !v)}>
-                  {notesOpen ? "Show less" : "Show more"}
+                  {notesOpen ? t("Show less") : t("Show more")}
                 </DialogButton>
               )}
             </Focusable>
@@ -324,10 +330,10 @@ export function UpdatesPage() {
         )}
 
         {pending === undefined && (
-          <div style={{ opacity: 0.8 }}>Checking your mods…</div>
+          <div style={{ opacity: 0.8 }}>{t("Checking your mods…")}</div>
         )}
         {pending !== undefined && pending.length === 0 && !self && (
-          <div style={{ opacity: 0.8 }}>Everything is up to date ✓</div>
+          <div style={{ opacity: 0.8 }}>{t("Everything is up to date ✓")}</div>
         )}
 
         {pending && pending.length > 0 && (
@@ -340,7 +346,9 @@ export function UpdatesPage() {
               disabled={busy}
               onClick={updateAll}
             >
-              {busy ? "Updating…" : `⬆ Update all (${pending.length})`}
+              {busy
+                ? t("Updating…")
+                : t("⬆ Update all ({n})", { n: pending.length })}
             </DialogButton>
           </Focusable>
         )}
@@ -372,18 +380,28 @@ export function UpdatesPage() {
                 </div>
                 <div style={{ fontSize: "12px", opacity: 0.65 }}>
                   {u.blocked
-                    ? u.blocked
+                    ? t(u.blocked)
                     : u.framework
                     ? // Not "new version": a script extender's right build
                       // is the one matching the game, which after a
                       // downgrade is older than what is installed. Saying
                       // "new" there would look like a mistake.
-                      `${u.game.displayName} · script extender, ` +
-                      (u.installedVersion
-                        ? `${u.installedVersion} installed, `
-                        : "") +
-                      `your game needs ${u.current}`
-                      : `${u.game.displayName} · new version ${u.current}`}
+                      t(
+                        "{game} · script extender, {installed}your game needs {needed}",
+                        {
+                          game: u.game.displayName,
+                          installed: u.installedVersion
+                            ? t("{version} installed, ", {
+                                version: u.installedVersion,
+                              })
+                            : "",
+                          needed: u.current,
+                        }
+                      )
+                      : t("{game} · new version {version}", {
+                          game: u.game.displayName,
+                          version: u.current,
+                        })}
                 </div>
               </div>
               {/* No Update button on a blocked row: there is no build to
@@ -400,8 +418,7 @@ export function UpdatesPage() {
                     flexShrink: 0,
                   }}
                 >
-                  ⬆ Update
-                </DialogButton>
+                  {t("⬆ Update")}</DialogButton>
               )}
               <DialogButton
                 disabled={busy}
@@ -414,8 +431,7 @@ export function UpdatesPage() {
                   flexShrink: 0,
                 }}
               >
-                Skip
-              </DialogButton>
+                {t("Skip")}</DialogButton>
             </Focusable>
           ))}
         </Focusable>
