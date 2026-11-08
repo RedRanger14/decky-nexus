@@ -102,17 +102,32 @@ export function trustedArtifact(url?: string): boolean {
   );
 }
 
+type Translate = (text: string, vars?: Record<string, string | number>) => string;
+
+let tr: Translate = (text, vars) => {
+  if (!vars) return text;
+  let out = text;
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split(`{${key}}`).join(String(value));
+  }
+  return out;
+};
+
+/** Install the UI translator. Called once by the panel entry point. */
+export function setPluginUpdateTranslator(fn: Translate): void {
+  tr = fn;
+}
+
 export function pluginUpdateLabel(u?: PluginUpdate): string {
   if (!u?.update_available || !u.version) return "";
-  return `Plugin update: v${u.version}`;
+  return tr("Plugin update: v{version}", { version: u.version });
 }
 
 export function pluginUpdateBody(u?: PluginUpdate): string {
   if (!u?.update_available || !u.version) return "";
-  return (
-    `You have v${u.current}. Decky will ask you to confirm, then ` +
-    `download and install it. Your mods, API key and settings are not ` +
-    `touched.`
+  return tr(
+    "You have v{current}. Decky will ask you to confirm, then download and install it. Your mods, API key and settings are not touched.",
+    { current: u.current }
   );
 }
 
@@ -158,7 +173,9 @@ export async function requestPluginUpdate(u: PluginUpdate): Promise<string> {
     );
     return "";
   } catch (e) {
-    return `Decky refused the update: ${String(e)}`;
+    return tr("Decky refused the update: {error}", {
+      error: String(e),
+    });
   }
 }
 

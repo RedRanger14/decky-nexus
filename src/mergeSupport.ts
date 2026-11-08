@@ -21,6 +21,22 @@
  * Pure strings and predicates, tested in tests/mergeSupport.test.mjs.
  */
 
+type Translate = (text: string, vars?: Record<string, string | number>) => string;
+
+let tr: Translate = (text, vars) => {
+  if (!vars) return text;
+  let out = text;
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split(`{${key}}`).join(String(value));
+  }
+  return out;
+};
+
+/** Install the UI translator. Called once by the panel entry point. */
+export function setMergeTranslator(fn: Translate): void {
+  tr = fn;
+}
+
 /** The step's heading. */
 export const MERGE_STEP_TITLE = "Merge mod support";
 
@@ -33,11 +49,13 @@ export const MERGE_STEP_TITLE = "Merge mod support";
  */
 export function mergeStepSummary(installed: boolean, version: string): string {
   if (!installed) {
-    return `${MERGE_STEP_TITLE}: not installed. Needed for the community patches.`;
+    return tr("{title}: not installed. Needed for the community patches.", {
+      title: tr(MERGE_STEP_TITLE),
+    });
   }
   return version
-    ? `ME3Tweaks Mod Manager ${version} installed ✓`
-    : "ME3Tweaks Mod Manager installed ✓";
+    ? tr("ME3Tweaks Mod Manager {version} installed ✓", { version })
+    : tr("ME3Tweaks Mod Manager installed ✓");
 }
 
 /** What pressing the button will actually do, in full. Shown before the
@@ -98,19 +116,19 @@ export const MERGE_STEP_STAGES: Record<string, string> = {
  * doing, which is enough to show it is alive.
  */
 export function mergeStepProgress(phase?: string, percent?: number): string {
-  if (!phase) return MERGE_STEP_BUSY;
+  if (!phase) return tr(MERGE_STEP_BUSY);
   const text = MERGE_STEP_STAGES[phase];
-  if (!text) return MERGE_STEP_BUSY;
+  if (!text) return tr(MERGE_STEP_BUSY);
   if (phase === "downloading") {
     const pct = Math.max(0, Math.min(100, Math.round(percent ?? 0)));
-    return `${text} ${pct}%`;
+    return tr("{text} {pct}%", { text: tr(text), pct });
   }
   // The runtime install is minutes long and silent, so it says what it is
   // rather than leaving "Setting up" to look like the step before it.
   if (phase === "installing" && (percent ?? 0) >= 80) {
-    return "Installing the Windows runtime, a few minutes…";
+    return tr("Installing the Windows runtime, a few minutes…");
   }
-  return text;
+  return tr(text);
 }
 
 /** How long the Windows runtime install runs for, in milliseconds.
@@ -179,7 +197,7 @@ export function offersMergeSupport(installMode: string | undefined): boolean {
 export function mergeStepFailure(error: string): string {
   const trimmed = (error || "").trim();
   if (!trimmed) return "";
-  return `Last attempt failed: ${trimmed}`;
+  return tr("Last attempt failed: {error}", { error: trimmed });
 }
 
 /** What a requirement pill says for a tool the plugin handles itself.
@@ -191,7 +209,7 @@ export function mergeStepFailure(error: string): string {
  * cannot install without it would be the wrong kind of reassuring.
  */
 export function managedRequirementNote(override?: string): string {
-  return override || "not needed (this plugin does its job)";
+  return override || tr("not needed (this plugin does its job)");
 }
 
 /** ME3Tweaks Mod Manager's own Nexus mod id. Progress for the setup is

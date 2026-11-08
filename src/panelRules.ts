@@ -169,8 +169,9 @@ export function missingMasterProblem(
   if (dlc.length) {
     const names = dlc.map((m) => m.label).join(", ");
     parts.push(
-      `you don't have ${dlc.length === 1 ? "this DLC" : "these DLC"} ` +
-        `installed: ${names}`
+      dlc.length === 1
+        ? tr("you don't have this DLC installed: {names}", { names })
+        : tr("you don't have these DLC installed: {names}", { names })
     );
   }
   if (mods.length) {
@@ -178,22 +179,35 @@ export function missingMasterProblem(
       .slice(0, 3)
       .map((m) => m.name.replace(/\.es[lmp]$/i, ""))
       .join(", ");
+    const shown = names + (mods.length > 3 ? ", …" : "");
     parts.push(
-      `${mods.length} mod${mods.length > 1 ? "s are" : " is"} missing that ` +
-        `others were built on (${names}${mods.length > 3 ? ", …" : ""})`
+      mods.length > 1
+        ? tr("{n} mods are missing that others were built on ({names})", {
+            n: mods.length,
+            names: shown,
+          })
+        : tr("1 mod is missing that others were built on ({names})", {
+            names: shown,
+          })
     );
   }
   // The advice differs by cause, and giving both would send someone to
   // Steam looking for a DLC called Tale Of Two Wastelands.
   const advice = dlc.length
-    ? `DLC is installed from Steam's DLC tab, not from here.`
-    : `These are usually patches the collection ships for a setup you don't ` +
-      `have, and switching them off is the normal fix.`;
-  return (
-    `${blockedPlugins.toLocaleString()} mod${blockedPlugins > 1 ? "s" : ""} ` +
-    `cannot load because ${parts.join("; and ")}. The game shows one name ` +
-    `and closes, so this is the full list. ${advice}`
-  );
+    ? tr("DLC is installed from Steam's DLC tab, not from here.")
+    : tr(
+        "These are usually patches the collection ships for a setup you don't have, and switching them off is the normal fix."
+      );
+  const joined = parts.join(tr("; and "));
+  return blockedPlugins > 1
+    ? tr(
+        "{n} mods cannot load because {parts}. The game shows one name and closes, so this is the full list. {advice}",
+        { n: blockedPlugins.toLocaleString(), parts: joined, advice }
+      )
+    : tr(
+        "1 mod cannot load because {parts}. The game shows one name and closes, so this is the full list. {advice}",
+        { parts: joined, advice }
+      );
 }
 
 /** Whether to offer "turn these off", and what to call it.

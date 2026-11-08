@@ -441,14 +441,18 @@ export function ManagerPage() {
         (m) => m.togglable !== false && !m.enabled && m.disabled_reason
       ).length;
       toaster.toast({
-        title: enable ? "Collection enabled" : "Collection disabled",
+        title: enable ? t("Collection enabled") : t("Collection disabled"),
         body:
-          `${change.length} mod${change.length === 1 ? "" : "s"} ${
-            enable ? "switched on" : "switched off"
-          }` +
+          t("{n} mod{fs} {state}", {
+            n: change.length,
+            fs: change.length === 1 ? "" : "s",
+            state: enable ? t("switched on") : t("switched off"),
+          }) +
           (enable && held > 0
-            ? `. ${held} the plugin switched off stay off; the reason is ` +
-              "beside each one."
+            ? t(
+                ". {n} switched off by the plugin stay off; the reason is beside each one.",
+                { n: held }
+              )
             : ""),
       });
     } finally {
@@ -489,10 +493,10 @@ export function ManagerPage() {
     showModal(
       <ConfirmModal
         strTitle={t("Uninstall {name}?", { name: title })}
-        strDescription={
-          `Removes the ${memberCount} mods this collection installed. ` +
-          `Mods you installed yourself (or via another collection) stay.`
-        }
+        strDescription={t(
+          "Removes the {n} mods this collection installed. Mods you installed yourself (or via another collection) stay.",
+          { n: memberCount }
+        )}
         strOKButtonText={t("Uninstall collection")}
         bDestructiveWarning={true}
         onOK={async () => {
@@ -657,8 +661,8 @@ export function ManagerPage() {
               }}
             >
               {showAllGames
-                ? `Only ${scopeGame.displayName}`
-                : `All games (${hiddenGames} more)`}
+                ? t("Only {game}", { game: scopeGame.displayName })
+                : t("All games ({n} more)", { n: hiddenGames })}
             </DialogButton>
           )}
         </Focusable>

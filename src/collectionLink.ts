@@ -52,6 +52,22 @@ export function parseCollectionLink(text: string): CollectionLink | null {
 
 /** The QAM's wording for the gate, kept to one sentence so it fits under a
  * heading. Where to turn it on is stated because the plugin cannot do it. */
+type Translate = (text: string, vars?: Record<string, string | number>) => string;
+
+let tr: Translate = (text, vars) => {
+  if (!vars) return text;
+  let out = text;
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split(`{${key}}`).join(String(value));
+  }
+  return out;
+};
+
+/** Install the UI translator. Called once by the panel entry point. */
+export function setCollectionLinkTranslator(fn: Translate): void {
+  tr = fn;
+}
+
 export const ADULT_OFF_NOTE =
   "Adult content is off on your Nexus Mods account. " +
   "Turn it on at nexusmods.com under Settings, Content blocking.";
@@ -64,9 +80,13 @@ export function hiddenCollectionsNote(n: number, searching: boolean): string {
   if (!n || n <= 0) return "";
   const count = n.toLocaleString("en-GB");
   const what = searching
-    ? `${count} more ${n === 1 ? "matches but is" : "match but are"} hidden.`
-    : `${count} ${n === 1 ? "collection is" : "collections are"} hidden.`;
-  return `${what} ${ADULT_OFF_NOTE}`;
+    ? n === 1
+      ? tr("{count} more matches but is hidden.", { count })
+      : tr("{count} more match but are hidden.", { count })
+    : n === 1
+    ? tr("{count} collection is hidden.", { count })
+    : tr("{count} collections are hidden.", { count });
+  return `${what} ${tr(ADULT_OFF_NOTE)}`;
 }
 
 /** A link that resolved to a collection the gate hides. Says so instead of
@@ -77,7 +97,10 @@ export const ADULT_LINK_NOTE =
 
 /** A link to a collection for a game this plugin does not have. */
 export function unsupportedLinkNote(domain: string): string {
-  return `That is a collection for ${domain}, which this plugin does not support yet.`;
+  return tr(
+    "That is a collection for {domain}, which this plugin does not support yet.",
+    { domain }
+  );
 }
 
 /** Shown beside an empty collection search. The realistic controller path

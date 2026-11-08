@@ -450,8 +450,11 @@ export function ModDetailPage() {
                 toaster.toast({
                   title:
                     extra.installed.length > 0
-                      ? `${mod.name} installed, with ${extra.installed.length} required extra`
-                      : `${mod.name} installed`,
+                      ? t("{name} installed, with {n} required extra", {
+                          name: mod.name,
+                          n: extra.installed.length,
+                        })
+                      : t("{name} installed", { name: mod.name }),
                   body: "",
                 });
               } else {
@@ -533,11 +536,18 @@ export function ModDetailPage() {
         toaster.toast({
           title:
             extra.installed.length > 0
-              ? `${mod.name} installed, with ${extra.installed.length} required extra`
-              : `${mod.name} installed`,
+              ? t("{name} installed, with {n} required extra", {
+                  name: mod.name,
+                  n: extra.installed.length,
+                })
+              : t("{name} installed", { name: mod.name }),
           body: running
-            ? `Tap here to restart ${game.displayName} and load it.`
-            : `It will load next time ${game.displayName} starts.`,
+            ? t("Tap here to restart {game} and load it.", {
+                game: game.displayName,
+              })
+            : t("It will load next time {game} starts.", {
+                game: game.displayName,
+              }),
           ...(running ? { onClick: () => restartGame(game.appId) } : {}),
         });
       } else if (result.mod_conflict || result.script_conflict) {
@@ -576,9 +586,9 @@ export function ModDetailPage() {
         : progress.phase === "extracting"
         ? "Extracting…"
         : progress.phase === "compiling"
-        ? `Compiling… ${progress.percent}%`
+        ? t("Compiling… {n}%", { n: progress.percent })
         : progress.phase === "converting"
-        ? `Converting textures… ${progress.percent}%`
+        ? t("Converting textures… {n}%", { n: progress.percent })
         : "Installing…"
       : "Installing…";
 
@@ -625,9 +635,18 @@ export function ModDetailPage() {
     ? "Installed ✓ (up to date)"
     : installedCopy
     ? installedCopy.version
-      ? `⬆ Update to v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`
-      : `⟳ Reinstall v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`
-    : `Install v${primaryFile.version} (${fmtSize(primaryFile.size_kb)})`;
+      ? t("⬆ Update to v{version} ({size})", {
+          version: primaryFile.version,
+          size: fmtSize(primaryFile.size_kb),
+        })
+      : t("⟳ Reinstall v{version} ({size})", {
+          version: primaryFile.version,
+          size: fmtSize(primaryFile.size_kb),
+        })
+    : t("Install v{version} ({size})", {
+        version: primaryFile.version,
+        size: fmtSize(primaryFile.size_kb),
+      });
   // Curated incompatibility: nothing in this mod can run here, so the
   // button is off and the page says why - BEFORE a download, not after.
   const incompatible = game.incompatibleMods?.[mod.modId];
@@ -830,7 +849,9 @@ export function ModDetailPage() {
               }}
             >
               ⚠ {needsExternal.reason}
-              {needsExternal.url ? ` Get it from ${needsExternal.url}` : ""}
+              {needsExternal.url
+                ? t(" Get it from {url}", { url: needsExternal.url })
+                : ""}
             </div>
           )}
           <Focusable
@@ -891,9 +912,13 @@ export function ModDetailPage() {
                     if (result.ok) {
                       setEndorseStatus(result.status);
                       toaster.toast({
-                        title: target ? "Endorsed!" : "Endorsement removed",
+                        title: target
+                          ? t("Endorsed!")
+                          : t("Endorsement removed"),
                         body: target
-                          ? `Thanks for supporting ${mod.author}`
+                          ? t("Thanks for supporting {author}", {
+                              author: mod.author,
+                            })
                           : mod.name,
                       });
                     } else {
@@ -950,8 +975,8 @@ export function ModDetailPage() {
                 fontSize: "13px",
               }}
             >
-              {compatHint.icon ?? "🐧"} <b>{compatHint.label ?? t("Linux note")}:</b>{" "}
-              {compatHint.hint}
+              {compatHint.icon ?? "🐧"} <b>{t(compatHint.label ?? "Linux note")}:</b>{" "}
+              {t(compatHint.hint)}
             </div>
           )}
           {strandingWarning && (
@@ -965,7 +990,7 @@ export function ModDetailPage() {
                 fontSize: "13px",
               }}
             >
-              🎮 <b>{t("Gaming Mode warning:")}</b> {strandingWarning}
+              🎮 <b>{t("Gaming Mode warning:")}</b> {t(strandingWarning)}
             </div>
           )}
           {dlcNeed && (
@@ -1237,7 +1262,9 @@ export function ModDetailPage() {
           onClick={() => setShowAllFiles(!showAllFiles)}
           style={ACTION_BUTTON}
         >
-          {showAllFiles ? t("Hide files ▴") : `All files (${fileList.length}) ▾`}
+          {showAllFiles
+            ? t("Hide files ▴")
+            : t("All files ({n}) ▾", { n: fileList.length })}
         </DialogButton>
         {installedCopy && (
           <DialogButton
@@ -1274,12 +1301,10 @@ export function ModDetailPage() {
       {companions && companions.failed.length > 0 && (
         <WarningBox
           title={t("One required part did not install")}
-          body={
-            `This mod needs more than one file from its page, and ` +
-            `${companions.failed.join(", ")} could not be installed. The mod ` +
-            `will not work until it is. Try installing again, or install ` +
-            `that file by hand from the All files list.`
-          }
+          body={t(
+            "This mod needs more than one file from its page, and {files} could not be installed. The mod will not work until it is. Try installing again, or install that file by hand from the All files list.",
+            { files: companions.failed.join(", ") }
+          )}
         />
       )}
       {companions &&
@@ -1287,11 +1312,10 @@ export function ModDetailPage() {
         companions.installed.length > 0 && (
           <WarningBox
             title={t("Extra required files installed")}
-            body={
-              `This mod is split across several files on its page, so ` +
-              `${companions.installed.join(", ")} was installed with it. ` +
-              `It will show separately in My Mods.`
-            }
+            body={t(
+              "This mod is split across several files on its page, so {files} was installed with it. It will show separately in My Mods.",
+              { files: companions.installed.join(", ") }
+            )}
           />
         )}
       {notInstallable && (
@@ -1406,7 +1430,9 @@ export function ModDetailPage() {
 
       {/* ---- All files (collapsed by default) ---- */}
       {!isFrameworkMod && showAllFiles && (
-        <SectionHeading title={`All files (${fileList.length})`} />
+        <SectionHeading
+          title={t("All files ({n})", { n: fileList.length })}
+        />
       )}
       {!isFrameworkMod && showAllFiles && (
       <Focusable

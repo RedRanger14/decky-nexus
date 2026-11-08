@@ -306,7 +306,7 @@ function CollectionCard({
             }}
           >
             {c.built_for
-              ? `BUILT FOR ${c.built_for.toUpperCase()}`
+              ? t("BUILT FOR {version}", { version: c.built_for.toUpperCase() })
               : t("NEEDS AN OLDER GAME")}
           </div>
         )}
@@ -1615,7 +1615,7 @@ export function BrowsePage() {
                   <HiddenNote
                     text={
                       linkHit.kind === "adult"
-                        ? ADULT_LINK_NOTE
+                        ? t(ADULT_LINK_NOTE)
                         : unsupportedLinkNote(linkHit.domain)
                     }
                   />
@@ -1678,7 +1678,7 @@ export function BrowsePage() {
                 {searchCollections.length === 0 && (
                   <div style={{ opacity: 0.7, fontSize: "13px" }}>
                     {t("No collections match \"")}{search.trim()}".
-                    {!searchHidden && !linkHit && ` ${LINK_HINT}`}
+                    {!searchHidden && !linkHit && ` ${t(LINK_HINT)}`}
                   </div>
                 )}
               </Focusable>

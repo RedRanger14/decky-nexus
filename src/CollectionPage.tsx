@@ -546,7 +546,11 @@ export function CollectionPage() {
           for (let i = 0; i < queue.length; i++) {
             const fw = queue[i];
             say(
-              `Installing ${fw.name} (${i + 1} of ${queue.length})…`
+              t("Installing {name} ({i} of {n})…", {
+                name: fw.name,
+                i: i + 1,
+                n: queue.length,
+              })
             );
             const isMain = fw.name === game.framework?.name;
             // The curator's pinned build when this loader says its mods
@@ -1105,11 +1109,16 @@ export function CollectionPage() {
     }
     toaster.toast({
       title: failed.length
-        ? `${versionDiffs.length - failed.length} of ${versionDiffs.length} switched`
-        : `Now using the collection's version${versionDiffs.length === 1 ? "" : "s"}`,
+        ? t("{done} of {total} switched", {
+            done: versionDiffs.length - failed.length,
+            total: versionDiffs.length,
+          })
+        : t("Now using the collection's version{fs}", {
+            fs: versionDiffs.length === 1 ? "" : "s",
+          }),
       body: failed.length
-        ? `Could not switch: ${failed.join(", ")}`
-        : "Launch the game to check everything loads",
+        ? t("Could not switch: {names}", { names: failed.join(", ") })
+        : t("Launch the game to check everything loads"),
     });
   };
   // "Resume" only makes sense for a run THIS page started - already
@@ -1270,16 +1279,25 @@ export function CollectionPage() {
       toaster.toast({
         title:
           repaired > 0
-            ? `Repaired ${repaired} mod${repaired > 1 ? "s" : ""}`
-            : "Nothing needed repairing",
+            ? t("Repaired {n} mod{fs}", {
+                n: repaired,
+                fs: repaired > 1 ? "s" : "",
+              })
+            : t("Nothing needed repairing"),
         body:
           repaired > 0
-            ? `${restored} missing file${
-                restored > 1 ? "s" : ""
-              } restored across ${checked} checked${
-                failed > 0 ? ` · ${failed} couldn't be checked` : ""
-              }`
-            : `All ${checked} installer-based mods were already complete`,
+            ? t("{restored} missing file{fs} restored across {checked} checked{extra}", {
+                restored,
+                fs: restored > 1 ? "s" : "",
+                checked,
+                extra:
+                  failed > 0
+                    ? t(" · {n} couldn't be checked", { n: failed })
+                    : "",
+              })
+            : t("All {n} installer-based mods were already complete", {
+                n: checked,
+              }),
         duration: 12000,
       });
     }
@@ -1443,7 +1461,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               undefined,
               undefined,
               undefined,
-              `connection lost - retrying in ${Math.round(waitMs / 1000)}s`
+              t("connection lost - retrying in {n}s", {
+                n: Math.round(waitMs / 1000),
+              })
             );
             await new Promise((r) => setTimeout(r, waitMs));
             result = await installPinned(
@@ -1687,13 +1707,16 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       const skipped = freshAttention.length - needsChoices;
       const bits = [];
       if (unavailable.length > 0) setUnavailable(unavailable);
-      if (failures > 0) bits.push(`${failures} failure(s)`);
-      if (networkStopped) bits.push("stopped - connection lost");
+      if (failures > 0) bits.push(t("{n} failure(s)", { n: failures }));
+      if (networkStopped) bits.push(t("stopped - connection lost"));
       if (unavailable.length > 0)
-        bits.push(`${unavailable.length} no longer on Nexus`);
+        bits.push(t("{n} no longer on Nexus", { n: unavailable.length }));
       if (needsChoices > 0)
-        bits.push(`${needsChoices} waiting on your choices (Finish setup)`);
-      if (skipped > 0) bits.push(`${skipped} skipped (see notes)`);
+        bits.push(
+        t("{n} waiting on your choices (Finish setup)", { n: needsChoices })
+      );
+      if (skipped > 0)
+        bits.push(t("{n} skipped (see notes)", { n: skipped }));
       toaster.toast({
         title: `${collection.name}`,
         body:
@@ -2224,23 +2247,31 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 // download progress, so something always moves.
                 runIsOurs && run!.finished === 0 && run!.note
                   ? run!.note
-                  : `Installing… ${runIsOurs ? run!.finished : 0}/${
-                      runIsOurs ? run!.total : remaining.length
-                    } · ${getAggregateDownloadPercent(run) ?? 0}%`
+                  : t("Installing… {done}/{total} · {pct}%", {
+                      done: runIsOurs ? run!.finished : 0,
+                      total: runIsOurs ? run!.total : remaining.length,
+                      pct: getAggregateDownloadPercent(run) ?? 0,
+                    })
               : remaining.length + loaderWork === 0 && detail
               ? t("Everything installed ✓")
               : remaining.length === 0 && loaderWork > 0 && detail
-              ? `Install the mod loader${loaderWork === 1 ? "" : "s"} (${loaderWork})`
+              ? t("Install the mod loader{fs} ({n})", {
+                  fs: loaderWork === 1 ? "" : "s",
+                  n: loaderWork,
+                })
               : partialFromRun
-              ? `Resume collection (${
-                  remaining.length + loaderWork
-                } left)`
+              ? t("Resume collection ({n} left)", {
+                  n: remaining.length + loaderWork,
+                })
               : detail &&
                 remaining.length + loaderWork < required.length
-              ? `Install remaining (${
-                  remaining.length + loaderWork
-                } of ${required.length})`
-              : `Install required (${remaining.length + loaderWork})`}
+              ? t("Install remaining ({n} of {total})", {
+                  n: remaining.length + loaderWork,
+                  total: required.length,
+                })
+              : t("Install required ({n})", {
+                  n: remaining.length + loaderWork,
+                })}
           </DialogButton>
           <Focusable style={ACTION_ROW}>
           {actionable.length > 0 && (
@@ -2257,13 +2288,16 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               }}
             >
               {finishProgress
-                ? `⚙ Finishing ${Math.min(
-                    finishProgress.done + 1,
-                    finishProgress.total
-                  )}/${finishProgress.total}…`
+                ? t("⚙ Finishing {done}/{total}…", {
+                    done: Math.min(
+                      finishProgress.done + 1,
+                      finishProgress.total
+                    ),
+                    total: finishProgress.total,
+                  })
                 : finishingFileId !== undefined
                 ? t("⚙ Finishing…")
-                : `⚙ Finish setup (${actionable.length})`}
+                : t("⚙ Finish setup ({n})", { n: actionable.length })}
             </DialogButton>
           )}
           {optionalRemaining.length > 0 && (
@@ -2274,8 +2308,10 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               style={ACTION_BUTTON}
             >
               {remaining.length === 0
-                ? `Install optional (${optionalRemaining.length})`
-                : `+ optional (${optionalRemaining.length})`}
+                ? t("Install optional ({n})", {
+                    n: optionalRemaining.length,
+                  })
+                : t("+ optional ({n})", { n: optionalRemaining.length })}
             </DialogButton>
           )}
           {conflictIssue && !installing && (
@@ -2287,9 +2323,10 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             >
               {fixingFiles
                 ? t("Fixing…")
-                : `Fix ${conflicts!.files.toLocaleString()} file${
-                    conflicts!.files === 1 ? "" : "s"
-                  }`}
+                : t("Fix {n} file{fs}", {
+                    n: conflicts!.files.toLocaleString(),
+                    fs: conflicts!.files === 1 ? "" : "s",
+                  })}
             </DialogButton>
           )}
           {/* One-way on purpose: the API has no viewer-endorsement field
@@ -2417,7 +2454,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 {autoOffGroups(autoOff).map((g, gi) => (
                   <div key={gi} style={{ marginTop: gi === 0 ? 0 : "14px" }}>
                     <div style={{ opacity: 0.85, marginBottom: "6px" }}>
-                      {g.reason}
+                      {t(g.reason)}
                     </div>
                     {g.names.map((n, i) => (
                       <div
@@ -2480,12 +2517,12 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 <>
                   <b>
                     {willOff.map((a) => a.name).join(", ")} {" "}{t("will be installed switched off.")}</b>{" "}
-                  {willOff.map((a) => a.reason).join(" ")} {" "}{t("My Mods can switch")}{willOff.length === 1 ? t("it") : t("them")} {" "}{t("back on afterwards.")}</>
+                  {willOff.map((a) => t(a.reason)).join(" ")} {" "}{t("My Mods can switch")}{willOff.length === 1 ? t("it") : t("them")} {" "}{t("back on afterwards.")}</>
               ) : (
                 <>
                   <b>{t("Gaming Mode warning:")}</b> {" "}{t("this collection includes")}{" "}
                   {stranding.map((m) => m.name).join(", ")}.{" "}
-                  {stranding[0].effect} {" "}{t("The rest of the collection is unaffected.")}</>
+                  {t(stranding[0].effect)} {" "}{t("The rest of the collection is unaffected.")}</>
               )}
             </div>
           );
@@ -2524,9 +2561,10 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                     if (!covered.includes(tool.name)) covered.push(tool.name);
                   } else {
                     items.push({
-                      label:
-                        `${name} (this is ${tool.name}: download it into ` +
-                        "your Downloads folder and the game panel installs it)",
+                      label: t(
+                        "{name} (this is {tool}: download it into your Downloads folder and the game panel installs it)",
+                        { name, tool: tool.name }
+                      ),
                     });
                   }
                   return true;
@@ -2537,7 +2575,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                   seen.add(k);
                   if (asTool(m.name, m.url)) continue;
                   items.push({
-                    label: m.name + (m.optional ? " (optional)" : ""),
+                    label: m.name + (m.optional ? t(" (optional)") : ""),
                     url: m.url,
                   });
                 }
@@ -2555,33 +2593,38 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                       );
                   items.push({
                     label: isFramework
-                      ? `${e.name} (this is ${game.framework!.name}, ` +
-                        `Step 1 on the game panel installs it)`
-                      : e.name + (e.optional ? " (optional)" : ""),
+                      ? t(
+                          "{name} (this is {framework}, Step 1 on the game panel installs it)",
+                          { name: e.name, framework: game.framework!.name }
+                        )
+                      : e.name + (e.optional ? t(" (optional)") : ""),
                   });
                 }
                 const withUrl = items.find((i) => i.url);
                 const coveredLine =
                   covered.length > 0
-                    ? `✓ ${covered.join(", ")}, which this collection also ` +
-                      `lists, is already installed from your download.`
+                    ? t(
+                        "✓ {names}, which this collection also lists, is already installed from your download.",
+                        { names: covered.join(", ") }
+                      )
                     : "";
                 if (items.length === 0) return <>{coveredLine}</>;
                 return (
                   <>
                     ⬇ {items.length} {" "}{t("thing")}{items.length === 1 ? "" : t("s")} {" "}{t("in this collection")}{" "}{items.length === 1 ? t("is") : t("are")} {" "}{t("not hosted on Nexus Mods, so")}{" "}
                     {items.length === 1 ? t("it cannot") : t("they cannot")} {" "}{t("be downloaded here:")}{" "}{items.map((i) => i.label).join(", ")}.
-                    {withUrl ? ` Get it from ${withUrl.url}.` : ""}
+                    {withUrl
+                      ? t(" Get it from {url}.", { url: withUrl.url ?? "" })
+                      : ""}
                     {parkedForExternal > 0
-                      ? ` ${parkedForExternal} mod${
-                          parkedForExternal === 1 ? "" : "s"
-                        } that need ${
-                          items.length === 1 ? "it have" : "them have"
-                        } been switched off so the game still starts. Turn ${
-                          parkedForExternal === 1 ? "it" : "them"
-                        } back on in My Mods once you have added ${
-                          items.length === 1 ? "it" : "them"
-                        }.`
+                      ? items.length === 1
+                        ? t(
+                            " 1 mod that needs it has been switched off so the game still starts. Turn it back on in My Mods once you have added it."
+                          )
+                        : t(
+                            " {n} mods that need them have been switched off so the game still starts. Turn them back on in My Mods once you have added them.",
+                            { n: parkedForExternal }
+                          )
                       : remaining.length === 0
                       ? t("Nothing else needed switching off, so the rest of") +
                         t("the collection is installed and active.")
@@ -2597,30 +2640,38 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             wasnt clear it was a clickable element". */}
         {versionDiffs.length > 0 && !installing && (
           <WarningBox
-            title={`${versionDiffs.length} of your mods ${
-              versionDiffs.length === 1 ? "is" : "are"
-            } not this collection's version`}
+            title={
+              versionDiffs.length === 1
+                ? t("1 of your mods is not this collection's version")
+                : t("{n} of your mods are not this collection's version", {
+                    n: versionDiffs.length,
+                  })
+            }
             body={
               versionDiffs
                 .slice(0, 6)
                 .map(
                   (d) =>
-                    `${d.modName} (yours ${d.have || "?"}, the collection's ${
-                      d.pinned || "?"
-                    })`
+                    t("{name} (yours {have}, the collection's {pinned})", {
+                      name: d.modName,
+                      have: d.have || "?",
+                      pinned: d.pinned || "?",
+                    })
                 )
                 .join(", ") +
               (versionDiffs.length > 6
-                ? ` and ${versionDiffs.length - 6} more`
+                ? t(" and {n} more", { n: versionDiffs.length - 6 })
                 : "") +
-              ". The collection's other mods can depend on its exact versions."
+              t(
+                ". The collection's other mods can depend on its exact versions."
+              )
             }
             action={{
               label: swapping
-                ? "Switching…"
-                : `Use the collection's version${
-                    versionDiffs.length === 1 ? "" : "s"
-                  }`,
+                ? t("Switching…")
+                : t("Use the collection's version{fs}", {
+                    fs: versionDiffs.length === 1 ? "" : "s",
+                  }),
               onClick: useCollectionVersions,
             }}
           />

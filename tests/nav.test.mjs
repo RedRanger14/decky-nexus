@@ -1062,7 +1062,7 @@ test("update-all reports what actually happened", () => {
     "the unconditional success toast is back"
   );
   assert.ok(
-    /No updates applied/.test(page) && /applied, \$\{failed\} failed/.test(page),
+    /No updates applied/.test(page) && /applied, \{failed\} failed/.test(page),
     "the summary does not distinguish success from failure"
   );
   assert.ok(
@@ -1450,7 +1450,7 @@ test("the script extender is checked for updates like everything else", () => {
   // "new version" is wrong for an extender: the right build can be OLDER
   // than what is installed, after a deliberate downgrade.
   assert.ok(
-    /your game needs \$\{u\.current\}/.test(page),
+    /your game needs \{needed\}/.test(page),
     "the framework row still calls its target a new version"
   );
 });

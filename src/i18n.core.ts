@@ -99,3 +99,20 @@ export function tn(
 export function formatNumber(value: number): string {
   return value.toLocaleString(localeTag());
 }
+
+/** Ordinal for the load-order page: English "3rd", French "3e". */
+export function formatOrdinal(n: number): string {
+  if (current === "fr") return n === 1 ? "1er" : `${n}e`;
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
+}

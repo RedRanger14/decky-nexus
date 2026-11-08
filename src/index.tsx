@@ -138,6 +138,11 @@ import {
   bg3ModLimitSelected,
   bg3ModLimitNote,
   installedDepsNote, fitReportBody, setPanelTranslator } from "./panelRules";
+import { setMergeTranslator } from "./mergeSupport";
+import { setLoadOrderTranslator } from "./loadOrderRules";
+import { setCollectionLinkTranslator } from "./collectionLink";
+import { setCompatTranslator } from "./compat";
+import { setPluginUpdateTranslator } from "./pluginUpdate";
 import {
   ALL_GAMES,
   DEFAULT_GAME,
@@ -258,11 +263,16 @@ import {
   mergeStepSummary,
   offersMergeSupport,
 } from "./mergeSupport";
-import { t, useT } from "./i18n";
+import { formatOrdinal, t, useT } from "./i18n";
 
 // panelRules stays import-free for its node tests; hand it the live
 // translator so the QAM panel's generated copy follows the UI language.
 setPanelTranslator(t);
+setMergeTranslator(t);
+setLoadOrderTranslator(t, formatOrdinal);
+setCollectionLinkTranslator(t);
+setCompatTranslator(t);
+setPluginUpdateTranslator(t);
 
 /** QAM row shortcut: jump from an installed mod straight to its detail page
  * (to re-check requirements, files, or updates). */
@@ -557,13 +567,13 @@ function ResetGameRow({
           showModal(
             <ConfirmModal
               strTitle={t("Reset {game} to vanilla?", { game: game.displayName })}
-              strDescription={
-                `Every mod installed by this plugin is uninstalled, ` +
-                `${game.framework?.name ?? "the mod loader"} is removed, ` +
-                `and the launch command is cleared. Saves are not touched. ` +
-                `Files added outside this plugin stay - use Steam's ` +
-                `"Verify integrity" afterwards if the game still misbehaves.`
-              }
+              strDescription={t(
+                "Every mod installed by this plugin is uninstalled, {loader} is removed, and the launch command is cleared. Saves are not touched. Files added outside this plugin stay - use Steam's \"Verify integrity\" afterwards if the game still misbehaves.",
+                {
+                  loader:
+                    game.framework?.name ?? t("the mod loader"),
+                }
+              )}
               strOKButtonText={t("Reset to vanilla")}
               bDestructiveWarning={true}
               onOK={doReset}
@@ -1229,7 +1239,9 @@ function CurrentGameSection() {
     <PanelSection title={t("Current Game")}>
       <PanelSectionRow>
         <Field label={t("Game")}>
-          {gameIsRunning ? game.displayName : `${game.displayName} · not running`}
+          {gameIsRunning
+            ? game.displayName
+            : t("{game} · not running", { game: game.displayName })}
         </Field>
       </PanelSectionRow>
       {game.underConstruction && (
@@ -1241,7 +1253,7 @@ function CurrentGameSection() {
       )}
       {game.gameNote && (
         <PanelSectionRow>
-          <Field label={t("Good to know")}>{game.gameNote}</Field>
+          <Field label={t("Good to know")}>{t(game.gameNote)}</Field>
         </PanelSectionRow>
       )}
       {status && !status.installed && (
@@ -1260,7 +1272,7 @@ function CurrentGameSection() {
         !game.launcherBypass && (
           <PanelSectionRow>
             <Field label={t("ℹ Before you mod")}>
-              {game.firstRunNotice.message}
+              {t(game.firstRunNotice.message)}
             </Field>
           </PanelSectionRow>
         )}
@@ -1275,13 +1287,20 @@ function CurrentGameSection() {
         status.updated_days_ago <= 7 && (
           <PanelSectionRow>
             <Field label={t("ℹ Game updated recently")}>
-              {`${game.displayName} updated ${
-                status.updated_days_ago === 0
-                  ? "today"
-                  : status.updated_days_ago === 1
-                  ? "yesterday"
-                  : `${status.updated_days_ago} days ago`
-              }. Updates usually break mods until their authors release new versions - if a mod installs but does nothing, check its page for an update from the last few days.`}
+              {t(
+                "{game} updated {when}. Updates usually break mods until their authors release new versions - if a mod installs but does nothing, check its page for an update from the last few days.",
+                {
+                  game: game.displayName,
+                  when:
+                    status.updated_days_ago === 0
+                      ? t("today")
+                      : status.updated_days_ago === 1
+                      ? t("yesterday")
+                      : t("{n} days ago", {
+                          n: status.updated_days_ago,
+                        }),
+                }
+              )}
             </Field>
           </PanelSectionRow>
         )}
@@ -1301,11 +1320,15 @@ function CurrentGameSection() {
           >
             {(status.bg3_crash_repair.marker_cleared ||
             status.bg3_crash_repair.registrations_restored > 0
-              ? `${game.displayName} crashed the last time it ran, which ` +
-                `switches every mod off in the game's own list. ` +
+              ? t(
+                  "{game} crashed the last time it ran, which switches every mod off in the game's own list.",
+                  { game: game.displayName }
+                ) +
+                " " +
                 (status.bg3_crash_repair.registrations_restored > 0
-                  ? `${status.bg3_crash_repair.registrations_restored} mod ` +
-                    `registrations were put back. `
+                  ? t("{n} mod registrations were put back.", {
+                      n: status.bg3_crash_repair.registrations_restored,
+                    }) + " "
                   : "") +
                 (status.bg3_crash_repair.marker_cleared
                   ? t("The game had also armed its mod-free safe mode for the") +
@@ -1319,11 +1342,18 @@ function CurrentGameSection() {
               // never run here, and left on, KAVT crashed every new game in
               // character creation.
               ((status.bg3_crash_repair.se_parked?.length ?? 0) > 0
-                ? `${status.bg3_crash_repair.se_parked!.length} mod` +
-                  `${status.bg3_crash_repair.se_parked!.length === 1 ? "" : "s"} ` +
-                  `that need${status.bg3_crash_repair.se_parked!.length === 1 ? "s" : ""} ` +
-                  `the Script Extender ${status.bg3_crash_repair.se_parked!.length === 1 ? "was" : "were"} ` +
-                  `switched off: ${status.bg3_crash_repair.se_parked!.join(", ")}. ` +
+                ? (status.bg3_crash_repair.se_parked!.length === 1
+                    ? t(
+                        "1 mod that needs the Script Extender was switched off: {names}.",
+                        { names: status.bg3_crash_repair.se_parked!.join(", ") }
+                      )
+                    : t(
+                        "{n} mods that need the Script Extender were switched off: {names}.",
+                        {
+                          n: status.bg3_crash_repair.se_parked!.length,
+                          names: status.bg3_crash_repair.se_parked!.join(", "),
+                        }
+                      )) + " " +
                   t("The Script Extender cannot run on this build of the game,") +
                   t("and with such a mod on, starting a new game crashes.")
                 : "")}
@@ -1375,12 +1405,19 @@ function CurrentGameSection() {
                   const back = r.returned?.length ?? 0;
                   const off = r.disabled?.length ?? 0;
                   toaster.toast({
-                    title: r.cap ? `Mod limit: ${r.cap}` : "Mod limit removed",
+                    title: r.cap
+                      ? t("Mod limit: {n}", { n: r.cap })
+                      : t("Mod limit removed"),
                     body:
-                      `${r.module_total ?? 0} mods switched on` +
-                      (back ? `, ${back} switched back on` : "") +
-                      (off ? `, ${off} switched off to fit` : "") +
-                      ".",
+                      t("{n} mods switched on{back}{off}.", {
+                        n: r.module_total ?? 0,
+                        back: back
+                          ? t(", {n} switched back on", { n: back })
+                          : "",
+                        off: off
+                          ? t(", {n} switched off to fit", { n: off })
+                          : "",
+                      }),
                   });
                 })
                 .catch((e) =>
@@ -1432,9 +1469,10 @@ function CurrentGameSection() {
           {frostyState?.toolkit_installed ? (
             <Field label={t("Step 1")}>
               {t("Mod compiler installed ✓")}{(frostyState.mods?.length ?? 0) > 0
-                ? ` · ${frostyState.mods!.length} mod${
-                    frostyState.mods!.length === 1 ? "" : "s"
-                  } compiled`
+                ? t(" · {n} mod{fs} compiled", {
+                    n: frostyState.mods!.length,
+                    fs: frostyState.mods!.length === 1 ? "" : "s",
+                  })
                 : ""}
             </Field>
           ) : (
@@ -1592,11 +1630,12 @@ function CurrentGameSection() {
                   layout="below"
                   disabled={frameworkBusy || !frameworkInstallable(game.framework)}
                   description={
-                    (game.framework.stepNote ??
-                      t("Most {game} mods require {name}.", {
-                        game: game.displayName,
-                        name: game.framework.name,
-                      })) +
+                    (game.framework.stepNote
+                      ? t(game.framework.stepNote)
+                      : t("Most {game} mods require {name}.", {
+                          game: game.displayName,
+                          name: game.framework.name,
+                        })) +
                     t(" Downloads from Nexus Mods (author gets the credit).")
                   }
                   onClick={onInstallFramework}
@@ -1660,7 +1699,7 @@ function CurrentGameSection() {
                       whiteSpace: "pre-wrap",
                     }}
                   >
-                    {MERGE_STEP_EXPLAINER}
+                    {t(MERGE_STEP_EXPLAINER)}
                   </div>
                 )}
                 {/* Removal lives INSIDE the explanation, not beside the
@@ -2016,7 +2055,7 @@ function CurrentGameSection() {
                   label={t("Step 2")}
                   layout="below"
                   disabled={!launchOptionsSet}
-                  description={game.firstRunNotice.message}
+                  description={t(game.firstRunNotice.message)}
                   onClick={() => {
                     launchGame();
                     // The marker file appears once the game reaches the
@@ -2025,8 +2064,12 @@ function CurrentGameSection() {
                   }}
                 >
                   {gameIsRunning
-                    ? `Restart ${game.displayName} (vanilla)`
-                    : `Launch ${game.displayName} once (vanilla)`}
+                    ? t("Restart {game} (vanilla)", {
+                        game: game.displayName,
+                      })
+                    : t("Launch {game} once (vanilla)", {
+                        game: game.displayName,
+                      })}
                 </ButtonItem>
               ) : (
                 <Field label={t("Step 2")}>{t("First vanilla boot done ✓")}</Field>
@@ -2114,9 +2157,10 @@ function CurrentGameSection() {
                       };
                       setToolPct(0);
                       setToolsBusy(
-                        `⚙ Running ${tool.name}… (up to ${Math.ceil(
-                          (tool.timeoutSec ?? 180) / 60
-                        )} min)`
+                        t("⚙ Running {name}… (up to {n} min)", {
+                          name: tool.name,
+                          n: Math.ceil((tool.timeoutSec ?? 180) / 60),
+                        })
                       );
                       const r = await runPrefixTool(
                         game.nexusDomain,
@@ -2161,11 +2205,11 @@ function CurrentGameSection() {
                   }}
                     >
                       {toolsBusy ??
-                        `Apply modding tools (${
-                          autoTools.filter(
+                        t("Apply modding tools ({n})", {
+                          n: autoTools.filter(
                             (t) => !toolsDone[t.nexusModId]
-                          ).length
-                        })`}
+                          ).length,
+                        })}
                     </DialogButton>
                     {!toolsBusy && (
                       <DialogButton
@@ -2214,7 +2258,7 @@ function CurrentGameSection() {
                       .filter((t) => !toolsDone[t.nexusModId])
                       .map((t) => t.name)
                       .join(" and ")}{" "}
-                    {t("from Nexus Mods and runs it inside the game's own environment.")}{" "}{game.prefixTools[0].description} {" "}{t("Takes a few minutes; Steam may close this menu while the tool's window flashes up - reopen it for the result.")}<br />
+                    {t("from Nexus Mods and runs it inside the game's own environment.")}{" "}{t(game.prefixTools[0].description)} {" "}{t("Takes a few minutes; Steam may close this menu while the tool's window flashes up - reopen it for the result.")}<br />
                     <br />
                     <b>{t("Skip")}</b> {" "}{t("if it keeps failing: these are old Windows tools and some refuse to run under Proton. Skipping hides this step and lets you mod normally - only mods that specifically require it become unavailable. You can apply it later from Desktop Mode, or un-skip to retry.")}</div>
                 )}
@@ -2583,8 +2627,8 @@ function UserToolRow({ game, tool }: { game: SupportedGame; tool: UserTool }) {
           layout="below"
           description={
             (state === "failed" ? `${note}. ` : "") +
-            `${tool.why} Download it once, and put the zip in your Downloads ` +
-            t("folder: this panel installs it next time it opens.")
+            `${t(tool.why)} ` +
+            t("Download it once, and put the zip in your Downloads folder: this panel installs it next time it opens.")
           }
           onClick={() => Navigation.NavigateToExternalWeb(tool.url)}
         >
@@ -2897,11 +2941,13 @@ function InstalledModsSection() {
     setFwEnabled(enabled);
     toaster.toast({
       title: enabled
-        ? `${game.framework.name} enabled`
-        : `${game.framework.name} disabled`,
+        ? t("{name} enabled", { name: game.framework.name })
+        : t("{name} disabled", { name: game.framework.name }),
       body: enabled
-        ? "Mods will load next launch"
-        : `${game.displayName} will launch without mods`,
+        ? t("Mods will load next launch")
+        : t("{game} will launch without mods", {
+            game: game.displayName,
+          }),
     });
   };
 
@@ -3082,14 +3128,18 @@ function InstalledModsSection() {
             : load === undefined
             ? ""
             : load.state === "loaded"
-            ? " · loaded ✓"
-            : " · failed to load ⚠") +
+            ? t(" · loaded ✓")
+            : t(" · failed to load ⚠")) +
           (update?.update_available
             ? update.blamed
               ? // Not a nag. The game named this mod as erroring and the
                 // newer version is the likely reason it will stop.
-                ` · ⬆ ${update.current} may fix its errors`
-              : ` · ⬆ ${update.current} available`
+                t(" · ⬆ {version} may fix its errors", {
+                  version: update.current,
+                })
+              : t(" · ⬆ {version} available", {
+                  version: update.current,
+                })
             : "");
         const base = mod.tracked
           ? `v${mod.version}${mod.enabled ? "" : " · disabled"}`
@@ -3454,9 +3504,10 @@ function TroubleshootingSection() {
         launches: step.launches ?? h?.launches ?? 0,
         remaining: step.remaining ?? 0,
         skipped: step.skipped ?? h?.skipped ?? [],
-        note: `Launch ${(step.launches ?? 0) + 1}: trying ${(
-          step.enabled ?? 0
-        ).toLocaleString()} mods`,
+        note: t("Launch {n}: trying {count} mods", {
+          n: (step.launches ?? 0) + 1,
+          count: (step.enabled ?? 0).toLocaleString(),
+        }),
       }));
       // Numbered every time: hours of the game opening and closing is
       // indistinguishable from a boot loop without a running count.
@@ -3539,12 +3590,13 @@ function TroubleshootingSection() {
     const end = await crashBisectFinish(true);
     setHunt(undefined);
     toaster.toast({
-      title: huntStopFlag ? "Hunt stopped" : "Hunt finished",
+      title: huntStopFlag ? t("Hunt stopped") : t("Hunt finished"),
       body: (end.skipped?.length ?? 0) > 0
-        ? `Skipped ${end.skipped!.length} broken mod${
-            end.skipped!.length === 1 ? "" : "s"
-          } - everything else is back on`
-        : "Nothing found - all mods are back on",
+        ? t("Skipped {n} broken mod{fs} - everything else is back on", {
+            n: end.skipped!.length,
+            fs: end.skipped!.length === 1 ? "" : "s",
+          })
+        : t("Nothing found - all mods are back on"),
       duration: 15000,
     });
     refresh();
@@ -3598,11 +3650,18 @@ function TroubleshootingSection() {
             open
               ? undefined
               : problems > 0
-              ? `${problems} thing${problems === 1 ? "" : "s"} to look at`
+              ? t("{n} thing{fs} to look at", {
+                  n: problems,
+                  fs: problems === 1 ? "" : "s",
+                })
               : t("Nothing looks wrong. Open if the game won't start.")
           }
         >
-          {open ? t("Hide") : problems > 0 ? `Fixes (${problems})` : t("Fixes")}
+          {open
+            ? t("Hide")
+            : problems > 0
+            ? t("Fixes ({n})", { n: problems })
+            : t("Fixes")}
         </ButtonItem>
       </PanelSectionRow>
       {open && (
@@ -3649,11 +3708,17 @@ function TroubleshootingSection() {
                     r.ok
                       ? {
                           title: r.updated
-                            ? "Runtime updated"
-                            : "Runtime already current",
+                            ? t("Runtime updated")
+                            : t("Runtime already current"),
                           body: r.updated
-                            ? `${r.previous ?? "old"} → ${r.version} — restart ${game.displayName} to load the mods that were failing`
-                            : `Already on ${r.version}`,
+                            ? t("{from} → {to} — restart {game} to load the mods that were failing", {
+                                from: r.previous ?? t("old"),
+                                to: r.version ?? "",
+                                game: game.displayName,
+                              })
+                            : t("Already on {version}", {
+                                version: r.version ?? "",
+                              }),
                           duration: 10000,
                         }
                       : {
@@ -3691,7 +3756,9 @@ function TroubleshootingSection() {
                   .map((p) => p.name.replace(/\.dll$/i, ""))
                   .join(", ")}${
                   sePlugins!.failed.length > 3
-                    ? ` and ${sePlugins!.failed.length - 3} more`
+                    ? t(" and {n} more", {
+                        n: sePlugins!.failed.length - 3,
+                      })
                     : ""
                 }` +
                 t(" failed to load last time") +
@@ -3729,9 +3796,10 @@ function TroubleshootingSection() {
             >
               {seBusy
                 ? t("Skipping…")
-                : `Skip ${sePlugins!.failed.length} mod plugin${
-                    sePlugins!.failed.length > 1 ? "s" : ""
-                  }`}
+                : t("Skip {n} mod plugin{fs}", {
+                    n: sePlugins!.failed.length,
+                    fs: sePlugins!.failed.length > 1 ? "s" : "",
+                  })}
             </ButtonItem>
           </PanelSectionRow>
         )}
@@ -3750,16 +3818,21 @@ function TroubleshootingSection() {
               layout="below"
               label={
                 hunt?.running
-                  ? `Hunting - launch ${hunt.launches + 1}`
+                  ? t("Hunting - launch {n}", { n: hunt.launches + 1 })
                   : t("Game crashes on startup?")
               }
               description={
                 hunt?.running
-                  ? `${hunt.note}. ${hunt.remaining.toLocaleString()} mods left to rule out` +
+                  ? t("{note}. {n} mods left to rule out", {
+                      note: hunt.note,
+                      n: hunt.remaining.toLocaleString(),
+                    }) +
                     (hunt.skipped.length
-                      ? `. Found so far: ${hunt.skipped
-                          .map((n) => n.replace(/\.es[lmp]$/i, ""))
-                          .join(", ")}`
+                      ? t(". Found so far: {names}", {
+                          names: hunt.skipped
+                            .map((n) => n.replace(/\.es[lmp]$/i, ""))
+                            .join(", "),
+                        })
                       : "")
                   : t("Finds the mods responsible by launching repeatedly and") +
                     t("reading the crash log itself. Takes a few hours and the") +
@@ -3841,7 +3914,9 @@ function TroubleshootingSection() {
               label={
                 failing.names.length === 1
                   ? t("1 mod broke last time you played")
-                  : `${failing.names.length} mods broke last time you played`
+                  : t("{n} mods broke last time you played", {
+                      n: failing.names.length,
+                    })
               }
               description={failingProblem(failing.details, failing.held)}
               disabled={failingBusy}
@@ -3863,8 +3938,8 @@ function TroubleshootingSection() {
                   );
                   toaster.toast({
                     title: r.ok
-                      ? `Switched off ${r.disabled ?? 0}`
-                      : "Could not switch them off",
+                      ? t("Switched off {n}", { n: r.disabled ?? 0 })
+                      : t("Could not switch them off"),
                     body: r.ok
                       ? disableFailingOutcome(
                           r.names ?? [],
@@ -4002,14 +4077,17 @@ function TroubleshootingSection() {
                           title: t("Load order fixed"),
                           body: [
                             (r.enabled_masters ?? 0) > 0 &&
-                              `${r.enabled_masters} mod${
-                                r.enabled_masters === 1 ? "" : "s"
-                              } switched back on`,
+                              t("{n} mod{fs} switched back on", {
+                                n: r.enabled_masters ?? 0,
+                                fs: r.enabled_masters === 1 ? "" : "s",
+                              }),
                             (r.violations_before ?? 0) > 0 &&
-                              `${(r.violations_before ?? 0).toLocaleString()} reordered`,
+                              t("{n} reordered", {
+                                n: (r.violations_before ?? 0).toLocaleString(),
+                              }),
                           ]
                             .filter(Boolean)
-                            .join(", ") || "Nothing needed changing",
+                            .join(", ") || t("Nothing needed changing"),
                           duration: 10000,
                         }
                       : { title: t("Could not fix it"), body: r.error ?? "" }
@@ -4060,14 +4138,28 @@ function TroubleshootingSection() {
               label={t("{game} crashed last time", { game: game.displayName })}
               disabled={seBusy}
               description={
-                `${suspect.name.replace(/\.dll$/i, "")} was ${
-                  suspect.frame === 0
-                    ? "the code running when it crashed"
-                    : "on the stack when it crashed"
-                }, so it's the most likely cause${
-                  suspect.probable ? "" : " (a weaker match)"
-                }. Skipping sets it aside so you can get back in — it's ` +
-                t("renamed, not deleted, and the crash may still turn out to be something else.")
+                (suspect.frame === 0
+                  ? t(
+                      "{name} was the code running when it crashed, so it's the most likely cause{weak}. Skipping sets it aside so you can get back in — it's ",
+                      {
+                        name: suspect.name.replace(/\.dll$/i, ""),
+                        weak: suspect.probable
+                          ? ""
+                          : t(" (a weaker match)"),
+                      }
+                    )
+                  : t(
+                      "{name} was on the stack when it crashed, so it's the most likely cause{weak}. Skipping sets it aside so you can get back in — it's ",
+                      {
+                        name: suspect.name.replace(/\.dll$/i, ""),
+                        weak: suspect.probable
+                          ? ""
+                          : t(" (a weaker match)"),
+                      }
+                    )) +
+                t(
+                  "renamed, not deleted, and the crash may still turn out to be something else."
+                )
               }
               onClick={async () => {
                 setSeBusy(true);
@@ -4109,7 +4201,7 @@ function TroubleshootingSection() {
                 .map((n) => n.replace(/\.dll$/i, ""))
                 .join(", ")}${
                 sePlugins!.parked.length > 3
-                  ? ` and ${sePlugins!.parked.length - 3} more`
+                  ? t(" and {n} more", { n: sePlugins!.parked.length - 3 })
                   : ""
               }` +
                 t(
@@ -4126,10 +4218,11 @@ function TroubleshootingSection() {
                   );
                   toaster.toast({
                     title: r.ok
-                      ? `Restored ${r.changed ?? 0} mod plugin${
-                          (r.changed ?? 0) === 1 ? "" : "s"
-                        }`
-                      : "Could not restore them",
+                      ? t("Restored {n} mod plugin{fs}", {
+                          n: r.changed ?? 0,
+                          fs: (r.changed ?? 0) === 1 ? "" : "s",
+                        })
+                      : t("Could not restore them"),
                     body: r.ok ? "They'll be tried again next launch" : r.error ?? "",
                   });
                   refresh();
@@ -4196,14 +4289,13 @@ function SavesSection() {
     showModal(
       <ConfirmModal
         strTitle={t("Copy vanilla save to modded — {game}", { game: game.displayName })}
-        strDescription={
-          `Copies your unmodded ${game.displayName} progress (unlocks, stats, ` +
-          `run history) into the modded save for Steam account ` +
-          `${status.active_account}. The current modded save is backed up ` +
-          `first. One-way only: modded progress can't safely go back to ` +
-          `vanilla. If Steam shows a cloud sync conflict afterwards, choose ` +
-          `"Upload local".`
-        }
+        strDescription={t(
+          "Copies your unmodded {game} progress (unlocks, stats, run history) into the modded save for Steam account {account}. The current modded save is backed up first. One-way only: modded progress can't safely go back to vanilla. If Steam shows a cloud sync conflict afterwards, choose \"Upload local\".",
+          {
+            game: game.displayName,
+            account: status.active_account ?? "",
+          }
+        )}
         strOKButtonText={t("Copy save")}
         bDestructiveWarning={true}
         onOK={async () => {
@@ -4275,7 +4367,9 @@ function SavesSection() {
               description={
                 gameRunning
                   ? t("Close the game first")
-                  : `Steam account ${status.active_account}`
+                  : t("Steam account {account}", {
+                    account: status.active_account ?? "",
+                  })
               }
               onClick={onCopy}
             >
@@ -4486,10 +4580,13 @@ function DownloadsButton() {
   // collection run, finished mods blend with the live one).
   const pct = getAggregateDownloadPercent(run);
   const label = run?.running
-    ? `Downloads · collection ${run.finished}/${run.total}`
+    ? t("Downloads · collection {done}/{total}", {
+        done: run.finished,
+        total: run.total,
+      })
     : active > 0
-    ? `Downloads · ${active} active`
-    : "Downloads";
+    ? t("Downloads · {n} active", { n: active })
+    : t("Downloads");
   return (
     <PanelSectionRow>
       {/* The inline fill gradient overrode Steam's hover/focus style,
@@ -4572,7 +4669,9 @@ function UpdatesButton({ scopedGame }: { scopedGame?: SupportedGame }) {
               pushOurPage(UPDATES_ROUTE);
         }}
       >
-        {pending ? `⬆ Updates · ${pending} available` : t("Updates")}
+        {pending
+          ? t("⬆ Updates · {n} available", { n: pending })
+          : t("Updates")}
       </DialogButton>
     </PanelSectionRow>
   );

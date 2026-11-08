@@ -95,7 +95,7 @@ export function UpdatesPage() {
     // A blocked row is information, not an action: there is no build to
     // install. Guarded here too so "Update all" cannot try.
     if (u.blocked) {
-      toaster.toast({ title: u.name, body: u.blocked });
+      toaster.toast({ title: u.name, body: t(u.blocked) });
       return false;
     }
     if (u.framework && u.game.framework) {
@@ -120,14 +120,16 @@ export function UpdatesPage() {
           title: t("{name} updated", { name: u.name }),
           body:
             "matched_game_version" in result && result.matched_game_version
-              ? `Now the build for game ${result.matched_game_version}`
+              ? t("Now the build for game {version}", {
+                  version: result.matched_game_version,
+                })
               : "",
         });
         return true;
       }
       toaster.toast({
         title: t("{name} update failed", { name: u.name }),
-        body: result.error ?? "Unknown error",
+        body: result.error ?? t("Unknown error"),
       });
       return false;
     }
@@ -205,12 +207,12 @@ export function UpdatesPage() {
           : {
               title:
                 ok === 0
-                  ? "No updates applied"
-                  : `${ok} applied, ${failed} failed`,
+                  ? t("No updates applied")
+                  : t("{ok} applied, {failed} failed", { ok, failed }),
               body:
                 failed > 0
-                  ? "The failed ones say why in their own toasts"
-                  : "Nothing was pending",
+                  ? t("The failed ones say why in their own toasts")
+                  : t("Nothing was pending"),
             }
       );
       // Re-scan rather than trusting local bookkeeping: if a row comes
@@ -252,7 +254,9 @@ export function UpdatesPage() {
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: "2px" }}>
-              {selfDone ? `Updated to v${self.version} ✓` : pluginUpdateLabel(self)}
+              {selfDone
+                ? t("Updated to v{version} ✓", { version: self.version ?? "" })
+                : pluginUpdateLabel(self)}
             </div>
             <div style={{ fontSize: "12.5px", opacity: 0.8, marginBottom: "8px" }}>
               {selfDone
@@ -342,7 +346,9 @@ export function UpdatesPage() {
               disabled={busy}
               onClick={updateAll}
             >
-              {busy ? t("Updating…") : `⬆ Update all (${pending.length})`}
+              {busy
+                ? t("Updating…")
+                : t("⬆ Update all ({n})", { n: pending.length })}
             </DialogButton>
           </Focusable>
         )}
@@ -374,18 +380,28 @@ export function UpdatesPage() {
                 </div>
                 <div style={{ fontSize: "12px", opacity: 0.65 }}>
                   {u.blocked
-                    ? u.blocked
+                    ? t(u.blocked)
                     : u.framework
                     ? // Not "new version": a script extender's right build
                       // is the one matching the game, which after a
                       // downgrade is older than what is installed. Saying
                       // "new" there would look like a mistake.
-                      `${u.game.displayName} · script extender, ` +
-                      (u.installedVersion
-                        ? `${u.installedVersion} installed, `
-                        : "") +
-                      `your game needs ${u.current}`
-                      : `${u.game.displayName} · new version ${u.current}`}
+                      t(
+                        "{game} · script extender, {installed}your game needs {needed}",
+                        {
+                          game: u.game.displayName,
+                          installed: u.installedVersion
+                            ? t("{version} installed, ", {
+                                version: u.installedVersion,
+                              })
+                            : "",
+                          needed: u.current,
+                        }
+                      )
+                      : t("{game} · new version {version}", {
+                          game: u.game.displayName,
+                          version: u.current,
+                        })}
                 </div>
               </div>
               {/* No Update button on a blocked row: there is no build to

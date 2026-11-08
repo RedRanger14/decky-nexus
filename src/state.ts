@@ -3,6 +3,7 @@ import { collectionProgressPercent } from "./panelRules";
 // (Decky routes can't easily carry complex objects as params.)
 import { NexusMod } from "./api";
 import { SupportedGame } from "./games";
+import { t } from "./i18n";
 
 export interface SelectedMod {
   game: SupportedGame;
@@ -582,10 +583,14 @@ export function endCollectionRun(): void {
   const skipped = getRunSkippedCount(collectionRun);
   completed.unshift({
     modId: -Math.abs(collectionRun.total * 1000 + collectionRun.finished),
-    name:
-      `${collectionRun.name ?? "Collection"} · ` +
-      `${collectionRun.finished}/${collectionRun.total} processed` +
-      (skipped ? ` · ${skipped} need choices` : ""),
+    name: t("{name} · {done}/{total} processed{choices}", {
+      name: collectionRun.name ?? t("Collection"),
+      done: collectionRun.finished,
+      total: collectionRun.total,
+      choices: skipped
+        ? t(" · {n} need choices", { n: skipped })
+        : "",
+    }),
     phase: "done",
     percent: 100,
     gameAppId: collectionRun.gameAppId,

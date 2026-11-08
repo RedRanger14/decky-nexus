@@ -263,7 +263,7 @@ export function SettingsPage() {
                     o.value === "english" || o.value === "all"
                       ? t(o.label)
                       : t("{lang} (translations only)", {
-                          lang: t(o.label),
+                          lang: t(o.value),
                         }),
                 }))}
                 selectedOption={prefs.mod_language ?? "english"}

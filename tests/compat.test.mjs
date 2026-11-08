@@ -241,7 +241,7 @@ test("its own mod page says so before the download", () => {
 test("the mod page renders each note's own heading, not a hardcoded one", () => {
   const mod = readFileSync("src/ModDetailPage.tsx", "utf8");
   assert.match(mod, /compatHint\.hint/, "must render the hint text");
-  assert.match(mod, /compatHint\.label \?\? t\("Linux note"\)/);
+  assert.match(mod, /t\(compatHint\.label \?\? "Linux note"\)/);
   assert.match(mod, /compatHint\.icon \?\? "🐧"/);
 });
 
@@ -625,7 +625,7 @@ test("KCD2's Step 1 does not claim most mods need LuaDB", () => {
   const kcd2 = games.slice(games.indexOf("appId: 1771300"), games.indexOf("appId: 1623730"));
   assert.match(kcd2, /stepNote:\s*\n?\s*"Only some mods need LuaDB/);
   const index = readFileSync("src/index.tsx", "utf8");
-  assert.match(index, /game\.framework\.stepNote \?\?\s*t\("Most \{game\} mods require/);
+  assert.match(index, /game\.framework\.stepNote\s*\?\s*t\(game\.framework\.stepNote\)/);
 });
 
 // PR #48 follow-up: a proxy-dll mod's override is applied, merged into

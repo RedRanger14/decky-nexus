@@ -1,5 +1,6 @@
 // Shared update-scan logic: the QAM badge and the full-screen Updates
 // page both use it (scoped to one game or across all).
+import { t } from "./i18n";
 import {
   checkFrameworkUpdate,
   checkUpdates,
@@ -77,11 +78,14 @@ export async function scanUpdates(
           name: game.framework.name,
           current: fw.newest_supported || "",
           framework: true,
-          blocked:
-            `Your game is ${fw.game_version}, and the newest ` +
-            `${game.framework.name} is for ${fw.newest_supported}. Mods will ` +
-            `not load until its author releases a build for your game. ` +
-            `Nothing to install yet - this is not something you can fix.`,
+          blocked: t(
+            "Your game is {game}, and the newest {framework} is for {newest}. Mods will not load until its author releases a build for your game. Nothing to install yet - this is not something you can fix.",
+            {
+              game: fw.game_version ?? "",
+              framework: game.framework.name,
+              newest: fw.newest_supported ?? "",
+            }
+          ),
         });
       } else if ("update_available" in fw && fw.update_available) {
         found.push({

@@ -171,11 +171,13 @@ const Row = memo(function Row({
   const off = !entry.enabled;
   const held = Boolean(entry.skipped) || entry.missing.length > 0 || !entry.on_disk;
   const note = entry.skipped
-    ? `Off: ${entry.skipped}`
+    ? t("Off: {reason}", { reason: entry.skipped })
     : entry.missing.length > 0
-    ? `Needs ${entry.missing.map(pluginTitle).join(", ")}, which is not installed`
+    ? t("Needs {names}, which is not installed", {
+        names: entry.missing.map(pluginTitle).join(", "),
+      })
     : !entry.on_disk
-    ? "Not installed any more"
+    ? t("Not installed any more")
     : lock
     ? lock
     : "";
@@ -955,10 +957,10 @@ export default function LoadOrderPage() {
                 title={
                   problems.length === 1
                     ? t("One plugin loads too early")
-                    : `${problems.length} plugins load too early`
+                    : t("{n} plugins load too early", { n: problems.length })
                 }
                 body={problemNote(problems)}
-                action={{ label: "Sort for me", onClick: sortForMe }}
+                action={{ label: t("Sort for me"), onClick: sortForMe }}
               />
             )}
 
@@ -986,7 +988,7 @@ export default function LoadOrderPage() {
                 )}
 
                 {masters.length > 0 && (
-                  <SectionHeading title={`Master files · ${masters.length}`} />
+                  <SectionHeading title={t("Master files") + ` · ${masters.length}`} />
                 )}
                 {masters.filter((e) => matchesFilter(e, filter)).map(renderRow)}
 
@@ -1057,7 +1059,7 @@ export default function LoadOrderPage() {
                           }`}
                     </div>
                     <div style={{ fontSize: "13px", opacity: 0.85, marginTop: "14px", lineHeight: 1.5 }}>
-                      {CARRY_HINT}
+                      {t(CARRY_HINT)}
                     </div>
                     {wall && (
                       <div
@@ -1135,7 +1137,9 @@ export default function LoadOrderPage() {
                             .map((d) => pluginTitle(d.name))
                             .join(", ")}
                           {dependentsOf(ordered, inspected.name).length > 6
-                            ? ` and ${dependentsOf(ordered, inspected.name).length - 6} more`
+                            ? t(" and {n} more", {
+                                n: dependentsOf(ordered, inspected.name).length - 6,
+                              })
                             : ""}
                         </div>
                       </div>
@@ -1163,7 +1167,7 @@ export default function LoadOrderPage() {
                         <FaExternalLinkAlt size={11} /> {" "}{t("Mod page")}</DialogButton>
                     )}
                     <div style={{ fontSize: "12px", opacity: 0.6, marginTop: "14px", lineHeight: 1.5 }}>
-                      {IDLE_HINT}
+                      {t(IDLE_HINT)}
                     </div>
                   </>
                 ) : (
@@ -1172,7 +1176,7 @@ export default function LoadOrderPage() {
                     <div style={{ fontSize: "13px", opacity: 0.85, marginTop: "8px", lineHeight: 1.55 }}>
                       {t("Mods load from the top down. If two of them change the same thing, the one lower in the list wins.")}</div>
                     <div style={{ fontSize: "13px", opacity: 0.85, marginTop: "10px", lineHeight: 1.55 }}>
-                      {IDLE_HINT} {" "}{t("A plugin can't be moved above something it needs, and the page tells you when you bump into that.")}</div>
+                      {t(IDLE_HINT)} {" "}{t("A plugin can't be moved above something it needs, and the page tells you when you bump into that.")}</div>
                   </>
                 )}
               </Focusable>
