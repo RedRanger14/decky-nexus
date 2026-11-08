@@ -461,7 +461,7 @@ export default function LoadOrderPage() {
     if (from < 0) {
       toaster.toast({
         title: t("Switch it on first"),
-        body: `${pluginTitle(name)} is off, so it has no place in the order yet.`,
+        body: t("{name} is off, so it has no place in the order yet.", { name: pluginTitle(name) }),
       });
       return;
     }
@@ -641,7 +641,7 @@ export default function LoadOrderPage() {
       if (!e?.mod_id) {
         toaster.toast({
           title: t("No mod page for this one"),
-          body: `${pluginTitle(name)} was not installed by this plugin, so there is nothing to open.`,
+          body: t("{name} was not installed by this plugin, so there is nothing to open.", { name: pluginTitle(name) }),
         });
         return;
       }

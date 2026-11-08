@@ -363,12 +363,12 @@ export function ModDetailPage() {
         );
         if (result.needs_choice) {
           toaster.toast({
-            title: `${req.modName}: choose manually`,
+            title: t("{name}: choose manually", { name: req.modName }),
             body: t("This one offers versions - open its page to pick"),
           });
         } else if (!result.ok) {
           toaster.toast({
-            title: `${req.modName} failed`,
+            title: t("{name} failed", { name: req.modName }),
             body: result.error ?? "",
           });
         }
@@ -376,7 +376,7 @@ export function ModDetailPage() {
       refreshInstalled(sel);
       toaster.toast({
         title: t("Required mods done"),
-        body: `${missing.length} processed - check the chips`,
+        body: t("{n} processed - check the chips", { n: missing.length }),
       });
     } finally {
       setReqBatchBusy(false);
@@ -495,7 +495,7 @@ export function ModDetailPage() {
         refreshInstalled(sel);
         setStale(result.warning);
         toaster.toast({
-          title: `${mod.name} installed`,
+          title: t("{name} installed", { name: mod.name }),
           body: result.injector
             ? "ReShade launch options set - see the note on this page"
             : "Preset installed - see the note on this page",
@@ -511,7 +511,7 @@ export function ModDetailPage() {
         refreshInstalled(sel);
         setStale(result.warning);
         toaster.toast({
-          title: `${mod.name} installed, switched off`,
+          title: t("{name} installed, switched off", { name: mod.name }),
           body: t("Built for an older patch - see the mod page"),
         });
       } else if (result.ok) {
@@ -1246,8 +1246,8 @@ export function ModDetailPage() {
             onClick={() =>
               showModal(
                 <ConfirmModal
-                  strTitle={`Uninstall ${mod.name}?`}
-                  strDescription={`This deletes the "${installedCopy.folder}" folder from the game. You can reinstall it at any time.`}
+                  strTitle={t("Uninstall {name}?", { name: mod.name })}
+                  strDescription={t("This deletes the \"{folder}\" folder from the game. You can reinstall it at any time.", { folder: installedCopy.folder })}
                   strOKButtonText={t("Uninstall")}
                   bDestructiveWarning={true}
                   onOK={async () => {

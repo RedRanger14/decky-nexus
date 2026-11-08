@@ -117,7 +117,7 @@ export function UpdatesPage() {
       if (result.ok) {
         setPending((prev) => prev?.filter((p) => p !== u));
         toaster.toast({
-          title: `${u.name} updated`,
+          title: t("{name} updated", { name: u.name }),
           body:
             "matched_game_version" in result && result.matched_game_version
               ? `Now the build for game ${result.matched_game_version}`
@@ -126,7 +126,7 @@ export function UpdatesPage() {
         return true;
       }
       toaster.toast({
-        title: `${u.name} update failed`,
+        title: t("{name} update failed", { name: u.name }),
         body: result.error ?? "Unknown error",
       });
       return false;
@@ -164,7 +164,7 @@ export function UpdatesPage() {
       });
     }
     toaster.toast({
-      title: `${u.name} update failed`,
+      title: t("{name} update failed", { name: u.name }),
       body: result.error ?? "Unknown error - check the mod's page",
     });
     return false;
@@ -196,7 +196,10 @@ export function UpdatesPage() {
       toaster.toast(
         failed === 0 && ok > 0
           ? {
-              title: `${ok} update${ok === 1 ? "" : "s"} applied`,
+              title: t("{n} update{fs} applied", {
+                n: ok,
+                fs: ok === 1 ? "" : "s",
+              }),
               body: t("Restart affected games to load them"),
             }
           : {

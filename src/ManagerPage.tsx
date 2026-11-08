@@ -488,7 +488,7 @@ export function ManagerPage() {
   ) => {
     showModal(
       <ConfirmModal
-        strTitle={`Uninstall ${title}?`}
+        strTitle={t("Uninstall {name}?", { name: title })}
         strDescription={
           `Removes the ${memberCount} mods this collection installed. ` +
           `Mods you installed yourself (or via another collection) stay.`
@@ -506,8 +506,8 @@ export function ManagerPage() {
           toaster.toast(
             result.ok
               ? {
-                  title: `${title} uninstalled`,
-                  body: `${result.removed ?? 0} mods removed`,
+                  title: t("{name} uninstalled", { name: title }),
+                  body: t("{n} mods removed", { n: result.removed ?? 0 }),
                 }
               : { title: t("Uninstall failed"), body: result.error ?? "" }
           );
@@ -520,7 +520,7 @@ export function ManagerPage() {
   const remove = (game: SupportedGame, mod: InstalledMod) => {
     showModal(
       <ConfirmModal
-        strTitle={`Uninstall ${mod.name ?? mod.folder}?`}
+        strTitle={t("Uninstall {name}?", { name: mod.name ?? mod.folder })}
         strDescription={t("You can reinstall it from the store at any time.")}
         strOKButtonText={t("Uninstall")}
         bDestructiveWarning={true}

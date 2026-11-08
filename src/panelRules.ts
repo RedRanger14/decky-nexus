@@ -233,16 +233,18 @@ export function fileConflictProblem(
 ): string | undefined {
   if (files <= 0 || !conflicts.length) return undefined;
   const worst = conflicts[0];
-  return (
-    `Some mods overwrote files they were meant to lose to — for example ` +
-    `"${worst.actual}" replaced ${worst.files.toLocaleString()} file` +
-    `${worst.files === 1 ? "" : "s"} belonging to "${worst.intended}". ` +
-    `${files.toLocaleString()} file${files === 1 ? "" : "s"} across ` +
-    `${pairs} pair${pairs === 1 ? "" : "s"} of mods ended up in the wrong ` +
-    `order. This usually happens to mods that needed your choices during ` +
-    `install, because they finish last. Fixing it rewrites just those ` +
-    `files from the mod that should own them, leaving everything else ` +
-    `alone.`
+  return tr(
+    "Some mods overwrote files they were meant to lose to — for example \"{actual}\" replaced {files} file{fs} belonging to \"{intended}\". {total} file{ts} across {pairs} pair{ps} of mods ended up in the wrong order. This usually happens to mods that needed your choices during install, because they finish last. Fixing it rewrites just those files from the mod that should own them, leaving everything else alone.",
+    {
+      actual: worst.actual,
+      files: worst.files.toLocaleString(),
+      fs: worst.files === 1 ? "" : "s",
+      intended: worst.intended,
+      total: files.toLocaleString(),
+      ts: files === 1 ? "" : "s",
+      pairs,
+      ps: pairs === 1 ? "" : "s",
+    }
   );
 }
 
@@ -268,11 +270,13 @@ export function ghostPluginProblem(
     .map((n) => n.replace(/\.es[lmp]$/i, ""))
     .join(", ");
   return (
-    `${count} mod${count === 1 ? " is" : "s are"} switched on but ` +
-    `${count === 1 ? "is" : "are"} not installed` +
+    (count === 1
+      ? tr("1 mod is switched on but is not installed")
+      : tr("{n} mods are switched on but are not installed", { n: count })) +
     (shown ? ` (${shown})` : "") +
-    `. Usually left behind by an uninstall. Clearing them is safe — they ` +
-    `cannot load either way, so nothing about the game changes.`
+    (count === 1
+      ? tr(". Usually left behind by an uninstall. Clearing it is safe — it cannot load either way, so nothing about the game changes.")
+      : tr(". Usually left behind by an uninstall. Clearing them is safe — they cannot load either way, so nothing about the game changes."))
   );
 }
 
@@ -296,20 +300,29 @@ export function failingProblem(
   const one = names.length === 1;
   const shown = names.slice(0, 2).join(", ");
   const rest = names.length - 2;
-  const who = `${shown}${rest > 0 ? ` and ${rest} more` : ""}`;
+  const who = `${shown}${rest > 0 ? tr(" and {n} more", { n: rest }) : ""}`;
   const kept = held.filter(Boolean);
-  return (
-    `The game reported errors from ${who}. That normally means ` +
-    `${one ? "it has" : "they have"} not been updated for this version of ` +
-    `the game. Switching ${one ? "it" : "them"} off leaves the rest of ` +
-    `your mods alone, and you can switch ${one ? "it" : "them"} back on ` +
-    `once ${one ? "an update arrives" : "updates arrive"}.` +
-    (kept.length
-      ? ` ${kept.slice(0, 2).join(" and ")} also reported errors but ` +
-        `${kept.length === 1 ? "is" : "are"} left on — your other mods ` +
-        `need ${kept.length === 1 ? "it" : "them"}.`
-      : "")
-  );
+  const base = one
+    ? tr(
+        "The game reported errors from {who}. That normally means it has not been updated for this version of the game. Switching it off leaves the rest of your mods alone, and you can switch it back on once an update arrives.",
+        { who }
+      )
+    : tr(
+        "The game reported errors from {who}. That normally means they have not been updated for this version of the game. Switching them off leaves the rest of your mods alone, and you can switch them back on once updates arrive.",
+        { who }
+      );
+  const keptNote = kept.length
+    ? kept.length === 1
+      ? tr(
+          " {names} also reported errors but is left on — your other mods need it.",
+          { names: kept.slice(0, 2).join(tr(" and ")) }
+        )
+      : tr(
+          " {names} also reported errors but are left on — your other mods need them.",
+          { names: kept.slice(0, 2).join(tr(" and ")) }
+        )
+    : "";
+  return base + keptNote;
 }
 
 /** The warning on a mod's own page when we have watched that exact version
@@ -321,12 +334,14 @@ export function failingProblem(
  */
 export function knownBrokenNote(version: string): string {
   const v = (version || "").trim();
-  return (
-    `This ${v ? `version (${v})` : "mod"} stopped the game running the ` +
-    `last time it was installed — it needs an update for the version of the ` +
-    `game you have. You can still install it; it will be switched off until ` +
-    `you turn it on.`
-  );
+  return v
+    ? tr(
+        "This version ({v}) stopped the game running the last time it was installed — it needs an update for the version of the game you have. You can still install it; it will be switched off until you turn it on.",
+        { v }
+      )
+    : tr(
+        "This mod stopped the game running the last time it was installed — it needs an update for the version of the game you have. You can still install it; it will be switched off until you turn it on."
+      );
 }
 
 /** Whether an install error means Nexus will not serve the mod at all.
@@ -396,15 +411,16 @@ export function unavailableNote(names: string[]): string {
   const one = gone.length === 1;
   const shown = gone.slice(0, 3).join(", ");
   const rest = gone.length - 3;
-  return (
-    `${shown}${rest > 0 ? ` and ${rest} more` : ""} ` +
-    `${one ? "is" : "are"} no longer available on Nexus — ` +
-    `${one ? "its author has" : "their authors have"} removed ` +
-    `${one ? "it" : "them"}, or Nexus is reviewing ` +
-    `${one ? "it" : "them"}. Nothing to fix: the collection lists ` +
-    `${one ? "it" : "them"} but cannot supply ` +
-    `${one ? "it" : "them"}, and the rest installed normally.`
-  );
+  const who = `${shown}${rest > 0 ? tr(" and {n} more", { n: rest }) : ""}`;
+  return one
+    ? tr(
+        "{names} is no longer available on Nexus — its author has removed it, or Nexus is reviewing it. Nothing to fix: the collection lists it but cannot supply it, and the rest installed normally.",
+        { names: who }
+      )
+    : tr(
+        "{names} are no longer available on Nexus — their authors have removed them, or Nexus is reviewing them. Nothing to fix: the collection lists them but cannot supply them, and the rest installed normally.",
+        { names: who }
+      );
 }
 
 /** Numbers for the framework setup steps, given which of them exist.
@@ -457,16 +473,21 @@ export function installedDepsNote(
   const one = kept.length === 1;
   const shown = kept
     .slice(0, 2)
-    .map((d) => (d.for ? `${d.name} for ${d.for}` : d.name))
+    .map((d) =>
+      d.for ? tr("{name} for {target}", { name: d.name, target: d.for }) : d.name
+    )
     .join(", ");
   const rest = kept.length - 2;
-  return (
-    `Installed ${shown}${rest > 0 ? ` and ${rest} more` : ""}. ` +
-    `${one ? "That mod needs it" : "Those mods need them"} and ` +
-    `${one ? "it was" : "they were"} missing, which is why ` +
-    `${one ? "it" : "they"} did not load. Restart the game and ` +
-    `${one ? "it" : "they"} should work.`
-  );
+  const who = `${shown}${rest > 0 ? tr(" and {n} more", { n: rest }) : ""}`;
+  return one
+    ? tr(
+        "Installed {names}. That mod needs it and it was missing, which is why it did not load. Restart the game and it should work.",
+        { names: who }
+      )
+    : tr(
+        "Installed {names}. Those mods need them and they were missing, which is why they did not load. Restart the game and they should work.",
+        { names: who }
+      );
 }
 
 /** The Health Check page's headline: an answer before any detail.
@@ -552,13 +573,18 @@ export function directNote(names: string[]): string {
   const got = names.filter(Boolean);
   if (!got.length) return "";
   const one = got.length === 1;
-  return (
-    `Also installed ${got.slice(0, 3).join(", ")}` +
-    `${got.length > 3 ? ` and ${got.length - 3} more` : ""}, ` +
-    `which this collection links to directly rather than hosting on Nexus. ` +
-    `${one ? "It was" : "They were"} checked against the fingerprint the ` +
-    `collection publishes.`
-  );
+  const who =
+    got.slice(0, 3).join(", ") +
+    (got.length > 3 ? tr(" and {n} more", { n: got.length - 3 }) : "");
+  return one
+    ? tr(
+        "Also installed {names}, which this collection links to directly rather than hosting on Nexus. It was checked against the fingerprint the collection publishes.",
+        { names: who }
+      )
+    : tr(
+        "Also installed {names}, which this collection links to directly rather than hosting on Nexus. They were checked against the fingerprint the collection publishes.",
+        { names: who }
+      );
 }
 
 /** A plain readout of what the game itself reported last run.
@@ -633,15 +659,24 @@ export function updatedNote(
   const one = kept.length === 1;
   const shown = kept
     .slice(0, 2)
-    .map((u) => `${u.name} to ${u.to || "the newest version"}`)
+    .map((u) =>
+      tr("{name} to {version}", {
+        name: u.name,
+        version: u.to || tr("the newest version"),
+      })
+    )
     .join(", ");
   const rest = kept.length - 2;
-  return (
-    `Updated ${shown}${rest > 0 ? ` and ${rest} more` : ""}. ` +
-    `${one ? "It was" : "They were"} out of date for the version of the ` +
-    `game you have, and other mods need ${one ? "it" : "them"}, so ` +
-    `updating was the fix rather than switching ${one ? "it" : "them"} off.`
-  );
+  const who = `${shown}${rest > 0 ? tr(" and {n} more", { n: rest }) : ""}`;
+  return one
+    ? tr(
+        "Updated {names}. It was out of date for the version of the game you have, and other mods need it, so updating was the fix rather than switching it off.",
+        { names: who }
+      )
+    : tr(
+        "Updated {names}. They were out of date for the version of the game you have, and other mods need them, so updating was the fix rather than switching them off.",
+        { names: who }
+      );
 }
 
 /** What the collection page says about mods it switched off before the
@@ -658,14 +693,16 @@ export function preDisabledNote(names: string[]): string {
   const one = off.length === 1;
   const shown = off.slice(0, 3).join(", ");
   const rest = off.length - 3;
-  return (
-    `Ready to play. ${shown}${rest > 0 ? ` and ${rest} more` : ""} ` +
-    `${one ? "was" : "were"} left switched off — ${one ? "it does" : "they do"} ` +
-    `not work with the version of the game you have, and the game will not ` +
-    `start with ${one ? "it" : "them"} on. ${one ? "It is" : "They are"} ` +
-    `still installed, so ${one ? "it" : "they"} can be switched on in ` +
-    `Installed mods when ${one ? "an update arrives" : "updates arrive"}.`
-  );
+  const who = `${shown}${rest > 0 ? tr(" and {n} more", { n: rest }) : ""}`;
+  return one
+    ? tr(
+        "Ready to play. {names} was left switched off — it does not work with the version of the game you have, and the game will not start with it on. It is still installed, so it can be switched on in Installed mods when an update arrives.",
+        { names: who }
+      )
+    : tr(
+        "Ready to play. {names} were left switched off — they do not work with the version of the game you have, and the game will not start with them on. They are still installed, so they can be switched on in Installed mods when updates arrive.",
+        { names: who }
+      );
 }
 
 /** What the collection page says about mods it installed switched off,
@@ -683,11 +720,21 @@ export function autoOffNote(
   const off = items.filter((i) => i.name);
   if (!off.length) return "";
   const one = off.length === 1;
-  const parts = off.map((i) => `${i.name}: ${i.reason}`);
+  const parts = off.map((i) =>
+    tr("{name}: {reason}", { name: i.name, reason: i.reason })
+  );
   return (
-    `${one ? "One mod was" : `${off.length} mods were`} installed but ` +
-    `left switched off. ${parts.join(" ")} My Mods can switch ` +
-    `${one ? "it" : "them"} back on.`
+    (one
+      ? tr("One mod was installed but left switched off.")
+      : tr("{n} mods were installed but left switched off.", {
+          n: off.length,
+        })) +
+    " " +
+    parts.join(" ") +
+    " " +
+    (one
+      ? tr("My Mods can switch it back on.")
+      : tr("My Mods can switch them back on."))
   );
 }
 
@@ -708,17 +755,9 @@ export function collectionCapacityWarning(
   cap: number
 ): string | undefined {
   if (!cap || !mods || mods <= cap) return undefined;
-  return (
-    `This collection lists ${mods} mods, and this device can load about ` +
-    `${cap} at once before the game runs out of graphics memory while it ` +
-    `starts. Roughly ${mods - cap} of them will be installed switched off, ` +
-    `taken from the end of the collection's own order, and mods needing ` +
-    `the BG3 Script Extender arrive switched off as well because it cannot ` +
-    `run on the Linux build of the game. Everything still downloads and ` +
-    `installs: to use one that is off, switch it on in My Mods and switch ` +
-    `another off. The limit was measured on a Legion Go 2; a device with ` +
-    `more graphics memory may load more, and the Nexus Mods panel has a ` +
-    `Mod limit control to raise or remove it.`
+  return tr(
+    "This collection lists {mods} mods, and this device can load about {cap} at once before the game runs out of graphics memory while it starts. Roughly {off} of them will be installed switched off, taken from the end of the collection's own order, and mods needing the BG3 Script Extender arrive switched off as well because it cannot run on the Linux build of the game. Everything still downloads and installs: to use one that is off, switch it on in My Mods and switch another off. The limit was measured on a Legion Go 2; a device with more graphics memory may load more, and the Nexus Mods panel has a Mod limit control to raise or remove it.",
+    { mods, cap, off: mods - cap }
   );
 }
 
@@ -737,12 +776,14 @@ export function bg3ModLimitOptions(
   const auto = source === "custom" || source === "off" ? undefined : cap;
   const autoLabel =
     auto === undefined
-      ? "Automatic"
-      : `Automatic (${auto}, ${
-          source === "measured"
-            ? "measured on this device"
-            : "measured on a Legion Go 2"
-        })`;
+      ? tr("Automatic")
+      : tr("Automatic ({n}, {source})", {
+          n: auto,
+          source:
+            source === "measured"
+              ? tr("measured on this device")
+              : tr("measured on a Legion Go 2"),
+        });
   const steps = [...BG3_MOD_LIMIT_STEPS];
   if (source === "custom" && cap > 0 && !steps.includes(cap)) {
     steps.push(cap);
@@ -750,8 +791,8 @@ export function bg3ModLimitOptions(
   }
   return [
     { data: -1, label: autoLabel },
-    ...steps.map((n) => ({ data: n, label: `${n} mods` })),
-    { data: 0, label: "No limit" },
+    ...steps.map((n) => ({ data: n, label: tr("{n} mods", { n }) })),
+    { data: 0, label: tr("No limit") },
   ];
 }
 
@@ -772,30 +813,33 @@ export function bg3ModLimitNote(
   source: "measured" | "default" | "custom" | "off" | undefined,
   total: number
 ): string {
-  const loaded = `${total} mod${total === 1 ? "" : "s"} switched on`;
+  const loaded =
+    total === 1
+      ? tr("1 mod switched on")
+      : tr("{n} mods switched on", { n: total });
   if (source === "off" || !cap) {
-    return (
-      `${loaded}, no limit. If the game dies part-way through its loading ` +
-      `screen, that is the graphics memory running out: pick a limit and ` +
-      `the mods at the end of the install order are switched off to fit.`
+    return tr(
+      "{loaded}, no limit. If the game dies part-way through its loading screen, that is the graphics memory running out: pick a limit and the mods at the end of the install order are switched off to fit.",
+      { loaded }
     );
   }
   const room = Math.max(0, cap - total);
-  const fit = `${loaded}, room for ${room} more.`;
+  const fit = tr("{loaded}, room for {n} more.", { loaded, n: room });
   if (source === "custom") {
-    return `${fit} You set this limit. Automatic puts the device's own number back.`;
-  }
-  if (source === "measured") {
-    return (
-      `${fit} ${cap} was measured on this device: every launch reached ` +
-      `the menu at ${cap}, and 600 failed four times in ten.`
+    return tr(
+      "{fit} You set this limit. Automatic puts the device's own number back.",
+      { fit }
     );
   }
-  return (
-    `${fit} ${cap} was measured on a Legion Go 2 with 512MB of graphics ` +
-    `memory, not on this device. A device with more may load more: raise ` +
-    `the limit and launch. If the game then dies while loading, this panel ` +
-    `puts your mods back and you can lower it again.`
+  if (source === "measured") {
+    return tr(
+      "{fit} {cap} was measured on this device: every launch reached the menu at {cap}, and 600 failed four times in ten.",
+      { fit, cap }
+    );
+  }
+  return tr(
+    "{fit} {cap} was measured on a Legion Go 2 with 512MB of graphics memory, not on this device. A device with more may load more: raise the limit and launch. If the game then dies while loading, this panel puts your mods back and you can lower it again.",
+    { fit, cap }
   );
 }
 
@@ -809,12 +853,14 @@ export function autoOffSummary(
   const off = items.filter((i) => i.name);
   if (!off.length) return "";
   const one = off.length === 1;
-  return (
-    `${one ? "One mod was" : `${off.length} mods were`} installed but ` +
-    `left switched off. Select this note to see ` +
-    `${one ? "why" : "which and why"}. My Mods can switch ` +
-    `${one ? "it" : "them"} back on.`
-  );
+  return one
+    ? tr(
+        "One mod was installed but left switched off. Select this note to see why. My Mods can switch it back on."
+      )
+    : tr(
+        "{n} mods were installed but left switched off. Select this note to see which and why. My Mods can switch them back on.",
+        { n: off.length }
+      );
 }
 
 /** The switched-off mods grouped by reason for the opened list: the
@@ -828,7 +874,7 @@ export function autoOffGroups(
   const byReason = new Map<string, string[]>();
   for (const i of items) {
     if (!i.name) continue;
-    const r = i.reason || "No reason was recorded.";
+    const r = i.reason || tr("No reason was recorded.");
     const list = byReason.get(r);
     if (list) list.push(i.name);
     else byReason.set(r, [i.name]);
@@ -860,13 +906,16 @@ export function repairedNote(names: string[]): string {
   const one = off.length === 1;
   const shown = off.slice(0, 3).join(", ");
   const rest = off.length - 3;
-  return (
-    `${shown}${rest > 0 ? ` and ${rest} more` : ""} ` +
-    `${one ? "was" : "were"} switched off — the game could not run ` +
-    `${one ? "it" : "them"} and kept crashing. ${one ? "It is" : "They are"} ` +
-    `still installed, so you can switch ${one ? "it" : "them"} back on in ` +
-    `Installed mods once ${one ? "it has" : "they have"} been updated.`
-  );
+  const who = `${shown}${rest > 0 ? tr(" and {n} more", { n: rest }) : ""}`;
+  return one
+    ? tr(
+        "{names} was switched off — the game could not run it and kept crashing. It is still installed, so you can switch it back on in Installed mods once it has been updated.",
+        { names: who }
+      )
+    : tr(
+        "{names} were switched off — the game could not run them and kept crashing. They are still installed, so you can switch them back on in Installed mods once they have been updated.",
+        { names: who }
+      );
 }
 
 /** What the toast says after switching off the mods the log blamed.
@@ -884,14 +933,19 @@ export function disableFailingOutcome(
   const off = names.filter(Boolean);
   const kept = held.filter(Boolean);
   if (!off.length && !kept.length) {
-    return fallback || "Nothing matched an installed mod";
+    return fallback || tr("Nothing matched an installed mod");
   }
   const parts: string[] = [];
   if (off.length) parts.push(off.slice(0, 3).join(", "));
   if (kept.length) {
     parts.push(
-      `Left ${kept.slice(0, 2).join(", ")} on — your other mods need ` +
-        `${kept.length === 1 ? "it" : "them"}.`
+      kept.length === 1
+        ? tr("Left {names} on — your other mods need it.", {
+            names: kept.slice(0, 2).join(", "),
+          })
+        : tr("Left {names} on — your other mods need them.", {
+            names: kept.slice(0, 2).join(", "),
+          })
     );
   }
   return parts.join(" ");
@@ -925,20 +979,23 @@ export function slotPressure(
     const which = full > fullLimit ? "full" : "light";
     return {
       level: "over",
-      message:
-        `Too many mods for the game to load: ${
-          which === "full" ? full : light
-        } ${which} plugins against a hard limit of ${
-          which === "full" ? fullLimit : lightLimit
-        }. Some will silently not load. Turning off a few mods is the only fix.`,
+      message: tr(
+        "Too many mods for the game to load: {n} {kind} plugins against a hard limit of {limit}. Some will silently not load. Turning off a few mods is the only fix.",
+        {
+          n: which === "full" ? full : light,
+          kind: which === "full" ? tr("full") : tr("light"),
+          limit: which === "full" ? fullLimit : lightLimit,
+        }
+      ),
     };
   }
   if (full >= fullLimit * 0.95 || (hasLight && light >= lightLimit * 0.95)) {
     return {
       level: "near",
-      message:
-        `Close to the game's limit: ${full} of ${fullLimit} full plugin ` +
-        `slots used. A few more mods and the game stops loading them.`,
+      message: tr(
+        "Close to the game's limit: {n} of {limit} full plugin slots used. A few more mods and the game stops loading them.",
+        { n: full, limit: fullLimit }
+      ),
     };
   }
   return { level: "ok" };
@@ -1489,7 +1546,7 @@ export function pauseAllControl(
  */
 export function fitReportBody(body: string, budget = 1200): string {
   if (encodeURIComponent(body).length <= budget) return body;
-  const note = "\n\n_(log truncated to fit a GitHub link)_";
+  const note = "\n\n" + tr("_(log truncated to fit a GitHub link)_");
   const lines = body.split("\n");
   while (lines.length > 1) {
     lines.pop();
@@ -1531,7 +1588,7 @@ export function requirementSetupNotes(
   return (reqs ?? [])
     .filter((r) => (r.notes ?? "").trim() && INSTRUCTION.test(r.notes ?? ""))
     .map((r) => ({
-      modName: (r.modName ?? "").trim() || "This mod",
+      modName: (r.modName ?? "").trim() || tr("This mod"),
       notes: (r.notes ?? "").trim(),
     }));
 }
@@ -1708,17 +1765,21 @@ export function layoutSkipsNote(
   });
   if (named.every((n) => !n.detail)) {
     const one = skips.length === 1;
-    return (
-      `⏭ ${skips.length} file${one ? "" : "s"} skipped: ` +
-      named.map((n) => n.label).join(", ") +
-      `. The plugin could not tell where ${one ? "it goes" : "they go"} ` +
-      "on this device."
+    return tr(
+      "⏭ {n} file{fs} skipped: {names}. The plugin could not tell where {pronoun} on this device.",
+      {
+        n: skips.length,
+        fs: one ? "" : "s",
+        names: named.map((n) => n.label).join(", "),
+        pronoun: one ? tr("it goes") : tr("they go"),
+      }
     );
   }
-  return (
-    "⏭ Skipped " +
-    named.map((n) => (n.detail ? `${n.label}: ${n.detail}` : n.label)).join(" · ")
-  );
+  return tr("⏭ Skipped {names}", {
+    names: named
+      .map((n) => (n.detail ? `${n.label}: ${n.detail}` : n.label))
+      .join(" · "),
+  });
 }
 
 /** What to say once they are in. Named as loaders, because "framework"
@@ -1729,10 +1790,17 @@ export function loadersInstalledNote(
 ): { title: string; body: string } {
   const n = names.length;
   return {
-    title: `Installed ${n} mod loader${n === 1 ? "" : "s"} for ${gameName}`,
-    body:
-      `${names.join(", ")}. Mod loaders install differently from ordinary ` +
-      "mods, so they are done last. Without them none of the other mods load.",
+    title:
+      n === 1
+        ? tr("Installed 1 mod loader for {game}", { game: gameName })
+        : tr("Installed {n} mod loaders for {game}", {
+            n,
+            game: gameName,
+          }),
+    body: tr(
+      "{names}. Mod loaders install differently from ordinary mods, so they are done last. Without them none of the other mods load.",
+      { names: names.join(", ") }
+    ),
   };
 }
 
@@ -1793,10 +1861,13 @@ export function launchOptionsAppliedNote(
   gameName: string
 ): { title: string; body: string } {
   return {
-    title: `${gameName} will now start through ${frameworkName}`,
-    body:
-      "The collection installed the mod loader, so the launch command was " +
-      "set for you. Without it the game starts without any mods.",
+    title: tr("{game} will now start through {framework}", {
+      game: gameName,
+      framework: frameworkName,
+    }),
+    body: tr(
+      "The collection installed the mod loader, so the launch command was set for you. Without it the game starts without any mods."
+    ),
   };
 }
 

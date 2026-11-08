@@ -390,7 +390,7 @@ export function CollectionPage() {
       }
       toaster.toast({
         title: t("Could not read installed mods"),
-        body: `${String(e)}. The counts on this page may be wrong until it is reopened.`,
+        body: t("{error}. The counts on this page may be wrong until it is reopened.", { error: String(e) }),
       });
     });
   };
@@ -468,12 +468,16 @@ export function CollectionPage() {
       );
       if (r.ok) {
         toaster.toast({
-          title: `Fixed ${r.rewritten ?? 0} file${
-            (r.rewritten ?? 0) === 1 ? "" : "s"
-          }`,
+          title: t("Fixed {n} file{fs}", {
+            n: r.rewritten ?? 0,
+            fs: (r.rewritten ?? 0) === 1 ? "" : "s",
+          }),
           body: r.errors?.length
-            ? `${r.errors.length} could not be fixed`
-            : `From ${r.mods ?? 0} mod${(r.mods ?? 0) === 1 ? "" : "s"}`,
+            ? t("{n} could not be fixed", { n: r.errors.length })
+            : t("From {n} mod{fs}", {
+                n: r.mods ?? 0,
+                fs: (r.mods ?? 0) === 1 ? "" : "s",
+              }), 
         });
       } else {
         toaster.toast({ title: t("Could not fix"), body: r.error ?? "" });
@@ -578,8 +582,9 @@ export function CollectionPage() {
               done.push(fw.name);
             } else {
               toaster.toast({
-                title: `Could not install ${fw.name}`,
-                body: r.error ?? "The other mods will not load without it",
+                title: t("Could not install {name}", { name: fw.name }),
+                body:
+                  r.error ?? t("The other mods will not load without it"),
                 duration: 15000,
               });
             }
@@ -648,9 +653,10 @@ export function CollectionPage() {
       );
       if (bundles.ok && (bundles.installed ?? 0) > 0) {
         toaster.toast({
-          title: `${bundles.installed} bundled mod${
-            bundles.installed === 1 ? "" : "s"
-          } installed`,
+          title: t("{n} bundled mod{fs} installed", {
+            n: bundles.installed ?? 0,
+            fs: bundles.installed === 1 ? "" : "s",
+          }),
           body: (bundles.mods ?? []).join(", "),
         });
       }
@@ -733,10 +739,13 @@ export function CollectionPage() {
         );
         if (pl.ok && (pl.disabled ?? 0) > 0) {
           toaster.toast({
-            title: `Load order set to the collection's ${pl.total ?? 0}`,
-            body: `${pl.disabled} plugin${
-              pl.disabled === 1 ? "" : "s"
-            } the collection doesn't use were switched off`,
+            title: t("Load order set to the collection's {n}", {
+              n: pl.total ?? 0,
+            }),
+            body: t("{n} plugin{fs} the collection doesn't use were switched off", {
+              n: pl.disabled ?? 0,
+              fs: pl.disabled === 1 ? "" : "s",
+            }),
           });
         }
       } catch {
@@ -912,7 +921,7 @@ export function CollectionPage() {
         setEndorsed(true);
         toaster.toast({
           title: t("Collection endorsed!"),
-          body: `Thanks for supporting ${detail.author}`,
+          body: t("Thanks for supporting {author}", { author: detail.author }),
         });
       } else {
         toaster.toast({ title: t("Could not endorse"), body: r.error ?? "" });
@@ -1516,9 +1525,9 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               detail: result.error ?? "",
             });
             toaster.toast({
-              title: `${
-                archiveDisplayName(f.fileName) || f.modName
-              }: skipped`,
+              title: t("{name}: skipped", {
+                name: archiveDisplayName(f.fileName) || f.modName,
+              }),
               body: result.error ?? "",
             });
           } else if (result.unsupported_tool) {
@@ -1590,7 +1599,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               options: [],
             });
             toaster.toast({
-              title: `${f.modName}: conflict - skipped`,
+              title: t("{name}: conflict - skipped", { name: f.modName }),
               body: result.error ?? "",
             });
           } else if (isGoneFromNexus(result.error)) {
@@ -1623,7 +1632,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
             setCollectionRow(f.fileId, "failed");
             updateDownload(f.modId, "error", 0);
             toaster.toast({
-              title: `${f.modName} failed`,
+              title: t("{name} failed", { name: f.modName }),
               body: result.error ?? "",
             });
           }
@@ -1632,7 +1641,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
           setCollectionRow(f.fileId, "failed");
           updateDownload(f.modId, "error", 0);
           toaster.toast({
-            title: `${f.modName} failed`,
+            title: t("{name} failed", { name: f.modName }),
             body: String(e),
           });
         }
@@ -1842,7 +1851,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       if (result.nothing_staged) {
         updateDownload(item.mod_id, "done", 100);
         toaster.toast({
-          title: `${item.mod_name}: nothing to install`,
+          title: t("{name}: nothing to install", { name: item.mod_name }),
           // The backend says which nothing: options with no files picked,
           // or options whose files are missing from the archive.
           body: result.error ?? "Skipped - see the note on the collection",
@@ -1851,13 +1860,13 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       }
       updateDownload(item.mod_id, "error", 0);
       toaster.toast({
-        title: `${item.mod_name} failed`,
+        title: t("{name} failed", { name: item.mod_name }),
         body: result.error ?? "",
       });
       return "failed";
     } catch (e) {
       updateDownload(item.mod_id, "error", 0);
-      toaster.toast({ title: `${item.mod_name} failed`, body: String(e) });
+      toaster.toast({ title: t("{name} failed", { name: item.mod_name }), body: String(e) });
       return "failed";
     } finally {
       setFinishingFileId(undefined);
@@ -1938,7 +1947,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
   const onUninstallCollection = () => {
     showModal(
       <ConfirmModal
-        strTitle={`Uninstall ${collection.name}?`}
+        strTitle={t("Uninstall {name}?", { name: collection.name })}
         strDescription={t("Removes the mods this collection installed. Mods you installed yourself (or via another collection) stay.")}
         strOKButtonText={t("Uninstall collection")}
         bDestructiveWarning={true}
@@ -1953,8 +1962,8 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
           toaster.toast(
             result.ok
               ? {
-                  title: `${collection.name} uninstalled`,
-                  body: `${result.removed ?? 0} mods removed`,
+                  title: t("{name} uninstalled", { name: collection.name }),
+                  body: t("{n} mods removed", { n: result.removed ?? 0 }),
                 }
               : { title: t("Uninstall failed"), body: result.error ?? "" }
           );

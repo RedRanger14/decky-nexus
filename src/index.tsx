@@ -393,7 +393,7 @@ function LaunchOptionsModal({
         {t("Set automatically")}</ButtonItem>
       <ButtonItem
         layout="below"
-        description={`Then: ${gameName} page → gear icon → Properties → Launch Options → paste`}
+        description={t("Then: {game} page → gear icon → Properties → Launch Options → paste", { game: gameName })}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(options);
@@ -498,27 +498,40 @@ function ResetGameRow({
         result.ok
           ? left > 0
             ? {
-                title: `${game.displayName} is not fully vanilla`,
-                body:
-                  `${result.removed ?? 0} mods removed, but ${left} file` +
-                  `${left === 1 ? "" : "s"} could not be traced to a mod and ` +
-                  "are still there. Verify the game files in Steam to be sure.",
+                title: t("{game} is not fully vanilla", {
+                  game: game.displayName,
+                }),
+                body: t(
+                  "{removed} mods removed, but {left} file{fs} could not be traced to a mod and are still there. Verify the game files in Steam to be sure.",
+                  {
+                    removed: result.removed ?? 0,
+                    left,
+                    fs: left === 1 ? "" : "s",
+                  }
+                ),
                 duration: 20000,
               }
             : {
-                title: `${game.displayName} reset to vanilla`,
+                title: t("{game} reset to vanilla", {
+                  game: game.displayName,
+                }),
                 body:
-                  `${result.removed ?? 0} mods removed` +
+                  t("{removed} mods removed", {
+                    removed: result.removed ?? 0,
+                  }) +
                   ((result.swept ?? 0) > 0
-                    ? `, ${result.swept} leftover file${
-                        result.swept === 1 ? "" : "s"
-                      } swept`
+                    ? t(", {n} leftover file{fs} swept", {
+                        n: result.swept ?? 0,
+                        fs: result.swept === 1 ? "" : "s",
+                      })
                     : "") +
                   ((result.errors?.length ?? 0) > 0
-                    ? ` · ${result.errors!.length} items need a look`
+                    ? t(" · {n} items need a look", {
+                        n: result.errors!.length,
+                      })
                     : result.verified
-                    ? " · verified clean"
-                    : " · ready for a clean start"),
+                    ? t(" · verified clean")
+                    : t(" · ready for a clean start")),
               }
           : { title: t("Reset failed"), body: result.error ?? "" }
       );
@@ -543,7 +556,7 @@ function ResetGameRow({
         onClick={() =>
           showModal(
             <ConfirmModal
-              strTitle={`Reset ${game.displayName} to vanilla?`}
+              strTitle={t("Reset {game} to vanilla?", { game: game.displayName })}
               strDescription={
                 `Every mod installed by this plugin is uninstalled, ` +
                 `${game.framework?.name ?? "the mod loader"} is removed, ` +
@@ -816,7 +829,7 @@ function CurrentGameSection() {
     });
     if (wait) {
       toaster.toast({
-        title: `Starting ${game.displayName}`,
+        title: t("Starting {game}", { game: game.displayName }),
         body: wait,
         duration: 15000,
       });
@@ -855,15 +868,18 @@ function CurrentGameSection() {
       ok
         ? {
             title: t("Launch command removed"),
-            body: `${game.displayName} will start without ${
-              game.framework?.name ?? "the mod loader"
-            }`,
+            body: t("{game} will start without {loader}", {
+              game: game.displayName,
+              loader: game.framework?.name ?? t("the mod loader"),
+            }),
           }
         : {
             title: t("Could not clear launch command"),
             body:
               result.error ??
-              `${game.displayName} page → Properties → Launch Options → clear`,
+              t("{game} page → Properties → Launch Options → clear", {
+                game: game.displayName,
+              }),
           }
     );
     if (ok) {
@@ -975,13 +991,18 @@ function CurrentGameSection() {
         // their game on purpose is exactly the user who checks this.
         const matched =
           "matched_game_version" in result && result.matched_game_version
-            ? ` for game ${result.matched_game_version}`
-            : "";
+            ? result.matched_game_version
+            : undefined;
         toaster.toast({
-          title: `${game.framework.name} installed${matched}`,
+          title: matched
+            ? t("{name} installed for game {version}", {
+                name: game.framework.name,
+                version: matched,
+              })
+            : t("{name} installed", { name: game.framework.name }),
           body: game.framework.launchOptionsTemplate
-            ? "Step 2: set the launch command"
-            : "That's the setup done — mods will load next time you play",
+            ? t("Step 2: set the launch command")
+            : t("That's the setup done — mods will load next time you play"),
         });
         if (game.framework.launchOptionsTemplate && installPath) {
           showModal(
@@ -1000,8 +1021,10 @@ function CurrentGameSection() {
         }
       } else {
         toaster.toast({
-          title: `${game.framework?.name} install failed`,
-          body: result.error ?? "Unknown error",
+          title: t("{name} install failed", {
+            name: game.framework?.name ?? "",
+          }),
+          body: result.error ?? t("Unknown error"),
         });
       }
     } finally {
@@ -1056,19 +1079,22 @@ function CurrentGameSection() {
         if (rt.ok && rt.updated) {
           toaster.toast({
             title: t("VC++ runtime updated"),
-            body: `${rt.previous ?? "old"} → ${rt.version} (needed by CET and RED4ext)`,
+            body: t("{from} → {to} (needed by CET and RED4ext)", {
+              from: rt.previous ?? t("old"),
+              to: rt.version ?? "",
+            }),
           });
         } else if (!rt.ok) {
           toaster.toast({
             title: t("VC++ runtime check failed"),
-            body: rt.error ?? "Frameworks may not load in-game",
+            body: rt.error ?? t("Frameworks may not load in-game"),
           });
         }
       }
       for (let i = 0; i < queue.length; i++) {
         const fw = queue[i];
         const isMain = fw.name === game.framework.name;
-        setFwProgress(`Installing ${fw.name} (${i + 1}/${queue.length})…`);
+        setFwProgress(t("Installing {name} ({i}/{n})…", { name: fw.name, i: i + 1, n: queue.length }));
         // A loader that IS an ordinary mod (FF12's two) goes through the
         // game's mod router, as the single-framework path already does.
         const result = fw.installAsMod
@@ -1090,8 +1116,8 @@ function CurrentGameSection() {
         if (!result.ok) {
           failed++;
           toaster.toast({
-            title: `${fw.name} install failed`,
-            body: result.error ?? "Unknown error",
+            title: t("{name} install failed", { name: fw.name }),
+            body: result.error ?? t("Unknown error"),
           });
         } else if (isMain && "install_path" in result && result.install_path) {
           mainInstallPath = result.install_path;
@@ -1110,7 +1136,7 @@ function CurrentGameSection() {
       }
       if (failed === 0) {
         toaster.toast({
-          title: `Frameworks installed (${queue.length})`,
+          title: t("Frameworks installed ({n})", { n: queue.length }),
           body: t("Step 2: set the launch command"),
         });
       }
@@ -1373,7 +1399,7 @@ function CurrentGameSection() {
           <ButtonItem
             label={t("⚠ Wrong game version for mods")}
             layout="below"
-            description={`Steam installed the native Linux version, which mod loaders can't hook. This switches ${game.displayName} to the Windows version via Proton - Steam will download it (your save syncs via Steam Cloud).`}
+            description={t("Steam installed the native Linux version, which mod loaders can't hook. This switches {game} to the Windows version via Proton - Steam will download it (your save syncs via Steam Cloud).", { game: game.displayName })}
             onClick={() => {
               const ok = setCompatTool(
                 game.appId,
@@ -1494,7 +1520,7 @@ function CurrentGameSection() {
                  Cyberpunk has five, so four of them were unreachable. */
               <>
                 <PanelSectionRow>
-                  <Field label={`Step ${fwSteps.install}`}>
+                  <Field label={t("Step {n}", { n: fwSteps.install })}>
                     {t("All")}{" "}{allFrameworks.length} {" "}{t("installed ✓")}</Field>
                 </PanelSectionRow>
                 {allFrameworks.map((f, i) => (
@@ -1520,32 +1546,41 @@ function CurrentGameSection() {
             ) : (
               <PanelSectionRow>
                 <ButtonItem
-                  label={`Step ${fwSteps.install}`}
+                  label={t("Step {n}", { n: fwSteps.install })}
                   layout="below"
                   disabled={frameworkBusy}
-                  description={`Installs everything ${game.displayName} mods need: ${missingFrameworks
-                    .map((f) => f.name)
-                    .join(", ")}. Each is downloaded from Nexus Mods so its author gets the download credit.${
-                    game.prefixRuntimeFix
-                      ? " Also updates the game's VC++ runtime (required on SteamOS)."
-                      : ""
-                  }`}
+                  description={
+                    t(
+                      "Installs everything {game} mods need: {frameworks}. Each is downloaded from Nexus Mods so its author gets the download credit.",
+                      {
+                        game: game.displayName,
+                        frameworks: missingFrameworks
+                          .map((f) => f.name)
+                          .join(", "),
+                      }
+                    ) +
+                    (game.prefixRuntimeFix
+                      ? t(
+                          " Also updates the game's VC++ runtime (required on SteamOS)."
+                        )
+                      : "")
+                  }
                   onClick={onInstallAllFrameworks}
                 >
                   {frameworkBusy
                     ? fwProgress ?? t("Installing…")
                     : missingFrameworks.length === allFrameworks.length
-                      ? `Install all frameworks (${allFrameworks.length})`
-                      : `Install remaining frameworks (${missingFrameworks.length})`}
+                      ? t("Install all frameworks ({n})", { n: allFrameworks.length })
+                      : t("Install remaining frameworks ({n})", { n: missingFrameworks.length })}
                 </ButtonItem>
               </PanelSectionRow>
             )
           ) : (
             <PanelSectionRow>
               {status.framework_installed ? (
-                <Field label={`Step ${fwSteps.install}`} childrenLayout="below">
+                <Field label={t("Step {n}", { n: fwSteps.install })} childrenLayout="below">
                   <EndorsableFrameworkRow
-                    text={`${game.framework.name} installed ✓`}
+                    text={t("{name} installed ✓", { name: game.framework.name })}
                     gameDomain={game.nexusDomain}
                     modId={game.framework.nexusModId}
                     modName={game.framework.name}
@@ -1553,15 +1588,22 @@ function CurrentGameSection() {
                 </Field>
               ) : (
                 <ButtonItem
-                  label={`Step ${fwSteps.install}`}
+                  label={t("Step {n}", { n: fwSteps.install })}
                   layout="below"
                   disabled={frameworkBusy || !frameworkInstallable(game.framework)}
-                  description={`${game.framework.stepNote ?? `Most ${game.displayName} mods require ${game.framework.name}.`} Downloads from Nexus Mods (author gets the credit).`}
+                  description={
+                    (game.framework.stepNote ??
+                      t("Most {game} mods require {name}.", {
+                        game: game.displayName,
+                        name: game.framework.name,
+                      })) +
+                    t(" Downloads from Nexus Mods (author gets the credit).")
+                  }
                   onClick={onInstallFramework}
                 >
                   {frameworkBusy
-                    ? `Installing ${game.framework.name}…`
-                    : `Install ${game.framework.name}`}
+                    ? t("Installing {name}…", { name: game.framework.name })
+                    : t("Install {name}", { name: game.framework.name })}
                 </ButtonItem>
               )}
             </PanelSectionRow>
@@ -1578,7 +1620,7 @@ function CurrentGameSection() {
             <PanelSectionRow>
               <div>
                 <Field
-                  label={`Step ${fwSteps.merge}`}
+                  label={t("Step {n}", { n: fwSteps.merge })}
                   childrenLayout="below"
                 >
                   {mergeOn === undefined
@@ -1724,14 +1766,14 @@ function CurrentGameSection() {
           {game.framework.launchOptionsTemplate && (
             <PanelSectionRow>
               {launchOptionsSet ? (
-                <Field label={`Step ${fwSteps.launch}`}>
+                <Field label={t("Step {n}", { n: fwSteps.launch })}>
                   {t("Launch command set ✓")}</Field>
               ) : (
                 <ButtonItem
-                  label={`Step ${fwSteps.launch}`}
+                  label={t("Step {n}", { n: fwSteps.launch })}
                   layout="below"
                   disabled={!status.framework_installed}
-                  description={`Needed for ${game.framework.name} to load mods`}
+                  description={t("Needed for {name} to load mods", { name: game.framework.name })}
                   onClick={openLaunchOptionsModal}
                 >
                   {t("Set launch command")}</ButtonItem>
@@ -1739,7 +1781,7 @@ function CurrentGameSection() {
             </PanelSectionRow>
           )}
           <PanelSectionRow>
-            <Field label={`Step ${fwSteps.browse}`} childrenLayout="below">
+            <Field label={t("Step {n}", { n: fwSteps.browse })} childrenLayout="below">
               <OrangeActionButton
                 onClick={() => {
                   setBrowseGame(game);
@@ -1753,7 +1795,7 @@ function CurrentGameSection() {
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
-              label={`Step ${fwSteps.play}`}
+              label={t("Step {n}", { n: fwSteps.play })}
               layout="below"
               description={t("Restarts are required for mods to take effect")}
               onClick={launchGame}
@@ -1778,7 +1820,7 @@ function CurrentGameSection() {
                 <ButtonItem
                   label={t("Step 1")}
                   layout="below"
-                  description={`${game.displayName}'s own launcher freezes on this device - this starts the game directly instead (and applies the config fixes mods need).`}
+                  description={t("{game}'s own launcher freezes on this device - this starts the game directly instead (and applies the config fixes mods need).", { game: game.displayName })}
                   onClick={async () => {
                     if (game.launcherBypass!.seedIni) {
                       await seedGameIni(
@@ -1827,18 +1869,18 @@ function CurrentGameSection() {
                   doesn't start. One tap writes it down. */}
               <PanelSectionRow>
                 {protonChosen || me3?.compat_tool ? (
-                  <Field label={`Step ${fwSteps.install}`}>
+                  <Field label={t("Step {n}", { n: fwSteps.install })}>
                     {t("Compatibility set ✓ (")}{protonChosen ?? me3?.compat_tool})
                   </Field>
                 ) : (
                   <ButtonItem
-                    label={`Step ${fwSteps.install}`}
+                    label={t("Step {n}", { n: fwSteps.install })}
                     layout="below"
                     disabled={me3?.protons?.length === 0}
                     description={
                       me3?.protons?.length === 0
                         ? t("No Proton version is installed on this device - install one from Steam's Library → Tools first.")
-                        : `Tells Steam which Proton to run ${game.displayName} with. The mod loader needs a named version; unmodded play is unaffected.`
+                        : t("Tells Steam which Proton to run {game} with. The mod loader needs a named version; unmodded play is unaffected.", { game: game.displayName })
                     }
                     onClick={async () => {
                       const tools = await getAvailableCompatTools(game.appId);
@@ -1846,14 +1888,18 @@ function CurrentGameSection() {
                       if (!pick || !setCompatTool(game.appId, pick.name)) {
                         toaster.toast({
                           title: t("Could not set compatibility"),
-                          body: `${game.displayName} → Properties → Compatibility → tick "Force the use of a specific Steam Play tool"`,
+                          body: t("{game} → Properties → Compatibility → tick \"Force the use of a specific Steam Play tool\"", { game: game.displayName }),
                         });
                         return;
                       }
                       setProtonChosen(pick.displayName || pick.name);
                       toaster.toast({
-                        title: `Compatibility set to ${pick.displayName}`,
-                        body: `${game.displayName} is ready for the mod loader`,
+                        title: t("Compatibility set to {name}", {
+                          name: pick.displayName,
+                        }),
+                        body: t("{game} is ready for the mod loader", {
+                          game: game.displayName,
+                        }),
                       });
                       // Steam writes config.vdf on its own schedule.
                       setTimeout(refreshStatus, 2000);
@@ -1876,8 +1922,14 @@ function CurrentGameSection() {
                       me3?.error
                         ? // Unpacked but won't execute: a green tick here
                           // would resurface as "the game won't start".
-                          `The mod loader is installed but won't run (${me3.error}). Reinstall it.`
-                        : `${game.displayName} mods load through me3, a mod loader that starts ${game.me3.gameExe} directly${game.me3.headlineMod ? ` - it's what ${game.me3.headlineMod} needs` : ""}. Your game files aren't modified.`
+                          t("The mod loader is installed but won't run ({error}). Reinstall it.", { error: me3.error })
+                        : t("{game} mods load through me3, a mod loader that starts {exe} directly{headline}. Your game files aren't modified.", {
+                            game: game.displayName,
+                            exe: game.me3.gameExe,
+                            headline: game.me3.headlineMod
+                              ? t(" - it's what {mod} needs", { mod: game.me3.headlineMod })
+                              : "",
+                          })
                     }
                     onClick={async () => {
                       setMe3Busy(true);
@@ -1891,7 +1943,7 @@ function CurrentGameSection() {
                               }
                             : {
                                 title: t("Could not install the mod loader"),
-                                body: r.error ?? "Check your connection",
+                                body: r.error ?? t("Check your connection"),
                               }
                         );
                         refreshStatus();
@@ -2079,13 +2131,16 @@ function CurrentGameSection() {
                       toaster.toast(
                         r.ok
                           ? {
-                              title: `${tool.name} applied`,
-                              body: `Verified: ${(r.changed ?? []).join(", ")}`,
+                              title: t("{name} applied", { name: tool.name }),
+                              body: t("Verified: {files}", {
+                                files: (r.changed ?? []).join(", "),
+                              }),
                             }
                           : {
-                              title: `${tool.name} failed${
-                                r.stage ? ` (${r.stage})` : ""
-                              }`,
+                              title: t("{name} failed{stage}", {
+                                name: tool.name,
+                                stage: r.stage ? ` (${r.stage})` : "",
+                              }),
                               body: r.error ?? r.output?.slice(-120) ?? "",
                               duration: 12000,
                             }
@@ -2422,9 +2477,10 @@ function LoadProblemsSummary({
       {parked.length > 0 && (
         <PanelSectionRow>
           <Field
-            label={`Switched off ${parked.length} mod${
-              parked.length === 1 ? "" : "s"
-            } that kept failing`}
+            label={t("Switched off {n} mod{fs} that kept failing", {
+              n: parked.length,
+              fs: parked.length === 1 ? "" : "s",
+            })}
             description={
               parked.map(label).join(", ") +
               t(". Each one says why in Manage my mods, where it can be") +
@@ -2436,9 +2492,10 @@ function LoadProblemsSummary({
       {sorted.length > 0 && (
         <PanelSectionRow>
           <Field
-            label={`⚠ ${sorted.length} mod${
-              sorted.length === 1 ? "" : "s"
-            } had problems last launch`}
+            label={t("⚠ {n} mod{fs} had problems last launch", {
+              n: sorted.length,
+              fs: sorted.length === 1 ? "" : "s",
+            })}
             description={
               sorted.map(label).join(", ") +
               t(". Manage my mods says what each one hit.")
@@ -2492,13 +2549,15 @@ function UserToolRow({ game, tool }: { game: SupportedGame; tool: UserTool }) {
       if (r.ok && r.installed) {
         setState("installed");
         toaster.toast({
-          title: `${tool.name} installed`,
-          body: `From your download ${r.zip ?? ""}. Mods that need it work now.`,
+          title: t("{name} installed", { name: tool.name }),
+          body: t("From your download {zip}. Mods that need it work now.", {
+            zip: r.zip ?? "",
+          }),
         });
         notifyGameStateChanged();
       } else {
         setState("failed");
-        setNote(r.error ?? "It could not be installed");
+        setNote(r.error ?? t("It could not be installed"));
       }
     } catch (e) {
       setState("failed");
@@ -2520,7 +2579,7 @@ function UserToolRow({ game, tool }: { game: SupportedGame; tool: UserTool }) {
           {t("Installing from your download…")}</Field>
       ) : (
         <ButtonItem
-          label={`${tool.name} (optional)`}
+          label={t("{name} (optional)", { name: tool.name })}
           layout="below"
           description={
             (state === "failed" ? `${note}. ` : "") +
@@ -2922,19 +2981,38 @@ function InstalledModsSection() {
             // most of the time that is paid Creation Club content the
             // user simply doesn't own. Say that, and call the fix what
             // it is - skipping them.
-            label={`${brokenPlugins.length} mod${
-              brokenPlugins.length > 1 ? "s" : ""
-            } can't load yet`}
+            label={
+              brokenPlugins.length > 1
+                ? t("{n} mods can't load yet", { n: brokenPlugins.length })
+                : t("1 mod can't load yet")
+            }
             description={
-              `${
-                brokenPlugins.length > 1 ? "They need" : "It needs"
-              } files that aren't installed (e.g. ${
-                brokenPlugins[0].plugin
-              } needs ${brokenPlugins[0].missing[0]}). ` +
+              (brokenPlugins.length > 1
+                ? t(
+                    "They need files that aren't installed (e.g. {plugin} needs {missing}).",
+                    {
+                      plugin: brokenPlugins[0].plugin,
+                      missing: brokenPlugins[0].missing[0],
+                    }
+                  )
+                : t(
+                    "It needs files that aren't installed (e.g. {plugin} needs {missing}).",
+                    {
+                      plugin: brokenPlugins[0].plugin,
+                      missing: brokenPlugins[0].missing[0],
+                    }
+                  )) +
+              " " +
               (creationClubCount > 0
-                ? `${creationClubCount} of them want Creation Club content, which comes with the paid Anniversary Edition upgrade - installing more mods won't help those. `
+                ? t(
+                    "{n} of them want Creation Club content, which comes with the paid Anniversary Edition upgrade - installing more mods won't help those.",
+                    { n: creationClubCount }
+                  ) + " "
                 : "") +
-              `Skipping turns them off so ${game.displayName} starts. Nothing is deleted and you can turn them back on any time.`
+              t(
+                "Skipping turns them off so {game} starts. Nothing is deleted and you can turn them back on any time.",
+                { game: game.displayName }
+              )
             }
             onClick={async () => {
               const result = await disablePlugins(
@@ -2947,7 +3025,10 @@ function InstalledModsSection() {
                 result.ok
                   ? {
                       title: t("Mods skipped"),
-                      body: `${result.disabled ?? 0} turned off — ${game.displayName} should start now`,
+                      body: t("{n} turned off — {game} should start now", {
+                        n: result.disabled ?? 0,
+                        game: game.displayName,
+                      }),
                     }
                   : { title: t("Could not skip them"), body: result.error ?? "" }
               );
@@ -2961,7 +3042,7 @@ function InstalledModsSection() {
       {showFrameworkRow && game.framework && (
         <PanelSectionRow key={`framework:${fwEnabled}`}>
           <ToggleField
-            label={`${game.framework.name} (mod loader)`}
+            label={t("{name} (mod loader)", { name: game.framework.name })}
             description={
               fwEnabled
                 ? t("framework — mods need it")
@@ -3069,9 +3150,10 @@ function InstalledModsSection() {
       {(mods?.length ?? 0) > 5 && (
         <PanelSectionRow>
           <Field
-            description={`…and ${
-              (mods?.length ?? 0) - 5
-            } more — Manage my mods below has the full list`}
+            description={t(
+              "…and {n} more — Manage my mods below has the full list",
+              { n: (mods?.length ?? 0) - 5 }
+            )}
           />
         </PanelSectionRow>
       )}
@@ -3420,10 +3502,12 @@ function TroubleshootingSection() {
         }
         setHunt((prev) => ({
           ...prev!,
-          note: `A different crash (${strayCrashes}/3) - retrying`,
+          note: t("A different crash ({n}/3) - retrying", {
+            n: strayCrashes,
+          }),
         }));
         toaster.toast({
-          title: `Different crash — retry ${strayCrashes} of 3`,
+          title: t("Different crash — retry {n} of 3", { n: strayCrashes }),
           body: t("That one wasn't the fault being hunted, so it doesn't count"),
           duration: 8000,
         });
@@ -3549,11 +3633,14 @@ function TroubleshootingSection() {
               layout="below"
               label={t("Mods not loading?")}
               disabled={runtimeBusy}
-              description={`${game.displayName}'s Windows runtime is ${
-                runtime.have || "very old"
-              } — mods built against ${
-                runtime.newest || "a newer one"
-              } can't load against it, and they fail silently. This copies the newer runtime out of Proton. Safe to run any time.`}
+              description={t(
+                "{game}'s Windows runtime is {have} — mods built against {newest} can't load against it, and they fail silently. This copies the newer runtime out of Proton. Safe to run any time.",
+                {
+                  game: game.displayName,
+                  have: runtime.have || t("very old"),
+                  newest: runtime.newest || t("a newer one"),
+                }
+              )}
               onClick={async () => {
                 setRuntimeBusy(true);
                 try {
@@ -3593,9 +3680,10 @@ function TroubleshootingSection() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              label={`${sePlugins!.failed.length} mod plugin${
-                sePlugins!.failed.length > 1 ? "s" : ""
-              } can't run`}
+              label={t("{n} mod plugin{fs} can't run", {
+                n: sePlugins!.failed.length,
+                fs: sePlugins!.failed.length > 1 ? "s" : "",
+              })}
               disabled={seBusy}
               description={
                 `${sePlugins!.failed
@@ -3605,7 +3693,8 @@ function TroubleshootingSection() {
                   sePlugins!.failed.length > 3
                     ? ` and ${sePlugins!.failed.length - 3} more`
                     : ""
-                } failed to load last time` +
+                }` +
+                t(" failed to load last time") +
                 (sePlugins!.failed.some((p) => p.outdated)
                   ? t("— they're built for an older version of the game, so only their authors can fix them.")
                   : ". ") +
@@ -3623,10 +3712,11 @@ function TroubleshootingSection() {
                   toaster.toast(
                     r.ok
                       ? {
-                          title: `Skipped ${r.changed ?? 0} mod plugin${
-                            (r.changed ?? 0) === 1 ? "" : "s"
-                          }`,
-                          body: `${game.displayName} should start now — the mods that needed them just won't do their thing`,
+                          title: t("Skipped {n} mod plugin{fs}", {
+                            n: r.changed ?? 0,
+                            fs: (r.changed ?? 0) === 1 ? "" : "s",
+                          }),
+                          body: t("{game} should start now — the mods that needed them just won't do their thing", { game: game.displayName }),
                           duration: 10000,
                         }
                       : { title: t("Could not skip them"), body: r.error ?? "" }
@@ -3853,9 +3943,10 @@ function TroubleshootingSection() {
                   );
                   if (r.ok) {
                     toaster.toast({
-                      title: `${r.disabled ?? 0} mod${
-                        (r.disabled ?? 0) === 1 ? "" : "s"
-                      } switched off`,
+                      title: t("{n} mod{fs} switched off", {
+                        n: r.disabled ?? 0,
+                        fs: (r.disabled ?? 0) === 1 ? "" : "s",
+                      }),
                       body: (r.names ?? []).slice(0, 3).join(", "),
                     });
                     refresh();
@@ -3892,7 +3983,7 @@ function TroubleshootingSection() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              label={`${game.displayName} won't start?`}
+              label={t("{game} won't start?", { game: game.displayName })}
               disabled={loadOrderBusy}
               description={loadOrderIssue}
               onClick={async () => {
@@ -3966,7 +4057,7 @@ function TroubleshootingSection() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              label={`${game.displayName} crashed last time`}
+              label={t("{game} crashed last time", { game: game.displayName })}
               disabled={seBusy}
               description={
                 `${suspect.name.replace(/\.dll$/i, "")} was ${
@@ -3990,7 +4081,7 @@ function TroubleshootingSection() {
                   toaster.toast(
                     r.ok
                       ? {
-                          title: `Skipped ${suspect.name.replace(/\.dll$/i, "")}`,
+                          title: t("Skipped {name}", { name: suspect.name.replace(/\.dll$/i, "") }),
                           body: t("Launch again — if it still crashes, the next suspect will show up here"),
                           duration: 10000,
                         }
@@ -4020,7 +4111,10 @@ function TroubleshootingSection() {
                 sePlugins!.parked.length > 3
                   ? ` and ${sePlugins!.parked.length - 3} more`
                   : ""
-              } are set aside. Bring them back if their authors have since updated them.`}
+              }` +
+                t(
+                  " are set aside. Bring them back if their authors have since updated them."
+                )}
               onClick={async () => {
                 setSeBusy(true);
                 try {
@@ -4101,7 +4195,7 @@ function SavesSection() {
   const onCopy = () =>
     showModal(
       <ConfirmModal
-        strTitle={`Copy vanilla save to modded — ${game.displayName}`}
+        strTitle={t("Copy vanilla save to modded — {game}", { game: game.displayName })}
         strDescription={
           `Copies your unmodded ${game.displayName} progress (unlocks, stats, ` +
           `run history) into the modded save for Steam account ` +
@@ -4124,9 +4218,11 @@ function SavesSection() {
               result.ok
                 ? {
                     title: t("Save copied"),
-                    body: `Vanilla progress is now available in modded play${
-                      result.backup ? " (previous modded save backed up)" : ""
-                    }`,
+                    body: t("Vanilla progress is now available in modded play{backup}", {
+                      backup: result.backup
+                        ? t(" (previous modded save backed up)")
+                        : "",
+                    }),
                   }
                 : { title: t("Copy failed"), body: result.error ?? "" }
             );
@@ -4628,12 +4724,13 @@ export default definePlugin(() => {
             if (parked.length === 0) return;
             notifyGameStateChanged();
             toaster.toast({
-              title: `Switched off ${parked.length} mod${
-                parked.length === 1 ? "" : "s"
-              } that failed while you played`,
+              title: t("Switched off {n} mod{fs} that failed while you played", {
+                n: parked.length,
+                fs: parked.length === 1 ? "" : "s",
+              }),
               body:
                 parked.map((m) => m.name).join(", ") +
-                ". Each one says why in My Mods.",
+                t(". Each one says why in My Mods."),
               duration: 12000,
             });
           })
@@ -4665,7 +4762,7 @@ export default definePlugin(() => {
       const wait = launchWaitNotice(r.ok ? r.mods ?? 0 : 0);
       if (wait) {
         toaster.toast({
-          title: `Starting ${game.displayName}`,
+          title: t("Starting {game}", { game: game.displayName }),
           body: wait,
           duration: 15000,
         });
@@ -4677,7 +4774,7 @@ export default definePlugin(() => {
   const listener = addEventListener<[message: string]>(
     "backend_event",
     (message) => {
-      toaster.toast({ title: t("Nexus Mods"), body: `Backend says: ${message}` });
+      toaster.toast({ title: t("Nexus Mods"), body: t("Backend says: {message}", { message }) });
     }
   );
 

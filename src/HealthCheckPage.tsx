@@ -492,7 +492,7 @@ export default function HealthCheckPage() {
               <FindingCard
                 tone="143, 212, 143"
                 icon={<FaCheck size={14} />}
-                title={`${report!.se_parked.length} set aside for you`}
+                title={t("{n} set aside for you", { n: report!.se_parked.length })}
                 detail={
                   <>
                     <b>{report!.se_parked.join(", ")}</b> —{" "}
@@ -556,7 +556,7 @@ export default function HealthCheckPage() {
                 key={`off:${s.name}`}
                 tone="143, 212, 143"
                 icon={<FaCheck size={14} />}
-                title={`${s.name} — switched off`}
+                title={t("{name} — switched off", { name: s.name })}
                 detail={
                   <>
                     {t("Its script")}{" "}<b>{s.script}</b> {" "}{t("would not compile, and the game stops loading")}{" "}<b>{t("every")}</b> {" "}{t("script mod when one fails — so this single mod was stopping all the others. It has been switched off for you. Start the game once and the rest should come back.")}</>
@@ -609,8 +609,8 @@ export default function HealthCheckPage() {
                     onClick={installAllMissing}
                   >
                     {fixing
-                      ? `Installing ${fixing}…`
-                      : `Install the ${missingCount} missing`}
+                      ? t("Installing {name}…", { name: fixing })
+                      : t("Install the {n} missing", { n: missingCount })}
                   </DialogButton>
                 )
               }
@@ -811,14 +811,13 @@ export default function HealthCheckPage() {
               tone="150, 160, 220"
               icon={<FaPuzzlePiece size={16} />}
               title={t("Corrected the mod load order")}
-              detail={
-                `${report!.load_order_moved} module` +
-                `${report!.load_order_moved === 1 ? "" : "s"} ` +
-                "were loading in an order the mods themselves say is wrong, " +
-                "which shows up as warnings like 'X is loaded before Y' at " +
-                "launch. Reordered to what the mods declare. Nothing was " +
-                "enabled or disabled."
-              }
+              detail={t(
+                "{n} module{fs} were loading in an order the mods themselves say is wrong, which shows up as warnings like 'X is loaded before Y' at launch. Reordered to what the mods declare. Nothing was enabled or disabled.",
+                {
+                  n: report!.load_order_moved,
+                  fs: report!.load_order_moved === 1 ? "" : "s",
+                }
+              )}
             />
           </>
         )}
@@ -831,13 +830,10 @@ export default function HealthCheckPage() {
               tone="150, 160, 220"
               icon={<FaPuzzlePiece size={16} />}
               title={t("Cleared a shader cache the game refused")}
-              detail={
-                `${report!.shader_caches_fixed.join(", ")} shipped a shader ` +
-                "cache built for an older version of the game, and the game " +
-                "refuses it and closes before reaching the menu. Removed, so " +
-                "the game builds its own instead. The next launch takes " +
-                "longer than usual while it does that, once."
-              }
+              detail={t(
+                "{names} shipped a shader cache built for an older version of the game, and the game refuses it and closes before reaching the menu. Removed, so the game builds its own instead. The next launch takes longer than usual while it does that, once.",
+                { names: report!.shader_caches_fixed.join(", ") }
+              )}
             />
           </>
         )}
@@ -850,14 +846,16 @@ export default function HealthCheckPage() {
               tone="150, 160, 220"
               icon={<FaPuzzlePiece size={16} />}
               title={t("Turned off a mod's debug display")}
-              detail={
-                `${report!.debug_quieted.join(", ")} — ` +
-                `${report!.debug_quieted.length === 1 ? "a mod" : "mods"} ` +
-                "left a debug display switched on, putting a panel of text " +
-                "over the game. Turned off in the game's own settings; the " +
-                "file was backed up first and the mods are untouched. Turn " +
-                "it back on in the game's Mods menu if you want it."
-              }
+              detail={t(
+                "{names} — {subject} left a debug display switched on, putting a panel of text over the game. Turned off in the game's own settings; the file was backed up first and the mods are untouched. Turn it back on in the game's Mods menu if you want it.",
+                {
+                  names: report!.debug_quieted.join(", "),
+                  subject:
+                    report!.debug_quieted.length === 1
+                      ? t("a mod")
+                      : t("mods"),
+                }
+              )}
             />
           </>
         )}

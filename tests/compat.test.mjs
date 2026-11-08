@@ -625,7 +625,7 @@ test("KCD2's Step 1 does not claim most mods need LuaDB", () => {
   const kcd2 = games.slice(games.indexOf("appId: 1771300"), games.indexOf("appId: 1623730"));
   assert.match(kcd2, /stepNote:\s*\n?\s*"Only some mods need LuaDB/);
   const index = readFileSync("src/index.tsx", "utf8");
-  assert.match(index, /game\.framework\.stepNote \?\? `Most \$\{game\.displayName\} mods require/);
+  assert.match(index, /game\.framework\.stepNote \?\?\s*t\("Most \{game\} mods require/);
 });
 
 // PR #48 follow-up: a proxy-dll mod's override is applied, merged into

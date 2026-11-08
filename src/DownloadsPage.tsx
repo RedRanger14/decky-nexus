@@ -582,15 +582,14 @@ export function DownloadsPage() {
               <DialogButton
                 onClick={() => showModal(
                   <ConfirmModal
-                    strTitle={`Cancel ${run.name ?? "this collection"}?`}
-                    strDescription={
-                      `Stops the download and removes the ` +
-                      `${run.installedModIds.length} mod` +
-                      `${run.installedModIds.length === 1 ? "" : "s"} it has ` +
-                      `installed so far. Mods you already had - your own, or ` +
-                      `from another collection - are kept, even if this one ` +
-                      `lists them. Nothing else is touched.`
-                    }
+                    strTitle={t("Cancel {name}?", { name: run.name ?? t("this collection") })}
+                    strDescription={t(
+                      "Stops the download and removes the {n} mod{fs} it has installed so far. Mods you already had - your own, or from another collection - are kept, even if this one lists them. Nothing else is touched.",
+                      {
+                        n: run.installedModIds.length,
+                        fs: run.installedModIds.length === 1 ? "" : "s",
+                      }
+                    )}
                     strOKButtonText={t("Cancel collection")}
                     bDestructiveWarning={true}
                     onOK={async () => {
@@ -613,10 +612,13 @@ export function DownloadsPage() {
                         );
                         toaster.toast({
                           title: r.ok
-                            ? `Collection cancelled`
-                            : "Could not finish cancelling",
+                            ? t("Collection cancelled")
+                            : t("Could not finish cancelling"),
                           body: r.ok
-                            ? `${r.removed ?? 0} removed, ${r.kept ?? 0} kept`
+                            ? t("{removed} removed, {kept} kept", {
+                                removed: r.removed ?? 0,
+                                kept: r.kept ?? 0,
+                              })
                             : r.error ?? "",
                         });
                       }
@@ -645,8 +647,10 @@ export function DownloadsPage() {
                 ? t("Nothing downloading right now.")
                 : run.note
                   ? run.note
-                  : `Installing ${run.finished} of ${run.total} — nothing ` +
-                    `left to download`}
+                  : t("Installing {n} of {total} — nothing left to download", {
+                      n: run.finished,
+                      total: run.total,
+                    })}
             </div>
           )}
           {active.map((d) => (
@@ -688,7 +692,7 @@ export function DownloadsPage() {
                       : d.phase === "extracting"
                       ? "⚙ Installing…"
                       : d.phase === "converting"
-                      ? `⚙ Converting textures · ${d.percent}%`
+                      ? t("⚙ Converting textures · {n}%", { n: d.percent })
                       : d.phase === "paused"
                       ? "⏸ Paused"
                       : d.phase === "queued"

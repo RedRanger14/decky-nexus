@@ -1284,7 +1284,7 @@ export function BrowsePage() {
               {game.displayName}
             </h2>
             <div style={{ fontSize: "13px", fontWeight: 400, opacity: 0.6 }}>
-              {total !== undefined ? `${total.toLocaleString()} mods` : t("loading…")}
+              {total !== undefined ? t("{n} mods", { n: total.toLocaleString() }) : t("loading…")}
             </div>
           </div>
           <div style={{ flexGrow: 1 }} />
@@ -1577,7 +1577,7 @@ export function BrowsePage() {
                 style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "10px" }}
               >
                 <div style={{ flex: 1 }}>
-                  <SectionHeading title={`Mods by ${author.name}`} />
+                  <SectionHeading title={t("Mods by {name}", { name: author.name })} />
                 </div>
                 <DialogButton
                   style={{ width: "auto", minWidth: "160px" }}
@@ -1593,7 +1593,7 @@ export function BrowsePage() {
                     <SectionHeading title={t("From your link")} />
                     {linkHit.game.appId !== game.appId && (
                       <HiddenNote
-                        text={`A ${linkHit.game.displayName} collection.`}
+                        text={t("A {game} collection.", { game: linkHit.game.displayName })}
                       />
                     )}
                     <Focusable
@@ -1648,8 +1648,8 @@ export function BrowsePage() {
                     }}
                   >
                     {scope === "mods"
-                      ? `Mods${total !== undefined ? ` (${total})` : ""}`
-                      : `Collections (${searchCollections.length})`}
+                      ? t("Mods") + (total !== undefined ? ` (${total})` : "")
+                      : t("Collections") + ` (${searchCollections.length})`}
                   </Focusable>
                 ))}
               </Focusable>
@@ -1717,7 +1717,7 @@ export function BrowsePage() {
                     fetchPage(nextOffset.current, true);
                   }}
                 >
-                  {loading ? t("Loading…") : `Load more (${mods.length} shown)`}
+                  {loading ? t("Loading…") : t("Load more ({n} shown)", { n: mods.length })}
                 </ButtonItem>
               </Focusable>
             )}
