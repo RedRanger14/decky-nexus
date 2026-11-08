@@ -13,6 +13,14 @@ import { useEffect, useState } from "react";
 import { UserPrefs, getUserPrefs, setUserPrefs } from "./api";
 import { NEXUS_ORANGE, PAGE_SCROLLER } from "./theme";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
+import {
+  LOCALES,
+  Locale,
+  getLocale,
+  setLocale,
+  t,
+  useT,
+} from "./i18n";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -117,6 +125,8 @@ function Caution({ children }: { children: React.ReactNode }) {
 }
 
 export function SettingsPage() {
+  // Re-render this page when the language is changed from the control below.
+  useT();
   const [prefs, setPrefs] = useState<UserPrefs | undefined>();
   const [saved, setSaved] = useState(false);
 
@@ -155,7 +165,7 @@ export function SettingsPage() {
             margin: "12px 0 4px",
           }}
         >
-          <h2 style={{ margin: 0 }}>Settings</h2>
+          <h2 style={{ margin: 0 }}>{t("Settings")}</h2>
           <span
             style={{
               fontSize: "12px",
@@ -164,24 +174,41 @@ export function SettingsPage() {
               transition: "opacity 0.4s ease",
             }}
           >
-            ✓ Saved
-          </span>
+            {t("✓ Saved")}</span>
         </div>
         <div style={{ fontSize: "12.5px", opacity: 0.65, marginBottom: "18px" }}>
-          Changes save instantly and apply to the next download.
-        </div>
+          {t("Changes save instantly and apply to the next download.")}</div>
 
         {!prefs ? (
-          <div style={{ opacity: 0.8 }}>Loading…</div>
+          <div style={{ opacity: 0.8 }}>{t("Loading…")}</div>
         ) : (
           <>
             <Section
-              title="Download pipeline"
-              blurb="how collections use your connection"
+              title={t("Language")}
+              blurb={t("what the plugin speaks")}
+            >
+              <DropdownItem
+                label={t("Interface language")}
+                description={t("Choose the language of the plugin's interface.")}
+                menuLabel={t("Interface language")}
+                rgOptions={LOCALES.map((l) => ({
+                  data: l.value,
+                  label: l.label,
+                }))}
+                selectedOption={getLocale()}
+                onChange={(opt: { data: string }) =>
+                  setLocale(opt.data as Locale)
+                }
+              />
+            </Section>
+
+            <Section
+              title={t("Download pipeline")}
+              blurb={t("how collections use your connection")}
             >
               <SliderField
-                label="Parallel downloads"
-                description="Mods downloaded at once during a collection install. More saturates fast connections; beyond ~6 the Nexus Mods API may rate-limit bursts (retried automatically, but slower overall)."
+                label={t("Parallel downloads")}
+                description={t("Mods downloaded at once during a collection install. More saturates fast connections; beyond ~6 the Nexus Mods API may rate-limit bursts (retried automatically, but slower overall).")}
                 value={prefs.parallel_downloads}
                 min={1}
                 max={8}
@@ -192,13 +219,11 @@ export function SettingsPage() {
               />
               {prefs.parallel_downloads > 6 && (
                 <Caution>
-                  ⚠ High parallelism can trip API rate limits on big
-                  collections - if you see slowdowns, 4-6 is the sweet spot.
-                </Caution>
+                  {t("⚠ High parallelism can trip API rate limits on big collections - if you see slowdowns, 4-6 is the sweet spot.")}</Caution>
               )}
               <SliderField
-                label="Download-ahead buffer"
-                description="Archives fetched ahead of the installer. Bigger keeps fast connections busy through slow installs, but every buffered archive sits on disk until installed."
+                label={t("Download-ahead buffer")}
+                description={t("Archives fetched ahead of the installer. Bigger keeps fast connections busy through slow installs, but every buffered archive sits on disk until installed.")}
                 value={prefs.prefetch_window}
                 min={2}
                 max={16}
@@ -208,14 +233,11 @@ export function SettingsPage() {
               />
               {prefs.prefetch_window > 10 && (
                 <Caution>
-                  ⚠ A large buffer can briefly hold several GB of archives -
-                  fine on a roomy SSD, risky when the drive is nearly full.
-                  The free-space floor below is your safety net.
-                </Caution>
+                  {t("⚠ A large buffer can briefly hold several GB of archives - fine on a roomy SSD, risky when the drive is nearly full. The free-space floor below is your safety net.")}</Caution>
               )}
               <SliderField
-                label="Unpack ahead"
-                description="Mods unpacked while the previous one is still being installed. Unpacking is the slow half of an install and uses a different part of your hardware than the download, so overlapping them is close to free. Mods are still INSTALLED one at a time, in the collection's order - that order is what decides which mod wins a conflict. Set to 0 for the old one-at-a-time behaviour."
+                label={t("Unpack ahead")}
+                description={t("Mods unpacked while the previous one is still being installed. Unpacking is the slow half of an install and uses a different part of your hardware than the download, so overlapping them is close to free. Mods are still INSTALLED one at a time, in the collection's order - that order is what decides which mod wins a conflict. Set to 0 for the old one-at-a-time behaviour.")}
                 value={prefs.extract_ahead}
                 min={0}
                 max={4}
@@ -226,20 +248,23 @@ export function SettingsPage() {
               />
               {prefs.extract_ahead === 0 && (
                 <Caution>
-                  Unpacking ahead is off - installs run strictly one at a
-                  time. Turn it back up if collections feel slow.
-                </Caution>
+                  {t("Unpacking ahead is off - installs run strictly one at a time. Turn it back up if collections feel slow.")}</Caution>
               )}
             </Section>
 
-            <Section title="Content" blurb="what the mod browser shows">
+            <Section title={t("Content")} blurb={t("what the mod browser shows")}>
               <DropdownItem
-                label="Mod language"
-                description="English hides mods tagged as translations. Picking a language shows ONLY mods tagged with it - handy for finding translations of your games."
-                menuLabel="Mod language"
+                label={t("Mod language")}
+                description={t("English hides mods tagged as translations. Picking a language shows ONLY mods tagged with it - handy for finding translations of your games.")}
+                menuLabel={t("Mod language")}
                 rgOptions={LANGUAGE_OPTIONS.map((o) => ({
                   data: o.value,
-                  label: o.label,
+                  label:
+                    o.value === "english" || o.value === "all"
+                      ? t(o.label)
+                      : t("{lang} (translations only)", {
+                          lang: t(o.label),
+                        }),
                 }))}
                 selectedOption={prefs.mod_language ?? "english"}
                 onChange={(opt: { data: string }) =>
@@ -248,14 +273,16 @@ export function SettingsPage() {
               />
             </Section>
 
-            <Section title="Bandwidth" blurb="be kind to the rest of your network">
+            <Section title={t("Bandwidth")} blurb={t("be kind to the rest of your network")}>
               <SliderField
                 label={
                   prefs.speed_cap_mbps === 0
-                    ? "Speed limit: unlimited"
-                    : `Speed limit: ${prefs.speed_cap_mbps} MB/s`
+                    ? t("Speed limit: unlimited")
+                    : t("Speed limit: {n} MB/s", {
+                        n: prefs.speed_cap_mbps,
+                      })
                 }
-                description="Total cap shared across all parallel downloads. Set it if downloads starve game streaming or others on your network; 0 means no limit."
+                description={t("Total cap shared across all parallel downloads. Set it if downloads starve game streaming or others on your network; 0 means no limit.")}
                 value={prefs.speed_cap_mbps}
                 min={0}
                 max={200}
@@ -265,10 +292,12 @@ export function SettingsPage() {
               />
             </Section>
 
-            <Section title="Disk safety" blurb="downloads stop before your drive fills">
+            <Section title={t("Disk safety")} blurb={t("downloads stop before your drive fills")}>
               <SliderField
-                label={`Keep at least ${prefs.min_free_gb} GB free`}
-                description="Downloads pause safely when free space falls below this. SteamOS misbehaves badly on a full drive - keep a real margin."
+                label={t("Keep at least {n} GB free", {
+                  n: prefs.min_free_gb,
+                })}
+                description={t("Downloads pause safely when free space falls below this. SteamOS misbehaves badly on a full drive - keep a real margin.")}
                 value={prefs.min_free_gb}
                 min={1}
                 max={50}
@@ -279,12 +308,7 @@ export function SettingsPage() {
             </Section>
 
             <div style={{ fontSize: "12px", opacity: 0.55, lineHeight: 1.5 }}>
-              Installs run one at a time by design - they share the game's
-              folders and load-order files, and parallel writes there can
-              corrupt a modded setup. The pipeline keeps your connection
-              busy the whole time instead: downloading ahead is where the
-              speed comes from.
-            </div>
+              {t("Installs run one at a time by design - they share the game's folders and load-order files, and parallel writes there can corrupt a modded setup. The pipeline keeps your connection busy the whole time instead: downloading ahead is where the speed comes from.")}</div>
           </>
         )}
       </Scroller>

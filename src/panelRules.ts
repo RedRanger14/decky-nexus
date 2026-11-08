@@ -1,6 +1,26 @@
 // Which QAM controls EXIST. Pure and import-free so it can be tested
 // (tests/panelRules.test.mjs) - "the button isn't rendered" is a class of
 // bug no backend test can see, and it has bitten twice now.
+//
+// User-facing copy is passed through `tr`, which the panel installs from
+// i18n.ts at startup. It defaults to identity, so the node tests keep
+// asserting the English strings without importing React or a dictionary.
+
+type Translate = (text: string, vars?: Record<string, string | number>) => string;
+
+let tr: Translate = (text, vars) => {
+  if (!vars) return text;
+  let out = text;
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split(`{${key}}`).join(String(value));
+  }
+  return out;
+};
+
+/** Install the UI translator. Called once by the panel entry point. */
+export function setPanelTranslator(fn: Translate): void {
+  tr = fn;
+}
 
 /** The installed-mods list has nothing to show without mods of its own or
  * a framework row. */
@@ -63,14 +83,17 @@ export function launchWaitNotice(
   // button it happens after. Naming the moment beats naming the mod count.
   if (ownLauncher) {
     return long
-      ? "Don't quit, grey for minutes after Play."
-      : "Don't quit, grey for a moment after Play.";
+      ? tr("Don't quit, grey for minutes after Play.")
+      : tr("Don't quit, grey for a moment after Play.");
   }
   // Steam's toast truncates hard, and twice now the half that mattered
   // was the half cut off. Instruction first, comma not em dash (the dash
   // ate width for nothing), and short enough to survive.
-  const wait = long ? "a few minutes" : "a moment";
-  return `Don't quit, ${modCount.toLocaleString()} mods take ${wait}.`;
+  const wait = long ? tr("a few minutes") : tr("a moment");
+  return tr("Don't quit, {n} mods take {wait}.", {
+    n: modCount.toLocaleString(),
+    wait,
+  });
 }
 
 /** What is wrong with the load order, phrased for someone who has never
@@ -92,20 +115,31 @@ export function loadOrderProblem(
       .map((n) => n.replace(/\.es[lmp]$/i, ""))
       .join(", ");
     parts.push(
-      `${disabledMasters} mod${disabledMasters > 1 ? "s are" : " is"} ` +
-        `installed but switched off while other mods depend on ` +
-        `${disabledMasters > 1 ? "them" : "it"}` +
-        (shown ? ` (${shown})` : "")
+      (disabledMasters > 1
+        ? tr(
+            "{n} mods are installed but switched off while other mods depend on them",
+            { n: disabledMasters }
+          )
+        : tr(
+            "{n} mod is installed but switched off while other mods depend on it",
+            { n: disabledMasters }
+          )) + (shown ? ` (${shown})` : "")
     );
   }
   if (violations > 0) {
     parts.push(
-      `${violations.toLocaleString()} mod${violations > 1 ? "s" : ""} ` +
-        `load before something they need`
+      violations > 1
+        ? tr("{n} mods load before something they need", {
+            n: violations.toLocaleString(),
+          })
+        : tr("1 mod loads before something it needs")
     );
   }
   if (!parts.length) return undefined;
-  return `${parts.join(", and ")}. Either one crashes the game while it starts. Fixing this only turns mods on and reorders them — nothing is installed, removed or downloaded.`;
+  return tr(
+    "{parts}. Either one crashes the game while it starts. Fixing this only turns mods on and reorders them — nothing is installed, removed or downloaded.",
+    { parts: parts.join(tr(", and ")) }
+  );
 }
 
 /** Mods that cannot load because a master is not installed at all, said
@@ -174,7 +208,7 @@ export function blockedPluginsAction(
 ): { show: boolean; label: string } {
   return {
     show: (missing ?? []).some((m) => !m.label),
-    label: "Turn off the mods that can't load",
+    label: tr("Turn off the mods that can't load"),
   };
 }
 
@@ -454,50 +488,53 @@ export function healthVerdict(
 ): { headline: string; detail: string; tone: string; clean: boolean } {
   if (busy) {
     return {
-      headline: "Checking your mods…",
-      detail:
-        "Asking Nexus what each installed mod says it needs, and looking " +
-        "for it on this device.",
+      headline: tr("Checking your mods…"),
+      detail: tr(
+        "Asking Nexus what each installed mod says it needs, and looking for it on this device."
+      ),
       tone: "218, 142, 53",
       clean: false,
     };
   }
   if (!checked) {
     return {
-      headline: "Nothing installed yet",
-      detail:
-        "Install some mods and come back — this screen checks that each " +
-        "one has what it needs to actually work.",
+      headline: tr("Nothing installed yet"),
+      detail: tr(
+        "Install some mods and come back — this screen checks that each one has what it needs to actually work."
+      ),
       tone: "255, 255, 255",
       clean: false,
     };
   }
   if (scriptStackDead) {
     return {
-      headline: "Your script mods are not running",
-      detail:
-        "One script failed to compile, and the game stops loading all of " +
-        "them when that happens — not just the one that broke. It has been " +
-        "switched off for you, so start the game once and check back.",
+      headline: tr("Your script mods are not running"),
+      detail: tr(
+        "One script failed to compile, and the game stops loading all of them when that happens — not just the one that broke. It has been switched off for you, so start the game once and check back."
+      ),
       tone: "220, 110, 110",
       clean: false,
     };
   }
   if (!problems) {
     return {
-      headline: "Everything checks out",
-      detail: `All ${checked} of your mods have what they need.`,
+      headline: tr("Everything checks out"),
+      detail: tr("All {n} of your mods have what they need.", {
+        n: checked,
+      }),
       tone: "143, 212, 143",
       clean: true,
     };
   }
   return {
     headline:
-      problems === 1 ? "1 thing needs attention" : `${problems} things need attention`,
-    detail:
-      `Out of ${checked} mods checked. ` +
-      "None of this stops you playing right now, but each one means a mod " +
-      "is not doing what you installed it for.",
+      problems === 1
+        ? tr("1 thing needs attention")
+        : tr("{n} things need attention", { n: problems }),
+    detail: tr(
+      "Out of {n} mods checked. None of this stops you playing right now, but each one means a mod is not doing what you installed it for.",
+      { n: checked }
+    ),
     tone: "230, 180, 80",
     clean: false,
   };
@@ -543,10 +580,10 @@ export function lastRunSummary(
   const names = blamed.filter(Boolean);
   if (!names.length) {
     return handled > 0
-      ? `No mods are reporting errors any more. The game may still show a ` +
-          `red "WITH ERRORS" line from the run before this fix — launch it ` +
-          `once more and that will clear.`
-      : "No mods reported errors the last time you played.";
+      ? tr(
+          "No mods are reporting errors any more. The game may still show a red \"WITH ERRORS\" line from the run before this fix — launch it once more and that will clear."
+        )
+      : tr("No mods reported errors the last time you played.");
   }
   const one = names.length === 1;
   const shown = names.slice(0, 3).join(", ");
@@ -556,17 +593,26 @@ export function lastRunSummary(
   // reader keeps looking for the fix that does not exist, and the red line
   // reads as an unsolved problem rather than a finished one.
   const allStuck = stuck.length === names.length;
+  const who = `${shown}${rest > 0 ? tr(" and {n} more", { n: rest }) : ""}`;
   return (
-    `${one ? "1 mod is" : `${names.length} mods are`} still reporting ` +
-    `errors: ${shown}${rest > 0 ? ` and ${rest} more` : ""}. ` +
+    (one
+      ? tr("1 mod is still reporting errors: {names}.", { names: who })
+      : tr("{n} mods are still reporting errors: {names}.", {
+          n: names.length,
+          names: who,
+        })) +
+    " " +
     (allStuck
-      ? `${one ? "It is" : "They are"} running — only part of ` +
-        `${one ? "it" : "them"} failed — and there is no newer version to ` +
-        `move to, so only the mod ${one ? "author" : "authors"} can clear ` +
-        `this. Nothing else to do: the game plays, and the red line the ` +
-        `game shows will stay until ${one ? "it is" : "they are"} updated.`
-      : `The game shows one red line however many there are, so it looks ` +
-        `the same whether that is one or twenty.`)
+      ? (one
+          ? tr(
+              "It is running — only part of it failed — and there is no newer version to move to, so only the mod author can clear this. Nothing else to do: the game plays, and the red line the game shows will stay until it is updated."
+            )
+          : tr(
+              "They are running — only part of them failed — and there is no newer version to move to, so only the mod authors can clear this. Nothing else to do: the game plays, and the red line the game shows will stay until they are updated."
+            ))
+      : tr(
+          "The game shows one red line however many there are, so it looks the same whether that is one or twenty."
+        ))
   );
 }
 
@@ -962,12 +1008,19 @@ export function huntProgressNote(
   // launch to confirm the crash and one to confirm the end.
   const left = Math.max(0, Math.ceil(Math.log2(Math.max(2, remaining)))) + 1;
   return {
-    title: `Attempt ${attempt} — testing ${modsUnderTest.toLocaleString()} mods`,
+    title: tr("Attempt {n} — testing {count} mods", {
+      n: attempt,
+      count: modsUnderTest.toLocaleString(),
+    }),
     body:
-      `About ${left} more launch${left === 1 ? "" : "es"} to go` +
+      (left === 1
+        ? tr("About 1 more launch to go")
+        : tr("About {n} more launches to go", { n: left })) +
       (found > 0
-        ? `. ${found} broken mod${found === 1 ? "" : "s"} found so far`
-        : ". Leave the game alone — it closes itself"),
+        ? (found === 1
+            ? tr(". 1 broken mod found so far")
+            : tr(". {n} broken mods found so far", { n: found }))
+        : tr(". Leave the game alone — it closes itself")),
   };
 }
 
@@ -1053,12 +1106,12 @@ export function collectionProgress(p: {
   const mins = Math.round(((p.elapsedMs / frac) * (1 - frac)) / 60_000);
   const eta =
     mins < 1
-      ? "under a minute left"
+      ? tr("under a minute left")
       : mins === 1
-      ? "about 1 minute left"
+      ? tr("about 1 minute left")
       : mins < 90
-      ? `about ${mins} minutes left`
-      : `about ${(mins / 60).toFixed(1)} hours left`;
+      ? tr("about {n} minutes left", { n: mins })
+      : tr("about {n} hours left", { n: (mins / 60).toFixed(1) });
   return { pct, eta };
 }
 
@@ -1069,8 +1122,12 @@ export function collectionProgress(p: {
 export function collectionSizeChip(files: { modId: number }[]): string {
   const mods = new Set(files.map((f) => f.modId)).size;
   const n = files.length;
-  if (mods === n) return `${mods} mod${mods === 1 ? "" : "s"}`;
-  return `${mods} mod${mods === 1 ? "" : "s"} · ${n} files`;
+  const modLabel =
+    mods === 1 ? tr("1 mod") : tr("{n} mods", { n: mods });
+  if (mods === n) return modLabel;
+  return `${modLabel} · ${
+    n === 1 ? tr("1 file") : tr("{n} files", { n })
+  }`;
 }
 
 /** The mod page's DLC note, or nothing.
@@ -1090,11 +1147,11 @@ export function dlcNote(
   if (list.length === 0) {
     return quote
       ? {
-          title: "Needs DLC",
+          title: tr("Needs DLC"),
           body: quote,
-          hint:
-            "Check you own it before installing. Without it, the mod can " +
-            "install cleanly and still crash the game.",
+          hint: tr(
+            "Check you own it before installing. Without it, the mod can install cleanly and still crash the game."
+          ),
         }
       : undefined;
   }
@@ -1102,29 +1159,33 @@ export function dlcNote(
   const unknown = list
     .filter((d) => d.owned === null || d.owned === undefined)
     .map((d) => d.name);
-  const and = (xs: string[]) => xs.join(" and ");
+  const and = (xs: string[]) => xs.join(tr(" and "));
+  const uncheckable = unknown.length
+    ? tr(" It also lists {dlc}, which can't be checked here.", {
+        dlc: and(unknown),
+      })
+    : "";
   if (missing.length > 0) {
     return {
-      title: "Needs DLC you don't have",
-      body:
-        `Needs the ${and(missing)} DLC, which ${
-          missing.length === 1 ? "isn't" : "aren't"
-        } installed.` +
-        (unknown.length
-          ? ` It also lists ${and(unknown)}, which can't be checked here.`
-          : ""),
-      hint:
-        "DLC is installed from Steam's DLC tab. Without it, the mod can " +
-        "install cleanly and still crash the game.",
+      title: tr("Needs DLC you don't have"),
+      body: tr(
+        missing.length === 1
+          ? "Needs the {dlc} DLC, which isn't installed."
+          : "Needs the {dlc} DLC, which aren't installed.",
+        { dlc: and(missing) }
+      ) + uncheckable,
+      hint: tr(
+        "DLC is installed from Steam's DLC tab. Without it, the mod can install cleanly and still crash the game."
+      ),
     };
   }
   if (unknown.length > 0) {
     return {
-      title: "Needs DLC",
-      body: `Needs the ${and(unknown)} DLC.`,
-      hint:
-        "Check you own it before installing. Without it, the mod can " +
-        "install cleanly and still crash the game.",
+      title: tr("Needs DLC"),
+      body: tr("Needs the {dlc} DLC.", { dlc: and(unknown) }),
+      hint: tr(
+        "Check you own it before installing. Without it, the mod can install cleanly and still crash the game."
+      ),
     };
   }
   return undefined;
@@ -1137,16 +1198,16 @@ export function dlcNote(
  * collection the curator's choices install it a moment later, or it waits
  * under Finish setup. Every one of them read "Failed" (#35, #36). */
 export function downloadRowStatus(phase: string, message?: string): string {
-  if (phase === "done") return "Done ✓";
-  if (phase === "cancelled") return "Cancelled";
+  if (phase === "done") return tr("Done ✓");
+  if (phase === "cancelled") return tr("Cancelled");
   const m = (message ?? "").toLowerCase();
   if (m === "fomod wizard" || m === "options" || m === "choose a folder") {
-    return "Waiting for your choices ⚙";
+    return tr("Waiting for your choices ⚙");
   }
   if (m === "pc tool" || m === "no payload" || m === "not installable") {
-    return "Skipped ⏭";
+    return tr("Skipped ⏭");
   }
-  return "Failed ⚠";
+  return tr("Failed ⚠");
 }
 
 /** A collection's switch in My Mods.
@@ -1180,11 +1241,20 @@ export function collectionCountLine(
 ): string {
   const distinct = memberModIds?.length ? new Set(memberModIds).size : 0;
   if (distinct > 0) {
-    return `${installed} of ${distinct} mod${distinct === 1 ? "" : "s"} installed`;
+    return tr("{installed} of {total} mods installed", {
+      installed,
+      total: distinct,
+    });
   }
   return (
-    `${installed} mod${installed === 1 ? "" : "s"} installed` +
-    (fileCount ? ` · ${fileCount} files in the collection` : "")
+    (installed === 1
+      ? tr("1 mod installed")
+      : tr("{n} mods installed", { n: installed })) +
+    (fileCount
+      ? (fileCount === 1
+          ? tr(" · 1 file in the collection")
+          : tr(" · {n} files in the collection", { n: fileCount }))
+      : "")
   );
 }
 
@@ -1314,17 +1384,17 @@ export function endorseControl(
     return { show: false, endorsed: false, label: "" };
   }
   if (status === "Endorsed") {
-    return { show: true, endorsed: true, label: "Endorsed" };
+    return { show: true, endorsed: true, label: tr("Endorsed") };
   }
   const knownSettled =
     installedMinutesAgo !== undefined && installedMinutesAgo >= 15;
   return {
     show: true,
     endorsed: false,
-    label: "Endorse",
+    label: tr("Endorse"),
     hint: knownSettled
-      ? "Endorsing tells the author their work is being used."
-      : "Nexus Mods only accepts an endorsement 15 minutes after the download, so this may not work straight away.",
+      ? tr("Endorsing tells the author their work is being used.")
+      : tr("Nexus Mods only accepts an endorsement 15 minutes after the download, so this may not work straight away."),
   };
 }
 
@@ -1395,7 +1465,7 @@ export function pauseAllControl(
 ): { show: boolean; label: string } {
   return {
     show: paused || activeCount > 0,
-    label: paused ? "▶ Resume" : "⏸ Pause all",
+    label: paused ? tr("▶ Resume") : tr("⏸ Pause all"),
   };
 }
 

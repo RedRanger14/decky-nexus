@@ -51,6 +51,7 @@ import {
   pushOurPage,
 } from "./Tabs";
 import { collectionCountLine, collectionSwitchPlan } from "./panelRules";
+import { t, useT } from "./i18n";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -136,7 +137,7 @@ async function openModDetail(game: SupportedGame, mod: InstalledMod) {
     pushOurPage("/nexus-mods/mod");
   } else {
     toaster.toast({
-      title: "Could not open mod",
+      title: t("Could not open mod"),
       body: result.error ?? mod.name ?? mod.folder,
     });
   }
@@ -195,9 +196,9 @@ function ModRow({
           {mod.name ?? mod.folder}
         </div>
         <div style={{ fontSize: "11.5px", opacity: 0.6 }}>
-          {mod.version ? `v${mod.version}` : "untracked"}
-          {mod.enabled ? "" : " · disabled"}
-          {mod.togglable === false ? " · always active" : ""}
+          {mod.version ? `v${mod.version}` : t("untracked")}
+          {mod.enabled ? "" : t("· disabled")}
+          {mod.togglable === false ? t("· always active") : ""}
         </div>
         {/* The reason lives on the row, not in a log. A mod switched off
             because it cannot work looks exactly like one the user turned
@@ -292,13 +293,13 @@ function ModRow({
           opacity: 0.85,
         }}
       >
-        Uninstall
-      </DialogButton>
+        {t("Uninstall")}</DialogButton>
     </Focusable>
   );
 }
 
 export function ManagerPage() {
+  useT();
   // Same scope resolution as the Store tab: the game the user is browsing
   // (or running) is the one whose mods they expect to see. Everything
   // else hides behind an explicit "All games" toggle - seeing Skyrim
@@ -411,7 +412,7 @@ export function ManagerPage() {
       // Battlefront II toggle fail with the backend never even logging it.
       const result = await toggleMod(game, mod.folder, !mod.enabled);
       if (!result.ok) {
-        toaster.toast({ title: "Could not toggle", body: result.error ?? "" });
+        toaster.toast({ title: t("Could not toggle"), body: result.error ?? "" });
       }
     } finally {
       setBusyKey(undefined);
@@ -492,7 +493,7 @@ export function ManagerPage() {
           `Removes the ${memberCount} mods this collection installed. ` +
           `Mods you installed yourself (or via another collection) stay.`
         }
-        strOKButtonText="Uninstall collection"
+        strOKButtonText={t("Uninstall collection")}
         bDestructiveWarning={true}
         onOK={async () => {
           const result = await uninstallCollection(
@@ -508,7 +509,7 @@ export function ManagerPage() {
                   title: `${title} uninstalled`,
                   body: `${result.removed ?? 0} mods removed`,
                 }
-              : { title: "Uninstall failed", body: result.error ?? "" }
+              : { title: t("Uninstall failed"), body: result.error ?? "" }
           );
           refresh();
         }}
@@ -520,15 +521,15 @@ export function ManagerPage() {
     showModal(
       <ConfirmModal
         strTitle={`Uninstall ${mod.name ?? mod.folder}?`}
-        strDescription="You can reinstall it from the store at any time."
-        strOKButtonText="Uninstall"
+        strDescription={t("You can reinstall it from the store at any time.")}
+        strOKButtonText={t("Uninstall")}
         bDestructiveWarning={true}
         onOK={async () => {
           const result = await removeMod(game, mod.folder);
           toaster.toast(
             result.ok
               ? { title: "Uninstalled", body: mod.name ?? mod.folder }
-              : { title: "Uninstall failed", body: result.error ?? "" }
+              : { title: t("Uninstall failed"), body: result.error ?? "" }
           );
           refresh();
         }}
@@ -642,8 +643,7 @@ export function ManagerPage() {
           }}
         >
           <h2 style={{ margin: 0 }}>
-            My Mods
-            {scopeGame ? ` — ${scopeGame.displayName}` : ""}
+            {t("My Mods")}{scopeGame ? ` — ${scopeGame.displayName}` : ""}
           </h2>
           {scopeGame && (hiddenGames > 0 || showAllGames) && (
             <DialogButton
@@ -664,21 +664,18 @@ export function ManagerPage() {
         </Focusable>
 
         {groups === undefined && (
-          <div style={{ opacity: 0.8 }}>Reading your games…</div>
+          <div style={{ opacity: 0.8 }}>{t("Reading your games…")}</div>
         )}
         {groups !== undefined && groups.length === 0 && (
           <div style={{ opacity: 0.8 }}>
-            Nothing installed yet - the Store tab is where it starts.
-          </div>
+            {t("Nothing installed yet - the Store tab is where it starts.")}</div>
         )}
         {groups !== undefined &&
           groups.length > 0 &&
           grouped.length === 0 &&
           scoped && (
             <div style={{ opacity: 0.8 }}>
-              Nothing installed for {scopeGame!.displayName} yet - mods for
-              other games are behind "All games" above.
-            </div>
+              {t("Nothing installed for")}{" "}{scopeGame!.displayName} {" "}{t("yet - mods for other games are behind \"All games\" above.")}</div>
           )}
 
         {groups !== undefined && grouped.length > 0 && (
@@ -692,8 +689,7 @@ export function ManagerPage() {
               {columnHeader(`Mods (${looseTotal})`)}
               {looseTotal === 0 && (
                 <div style={{ opacity: 0.65, fontSize: "12.5px" }}>
-                  No individually installed mods.
-                </div>
+                  {t("No individually installed mods.")}</div>
               )}
               {grouped
                 .filter((g) => g.loose.length > 0)
@@ -745,8 +741,7 @@ export function ManagerPage() {
               {columnHeader(`Collections (${collectionsTotal})`)}
               {collectionsTotal === 0 && (
                 <div style={{ opacity: 0.65, fontSize: "12.5px" }}>
-                  No collections installed yet - find them on the Store tab.
-                </div>
+                  {t("No collections installed yet - find them on the Store tab.")}</div>
               )}
               {grouped
                 .filter((g) => g.entries.length > 0)
@@ -842,7 +837,7 @@ export function ManagerPage() {
                                       info?.mod_ids,
                                       info?.mod_count
                                     )}
-                                    {collBusy ? " · switching…" : ""}
+                                    {collBusy ? t("· switching…") : ""}
                                   </div>
                                 </div>
                                 <div
@@ -885,7 +880,7 @@ export function ManagerPage() {
                                       flexShrink: 0,
                                     }}
                                   >
-                                    ⚙ Finish installing ({pendingChoices})
+                                    {t("⚙ Finish installing (")}{pendingChoices})
                                   </DialogButton>
                                 )}
                               {toggleable.length > 0 && (
@@ -916,8 +911,7 @@ export function ManagerPage() {
                                   flexShrink: 0,
                                 }}
                               >
-                                Uninstall
-                              </DialogButton>
+                                {t("Uninstall")}</DialogButton>
                             </Focusable>
                             {open && (
                               <Focusable

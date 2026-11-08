@@ -14,6 +14,7 @@ import {
 } from "./state";
 import { DOWNLOADS_ROUTE, pushOurPage } from "./Tabs";
 import { ACTION_BUTTON, NEXUS_ORANGE } from "./theme";
+import { t } from "./i18n";
 
 /** Says where it goes, not what it is: an icon-only download glyph next
  * to an Install button reads as a second download button. Sized like
@@ -49,7 +50,7 @@ export function DownloadsButton() {
         <FaDownload />
         {busy && percent !== undefined
           ? `Downloads ${percent}%`
-          : "Go to downloads"}
+          : t("Go to downloads")}
       </span>
     </DialogButton>
   );

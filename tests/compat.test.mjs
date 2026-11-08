@@ -241,7 +241,7 @@ test("its own mod page says so before the download", () => {
 test("the mod page renders each note's own heading, not a hardcoded one", () => {
   const mod = readFileSync("src/ModDetailPage.tsx", "utf8");
   assert.match(mod, /compatHint\.hint/, "must render the hint text");
-  assert.match(mod, /compatHint\.label \?\? "Linux note"/);
+  assert.match(mod, /compatHint\.label \?\? t\("Linux note"\)/);
   assert.match(mod, /compatHint\.icon \?\? "🐧"/);
 });
 

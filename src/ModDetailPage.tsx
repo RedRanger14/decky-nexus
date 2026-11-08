@@ -78,6 +78,7 @@ import {
 } from "./theme";
 import { PageBackdrop, SectionHeading, StatChip, WarningBox } from "./chrome";
 import { DownloadsButton } from "./DownloadsButton";
+import { t, useT } from "./i18n";
 
 function fmtSize(sizeKb: number): string {
   if (sizeKb >= 1024 * 1024) return `${(sizeKb / 1024 / 1024).toFixed(1)} GB`;
@@ -106,6 +107,7 @@ function stripMarkup(text: string): string {
 const DESC_COLLAPSE_LENGTH = 500;
 
 export function ModDetailPage() {
+  useT();
   const [sel, setSel] = useState<SelectedMod | undefined>(getSelectedMod());
   const [files, setFiles] = useState<FilesResult | undefined>();
   const [requirements, setRequirements] = useState<ModRequirement[] | undefined>();
@@ -307,7 +309,7 @@ export function ModDetailPage() {
   }, []);
 
   if (!sel) {
-    return <div style={{ marginTop: "40px", padding: "24px" }}>No mod selected.</div>;
+    return <div style={{ marginTop: "40px", padding: "24px" }}>{t("No mod selected.")}</div>;
   }
   const { game, mod } = sel;
 
@@ -362,7 +364,7 @@ export function ModDetailPage() {
         if (result.needs_choice) {
           toaster.toast({
             title: `${req.modName}: choose manually`,
-            body: "This one offers versions - open its page to pick",
+            body: t("This one offers versions - open its page to pick"),
           });
         } else if (!result.ok) {
           toaster.toast({
@@ -373,7 +375,7 @@ export function ModDetailPage() {
       }
       refreshInstalled(sel);
       toaster.toast({
-        title: "Required mods done",
+        title: t("Required mods done"),
         body: `${missing.length} processed - check the chips`,
       });
     } finally {
@@ -391,7 +393,7 @@ export function ModDetailPage() {
       loadAll(next);
     } else {
       toaster.toast({
-        title: "Could not open mod",
+        title: t("Could not open mod"),
         body: result.error ?? req.modName,
       });
     }
@@ -454,7 +456,7 @@ export function ModDetailPage() {
                 });
               } else {
                 toaster.toast({
-                  title: "Install failed",
+                  title: t("Install failed"),
                   body: done.error ?? "",
                 });
               }
@@ -510,7 +512,7 @@ export function ModDetailPage() {
         setStale(result.warning);
         toaster.toast({
           title: `${mod.name} installed, switched off`,
-          body: "Built for an older patch - see the mod page",
+          body: t("Built for an older patch - see the mod page"),
         });
       } else if (result.ok) {
         setInstalledFileIds((prev) => new Set(prev).add(file.file_id));
@@ -544,8 +546,8 @@ export function ModDetailPage() {
         // toast only points at the box.
         setBlocked(result.error ?? "Another mod is in the way.");
         toaster.toast({
-          title: "Install blocked",
-          body: "Details on the mod page.",
+          title: t("Install blocked"),
+          body: t("Details on the mod page."),
         });
       } else if (result.refused) {
         // Will fail every time, so the reason stays on this file where it
@@ -553,14 +555,14 @@ export function ModDetailPage() {
         const reason = result.error ?? "Nothing in this file can be installed.";
         setRefused((prev) => ({ ...prev, [file.file_id]: reason }));
         toaster.toast({
-          title: "Can't install this file",
-          body: "Details on the mod page.",
+          title: t("Can't install this file"),
+          body: t("Details on the mod page."),
         });
       } else {
-        toaster.toast({ title: "Install failed", body: result.error ?? "Unknown error" });
+        toaster.toast({ title: t("Install failed"), body: result.error ?? "Unknown error" });
       }
     } catch (e) {
-      toaster.toast({ title: "Install failed", body: String(e) });
+      toaster.toast({ title: t("Install failed"), body: String(e) });
     } finally {
       setInstallingFileId(undefined);
       setProgress(undefined);
@@ -719,8 +721,7 @@ export function ModDetailPage() {
               opacity: 0.7,
             }}
           >
-            B — close
-          </div>
+            {t("B — close")}</div>
         </Focusable>
       )}
       <Scroller
@@ -790,12 +791,11 @@ export function ModDetailPage() {
                   Navigation.Navigate("/nexus-mods");
                 }}
               >
-                by {mod.author} · more from this author
-              </DialogButton>
+                {t("by")}{" "}{mod.author} {" "}{t("· more from this author")}</DialogButton>
             </Focusable>
           ) : (
             <div style={{ opacity: 0.75, fontSize: "13.5px", marginBottom: "8px" }}>
-              by {mod.author}
+              {t("by")}{" "}{mod.author}
             </div>
           )}
           {/* Warned on the mod's OWN page, not only on the collection that
@@ -848,7 +848,7 @@ export function ModDetailPage() {
             <StatChip icon={<FaArrowDown size={11} />}>
               {mod.downloads.toLocaleString()}
             </StatChip>
-            <StatChip>v{mod.version}</StatChip>
+            <StatChip>{t("v")}{mod.version}</StatChip>
             {mod.preGameUpdate && (
               <span
                 style={{
@@ -863,16 +863,15 @@ export function ModDetailPage() {
                   color: "#fff",
                 }}
               >
-                PRE-UPDATE
-              </span>
+                {t("PRE-UPDATE")}</span>
             )}
             {/* Both dates, plainly: upload age and update recency answer
                 different questions (is it established? is it maintained?),
                 and on live-service games the updated date is the whole
                 ballgame. */}
-            {createdDate && <StatChip>uploaded {createdDate}</StatChip>}
+            {createdDate && <StatChip>{t("uploaded")}{" "}{createdDate}</StatChip>}
             {updatedDate && updatedDate !== createdDate && (
-              <StatChip>updated {updatedDate}</StatChip>
+              <StatChip>{t("updated")}{" "}{updatedDate}</StatChip>
             )}
             {endorseStatus !== undefined && endorseStatus !== "unknown" && (
               <EndorsePill
@@ -899,7 +898,7 @@ export function ModDetailPage() {
                       });
                     } else {
                       toaster.toast({
-                        title: "Could not endorse",
+                        title: t("Could not endorse"),
                         body: result.error ?? "",
                       });
                     }
@@ -925,7 +924,7 @@ export function ModDetailPage() {
                   border: "1px solid rgba(255, 120, 150, 0.45)",
                 }}
               >
-                ❤ Support {uploader.name ?? mod.author}
+                {t("❤ Support")}{" "}{uploader.name ?? mod.author}
               </Focusable>
             )}
           </Focusable>
@@ -936,8 +935,8 @@ export function ModDetailPage() {
             <div
               style={{ marginTop: "8px", fontSize: "13px", color: ACCENT_SUCCESS }}
             >
-              ✓ Installed{installedCopy.version ? ` (v${installedCopy.version})` : ""}
-              {installedCopy.enabled ? "" : " · currently disabled"}
+              {t("✓ Installed")}{installedCopy.version ? ` (v${installedCopy.version})` : ""}
+              {installedCopy.enabled ? "" : t("· currently disabled")}
             </div>
           )}
           {compatHint && (
@@ -951,7 +950,7 @@ export function ModDetailPage() {
                 fontSize: "13px",
               }}
             >
-              {compatHint.icon ?? "🐧"} <b>{compatHint.label ?? "Linux note"}:</b>{" "}
+              {compatHint.icon ?? "🐧"} <b>{compatHint.label ?? t("Linux note")}:</b>{" "}
               {compatHint.hint}
             </div>
           )}
@@ -966,7 +965,7 @@ export function ModDetailPage() {
                 fontSize: "13px",
               }}
             >
-              🎮 <b>Gaming Mode warning:</b> {strandingWarning}
+              🎮 <b>{t("Gaming Mode warning:")}</b> {strandingWarning}
             </div>
           )}
           {dlcNeed && (
@@ -1017,8 +1016,7 @@ export function ModDetailPage() {
                 }}
               >
                 <span style={{ fontSize: "13px", fontWeight: 600 }}>
-                  Required mods
-                </span>
+                  {t("Required mods")}</span>
                 {requirements.some((r) => {
                   const c = classifyRequirement(r);
                   if ((game.heroExcludeModIds ?? []).includes(r.modId))
@@ -1036,8 +1034,8 @@ export function ModDetailPage() {
                     }}
                   >
                     {reqBatchBusy
-                      ? "Installing…"
-                      : "Install all missing"}
+                      ? t("Installing…")
+                      : t("Install all missing")}
                   </DialogButton>
                 )}
               </div>
@@ -1130,8 +1128,7 @@ export function ModDetailPage() {
                   }}
                 >
                   <div style={{ fontWeight: 600, marginBottom: "3px" }}>
-                    Setup notes from the author
-                  </div>
+                    {t("Setup notes from the author")}</div>
                   {requirementSetupNotes(requirements).map((n) => (
                     <div key={n.modName} style={{ opacity: 0.9 }}>
                       <span style={{ color: NEXUS_ORANGE }}>{n.modName}</span>
@@ -1142,15 +1139,14 @@ export function ModDetailPage() {
                 </div>
               )}
               <div style={{ fontSize: "11px", marginTop: "6px" }}>
-                <span style={{ color: "rgb(143, 212, 143)" }}>● Installed</span>
+                <span style={{ color: "rgb(143, 212, 143)" }}>{t("● Installed")}</span>
                 <span style={{ opacity: 0.5 }}> · </span>
-                <span style={{ color: NEXUS_ORANGE }}>● Needs installing</span>
+                <span style={{ color: NEXUS_ORANGE }}>{t("● Needs installing")}</span>
                 <span style={{ opacity: 0.5 }}> · </span>
                 <span style={{ color: "rgb(120, 170, 255)" }}>
-                  ● External link
-                </span>
+                  {t("● External link")}</span>
                 <span style={{ opacity: 0.5 }}> · </span>
-                <span style={{ opacity: 0.7 }}>○ Optional</span>
+                <span style={{ opacity: 0.7 }}>{t("○ Optional")}</span>
               </div>
             </div>
           )}
@@ -1169,10 +1165,7 @@ export function ModDetailPage() {
             lineHeight: "1.5",
           }}
         >
-          🛠 <b>{mod.name}</b> is the mod loader for {game.displayName}.
-          Install it from the game's panel (Step 1) for guided setup with
-          launch options — installing it here as a regular mod won't work.
-        </div>
+          🛠 <b>{mod.name}</b> {" "}{t("is the mod loader for")}{" "}{game.displayName}{t(". Install it from the game's panel (Step 1) for guided setup with launch options — installing it here as a regular mod won't work.")}</div>
       ) : (
         <>
       {/* ---- Primary actions: one big install (latest main file), all-files
@@ -1223,7 +1216,7 @@ export function ModDetailPage() {
                 lineHeight: 1.4,
               }}
             >
-              Chosen to match your game (version {versionMatch.gameVersion})
+              {t("Chosen to match your game (version")}{" "}{versionMatch.gameVersion})
             </div>
           )}
         {progressNote !== "" && (
@@ -1244,7 +1237,7 @@ export function ModDetailPage() {
           onClick={() => setShowAllFiles(!showAllFiles)}
           style={ACTION_BUTTON}
         >
-          {showAllFiles ? "Hide files ▴" : `All files (${fileList.length}) ▾`}
+          {showAllFiles ? t("Hide files ▴") : `All files (${fileList.length}) ▾`}
         </DialogButton>
         {installedCopy && (
           <DialogButton
@@ -1255,7 +1248,7 @@ export function ModDetailPage() {
                 <ConfirmModal
                   strTitle={`Uninstall ${mod.name}?`}
                   strDescription={`This deletes the "${installedCopy.folder}" folder from the game. You can reinstall it at any time.`}
-                  strOKButtonText="Uninstall"
+                  strOKButtonText={t("Uninstall")}
                   bDestructiveWarning={true}
                   onOK={async () => {
                     // removeMod picks the mechanism: Frostbite games have
@@ -1263,8 +1256,8 @@ export function ModDetailPage() {
                     const result = await removeMod(game, installedCopy.folder);
                     toaster.toast(
                       result.ok
-                        ? { title: "Mod uninstalled", body: mod.name }
-                        : { title: "Uninstall failed", body: result.error ?? "" }
+                        ? { title: t("Mod uninstalled"), body: mod.name }
+                        : { title: t("Uninstall failed"), body: result.error ?? "" }
                     );
                     setInstalledFileIds(new Set());
                     refreshInstalled(sel);
@@ -1273,15 +1266,14 @@ export function ModDetailPage() {
               )
             }
           >
-            Uninstall
-          </DialogButton>
+            {t("Uninstall")}</DialogButton>
         )}
         <DownloadsButton />
       </Focusable>
       </Focusable>
       {companions && companions.failed.length > 0 && (
         <WarningBox
-          title="One required part did not install"
+          title={t("One required part did not install")}
           body={
             `This mod needs more than one file from its page, and ` +
             `${companions.failed.join(", ")} could not be installed. The mod ` +
@@ -1294,7 +1286,7 @@ export function ModDetailPage() {
         companions.failed.length === 0 &&
         companions.installed.length > 0 && (
           <WarningBox
-            title="Extra required files installed"
+            title={t("Extra required files installed")}
             body={
               `This mod is split across several files on its page, so ` +
               `${companions.installed.join(", ")} was installed with it. ` +
@@ -1304,13 +1296,13 @@ export function ModDetailPage() {
         )}
       {notInstallable && (
         <WarningBox
-          title="Not installable on this device"
+          title={t("Not installable on this device")}
           body={notInstallable}
         />
       )}
       {blocked && (
         <WarningBox
-          title="This mod cannot install yet"
+          title={t("This mod cannot install yet")}
           body={blocked}
           action={{
             label: "Manage my mods",
@@ -1324,7 +1316,7 @@ export function ModDetailPage() {
       )}
       {!blocked && stale && (
         <WarningBox
-          title="Worth knowing"
+          title={t("Worth knowing")}
           body={stale}
         />
       )}
@@ -1335,14 +1327,14 @@ export function ModDetailPage() {
       {/* Switched off by the plugin (after a session it kept failing, or
           as part of a collection): the reason belongs on the mod itself. */}
       {installedCopy && !installedCopy.enabled && installedCopy.disabled_reason && (
-        <WarningBox title="Switched off" body={installedCopy.disabled_reason} />
+        <WarningBox title={t("Switched off")} body={installedCopy.disabled_reason} />
       )}
       {installedCopy?.enabled && installedCopy.load_problem && (
         <WarningBox
           title={
             installedCopy.load_state === "failed"
-              ? "Did not load last time you played"
-              : "Had errors last time you played"
+              ? t("Did not load last time you played")
+              : t("Had errors last time you played")
           }
           body={installedCopy.load_problem}
           action={{
@@ -1351,7 +1343,7 @@ export function ModDetailPage() {
               const r = await toggleMod(game, installedCopy.folder, false);
               if (!r.ok) {
                 toaster.toast({
-                  title: "Could not switch it off",
+                  title: t("Could not switch it off"),
                   body: r.error ?? "",
                 });
               }
@@ -1362,14 +1354,13 @@ export function ModDetailPage() {
       )}
       {files && !files.ok && (
         <div style={{ opacity: 0.8, fontSize: "13px" }}>
-          Could not load files: {files.error}
+          {t("Could not load files:")}{" "}{files.error}
         </div>
       )}
       {installedFileIds.size > 0 && (
         <div style={{ marginTop: "4px", fontSize: "13px", opacity: 0.8 }}>
-          Installed mods load when the game starts
-          {game.logAdapter?.kind === "godot"
-            ? " (it may relaunch itself once more to compile mods)."
+          {t("Installed mods load when the game starts")}{game.logAdapter?.kind === "godot"
+            ? t("(it may relaunch itself once more to compile mods).")
             : "."}
         </div>
       )}
@@ -1378,10 +1369,10 @@ export function ModDetailPage() {
 
       {/* ---- Description ---- */}
       {description === undefined ? (
-        <div style={{ opacity: 0.7, padding: "8px 0" }}>Loading description…</div>
+        <div style={{ opacity: 0.7, padding: "8px 0" }}>{t("Loading description…")}</div>
       ) : description ? (
         <>
-          <SectionHeading title="About" />
+          <SectionHeading title={t("About")} />
           <div
             style={{
               fontSize: "13px",
@@ -1407,7 +1398,7 @@ export function ModDetailPage() {
                 fontSize: "12px",
               }}
             >
-              {descExpanded ? "Show less ▴" : "Show more ▾"}
+              {descExpanded ? t("Show less ▴") : t("Show more ▾")}
             </Focusable>
           )}
         </>
@@ -1456,7 +1447,7 @@ export function ModDetailPage() {
               </div>
               <div style={{ fontSize: "11px", opacity: 0.65 }}>
                 {file.category_name}
-                {file.is_primary ? " · primary" : ""} · v{file.version} ·{" "}
+                {file.is_primary ? t("· primary") : ""} {" "}{t("· v")}{file.version} ·{" "}
                 {fmtSize(file.size_kb)}
               </div>
               <div
@@ -1470,10 +1461,10 @@ export function ModDetailPage() {
                 {busy
                   ? progressText
                   : done
-                  ? "Installed ✓"
+                  ? t("Installed ✓")
                   : why
-                  ? "Can't install"
-                  : "Install"}
+                  ? t("Can't install")
+                  : t("Install")}
               </div>
               {why && !busy && !done && (
                 <div style={{ fontSize: "11px", marginTop: "2px", opacity: 0.75 }}>
@@ -1495,14 +1486,13 @@ export function ModDetailPage() {
             style={{ flexGrow: 1 }}
             onClick={() => restartGame(game.appId)}
           >
-            Restart {game.displayName} now
-          </DialogButton>
+            {t("Restart")}{" "}{game.displayName} {" "}{t("now")}</DialogButton>
         )}
         <DialogButton
           style={{ flexGrow: 1 }}
           onClick={goBack}
         >
-          {getDetailOrigin() === "qam" ? "Back" : "Back to browse"}
+          {getDetailOrigin() === "qam" ? t("Back") : t("Back to browse")}
         </DialogButton>
       </Focusable>
       </div>

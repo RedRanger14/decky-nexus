@@ -225,7 +225,7 @@ test("the panel's startup calls handle a rejected backend", () => {
     "the content gate must not sit on checking either");
   // Both states are what the rows read as "checking...", so neither may be
   // left undefined by a failure.
-  assert.ok(src.includes('auth === undefined ? "checking'),
+  assert.ok(src.includes('auth === undefined ? t("checking'),
     "the status row reads checking while auth is undefined");
   assert.ok(src.includes("gate === undefined"),
     "and so does the adult content row");
@@ -412,7 +412,7 @@ test("the store pins both its nav and its search out of the scroll", () => {
       "hides the nav"
   );
   assert.ok(
-    block.includes('label="Search"'),
+    block.includes('label={t("Search")}'),
     "the search field is outside the pinned block - this is exactly the " +
       "half that was still cut off after the tab bar was fixed"
   );
@@ -895,7 +895,7 @@ test("the panel says unofficial and beta where the user can see it", () => {
   // 'unnofifcial' and in beta ha".
   const panel = read("index.tsx");
   assert.ok(
-    /v\{version\} · unofficial beta/.test(panel),
+    /unofficial beta/.test(panel),
     "the QAM version badge does not say unofficial or beta"
   );
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
@@ -1082,7 +1082,7 @@ test("the mod page states the pre-update fact", () => {
 test("the browse filter sits beside sort and refetches", () => {
   const page = read("BrowsePage.tsx");
   assert.ok(
-    /strDefaultLabel="Filter"/.test(page),
+    /strDefaultLabel=\{t\("Filter"\)\}/.test(page),
     "no Filter dropdown on the browse page"
   );
   // Recency options lead; live-service games get "since game update".

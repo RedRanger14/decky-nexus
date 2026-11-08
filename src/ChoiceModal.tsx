@@ -2,6 +2,7 @@
 // mini-FOMOD). The backend lists them; the user picks one to install.
 // Shared by the mod detail page and the collection "Finish setup" flow.
 import { ButtonItem, ModalRoot } from "@decky/ui";
+import { t } from "./i18n";
 
 export function PayloadChoiceModal({
   modName,
@@ -26,23 +27,19 @@ export function PayloadChoiceModal({
 }) {
   return (
     <ModalRoot closeModal={closeModal}>
-      <h3 style={{ marginTop: 0 }}>{modName}: choose a version</h3>
+      <h3 style={{ marginTop: 0 }}>{modName}{t(": choose a version")}</h3>
       <div style={{ fontSize: "13px", opacity: 0.9, marginBottom: "8px" }}>
-        This mod's archive has several parts. Some mods offer alternatives
-        to pick between; others are a set that belongs together. (Check the
-        mod's description if you're unsure.)
-      </div>
+        {t("This mod's archive has several parts. Some mods offer alternatives to pick between; others are a set that belongs together. (Check the mod's description if you're unsure.)")}</div>
       {options.length > 1 && allowMerge !== false && (
         <ButtonItem
           layout="below"
-          description="Multi-part mods want all of them: The Mandalorian ships a base, text and weapon part"
+          description={t("Multi-part mods want all of them: The Mandalorian ships a base, text and weapon part")}
           onClick={() => {
             closeModal?.();
             onPick("*");
           }}
         >
-          Install all {options.length} parts
-        </ButtonItem>
+          {t("Install all")}{" "}{options.length} {" "}{t("parts")}</ButtonItem>
       )}
       {options.map((opt, i) => (
         <ButtonItem

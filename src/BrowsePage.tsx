@@ -62,6 +62,7 @@ import { AdultBadge, PageBackdrop, SectionHeading, StackedThumb } from "./chrome
 import { NEXUS_ORANGE, PAGE_SCROLLER } from "./theme";
 import { storeHeaderPlan, STORE_HEADER_EDGE } from "./panelRules";
 import { TabBar, exitTabsToQam, handleTabButtons, pushOurPage } from "./Tabs";
+import { t, useT } from "./i18n";
 
 // The filter dropdown's value while one author's mods are shown (#46).
 const AUTHOR_FILTER = "author";
@@ -69,10 +70,10 @@ const AUTHOR_FILTER = "author";
 const SORT_OPTIONS = [
   { data: "featured", label: "Featured" },
   { data: "trending", label: "Trending" },
-  { data: "endorsements", label: "Most endorsed" },
-  { data: "downloads", label: "Most downloaded" },
-  { data: "updatedAt", label: "Recently updated" },
-  { data: "createdAt", label: "Newest" },
+  { data: "endorsements", label: t("Most endorsed") },
+  { data: "downloads", label: t("Most downloaded") },
+  { data: "updatedAt", label: t("Recently updated") },
+  { data: "createdAt", label: t("Newest") },
 ];
 
 const PAGE_SIZE = 24;
@@ -280,9 +281,9 @@ function CollectionCard({
         >
           {c.name}
         </div>
-        <div style={{ fontSize: "11.5px", opacity: 0.65 }}>by {c.author}</div>
+        <div style={{ fontSize: "11.5px", opacity: 0.65 }}>{t("by")}{" "}{c.author}</div>
         <div style={{ fontSize: "11.5px", opacity: 0.65 }}>
-          {c.modCount} mods ·{" "}
+          {c.modCount} {" "}{t("mods ·")}{" "}
           {c.totalSize >= 1 << 30
             ? `${(c.totalSize / (1 << 30)).toFixed(1)} GB`
             : `${Math.round(c.totalSize / (1 << 20))} MB`}
@@ -306,7 +307,7 @@ function CollectionCard({
           >
             {c.built_for
               ? `BUILT FOR ${c.built_for.toUpperCase()}`
-              : "NEEDS AN OLDER GAME"}
+              : t("NEEDS AN OLDER GAME")}
           </div>
         )}
         {SHOW_VERIFIED_BADGES && verdict && <VerifiedBadge state={verdict} />}
@@ -440,8 +441,7 @@ function UnsupportedBadge({ reason }: { reason: string }) {
         color: "#f0a746",
       }}
     >
-      Not installable here
-    </div>
+      {t("Not installable here")}</div>
   );
 }
 
@@ -508,7 +508,7 @@ function ModTile({
           {mod.name}
         </div>
         <div style={{ fontSize: "12px", opacity: 0.7 }}>
-          {mod.author} · v{mod.version}
+          {mod.author} {" "}{t("· v")}{mod.version}
         </div>
         <div style={{ fontSize: "12px", opacity: 0.7 }}>
           <StatsLine mod={mod} />
@@ -527,8 +527,7 @@ function ModTile({
               color: "#fff",
             }}
           >
-            PRE-UPDATE
-          </div>
+            {t("PRE-UPDATE")}</div>
         )}
         {/* Curated: a mod this plugin can NEVER install (a desktop tool with
             a big endorsement count). Saying so on the tile beats letting the
@@ -548,8 +547,7 @@ function ModTile({
               color: "#fff",
             }}
           >
-            DESKTOP APP ONLY
-          </div>
+            {t("DESKTOP APP ONLY")}</div>
         )}
       </div>
     </Focusable>
@@ -662,6 +660,7 @@ let lastRailCols = 5;
 let lastHeaderWidth = 0;
 
 export function BrowsePage() {
+  useT();
   // Explicit scope from the QAM beats ambient resolution (which could
   // go stale and surface another game's store).
   const explicitScope = getBrowseGame() !== undefined;
@@ -1285,7 +1284,7 @@ export function BrowsePage() {
               {game.displayName}
             </h2>
             <div style={{ fontSize: "13px", fontWeight: 400, opacity: 0.6 }}>
-              {total !== undefined ? `${total.toLocaleString()} mods` : "loading…"}
+              {total !== undefined ? `${total.toLocaleString()} mods` : t("loading…")}
             </div>
           </div>
           <div style={{ flexGrow: 1 }} />
@@ -1300,7 +1299,7 @@ export function BrowsePage() {
             }}
           >
             <TextField
-              label="Search"
+              label={t("Search")}
               value={search}
               bShowClearAction={true}
               onChange={(e) => {
@@ -1316,10 +1315,13 @@ export function BrowsePage() {
           </div>
           <div style={{ width: `${header.controlWidth}px`, flexShrink: 0 }}>
             <Dropdown
-              rgOptions={SORT_OPTIONS}
+              rgOptions={SORT_OPTIONS.map((o) => ({
+                data: o.data,
+                label: t(o.label),
+              }))}
               selectedOption={sort}
               onChange={(opt) => setSort(opt.data)}
-              strDefaultLabel="Sort"
+              strDefaultLabel={t("Sort")}
             />
           </div>
           <div
@@ -1335,17 +1337,17 @@ export function BrowsePage() {
                 // One author's mods (#46) is a filter like the rest, so the
                 // filter shows it and "All mods" takes it off.
                 ...(author
-                  ? [{ data: AUTHOR_FILTER, label: `By ${author.name}` }]
+                  ? [{ data: AUTHOR_FILTER, label: t("By {name}", { name: author.name }) }]
                   : []),
-                { data: "", label: "All mods" },
+                { data: "", label: t("All mods") },
                 // The recency options lead because they answer the
                 // question this filter exists for on live-service games:
                 // "which of these actually work right now?"
                 ...(game.hd2Layout
-                  ? [{ data: "d:-1", label: "Since game update" }]
+                  ? [{ data: "d:-1", label: t("Since game update") }]
                   : []),
-                { data: "d:7", label: "Updated this week" },
-                { data: "d:30", label: "Updated this month" },
+                { data: "d:7", label: t("Updated this week") },
+                { data: "d:30", label: t("Updated this month") },
                 ...categories.map((c) => ({ data: c, label: c })),
               ]}
               selectedOption={author ? AUTHOR_FILTER : filter}
@@ -1354,7 +1356,7 @@ export function BrowsePage() {
                 setAuthor(undefined);
                 setFilter(opt.data);
               }}
-              strDefaultLabel="Filter"
+              strDefaultLabel={t("Filter")}
             />
           </div>
           </>
@@ -1374,22 +1376,21 @@ export function BrowsePage() {
               }}
             >
               <h3 style={{ margin: 0 }}>
-                Collections{" "}
+                {t("Collections")}{" "}
                 <span style={{ opacity: 0.6, fontWeight: 400, fontSize: "13px" }}>
-                  · {allCollections.length} shown
-                </span>
+                  · {allCollections.length} {" "}{t("shown")}</span>
               </h3>
               <div style={{ width: "220px" }}>
                 <Dropdown
                   rgOptions={[
-                    { data: "endorsements", label: "Most endorsed" },
-                    { data: "downloads", label: "Most downloaded" },
-                    { data: "updatedAt", label: "Recently updated" },
-                    { data: "createdAt", label: "Newest" },
+                    { data: "endorsements", label: t("Most endorsed") },
+                    { data: "downloads", label: t("Most downloaded") },
+                    { data: "updatedAt", label: t("Recently updated") },
+                    { data: "createdAt", label: t("Newest") },
                   ]}
                   selectedOption={collectionsSort}
                   onChange={(opt) => setCollectionsSort(opt.data)}
-                  strDefaultLabel="Sort"
+                  strDefaultLabel={t("Sort")}
                 />
               </div>
             </Focusable>
@@ -1417,8 +1418,7 @@ export function BrowsePage() {
             </div>
             {allCollections.length === 0 && (
               <div style={{ opacity: 0.8, padding: "12px 0" }}>
-                Loading collections…
-              </div>
+                {t("Loading collections…")}</div>
             )}
             {collectionsHasMore && allCollections.length > 0 && (
               <Focusable style={{ margin: "14px auto 0", maxWidth: "320px" }}>
@@ -1436,8 +1436,7 @@ export function BrowsePage() {
                     fetchCollectionsPage(allCollections.length, true);
                   }}
                 >
-                  Load more ({allCollections.length} shown)
-                </ButtonItem>
+                  {t("Load more (")}{allCollections.length} {" "}{t("shown)")}</ButtonItem>
               </Focusable>
             )}
           </div>
@@ -1487,15 +1486,11 @@ export function BrowsePage() {
               lineHeight: 1.45,
             }}
           >
-            Showing mods for <b>{game.displayName}</b> - the game this store
-            defaults to. To browse another game's mods, open that game in your
-            Steam library, then use the Nexus Mods panel in the Quick Access
-            Menu (the ... button).
-          </div>
+            {t("Showing mods for")}{" "}<b>{game.displayName}</b> {" "}{t("- the game this store defaults to. To browse another game's mods, open that game in your Steam library, then use the Nexus Mods panel in the Quick Access Menu (the ... button).")}</div>
         )}
         {collections.length > 0 && (
               <>
-                <SectionHeading title="Collections" />
+                <SectionHeading title={t("Collections")} />
                 <HiddenNote text={hiddenCollectionsNote(railHidden, false)} />
                 <Focusable
                   style={{
@@ -1528,15 +1523,13 @@ export function BrowsePage() {
                       minHeight: "80px",
                     }}
                   >
-                    All collections →
-                  </Focusable>
+                    {t("All collections →")}</Focusable>
                 </Focusable>
               </>
             )}
             {trending.length === 0 && recommended.length === 0 && (
               <div style={{ padding: "20px 0", opacity: 0.8 }}>
-                Loading mods…
-              </div>
+                {t("Loading mods…")}</div>
             )}
             <ModCarousel
               title={railTitle}
@@ -1549,7 +1542,7 @@ export function BrowsePage() {
               }}
             />
             <ModCarousel
-              title="New mods"
+              title={t("New mods")}
               mods={railNewest}
               game={game}
               blur={blurAdult}
@@ -1559,7 +1552,7 @@ export function BrowsePage() {
               }}
             />
             <ModCarousel
-              title="All-time favourites"
+              title={t("All-time favourites")}
               mods={railPopular}
               game={game}
               blur={blurAdult}
@@ -1573,11 +1566,11 @@ export function BrowsePage() {
           <div ref={contentRef}>
             {error && (
               <div style={{ padding: "24px 0", opacity: 0.8 }}>
-                Could not load mods: {error}
+                {t("Could not load mods:")}{" "}{error}
               </div>
             )}
             {loading && mods.length === 0 && (
-              <div style={{ padding: "24px 0", opacity: 0.8 }}>Loading mods…</div>
+              <div style={{ padding: "24px 0", opacity: 0.8 }}>{t("Loading mods…")}</div>
             )}
             {author && (
               <Focusable
@@ -1590,15 +1583,14 @@ export function BrowsePage() {
                   style={{ width: "auto", minWidth: "160px" }}
                   onClick={() => setAuthor(undefined)}
                 >
-                  Show all mods
-                </DialogButton>
+                  {t("Show all mods")}</DialogButton>
               </Focusable>
             )}
             {search.trim() !== "" && linkHit && (
               <div style={{ marginTop: "10px" }}>
                 {linkHit.kind === "found" ? (
                   <>
-                    <SectionHeading title="From your link" />
+                    <SectionHeading title={t("From your link")} />
                     {linkHit.game.appId !== game.appId && (
                       <HiddenNote
                         text={`A ${linkHit.game.displayName} collection.`}
@@ -1632,7 +1624,7 @@ export function BrowsePage() {
             )}
             {!loading && !error && mods.length === 0 && total !== undefined && (
               <div style={{ padding: "24px 0", opacity: 0.8 }}>
-                No mods match “{search.trim()}”.
+                {t("No mods match “")}{search.trim()}”.
               </div>
             )}
             {search.trim() !== "" && (
@@ -1685,7 +1677,7 @@ export function BrowsePage() {
                 ))}
                 {searchCollections.length === 0 && (
                   <div style={{ opacity: 0.7, fontSize: "13px" }}>
-                    No collections match "{search.trim()}".
+                    {t("No collections match \"")}{search.trim()}".
                     {!searchHidden && !linkHit && ` ${LINK_HINT}`}
                   </div>
                 )}
@@ -1725,7 +1717,7 @@ export function BrowsePage() {
                     fetchPage(nextOffset.current, true);
                   }}
                 >
-                  {loading ? "Loading…" : `Load more (${mods.length} shown)`}
+                  {loading ? t("Loading…") : `Load more (${mods.length} shown)`}
                 </ButtonItem>
               </Focusable>
             )}

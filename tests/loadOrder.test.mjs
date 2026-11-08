@@ -386,7 +386,7 @@ test("undo says it happened", () => {
   const src = readCode("LoadOrderPage.tsx");
   const at = src.indexOf("const undoLast");
   const block = src.slice(at, at + 900);
-  assert.ok(/toaster\.toast\(\{\s*title: "Put back"/.test(block));
+  assert.ok(/toaster\.toast\(\{\s*title: t\("Put back"\)/.test(block));
 });
 
 test("the page tells the footer what each button does", () => {

@@ -31,10 +31,12 @@ import {
   PRIMARY_BUTTON_CSS,
 } from "./theme";
 import { TabBar, exitTabsToQam, handleTabButtons } from "./Tabs";
+import { t, useT } from "./i18n";
 
 const Scroller: any = ScrollPanelGroup;
 
 export function UpdatesPage() {
+  useT();
   const [pending, setPending] = useState<PendingUpdate[] | undefined>();
   const [busy, setBusy] = useState(false);
   // The plugin's own update. It sits above the mods because it is the one
@@ -195,7 +197,7 @@ export function UpdatesPage() {
         failed === 0 && ok > 0
           ? {
               title: `${ok} update${ok === 1 ? "" : "s"} applied`,
-              body: "Restart affected games to load them",
+              body: t("Restart affected games to load them"),
             }
           : {
               title:
@@ -231,11 +233,9 @@ export function UpdatesPage() {
       >
         <style>{PRIMARY_BUTTON_CSS}</style>
         <TabBar currentId="updates" />
-        <h2 style={{ margin: "12px 0 4px" }}>Updates</h2>
+        <h2 style={{ margin: "12px 0 4px" }}>{t("Updates")}</h2>
         <div style={{ fontSize: "12.5px", opacity: 0.65, marginBottom: "10px" }}>
-          Mods installed as part of a collection aren't shown - collections
-          pin their versions on purpose.
-        </div>
+          {t("Mods installed as part of a collection aren't shown - collections pin their versions on purpose.")}</div>
 
         {self && (
           <Focusable
@@ -253,7 +253,7 @@ export function UpdatesPage() {
             </div>
             <div style={{ fontSize: "12.5px", opacity: 0.8, marginBottom: "8px" }}>
               {selfDone
-                ? "Decky has installed it. Close this page and reopen the panel to see the new version."
+                ? t("Decky has installed it. Close this page and reopen the panel to see the new version.")
                 : pluginUpdateBlocked(self) || pluginUpdateBody(self)}
             </div>
 
@@ -271,8 +271,7 @@ export function UpdatesPage() {
                 }}
               >
                 <div style={{ fontWeight: 600, marginBottom: "4px" }}>
-                  What is in this update
-                </div>
+                  {t("What is in this update")}</div>
                 {notes.map((line, i) =>
                   line === "" ? (
                     <div key={i} style={{ height: "6px" }} />
@@ -302,21 +301,21 @@ export function UpdatesPage() {
                     const err = await requestPluginUpdate(self);
                     if (err) {
                       setSelfSentAt(0);
-                      toaster.toast({ title: "Nexus Mods", body: err });
+                      toaster.toast({ title: t("Nexus Mods"), body: err });
                       return;
                     }
                     toaster.toast({
-                      title: "Nexus Mods",
-                      body: "Decky will ask you to confirm the update.",
+                      title: t("Nexus Mods"),
+                      body: t("Decky will ask you to confirm the update."),
                     });
                   }}
                 >
-                  {selfWaiting ? "Waiting for Decky…" : "⬆ Update the plugin"}
+                  {selfWaiting ? t("Waiting for Decky…") : t("⬆ Update the plugin")}
                 </DialogButton>
               )}
               {!selfDone && notes.length > 0 && (
                 <DialogButton onClick={() => setNotesOpen((v) => !v)}>
-                  {notesOpen ? "Show less" : "Show more"}
+                  {notesOpen ? t("Show less") : t("Show more")}
                 </DialogButton>
               )}
             </Focusable>
@@ -324,10 +323,10 @@ export function UpdatesPage() {
         )}
 
         {pending === undefined && (
-          <div style={{ opacity: 0.8 }}>Checking your mods…</div>
+          <div style={{ opacity: 0.8 }}>{t("Checking your mods…")}</div>
         )}
         {pending !== undefined && pending.length === 0 && !self && (
-          <div style={{ opacity: 0.8 }}>Everything is up to date ✓</div>
+          <div style={{ opacity: 0.8 }}>{t("Everything is up to date ✓")}</div>
         )}
 
         {pending && pending.length > 0 && (
@@ -340,7 +339,7 @@ export function UpdatesPage() {
               disabled={busy}
               onClick={updateAll}
             >
-              {busy ? "Updating…" : `⬆ Update all (${pending.length})`}
+              {busy ? t("Updating…") : `⬆ Update all (${pending.length})`}
             </DialogButton>
           </Focusable>
         )}
@@ -400,8 +399,7 @@ export function UpdatesPage() {
                     flexShrink: 0,
                   }}
                 >
-                  ⬆ Update
-                </DialogButton>
+                  {t("⬆ Update")}</DialogButton>
               )}
               <DialogButton
                 disabled={busy}
@@ -414,8 +412,7 @@ export function UpdatesPage() {
                   flexShrink: 0,
                 }}
               >
-                Skip
-              </DialogButton>
+                {t("Skip")}</DialogButton>
             </Focusable>
           ))}
         </Focusable>

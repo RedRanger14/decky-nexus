@@ -138,6 +138,7 @@ import {
   WarningBox,
 } from "./chrome";
 import { DownloadsButton } from "./DownloadsButton";
+import { t, useT } from "./i18n";
 
 const Scroller: any = ScrollPanelGroup;
 
@@ -151,6 +152,7 @@ function fmtBytes(bytes: number): string {
 }
 
 export function CollectionPage() {
+  useT();
   const sel = getSelectedCollection();
   const [detail, setDetail] = useState<CollectionDetail | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -387,7 +389,7 @@ export function CollectionPage() {
         return;
       }
       toaster.toast({
-        title: "Could not read installed mods",
+        title: t("Could not read installed mods"),
         body: `${String(e)}. The counts on this page may be wrong until it is reopened.`,
       });
     });
@@ -474,7 +476,7 @@ export function CollectionPage() {
             : `From ${r.mods ?? 0} mod${(r.mods ?? 0) === 1 ? "" : "s"}`,
         });
       } else {
-        toaster.toast({ title: "Could not fix", body: r.error ?? "" });
+        toaster.toast({ title: t("Could not fix"), body: r.error ?? "" });
       }
     } finally {
       setFixingFiles(false);
@@ -628,7 +630,7 @@ export function CollectionPage() {
         setDirectInstalled(direct.names ?? []);
       }
       for (const e of direct.errors ?? []) {
-        toaster.toast({ title: "Could not install a linked file", body: e });
+        toaster.toast({ title: t("Could not install a linked file"), body: e });
       }
     } catch {
       /* the extras note still names what is missing */
@@ -895,8 +897,8 @@ export function CollectionPage() {
     }
     setFinalising("");
     toaster.toast({
-      title: "Collection ready",
-      body: "Launch the game from the panel or your library",
+      title: t("Collection ready"),
+      body: t("Launch the game from the panel or your library"),
     });
   };
 
@@ -909,11 +911,11 @@ export function CollectionPage() {
       if (r.ok) {
         setEndorsed(true);
         toaster.toast({
-          title: "Collection endorsed!",
+          title: t("Collection endorsed!"),
           body: `Thanks for supporting ${detail.author}`,
         });
       } else {
-        toaster.toast({ title: "Could not endorse", body: r.error ?? "" });
+        toaster.toast({ title: t("Could not endorse"), body: r.error ?? "" });
       }
     } finally {
       setEndorsing(false);
@@ -984,8 +986,7 @@ export function CollectionPage() {
   if (!sel) {
     return (
       <div style={{ marginTop: "40px", padding: "24px" }}>
-        No collection selected.
-      </div>
+        {t("No collection selected.")}</div>
     );
   }
   const { game, collection } = sel;
@@ -1926,7 +1927,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
       info = r.ok ? r.mod ?? null : null;
     }
     if (!info) {
-      toaster.toast({ title: "Could not open mod", body: f.modName });
+      toaster.toast({ title: t("Could not open mod"), body: f.modName });
       return;
     }
     setSelectedMod({ game, mod: info });
@@ -1938,8 +1939,8 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
     showModal(
       <ConfirmModal
         strTitle={`Uninstall ${collection.name}?`}
-        strDescription="Removes the mods this collection installed. Mods you installed yourself (or via another collection) stay."
-        strOKButtonText="Uninstall collection"
+        strDescription={t("Removes the mods this collection installed. Mods you installed yourself (or via another collection) stay.")}
+        strOKButtonText={t("Uninstall collection")}
         bDestructiveWarning={true}
         onOK={async () => {
           const result = await uninstallCollection(
@@ -1955,7 +1956,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                   title: `${collection.name} uninstalled`,
                   body: `${result.removed ?? 0} mods removed`,
                 }
-              : { title: "Uninstall failed", body: result.error ?? "" }
+              : { title: t("Uninstall failed"), body: result.error ?? "" }
           );
           if (result.ok) setJustUninstalled(true);
           persistAttention([]);
@@ -2066,7 +2067,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               {collection.name}
             </h2>
             <div style={{ opacity: 0.75, fontSize: "13.5px", marginBottom: "10px" }}>
-              a collection by {detail?.author ?? collection.author} ·{" "}
+              {t("a collection by")}{" "}{detail?.author ?? collection.author} ·{" "}
               {game.displayName}
             </div>
             <Focusable
@@ -2086,7 +2087,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 {fmtBytes(detail ? detail.totalSize : collection.totalSize)}
               </StatChip>
               {installedTotalCount > 0 && (
-                <StatChip>✓ {installedTotalCount} installed</StatChip>
+                <StatChip>✓ {installedTotalCount} {" "}{t("installed")}</StatChip>
               )}
             </Focusable>
             {unsupported && (
@@ -2105,7 +2106,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                     curator's own quoted instruction - run together as one
                     paragraph it reads as our words rather than theirs. */}
                 <span style={{ whiteSpace: "pre-wrap" }}>
-                  ⚠ This collection isn't supported on SteamOS. {unsupported}
+                  {t("⚠ This collection isn't supported on SteamOS.")}{" "}{unsupported}
                 </span>
               </div>
             )}
@@ -2130,8 +2131,8 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                   endorsed={endorsed}
                   busy={endorsing}
                   onActivate={endorseCollectionNow}
-                  label="Endorse collection"
-                  endorsedLabel="Collection endorsed"
+                  label={t("Endorse collection")}
+                  endorsedLabel={t("Collection endorsed")}
                 />
               </div>
             )}
@@ -2218,7 +2219,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                       runIsOurs ? run!.total : remaining.length
                     } · ${getAggregateDownloadPercent(run) ?? 0}%`
               : remaining.length + loaderWork === 0 && detail
-              ? "Everything installed ✓"
+              ? t("Everything installed ✓")
               : remaining.length === 0 && loaderWork > 0 && detail
               ? `Install the mod loader${loaderWork === 1 ? "" : "s"} (${loaderWork})`
               : partialFromRun
@@ -2252,7 +2253,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                     finishProgress.total
                   )}/${finishProgress.total}…`
                 : finishingFileId !== undefined
-                ? "⚙ Finishing…"
+                ? t("⚙ Finishing…")
                 : `⚙ Finish setup (${actionable.length})`}
             </DialogButton>
           )}
@@ -2276,7 +2277,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               style={ACTION_BUTTON}
             >
               {fixingFiles
-                ? "Fixing…"
+                ? t("Fixing…")
                 : `Fix ${conflicts!.files.toLocaleString()} file${
                     conflicts!.files === 1 ? "" : "s"
                   }`}
@@ -2294,7 +2295,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               onClick={repairInstallers}
               style={ACTION_BUTTON}
             >
-              {repairing ? "Checking…" : "Repair"}
+              {repairing ? t("Checking…") : t("Repair")}
             </DialogButton>
           )}
           {ownedCount > 0 && !installing ? (
@@ -2304,15 +2305,14 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               onClick={onUninstallCollection}
               style={ACTION_BUTTON}
             >
-              Uninstall ({ownedCount})
+              {t("Uninstall (")}{ownedCount})
             </DialogButton>
           ) : justUninstalled && !installing ? (
             <DialogButton
               onClick={() => {}}
               style={{ ...ACTION_BUTTON, opacity: 0.7 }}
             >
-              Uninstalled ✓
-            </DialogButton>
+              {t("Uninstalled ✓")}</DialogButton>
           ) : null}
           <DownloadsButton />
           <DialogButton
@@ -2321,8 +2321,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               popOurPage();
             }}
           >
-            Back
-          </DialogButton>
+            {t("Back")}</DialogButton>
           </Focusable>
         </Focusable>
 
@@ -2341,9 +2340,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 margin: "-6px 0 12px",
               }}
             >
-              {installedRequiredCount} of this collection's mods are already
-              installed - only the missing ones will download.
-            </div>
+              {installedRequiredCount} {" "}{t("of this collection's mods are already installed - only the missing ones will download.")}</div>
           )}
         {directInstalled.length > 0 && !installing && (
           <div
@@ -2473,19 +2470,13 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               {willOff.length > 0 ? (
                 <>
                   <b>
-                    {willOff.map((a) => a.name).join(", ")} will be installed
-                    switched off.
-                  </b>{" "}
-                  {willOff.map((a) => a.reason).join(" ")} My Mods can switch
-                  {willOff.length === 1 ? " it" : " them"} back on afterwards.
-                </>
+                    {willOff.map((a) => a.name).join(", ")} {" "}{t("will be installed switched off.")}</b>{" "}
+                  {willOff.map((a) => a.reason).join(" ")} {" "}{t("My Mods can switch")}{willOff.length === 1 ? t("it") : t("them")} {" "}{t("back on afterwards.")}</>
               ) : (
                 <>
-                  <b>Gaming Mode warning:</b> this collection includes{" "}
+                  <b>{t("Gaming Mode warning:")}</b> {" "}{t("this collection includes")}{" "}
                   {stranding.map((m) => m.name).join(", ")}.{" "}
-                  {stranding[0].effect} The rest of the collection is
-                  unaffected.
-                </>
+                  {stranding[0].effect} {" "}{t("The rest of the collection is unaffected.")}</>
               )}
             </div>
           );
@@ -2569,11 +2560,8 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                 if (items.length === 0) return <>{coveredLine}</>;
                 return (
                   <>
-                    ⬇ {items.length} thing{items.length === 1 ? "" : "s"} in
-                    this collection {items.length === 1 ? "is" : "are"} not
-                    hosted on Nexus Mods, so{" "}
-                    {items.length === 1 ? "it cannot" : "they cannot"} be
-                    downloaded here: {items.map((i) => i.label).join(", ")}.
+                    ⬇ {items.length} {" "}{t("thing")}{items.length === 1 ? "" : t("s")} {" "}{t("in this collection")}{" "}{items.length === 1 ? t("is") : t("are")} {" "}{t("not hosted on Nexus Mods, so")}{" "}
+                    {items.length === 1 ? t("it cannot") : t("they cannot")} {" "}{t("be downloaded here:")}{" "}{items.map((i) => i.label).join(", ")}.
                     {withUrl ? ` Get it from ${withUrl.url}.` : ""}
                     {parkedForExternal > 0
                       ? ` ${parkedForExternal} mod${
@@ -2586,8 +2574,8 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                           items.length === 1 ? "it" : "them"
                         }.`
                       : remaining.length === 0
-                      ? " Nothing else needed switching off, so the rest of" +
-                        " the collection is installed and active."
+                      ? t("Nothing else needed switching off, so the rest of") +
+                        t("the collection is installed and active.")
                       : ""}
                     {coveredLine ? ` ${coveredLine}` : ""}
                   </>
@@ -2640,13 +2628,10 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               border: "1px solid rgba(218, 142, 53, 0.4)",
             }}
           >
-            ⏭ {brokenSkips.length} mod
-            {brokenSkips.length === 1 ? "" : "s"} left out because the game
-            will not start with {brokenSkips.length === 1 ? "it" : "them"}:{" "}
+            ⏭ {brokenSkips.length} {" "}{t("mod")}{brokenSkips.length === 1 ? "" : t("s")} {" "}{t("left out because the game will not start with")}{" "}{brokenSkips.length === 1 ? t("it") : t("them")}:{" "}
             {brokenSkips.map((b) => b.mod_name).join(", ")}.
             {brokenSkips[0]?.detail ? ` ${brokenSkips[0].detail}` : ""}{" "}
-            Everything else in the collection is installed and working.
-          </div>
+            {t("Everything else in the collection is installed and working.")}</div>
         )}
         {emptySkips.length > 0 && !installing && (
           <div
@@ -2656,12 +2641,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               margin: "-6px 0 12px",
             }}
           >
-            ⏭ {emptySkips.length} installer
-            {emptySkips.length === 1 ? "" : "s"} had nothing to install (
-            {emptySkips.map((t) => t.mod_name).join(", ")}) - the options
-            offered are not in the archive, so there is nothing to add and
-            nothing to fix.
-          </div>
+            ⏭ {emptySkips.length} {" "}{t("installer")}{emptySkips.length === 1 ? "" : t("s")} {" "}{t("had nothing to install (")}{emptySkips.map((t) => t.mod_name).join(", ")}{t(") - the options offered are not in the archive, so there is nothing to add and nothing to fix.")}</div>
         )}
         {toolSkips.length > 0 && !installing && (
           <div
@@ -2671,11 +2651,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               margin: "-6px 0 12px",
             }}
           >
-            ⏭ {toolSkips.length} PC modding tool
-            {toolSkips.length === 1 ? "" : "s"} skipped (
-            {toolSkips.map((t) => t.mod_name).join(", ")}) - they run on a
-            desktop, not in-game, and don't count as missing.
-          </div>
+            ⏭ {toolSkips.length} {" "}{t("PC modding tool")}{toolSkips.length === 1 ? "" : t("s")} {" "}{t("skipped (")}{toolSkips.map((t) => t.mod_name).join(", ")}{t(") - they run on a desktop, not in-game, and don't count as missing.")}</div>
         )}
         {layoutSkips.length > 0 && !installing && (
           <div
@@ -2696,13 +2672,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               margin: "-6px 0 12px",
             }}
           >
-            ⏭ {nothingSkips.length} download
-            {nothingSkips.length === 1 ? "" : "s"} had nothing to install (
-            {nothingSkips.map((t) => t.mod_name).join(", ")}) - Script
-            Extender parts, its settings, Windows mouse cursors, desktop
-            programs or a mod manager's load order file. The game on this
-            device cannot use them and they don't count as missing.
-          </div>
+            ⏭ {nothingSkips.length} {" "}{t("download")}{nothingSkips.length === 1 ? "" : t("s")} {" "}{t("had nothing to install (")}{nothingSkips.map((t) => t.mod_name).join(", ")}{t(") - Script Extender parts, its settings, Windows mouse cursors, desktop programs or a mod manager's load order file. The game on this device cannot use them and they don't count as missing.")}</div>
         )}
         {conflictSkips.length > 0 && !installing && (
           <div
@@ -2713,13 +2683,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               margin: "-6px 0 12px",
             }}
           >
-            🔒 {conflictSkips.length} mod
-            {conflictSkips.length === 1 ? "" : "s"} skipped for script
-            conflicts ({conflictSkips.map((c) => c.mod_name).join(", ")}).
-            Each edits a game script another installed mod already changed;
-            the installed one was kept so the game still boots. Resolving
-            these needs Script Merger on PC.
-          </div>
+            🔒 {conflictSkips.length} {" "}{t("mod")}{conflictSkips.length === 1 ? "" : t("s")} {" "}{t("skipped for script conflicts (")}{conflictSkips.map((c) => c.mod_name).join(", ")}{t("). Each edits a game script another installed mod already changed; the installed one was kept so the game still boots. Resolving these needs Script Merger on PC.")}</div>
         )}
 
         {error && (
@@ -2816,31 +2780,27 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                       {needsChoices && (
                         <span style={{ color: "#4aa9ff" }}>
                           {" "}
-                          · needs choices
-                        </span>
+                          {t("· needs choices")}</span>
                       )}
                       {isToolSkip && (
-                        <span style={{ opacity: 0.55 }}> · PC tool</span>
+                        <span style={{ opacity: 0.55 }}> {" "}{t("· PC tool")}</span>
                       )}
                       {parkedReason === "layout" &&
                         !fileIn(f) && (
                           <span style={{ opacity: 0.55 }}>
                             {" "}
-                            · not installable
-                          </span>
+                            {t("· not installable")}</span>
                         )}
                       {parkedReason === "nothing" &&
                         !fileIn(f) && (
                           <span style={{ opacity: 0.55 }}>
                             {" "}
-                            · nothing to install
-                          </span>
+                            {t("· nothing to install")}</span>
                         )}
                       {isConflict && (
                         <span style={{ color: "#ffc83c" }}>
                           {" "}
-                          · script conflict
-                        </span>
+                          {t("· script conflict")}</span>
                       )}
                       {/* Amber and worded, because a toast has gone by the
                           time the user wonders why this one has no tick. */}
@@ -2848,8 +2808,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                         !fileIn(f) && (
                           <span style={{ color: "#ffc83c" }}>
                             {" "}
-                            · skipped · built for an older patch
-                          </span>
+                            {t("· skipped · built for an older patch")}</span>
                         )}
                     </span>
                     <span
@@ -2872,13 +2831,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                     >
                       {info === undefined && (
                         <span style={{ opacity: 0.6, fontSize: "12px" }}>
-                          Loading…
-                        </span>
+                          {t("Loading…")}</span>
                       )}
                       {info === null && (
                         <span style={{ opacity: 0.6, fontSize: "12px" }}>
-                          Details unavailable.
-                        </span>
+                          {t("Details unavailable.")}</span>
                       )}
                       {info && (
                         <>
@@ -2913,7 +2870,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                             }}
                           >
                             <div style={{ opacity: 0.7 }}>
-                              by {info.author} · {f.fileName}
+                              {t("by")}{" "}{info.author} · {f.fileName}
                             </div>
                             {info.summary}
                           </div>
@@ -2951,8 +2908,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                                   fontSize: "12px",
                                 }}
                               >
-                                Make choices
-                              </DialogButton>
+                                {t("Make choices")}</DialogButton>
                             )}
                           </Focusable>
                         </>
@@ -2966,8 +2922,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
               <div
                 style={{ fontSize: "12px", opacity: 0.65, margin: "8px 0 2px" }}
               >
-                Optional ({optional.length}), not installed automatically:
-              </div>
+                {t("Optional (")}{optional.length}{t("), not installed automatically:")}</div>
             )}
             {optional.map((f) => {
               const open = expanded.has(f.fileId);
@@ -3036,13 +2991,11 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                     >
                       {info === undefined && (
                         <span style={{ opacity: 0.6, fontSize: "12px" }}>
-                          Loading…
-                        </span>
+                          {t("Loading…")}</span>
                       )}
                       {info === null && (
                         <span style={{ opacity: 0.6, fontSize: "12px" }}>
-                          Details unavailable.
-                        </span>
+                          {t("Details unavailable.")}</span>
                       )}
                       {info && (
                         <>
@@ -3077,7 +3030,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
                             }}
                           >
                             <div style={{ opacity: 0.7 }}>
-                              by {info.author} · {f.fileName}
+                              {t("by")}{" "}{info.author} · {f.fileName}
                             </div>
                             {info.summary}
                           </div>
@@ -3109,8 +3062,7 @@ const EXTRACT_AHEAD = prefs?.prefs?.extract_ahead ?? 2;
         )}
         {!detail && !error && (
           <div style={{ opacity: 0.8, padding: "12px 0" }}>
-            Loading collection…
-          </div>
+            {t("Loading collection…")}</div>
         )}
         </div>
       </Scroller>
