@@ -117,6 +117,26 @@
     ]
   },
   {
+    "appId": "275850",
+    "displayName": "No Man's Sky",
+    "nexusDomain": "nomanssky",
+    "installDirName": "No Man's Sky",
+    "modsSubdir": "GAMEDATA/MODS",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "292030",
     "displayName": "The Witcher 3",
     "nexusDomain": "witcher3",
@@ -161,6 +181,26 @@
       "\"x64/ShadowOfWarDllLoader.dll\", \"x64/plugins\"",
       "\"x64/plugins/ShadowOfWarPacketLoader.dll\", \"x64/plugins/PacketLoader\","
     ]
+  },
+  {
+    "appId": "368260",
+    "displayName": "Marvel's Midnight Suns",
+    "nexusDomain": "marvelsmidnightsuns",
+    "installDirName": "Marvel's Midnight Suns",
+    "modsSubdir": "MidnightSuns/Content/Paks/~mods",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": null,
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
   },
   {
     "appId": "377160",
@@ -255,6 +295,26 @@
     ]
   },
   {
+    "appId": "517630",
+    "displayName": "Just Cause 4",
+    "nexusDomain": "justcause4",
+    "installDirName": "Just Cause 4",
+    "modsSubdir": "dropzone",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": null,
+    "launchOptionsTemplate": "--vfs-fs dropzone %command%",
+    "prefixTools": [],
+    "manualTools": 0,
+    "hasLauncherBypass": true,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": []
+  },
+  {
     "appId": "524220",
     "displayName": "NieR:Automata",
     "nexusDomain": "nierautomata",
@@ -317,6 +377,30 @@
     "longWaitAtMods": null,
     "cleanupPrefixes": [
       "\"x64/hook.log\""
+    ]
+  },
+  {
+    "appId": "599140",
+    "displayName": "Graveyard Keeper",
+    "nexusDomain": "graveyardkeeper",
+    "installDirName": "Graveyard Keeper",
+    "modsSubdir": "BepInEx/plugins",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "BepInEx",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"winhttp=n,b\" %command%",
+    "prefixTools": [
+      "79"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"BepInEx\", \"winhttp.dll\", \"doorstop_config.ini\", \".doorstop_version\","
     ]
   },
   {
@@ -630,6 +714,30 @@
     "longWaitAtMods": null,
     "cleanupPrefixes": [
       "\"Bin/Win64MasterMasterSteamPGO/kcd2db.asi\", \"Bin/Win64MasterMasterSteamPGO/dinput8.dll\","
+    ]
+  },
+  {
+    "appId": "1868140",
+    "displayName": "Dave the Diver",
+    "nexusDomain": "davethediver",
+    "installDirName": "Dave the Diver",
+    "modsSubdir": "BepInEx/plugins",
+    "pluginsTxtSubpath": null,
+    "pluginsTxtStyle": null,
+    "installMode": null,
+    "frameworkName": "BepInEx",
+    "launchOptionsTemplate": "WINEDLLOVERRIDES=\"winhttp=n,b\" %command%",
+    "prefixTools": [
+      "3"
+    ],
+    "manualTools": 0,
+    "hasLauncherBypass": false,
+    "hasSetupInis": false,
+    "hasLogAdapter": false,
+    "hasOwnLauncher": false,
+    "longWaitAtMods": null,
+    "cleanupPrefixes": [
+      "\"BepInEx\", \"winhttp.dll\", \"doorstop_config.ini\", \".doorstop_version\","
     ]
   },
   {

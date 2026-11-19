@@ -17,36 +17,41 @@ Browse, download, install, and enable/disable [Nexus Mods](https://www.nexusmods
 
 ## Supported games
 
-Twenty-five games. Every one unmarked below was installed, modded and played
+Thirty games. Every one unmarked below was installed, modded and played
 on real hardware before it shipped. That is what supported means here: not
 that the code has a config entry for it, but that someone finished a
 session with mods running.
 
 1. Baldur's Gate 3
 2. Cyberpunk 2077
-3. Elden Ring
-4. Fallout 4
-5. Fallout: New Vegas
-6. Helldivers 2
-7. Kingdom Come: Deliverance
-8. Kingdom Come: Deliverance II
-9. Mass Effect Legendary Edition
-10. Middle-earth: Shadow of Mordor \*
-11. Mount & Blade II: Bannerlord
-12. NieR:Automata
-13. Palworld
-14. Red Dead Redemption 2
-15. Resident Evil 4
-16. Skyrim Special Edition
-17. Slay the Spire 2
-18. STAR WARS Battlefront II (2017)
-19. Stardew Valley
-20. Starfield \*
-21. Subnautica
-22. Subnautica 2
-23. Subnautica: Below Zero
-24. The Witcher 3
-25. Valheim
+3. Dave the Diver \*
+4. Elden Ring
+5. Fallout 4
+6. Fallout: New Vegas
+7. Graveyard Keeper \*
+8. Helldivers 2
+9. Just Cause 4 \*
+10. Kingdom Come: Deliverance
+11. Kingdom Come: Deliverance II
+12. Marvel's Midnight Suns \*
+13. Mass Effect Legendary Edition
+14. Middle-earth: Shadow of Mordor \*
+15. Mount & Blade II: Bannerlord
+16. NieR:Automata
+17. No Man's Sky \*
+18. Palworld
+19. Red Dead Redemption 2
+20. Resident Evil 4
+21. Skyrim Special Edition
+22. Slay the Spire 2
+23. STAR WARS Battlefront II (2017)
+24. Stardew Valley
+25. Starfield \*
+26. Subnautica
+27. Subnautica 2
+28. Subnautica: Below Zero
+29. The Witcher 3
+30. Valheim
 
 \* Community added game. Not tested by author.
 

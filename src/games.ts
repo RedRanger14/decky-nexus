@@ -2041,6 +2041,107 @@ export const SUPPORTED_GAMES: Record<number, SupportedGame> = {
     // shipped files, and a proxy-dll loader package.
     recommendedModIds: [41, 26, 36],
   },
+  1868140: {
+    appId: 1868140,
+    displayName: "Dave the Diver",
+    nexusDomain: "davethediver",
+    installDirName: "Dave the Diver",
+    modsSubdir: "BepInEx/plugins",
+    moddedSaveWarning: false, // saves shared between modded/vanilla
+    processName: "DaveTheDiver.exe",
+    framework: {
+      name: "BepInEx",
+      // BepInEx 6 IL2CPP Pack (Nexus mod 3 on davethediver), the build
+      // the mod scene targets. Unity IL2CPP, Windows x64 — not Mono, not
+      // BepInEx 5. Same winhttp.dll proxy mechanism as Subnautica.
+      detectFile: "winhttp.dll",
+      url: "www.nexusmods.com/davethediver/mods/3",
+      nexusModId: 3,
+      installKind: "copyRoot",
+      // BepInEx 6 IL2CPP needs the winhttp proxy override under Proton,
+      // same as Subnautica.
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="winhttp=n,b" %command%',
+      // Standard BepInEx 6 IL2CPP root artifacts (winhttp.dll proxy +
+      // Unity Doorstop files + the BepInEx core dir). None exist in a
+      // vanilla install. Verify against the real pack archive on device.
+      cleanupPrefixes: [
+        "BepInEx",
+        "winhttp.dll",
+        "doorstop_config.ini",
+        ".doorstop_version",
+      ],
+    },
+  },
+  275850: {
+    appId: 275850,
+    displayName: "No Man's Sky",
+    nexusDomain: "nomanssky",
+    installDirName: "No Man's Sky",
+    modsSubdir: "GAMEDATA/MODS",
+    moddedSaveWarning: false, // saves shared between modded/vanilla
+    processName: "NMS.exe",
+    // No framework: NMS uses a native mod system. Mods are folders of
+    // .MBIN/.EXML files placed in GAMEDATA/MODS/<ModName>/. The default
+    // "folder" install mode peels one top-level folder from each archive
+    // and drops it into GAMEDATA/MODS/, matching how AMUMSS and the
+    // community package mods.
+  },
+  368260: {
+    appId: 368260,
+    displayName: "Marvel's Midnight Suns",
+    nexusDomain: "marvelsmidnightsuns",
+    installDirName: "Marvel's Midnight Suns",
+    // Unreal Engine 4, not Unity: pak drop-ins auto-load from ~mods,
+    // same layout as Palworld and Subnautica 2.
+    modsSubdir: "MidnightSuns/Content/Paks/~mods",
+    moddedSaveWarning: false, // pak mods bake into the vanilla save
+    processName: "MidnightSuns-Win64-Shipping.exe",
+    // No framework: pure pak drop-ins, no BepInEx/UE4SS.
+  },
+  517630: {
+    appId: 517630,
+    displayName: "Just Cause 4",
+    nexusDomain: "justcause4",
+    installDirName: "Just Cause 4",
+    modsSubdir: "dropzone",
+    moddedSaveWarning: false, // saves shared between modded/vanilla
+    processName: "JustCause4.exe",
+    // No framework: the Avalanche engine loads dropzone/ as a virtual
+    // filesystem when launched with --vfs-fs dropzone. No DLL proxy,
+    // no GUI installer — just launch options.
+    launcherBypass: {
+      launchOptionsTemplate: "--vfs-fs dropzone %command%",
+    },
+  },
+  599140: {
+    appId: 599140,
+    displayName: "Graveyard Keeper",
+    nexusDomain: "graveyardkeeper",
+    installDirName: "Graveyard Keeper",
+    modsSubdir: "BepInEx/plugins",
+    moddedSaveWarning: false, // saves shared between modded/vanilla
+    processName: "Graveyard Keeper.exe",
+    // BepInEx 5 (Mono), not 6 IL2CPP: Unity Mono, doorstop-loaded via
+    // winhttp.dll. Community loader pack is Nexus mod 79. Same root
+    // footprint as the IL2CPP games (winhttp.dll + doorstop + BepInEx/),
+    // same Proton proxy override. NOTE: the Steam build flipped to
+    // 32-bit in Nov 2026; mod 79's main archive is 64-bit and may need
+    // the 32-bit optional file (file_id 1051) + fix mod 215.
+    framework: {
+      name: "BepInEx",
+      detectFile: "winhttp.dll",
+      url: "www.nexusmods.com/graveyardkeeper/mods/79",
+      nexusModId: 79,
+      installKind: "copyRoot",
+      launchOptionsTemplate: 'WINEDLLOVERRIDES="winhttp=n,b" %command%',
+      cleanupPrefixes: [
+        "BepInEx",
+        "winhttp.dll",
+        "doorstop_config.ini",
+        ".doorstop_version",
+      ],
+    },
+  },
 };
 
 /** Positional params several backend calls need for install-mode dispatch. */
